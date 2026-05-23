@@ -8672,6 +8672,8 @@ from prediction.extrap_safeguards import (
     pred_cap_abs_pp as _pred_cap_abs_pp,
     pred_cap_abs_pp_precd as _pred_cap_abs_pp_precd,
     pred_damp_dm60_extrap_enabled as _pred_damp_dm60_extrap_enabled,
+    pred_dir_align_flip_factor as _pred_dir_align_flip_factor,
+    pred_stn_runup_threshold as _pred_stn_runup_threshold,
     sheet_use_seq_curve_for_pred as _sheet_use_seq_curve_for_pred,
 )
 from prediction.direction_ensemble import direction_ensemble as _direction_ensemble
@@ -13392,7 +13394,7 @@ def _compute_price_predictions(sim_rows: list,
             #   2. Cap assoluto ±25% per evitare estrapolazioni esplosive
             _cap_post = _pred_cap_abs_pp()
             _cap_pre = _pred_cap_abs_pp_precd()
-            if run_up is not None and run_up > 5:
+            if run_up is not None and run_up > _pred_stn_runup_threshold():
                 # Fattore di reversion: più forte con run-up alto e catalyst vicino
                 _rev = min(0.6, run_up / 40.0)        # 0–0.6
                 if days_to_t <= 14: _rev = min(0.7, _rev + 0.15)
@@ -13509,7 +13511,7 @@ def _compute_price_predictions(sim_rows: list,
         def _align(v, bull_dir: bool) -> float | None:
             if v is None: return None
             if bull_dir  and v < 0: return round(-v * 0.4, 1)   # converti negativo→positivo ridotto
-            if not bull_dir and v > 0: return round(-v * 0.7, 1) # flip positivo→negativo (×0.7)
+            if not bull_dir and v > 0: return round(-v * _pred_dir_align_flip_factor(), 1)  # flip positivo→negativo
             return v
         _is_bull   = direction_adj.startswith("↑")
         _is_bear   = direction_adj.startswith("↓")

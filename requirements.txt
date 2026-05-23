@@ -1,0 +1,2 @@
+# Alias per pip: dipendenze orchestrator / Simulation / Accuracy / Grafici.
+-r requirements-core.txt

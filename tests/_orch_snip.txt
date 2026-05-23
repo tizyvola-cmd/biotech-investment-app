@@ -1,0 +1,30 @@
+12256|    def _one_opt_prefetch(_tkx: str) -> tuple[str, dict]:
+12257|        if _tkx not in closes:
+12258|            return _tkx, {}
+12259|        _pn = _last_close_scalar(closes[_tkx])
+12260|        if _pn is None or _pn <= 0:
+12261|            return _tkx, {}
+12262|        try:
+12263|            return _tkx, _options_signals(_tkx, _pn)
+12264|        except Exception:
+12265|            return _tkx, {}
+12266|
+12267|    _ows = os.environ.get("ORCH_OPTIONS_WORKERS", "").strip().lower()
+12268|    if _ows in ("0", "false", "no", "off"):
+12269|        for _tk in syms:
+12270|            _kx, _ox = _one_opt_prefetch(_tk)
+12271|            _opts_by_ticker[_kx] = _ox
+12272|    else:
+12273|        try:
+12274|            _nw_o = int(_ows) if _ows else max(2, min(6, len(syms)))
+12275|        except ValueError:
+12276|            _nw_o = max(2, min(6, len(syms)))
+12277|        _nw_o = max(1, min(_nw_o, len(syms)))
+12278|        if len(syms) <= 1:
+12279|            _kx2, _ox2 = _one_opt_prefetch(syms[0])
+12280|            _opts_by_ticker[_kx2] = _ox2
+12281|        else:
+12282|            import concurrent.futures as _opxf
+12283|            with _opxf.ThreadPoolExecutor(max_workers=_nw_o) as _oex:
+12284|                _of = {_oex.submit(_one_opt_prefetch, _t): _t for _t in syms}
+12285|                for _ff in _opxf.as_completed(_of):

@@ -1,0 +1,49 @@
+# Python
+__pycache__/
+*.py[cod]
+*.pyo
+.venv/
+*.egg-info/
+dist/
+build/
+
+# Cache e dati locali
+cache/
+logs/
+*.log
+pip/
+
+# Excel temporanei
+~$*.xlsx
+~$*.xls
+
+# Node / Electron
+node_modules/
+desktop-ui/dist/
+desktop-ui/.vite/
+electron/node_modules/
+
+# OS
+.DS_Store
+Thumbs.db
+desktop.ini
+
+# IDE
+.vscode/
+.idea/
+pyrightconfig.json
+
+# File temporanei di test/debug
+_dv_test*.xlsx
+_tbar.xlsx
+_tvar.xlsx
+_orch_err.txt
+_orch_out.txt
+FORCE_PAST_PRED_FULL_REBUILD=1
+cd
+0
+
+# Dati sensibili / grossi
+data/
+cik_tickers.json
+*.png

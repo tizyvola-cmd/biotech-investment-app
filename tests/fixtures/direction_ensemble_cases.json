@@ -1,0 +1,290 @@
+{
+  "version": 1,
+  "cases": [
+    {
+      "id": "phase3_strong_bull",
+      "kwargs": {
+        "ph_num": 3,
+        "exc_slope": 2.0,
+        "slope": 1.8,
+        "rsi_val": 50,
+        "vol_ratio": 2.5,
+        "vol_accel": 2.2,
+        "run_up": 3,
+        "slope_5d": 1.0,
+        "slope_20d": 0.8,
+        "pcr": 0.55,
+        "exp_move_pct": 30.0
+      },
+      "expect": {
+        "direction_label": "↑↑ Forte crescita",
+        "direction_substring": "↑",
+        "confidence": 0.929,
+        "confidence_min": 0.928,
+        "confidence_max": 0.93,
+        "phase": 3,
+        "net_score": 5
+      }
+    },
+    {
+      "id": "phase3_strong_bear",
+      "kwargs": {
+        "ph_num": 3,
+        "exc_slope": -0.2,
+        "slope": -0.1,
+        "rsi_val": 75,
+        "vol_ratio": 1.0,
+        "vol_accel": 1.0,
+        "run_up": 22,
+        "slope_5d": -0.5,
+        "slope_20d": -0.4,
+        "run_up_7d": 18,
+        "ath_prox": 0.95
+      },
+      "expect": {
+        "direction_label": "↓↓ Calo forte",
+        "direction_substring": "↓",
+        "confidence": 0.875,
+        "confidence_min": 0.874,
+        "confidence_max": 0.876,
+        "phase": 3,
+        "net_score": -8
+      }
+    },
+    {
+      "id": "phase2_mixed_signals",
+      "kwargs": {
+        "ph_num": 2,
+        "exc_slope": 2.0,
+        "slope": 2.0,
+        "rsi_val": 80,
+        "vol_ratio": 2.5,
+        "vol_accel": 2.0,
+        "run_up": 25,
+        "slope_5d": 1.0,
+        "slope_20d": 1.0
+      },
+      "expect": {
+        "direction_label": "→ Stabile",
+        "direction_substring": "→",
+        "confidence": 0.091,
+        "confidence_min": 0.09,
+        "confidence_max": 0.092,
+        "phase": 2,
+        "net_score": 1
+      }
+    },
+    {
+      "id": "phase3_neutral_flat",
+      "kwargs": {
+        "ph_num": 3,
+        "exc_slope": 0.1,
+        "slope": 0.1,
+        "rsi_val": 50,
+        "vol_ratio": 1.0,
+        "vol_accel": 1.0,
+        "run_up": 0,
+        "slope_5d": 0.1,
+        "slope_20d": 0.1
+      },
+      "expect": {
+        "direction_label": "→ Stabile",
+        "direction_substring": "→",
+        "confidence": 0.05,
+        "confidence_min": 0.05,
+        "confidence_max": 0.051,
+        "phase": 3,
+        "net_score": 0
+      }
+    },
+    {
+      "id": "phase3_rsi_oversold",
+      "kwargs": {
+        "ph_num": 3,
+        "exc_slope": 0.5,
+        "slope": 0.4,
+        "rsi_val": 25,
+        "vol_ratio": 1.2,
+        "vol_accel": 1.1,
+        "run_up": -5,
+        "slope_5d": 0.3,
+        "slope_20d": 0.2
+      },
+      "expect": {
+        "direction_label": "↑ Crescita lieve",
+        "direction_substring": "↑",
+        "confidence": 0.66,
+        "confidence_min": 0.659,
+        "confidence_max": 0.661,
+        "phase": 3,
+        "net_score": 3
+      }
+    },
+    {
+      "id": "phase3_pcr_panic_bull",
+      "kwargs": {
+        "ph_num": 3,
+        "exc_slope": 0.8,
+        "slope": 0.7,
+        "rsi_val": 45,
+        "vol_ratio": 1.3,
+        "vol_accel": 1.2,
+        "run_up": 2,
+        "slope_5d": 0.4,
+        "slope_20d": 0.3,
+        "pcr": 2.8
+      },
+      "expect": {
+        "direction_label": "↑ Crescita lieve",
+        "direction_substring": "↑",
+        "confidence": 0.75,
+        "confidence_min": 0.749,
+        "confidence_max": 0.751,
+        "phase": 3,
+        "net_score": 3
+      }
+    },
+    {
+      "id": "phase3_pcr_call_frenzy_bear",
+      "kwargs": {
+        "ph_num": 3,
+        "exc_slope": 1.0,
+        "slope": 0.9,
+        "rsi_val": 68,
+        "vol_ratio": 1.4,
+        "vol_accel": 1.3,
+        "run_up": 12,
+        "slope_5d": 0.6,
+        "slope_20d": 0.5,
+        "pcr": 0.45
+      },
+      "expect": {
+        "direction_label": "→ Stabile",
+        "direction_substring": "→",
+        "confidence": 0.344,
+        "confidence_min": 0.343,
+        "confidence_max": 0.345,
+        "phase": 3,
+        "net_score": -2
+      }
+    },
+    {
+      "id": "phase3_price_not_ok",
+      "kwargs": {
+        "ph_num": 3,
+        "exc_slope": 1.8,
+        "slope": 1.5,
+        "rsi_val": 48,
+        "vol_ratio": 2.0,
+        "vol_accel": 1.8,
+        "run_up": 5,
+        "slope_5d": 0.8,
+        "slope_20d": 0.6,
+        "price_ok": false
+      },
+      "expect": {
+        "direction_label": "↑↑ Forte crescita",
+        "direction_substring": "↑",
+        "confidence": 0.286,
+        "confidence_min": 0.285,
+        "confidence_max": 0.287,
+        "phase": 3,
+        "net_score": 5
+      }
+    },
+    {
+      "id": "phase3_low_data_quality",
+      "kwargs": {
+        "ph_num": 3,
+        "exc_slope": 1.8,
+        "slope": 1.5,
+        "rsi_val": 48,
+        "vol_ratio": 2.0,
+        "vol_accel": 1.8,
+        "run_up": 5,
+        "slope_5d": 0.8,
+        "slope_20d": 0.6,
+        "data_quality_score": 0.3
+      },
+      "expect": {
+        "direction_label": "↑↑ Forte crescita",
+        "direction_substring": "↑",
+        "confidence": 0.245,
+        "confidence_min": 0.244,
+        "confidence_max": 0.246,
+        "phase": 3,
+        "net_score": 5
+      }
+    },
+    {
+      "id": "phase2_strong_bull",
+      "kwargs": {
+        "ph_num": 2,
+        "exc_slope": 2.0,
+        "slope": 1.8,
+        "rsi_val": 50,
+        "vol_ratio": 2.5,
+        "vol_accel": 2.2,
+        "run_up": 3,
+        "slope_5d": 1.0,
+        "slope_20d": 0.8
+      },
+      "expect": {
+        "direction_label": "↑ Crescita lieve",
+        "direction_substring": "↑",
+        "confidence": 0.607,
+        "confidence_min": 0.606,
+        "confidence_max": 0.608,
+        "phase": 2,
+        "net_score": 4
+      }
+    },
+    {
+      "id": "phase3_priced_in_near_t",
+      "kwargs": {
+        "ph_num": 3,
+        "exc_slope": 1.2,
+        "slope": 1.0,
+        "rsi_val": 55,
+        "vol_ratio": 1.5,
+        "vol_accel": 1.4,
+        "run_up": 8,
+        "slope_5d": 0.7,
+        "slope_20d": 0.6,
+        "days_to_t": 5
+      },
+      "expect": {
+        "direction_label": "→ Stabile",
+        "direction_substring": "→",
+        "confidence": 0.151,
+        "confidence_min": 0.15,
+        "confidence_max": 0.152,
+        "phase": 3,
+        "net_score": 1
+      }
+    },
+    {
+      "id": "phase1_mild_bull",
+      "kwargs": {
+        "ph_num": 1,
+        "exc_slope": 0.6,
+        "slope": 0.55,
+        "rsi_val": 42,
+        "vol_ratio": 1.6,
+        "vol_accel": 1.5,
+        "run_up": 1,
+        "slope_5d": 0.5,
+        "slope_20d": 0.4
+      },
+      "expect": {
+        "direction_label": "↑↑ Forte crescita",
+        "direction_substring": "↑",
+        "confidence": 0.753,
+        "confidence_min": 0.752,
+        "confidence_max": 0.754,
+        "phase": 1,
+        "net_score": 4
+      }
+    }
+  ]
+}

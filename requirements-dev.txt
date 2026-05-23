@@ -1,0 +1,6 @@
+# Dev / test dependencies (API tests, pytest).
+# Install: pip install -r requirements-dev.txt
+# Or use project venv after: pip install -r requirements-electron.txt -r requirements-dev.txt
+
+-r requirements-electron.txt
+pytest>=8.0.0

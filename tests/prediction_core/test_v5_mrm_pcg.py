@@ -94,6 +94,26 @@ def test_drift_sigma_from_prices_trend() -> None:
     assert r.sigma_per_day > 0
 
 
+def test_mrm_thresholds_env_override(monkeypatch: pytest.MonkeyPatch) -> None:
+    """MRM_MEAN_REVERT_RUNUP env var lowers the run_up bar for mean_revert."""
+    import importlib
+    import prediction.v5.mrm as mrm_mod
+
+    # With default threshold (18), run_up=10 → trend
+    regime_default = classify_regime(slope_20d=0.01, vol_20d=0.02, run_up_30d=10.0)
+    assert regime_default.label == "trend"
+
+    # Lower the threshold to 8 via env: run_up=10 should now be mean_revert
+    monkeypatch.setenv("MRM_MEAN_REVERT_RUNUP", "8")
+    importlib.reload(mrm_mod)
+    regime_lowered = mrm_mod.classify_regime(slope_20d=0.01, vol_20d=0.02, run_up_30d=10.0)
+    assert regime_lowered.label == "mean_revert"
+
+    # Restore module to original state so other tests are unaffected
+    monkeypatch.delenv("MRM_MEAN_REVERT_RUNUP", raising=False)
+    importlib.reload(mrm_mod)
+
+
 def test_predict_v5_monotonic_toward_anchor() -> None:
     dist = predict_v5_curve(
         slope_20d=0.25,

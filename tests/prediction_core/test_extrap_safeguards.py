@@ -6,6 +6,8 @@ import pytest
 from prediction.extrap_safeguards import (
     cap_pred_pct,
     damp_model_dm60_extrap,
+    pred_dir_align_flip_factor,
+    pred_stn_runup_threshold,
     sheet_use_seq_curve_for_pred,
 )
 
@@ -56,6 +58,33 @@ def test_hura_like_high_runup_dm60_not_at_cap_without_reason(monkeypatch):
     assert out is not None
     assert out < raw_dm60
     assert out < 18.0
+
+
+def test_pred_stn_runup_threshold_default_and_override(monkeypatch):
+    """Default 15; override via PRED_STN_RUNUP_THRESHOLD."""
+    monkeypatch.delenv("PRED_STN_RUNUP_THRESHOLD", raising=False)
+    assert pred_stn_runup_threshold() == 15.0
+
+    monkeypatch.setenv("PRED_STN_RUNUP_THRESHOLD", "20")
+    assert pred_stn_runup_threshold() == 20.0
+
+    monkeypatch.setenv("PRED_STN_RUNUP_THRESHOLD", "5")
+    assert pred_stn_runup_threshold() == 5.0
+
+
+def test_pred_dir_align_flip_factor_default_and_override(monkeypatch):
+    """Default 0.5; clamped to [0.1, 1.0]; override via PRED_DIR_ALIGN_FLIP_FACTOR."""
+    monkeypatch.delenv("PRED_DIR_ALIGN_FLIP_FACTOR", raising=False)
+    assert pred_dir_align_flip_factor() == 0.5
+
+    monkeypatch.setenv("PRED_DIR_ALIGN_FLIP_FACTOR", "0.3")
+    assert pred_dir_align_flip_factor() == 0.3
+
+    monkeypatch.setenv("PRED_DIR_ALIGN_FLIP_FACTOR", "0.0")  # below min → clamped to 0.1
+    assert pred_dir_align_flip_factor() == 0.1
+
+    monkeypatch.setenv("PRED_DIR_ALIGN_FLIP_FACTOR", "1.5")  # above max → clamped to 1.0
+    assert pred_dir_align_flip_factor() == 1.0
 
 
 def test_sheet_seq_curve_default_on_model_only_opt_out(monkeypatch):

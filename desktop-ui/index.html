@@ -1,0 +1,26 @@
+<!doctype html>
+<html lang="it">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>SuperNova</title>
+    <script>
+      (function () {
+        try {
+          var raw = localStorage.getItem("supernova_theme");
+          if (raw) raw = raw.trim();
+          var dark = false;
+          if (raw === "dark") dark = true;
+          else if (raw === "light") dark = false;
+          else
+            dark = window.matchMedia("(prefers-color-scheme: dark)").matches;
+          if (dark) document.documentElement.classList.add("dark");
+        } catch (_) {}
+      })();
+    </script>
+  </head>
+  <body class="bg-surface text-ink antialiased">
+    <div id="root"></div>
+    <script type="module" src="/src/main.tsx"></script>
+  </body>
+</html>

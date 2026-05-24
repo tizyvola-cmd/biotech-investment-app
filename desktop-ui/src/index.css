@@ -1,0 +1,349 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+/* ── Light mode ─────────────────────────────────────────── */
+:root {
+  --surface: 243 244 249;
+  --surface-elevated: 255 255 255;
+  --ink: 15 23 42;
+  --ink-muted: 100 116 139;
+  --accent: 99 102 241;
+  --positive: 22 163 74;
+  --negative: 220 38 38;
+  --border: 226 232 240;
+  --surface-3: 46 53 96;
+  --bg-deep: 15 18 33;
+  --signal-up: 22 163 74;
+  --signal-down: 220 38 38;
+  --signal-neutral: 100 116 139;
+  --warn: 245 158 11;
+  --purple-soft: 167 139 250;
+  --sidebar-w: 220px;
+}
+
+/* ── Dark glass mode ────────────────────────────────────── */
+/*
+ * Palette calibrata per astigmatismo:
+ * - ink: bianco leggermente freddo invece di bianco puro (riduce halation)
+ * - signal-up: teal-verde invece di verde puro (meno aberrazione cromatica con il rosso)
+ * - signal-down: corallo morbido invece di rosso puro (meno aggressivo)
+ * - signal-neutral: più chiaro per essere visibile senza affidarsi al colore
+ */
+.dark {
+  --surface: 28 33 65;
+  --surface-elevated: 18 24 54;
+  --ink: 210 222 238;
+  --ink-muted: 138 158 180;
+  --accent: 129 140 248;
+  --positive: 52 211 153;
+  --negative: 248 113 133;
+  --border: 255 255 255;
+  --surface-3: 46 53 96;
+  --bg-deep: 13 16 30;
+  --signal-up: 52 211 153;
+  --signal-down: 248 113 133;
+  --signal-neutral: 120 145 172;
+  --warn: 245 158 11;
+  --purple-soft: 180 156 252;
+}
+
+/* ── Base ────────────────────────────────────────────────── */
+body {
+  margin: 0;
+  min-height: 100vh;
+  background: rgb(var(--surface));
+  color: rgb(var(--ink));
+  transition: background 0.3s, color 0.3s;
+}
+
+.dark body {
+  background:
+    radial-gradient(ellipse 80% 50% at 20% 0%, rgba(99,102,241,0.18) 0%, transparent 60%),
+    radial-gradient(ellipse 60% 40% at 80% 100%, rgba(139,92,246,0.12) 0%, transparent 60%),
+    linear-gradient(160deg, #07080f 0%, #0b1025 45%, #0d0820 100%);
+  background-attachment: fixed;
+}
+
+/* ── Components ─────────────────────────────────────────── */
+@layer components {
+  /* Light card */
+  .card {
+    @apply rounded-2xl border border-[rgb(var(--border))] bg-[rgb(var(--surface-elevated))];
+    box-shadow:
+      0 1px 2px rgb(0 0 0 / 0.04),
+      0 4px 16px rgb(0 0 0 / 0.07);
+  }
+
+  /* Glass card (dark mode) */
+  .dark .card {
+    background: rgba(255, 255, 255, 0.062) !important;
+    backdrop-filter: blur(22px) saturate(1.6);
+    -webkit-backdrop-filter: blur(22px) saturate(1.6);
+    border: 1px solid rgba(255, 255, 255, 0.10) !important;
+    box-shadow:
+      0 8px 40px rgba(0, 0, 0, 0.5),
+      0 0 0 1px rgba(255, 255, 255, 0.04),
+      inset 0 1px 0 rgba(255, 255, 255, 0.10);
+  }
+
+  .btn {
+    @apply inline-flex items-center justify-center gap-2 rounded-lg px-4 py-2 text-sm font-medium
+      transition-all duration-150
+      bg-[rgb(var(--accent))] text-white
+      hover:opacity-90 active:scale-[0.97]
+      disabled:opacity-40 disabled:cursor-not-allowed;
+  }
+
+  .dark .btn {
+    box-shadow: 0 0 16px rgb(var(--accent) / 0.35);
+  }
+  .dark .btn:hover {
+    box-shadow: 0 0 24px rgb(var(--accent) / 0.50);
+  }
+
+  .btn-ghost {
+    @apply btn bg-transparent text-[rgb(var(--ink))] border border-[rgb(var(--border))]
+      hover:bg-[rgb(var(--surface))];
+    box-shadow: none !important;
+  }
+
+  .input {
+    @apply w-full rounded-lg border border-[rgb(var(--border))] bg-[rgb(var(--surface))]
+      px-3 py-2 text-sm text-[rgb(var(--ink))]
+      placeholder:text-[rgb(var(--ink-muted))]
+      focus:outline-none focus:ring-2 focus:ring-[rgb(var(--accent))]/40
+      transition;
+  }
+
+  .dark .input {
+    background: rgba(255, 255, 255, 0.06) !important;
+    border-color: rgba(255, 255, 255, 0.12) !important;
+  }
+
+  /*
+   * Native <select> popups (esp. Windows/WebView2) use a light OS panel while
+   * .input inherits light --ink text → white-on-white. Force readable options.
+   */
+  select option,
+  select optgroup {
+    background-color: rgb(var(--surface-elevated));
+    color: rgb(var(--ink));
+  }
+
+  .dark select {
+    color-scheme: light;
+  }
+
+  .dark select option,
+  .dark select optgroup {
+    background-color: rgb(248 250 252);
+    color: rgb(15 23 42);
+  }
+
+  .dark select option:checked {
+    background-color: rgb(var(--accent));
+    color: rgb(255 255 255);
+  }
+
+  /*
+   * Signal badges — accessibili per astigmatismo:
+   * bordo colorato + background tenue + icona nel testo = triplice ridondanza visiva
+   * (non solo il colore comunica il significato)
+   */
+  .signal-up {
+    @apply inline-flex items-center gap-1 rounded-full px-3 py-1 text-[12px] font-bold tracking-wide;
+    background: rgb(var(--signal-up) / 0.13);
+    color: rgb(var(--signal-up));
+    border: 1.5px solid rgb(var(--signal-up) / 0.40);
+  }
+  .signal-down {
+    @apply inline-flex items-center gap-1 rounded-full px-3 py-1 text-[12px] font-bold tracking-wide;
+    background: rgb(var(--signal-down) / 0.13);
+    color: rgb(var(--signal-down));
+    border: 1.5px solid rgb(var(--signal-down) / 0.40);
+  }
+  .signal-neutral {
+    @apply inline-flex items-center gap-1 rounded-full px-3 py-1 text-[12px] font-bold tracking-wide;
+    background: rgb(var(--signal-neutral) / 0.13);
+    color: rgb(var(--signal-neutral));
+    border: 1.5px solid rgb(var(--signal-neutral) / 0.35);
+  }
+  .phase-badge {
+    @apply inline-flex items-center rounded-full px-2 py-0.5 text-[9px] font-bold;
+    background: rgb(var(--purple-soft) / 0.15);
+    color: rgb(var(--purple-soft));
+  }
+  .infer-ok {
+    @apply inline-flex items-center rounded-full px-2 py-0.5 text-[9px] font-semibold;
+    background: rgb(var(--signal-up) / 0.12);
+    color: rgb(var(--signal-up));
+  }
+  .infer-warn {
+    @apply inline-flex items-center rounded-full px-2 py-0.5 text-[9px] font-semibold;
+    background: rgb(var(--warn) / 0.12);
+    color: rgb(var(--warn));
+  }
+  /* Quality dots — leggermente più grandi per visibilità */
+  .quality-dot-green {
+    @apply inline-block w-2.5 h-2.5 rounded-full bg-[rgb(var(--signal-up))];
+    box-shadow: 0 0 0 2px rgb(var(--signal-up) / 0.25), 0 0 6px rgb(var(--signal-up) / 0.4);
+  }
+  .quality-dot-yellow {
+    @apply inline-block w-2.5 h-2.5 rounded-full bg-[rgb(var(--warn))];
+    box-shadow: 0 0 0 2px rgb(var(--warn) / 0.25), 0 0 6px rgb(var(--warn) / 0.4);
+  }
+  .quality-dot-red {
+    @apply inline-block w-2.5 h-2.5 rounded-full bg-[rgb(var(--signal-down))];
+    box-shadow: 0 0 0 2px rgb(var(--signal-down) / 0.25), 0 0 6px rgb(var(--signal-down) / 0.4);
+  }
+}
+
+/* ── Zebra table rows — riduce lo sforzo oculare nel seguire le righe ── */
+.table-zebra tbody tr:nth-child(even) {
+  background: rgb(var(--surface-3) / 0.18);
+}
+.dark .table-zebra tbody tr:nth-child(even) {
+  background: rgba(255, 255, 255, 0.03);
+}
+
+/* ── Celle numeriche direzionali ─────────────────────────── */
+.cell-up   { color: rgb(var(--signal-up));   font-weight: 600; }
+.cell-down { color: rgb(var(--signal-down)); font-weight: 600; }
+.cell-warn { color: rgb(var(--warn));         font-weight: 600; }
+
+/* ── Black flat mode (schermo nero) ─────────────────────── */
+.dark.theme-black {
+  --surface: 14 14 14;
+  --surface-elevated: 22 22 22;
+  --ink: 235 235 235;
+  --ink-muted: 140 140 140;
+  --accent: 180 180 180;
+  --positive: 120 200 140;
+  --negative: 240 120 120;
+  --border: 255 255 255;
+  --surface-3: 32 32 32;
+  --bg-deep: 0 0 0;
+  --signal-up: 120 200 140;
+  --signal-down: 240 120 120;
+  --signal-neutral: 120 120 120;
+  --warn: 200 160 80;
+  --purple-soft: 160 160 160;
+}
+
+.dark.theme-black body {
+  background: #000000;
+  background-image: none;
+}
+
+.dark.theme-black .card {
+  background: rgb(var(--surface-elevated)) !important;
+  backdrop-filter: none !important;
+  -webkit-backdrop-filter: none !important;
+  border: 1px solid rgba(255, 255, 255, 0.08) !important;
+  box-shadow: none !important;
+}
+
+.dark.theme-black .btn {
+  box-shadow: none !important;
+}
+.dark.theme-black .btn:hover {
+  box-shadow: none !important;
+}
+
+.dark.theme-black .input {
+  background: rgb(var(--surface)) !important;
+  border-color: rgba(255, 255, 255, 0.1) !important;
+}
+
+.dark.theme-black header {
+  background: rgb(var(--surface)) !important;
+  backdrop-filter: none !important;
+  -webkit-backdrop-filter: none !important;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.08) !important;
+}
+
+/* ── Header ──────────────────────────────────────────────── */
+header {
+  background: linear-gradient(
+    to bottom,
+    rgb(var(--surface-elevated)) 0%,
+    rgb(var(--surface-elevated) / 0.9) 100%
+  );
+  border-bottom: 1px solid rgb(var(--border) / 0.6);
+}
+
+.dark header {
+  background: rgba(7, 8, 15, 0.72) !important;
+  backdrop-filter: blur(28px);
+  -webkit-backdrop-filter: blur(28px);
+  border-bottom: 1px solid rgba(255, 255, 255, 0.08) !important;
+}
+
+/* ── Sidebar nav (verticale — non ereditare stili tab orizzontali) ── */
+.app-sidebar-nav {
+  display: flex;
+  flex-direction: column;
+  gap: 0;
+  padding: 0;
+  background: transparent;
+  border: none;
+}
+
+.dark .app-sidebar-nav {
+  background: transparent;
+  border: none;
+}
+
+.app-sidebar-nav button {
+  width: 100%;
+  text-align: left;
+}
+
+.app-sidebar-nav button[class*="bg-accent"] {
+  box-shadow: none;
+}
+
+.dark .app-sidebar-nav button[class*="bg-accent"] {
+  box-shadow: none;
+}
+
+/* ── Scrollbar (dark) ────────────────────────────────────── */
+.dark ::-webkit-scrollbar {
+  width: 6px;
+  height: 6px;
+}
+.dark ::-webkit-scrollbar-track { background: transparent; }
+.dark ::-webkit-scrollbar-thumb {
+  background: rgba(255, 255, 255, 0.15);
+  border-radius: 9999px;
+}
+.dark ::-webkit-scrollbar-thumb:hover {
+  background: rgba(255, 255, 255, 0.25);
+}
+
+/* ── React Flow ──────────────────────────────────────────── */
+.react-flow__controls button {
+  background: rgb(var(--surface-elevated));
+  border-color: rgb(var(--border));
+  color: rgb(var(--ink));
+}
+.react-flow__controls button:hover { background: rgb(var(--surface)); }
+.react-flow__edge-path {
+  stroke: rgb(var(--accent) / 0.45);
+  stroke-width: 1.5;
+}
+
+/* Financial nodes view — React Flow needs explicit host height */
+.financial-flow-shell {
+  width: 100%;
+}
+.financial-flow-shell .financial-flow-canvas,
+.financial-flow-shell .react-flow {
+  width: 100% !important;
+  height: 100% !important;
+  min-height: 22rem;
+}
+.financial-flow-shell .react-flow__pane {
+  background: rgb(var(--surface) / 0.35);
+}

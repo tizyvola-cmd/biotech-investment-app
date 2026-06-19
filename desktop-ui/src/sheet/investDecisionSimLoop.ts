@@ -52,6 +52,7 @@ import { resolveTop2VerdictFields } from "./top2DecisionHelpers";
 import { signalMetricsFromSimRow } from "./investSignalScore";
 import { computeFairRecs24hFromEvaluations } from "./missedOpportunityFairRecs";
 import type { GapInvestigationRecord } from "./gapInvestigationTypes";
+import { recordTradeLeadTimes, updatePatternMatchState } from "../riskPattern/patternMatchTracker";
 
 export type CurveMisalignmentId =
   | "harmony_pred_slope"
@@ -1360,6 +1361,8 @@ export function runDecisionSimTick(ctx: DecisionSimContext): DecisionSimTick {
   );
 
   const portfolioAfter = stampPortfolioMarks(rawAfter, evaluations);
+  recordTradeLeadTimes(trades, at);
+  updatePatternMatchState(portfolioAfter, at, ctx.simTable);
   const summary = summarizeTick(evaluations, trades);
 
   const badBuyKeys = new Set(ctx.badBuyScoredKeys ?? []);
@@ -1413,6 +1416,7 @@ export function runDecisionSimMarkTick(ctx: DecisionSimContext): DecisionSimTick
   const trades: PaperTradeEvent[] = [];
 
   const portfolioAfter = stampPortfolioMarks(ctx.paperPortfolio, evaluations);
+  updatePatternMatchState(portfolioAfter, at, ctx.simTable);
   const summary = summarizeTick(evaluations, trades);
 
   const badBuyKeys = new Set(ctx.badBuyScoredKeys ?? []);

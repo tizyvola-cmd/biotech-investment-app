@@ -5,34 +5,34 @@ export type FinancialNodeTemplateMeta = {
   label: string;
   tagline: string;
   description: string;
-  /** Suggerimento sul numero di ticker visibili */
+  /** Hint about the expected number of visible tickers. */
   idealCount: string;
 };
 
 export const FINANCIAL_NODE_TEMPLATES: FinancialNodeTemplateMeta[] = [
   {
     id: "ticker-grid",
-    label: "Griglia ticker",
-    tagline: "Una card per società",
+    label: "Ticker grid",
+    tagline: "One card per company",
     description:
-      "Ogni titolo è un nodo card in griglia regolare. Ideale per confrontare pochi ticker o dopo un filtro stretto.",
-    idealCount: "fino a ~80 ticker",
+      "Each stock is a card node in a regular grid. Ideal to compare a few tickers or after a tight filter.",
+    idealCount: "up to ~80 tickers",
   },
   {
     id: "sector-hub",
-    label: "Hub settore",
-    tagline: "Settore → titoli",
+    label: "Sector hub",
+    tagline: "Sector → stocks",
     description:
-      "Nodi hub per settore GICS con collegamenti verso i ticker del gruppo. Vista ad albero per esplorare l’universo per settore.",
-    idealCount: "tutti i settori presenti",
+      "GICS sector hub nodes linking to the tickers in the group. Tree view to explore the universe by sector.",
+    idealCount: "all sectors present",
   },
   {
     id: "cap-tiers",
-    label: "Fasce market cap",
-    tagline: "Dimensione → titoli",
+    label: "Market-cap tiers",
+    tagline: "Size → stocks",
     description:
-      "Fasce Mega / Large / Mid / Small / Micro collegate ai ticker per capitalizzazione. Utile per screening per size.",
-    idealCount: "raggruppamento automatico",
+      "Mega / Large / Mid / Small / Micro tiers linked to the tickers by market cap. Useful for size screening.",
+    idealCount: "automatic grouping",
   },
 ];
 

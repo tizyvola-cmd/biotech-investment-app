@@ -1,0 +1,33 @@
+---
+description: Mobile PWA — simpler subset of desktop; fewer fields per row, no wide tables
+globs: mobile-ui/src/**/*.tsx,mobile-ui/src/**/*.css
+alwaysApply: false
+---
+
+# Mobile app simplicity
+
+The mobile PWA (`mobile-ui/`) is a **tester companion** to the full desktop app — **not** a responsive version of the same layout.
+
+**Separation:** see `.cursor/rules/mobile-vs-desktop.mdc` — never edit `desktop-ui/` when fixing mobile, and vice versa.
+
+## Principles
+
+1. **Max 3–4 data points per list row** — ticker, one countdown/metric, one badge. Hide company names, secondary columns, and long subtitles in lists.
+2. **One primary action per screen** — e.g. opportunities → tap row → fill price + capital → save. Put the form first; market context second.
+3. **Segment instead of stacking** — use `SegToggle` (Hot / Watch) rather than two long scroll sections on the same tab.
+4. **Touch targets ≥ 44px** — inputs and primary buttons use `detail-touch-input` / `btn-lg` (min-height 48px).
+5. **No wide tables on mobile** — opportunities use a fixed **6-column** table (`MobileSimTable`: Ticker · RA · CD · Var · ROI · Reliab); portfolio uses compact 5–7 col tables with vertical scroll only, no horizontal pan.
+6. **Theme** — dark/light via `supernova-mobile-theme` in localStorage; toggle in header.
+7. **i18n** — **English is the source language** for all new UI copy in `mobile-ui/src/i18n.ts` (`en` key first). Default locale is **en** (`sn_mobile_lang`). Add Italian in the `it` field only; use `useMobileLang()` / `t("key")` — never hardcode user-facing strings in components.
+
+## When adding mobile features
+
+- Ask: “Can this be one card with 2 metrics?” before porting a desktop panel.
+- Prefer `MobileSimTable` for opportunities; deprecate card lists for dense opp data.
+- Dashboard mobile shows **KPI + piggy + actions + upcoming CD** only — no full AI feed or portfolio duplicate.
+
+## Anti-patterns
+
+- Duplicating desktop KPI grids, recommendation tables, and opportunity KPI tables on one scroll.
+- `text-[10px]` table bodies or horizontal scroll for primary workflows.
+- Company name + CD + ROI + Pred + badge crammed on one 8px-padded row.

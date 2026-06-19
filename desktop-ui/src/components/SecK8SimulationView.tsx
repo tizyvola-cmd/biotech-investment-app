@@ -21,14 +21,14 @@ export function SecK8SimulationView({
 }) {
   return (
     <SimulationPortfolioSheetView
-      title="SEC Form 8-K — portafoglio Simulation"
+      title="SEC Form 8-K — Simulation portfolio"
       sourceHint={
         <>
-          filing 8-K dal foglio{" "}
-          <code className="text-accent">SEC K-8</code> nel workbook orchestrato
+          8-K filings from the{" "}
+          <code className="text-accent">SEC 8-K</code> sheet in the orchestrated workbook
         </>
       }
-      countLabel="filing"
+      countLabel="filings"
       simTable={simTable}
       dataTable={secK8Table}
       loading={loading}

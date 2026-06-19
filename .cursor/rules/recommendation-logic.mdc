@@ -1,0 +1,42 @@
+---
+description: Supernova recommendation arbiter — deriveSuggestedAction, Top2 semantics, UI alignment (brief v2.0)
+globs: desktop-ui/src/sheet/investDecisionSimLoop.ts,desktop-ui/src/sheet/portfolioLossAnalysis.ts,desktop-ui/src/sheet/suggestionMonitor.ts,desktop-ui/src/sheet/recommendationAlerts.ts,desktop-ui/src/sheet/top2DecisionHelpers.ts,desktop-ui/src/lib/scoring/**,desktop-ui/src/components/RecommendationAlertModal.tsx,desktop-ui/src/components/PlanProbHero.tsx,desktop-ui/src/components/SlopeVerdictBanner.tsx
+alwaysApply: false
+---
+
+# Supernova — Recommendation logic (brief v2.0)
+
+Read `desktop-ui/RECOMMENDATION_LOGIC.md` before changing buy/sell/hold behavior.
+
+## Regole permanenti
+
+1. **Una sola azione operativa per ticker per tick:** BUY | SELL | HOLD | REVIEW. BUY e SELL sono mutuamente esclusivi.
+2. **Fonte di verità UI:** sempre `item.suggestedAction` (output di `deriveSuggestedAction`). Non usare `exitDecision` o `investVerdict` come azione finale in UI.
+3. **Top2 verdict — due significati:**
+   - `hasPosition=false` → `entryVerdict`: yes = entra
+   - `hasPosition=true` → `exitVerdict`: yes = esci
+   - Usare `getTop2Label()` / `formatTop2VerdictDisplay(profile, …)` — mai bare "Top2: yes".
+4. **SELL portafoglio reale** solo se `exitDecision=exit` **e** tutte le guardie recovery falliscono: `curveRisingHold=false` AND Top2≠wait AND P(recovery)<55% (o curva non copre perdita). Altrimenti → HOLD.
+5. **Paper sim** usa le **stesse guardie recovery** del portafoglio reale — no `exit→sell` diretto.
+6. **Momentum override BUY** → sempre `buyReason` con Δ24h e P(plan); `buyWarning` se Top2/precat negativi. Bloccare se precat avoid + forward model declining.
+7. **Segnali intermedi contraddittori** (slope vs precat vs P(recovery)): spiegare quale layer ha vinto — banner slope con nota azione finale; pipeline steps nel popup.
+8. **Disallineamenti (5 flag)** = WARNING only — non modificare `suggestedAction`.
+9. **Composite score (0–100)** = segnale ausiliario per fascia CD (`src/lib/scoring/`). Non sostituisce guardie recovery né Top2/precat. Usare per ranking, popup, Learning Lab. Non modificare `ZONE_WEIGHTS` senza backtest documentato.
+
+## Composite scoring
+
+- `getScoringZone(daysToCd, hasPosition, isInLoss)` — auto, no manual override in prod.
+- `deriveSuggestedAction` può emettere `review` su borderline (loss score ≥40, opp. hold + score ≥55).
+- UI: `TickerSimEvaluation.compositeScore`, `scoreBreakdown`, chip in `RecommendationAlertModal`.
+
+## UI checklist
+
+- `PlanProbHero`: chip da `suggestedAction`; se `exitDecision=exit` ma action=HOLD → chip secondario "Segnale exit".
+- `SlopeVerdictBanner`: nota contestuale se slope ≠ azione finale.
+- Grafici popup: sparkline ~T+7 vs slope T+90 — caption obbligatorie (`modalChartCaptions`).
+
+## Non fare
+
+- Mostrare "EXIT 70%" sul chip quando popup dice HOLD.
+- Forzare SELL con P(recovery) alta e curva ↑.
+- Trattare pred sparkline e slope chart come stesso orizzonte senza didascalia.

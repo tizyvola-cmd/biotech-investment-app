@@ -1,10 +1,17 @@
 import type { InvestSimInputs } from "../sheet/investSimStorage";
+import type { InvestSimHistoryPoint } from "../sheet/investSimStorage";
 import { api } from "./supernova";
 
 export type InvestSimPersistedPayload = {
   version: number;
   updated_at: string | null;
   inputs: InvestSimInputs;
+};
+
+export type InvestSimHistoryPersistedPayload = {
+  version: number;
+  updated_at: string | null;
+  points: InvestSimHistoryPoint[];
 };
 
 export async function fetchInvestSimInputsPersisted(): Promise<InvestSimPersistedPayload | null> {
@@ -22,6 +29,24 @@ export async function saveInvestSimInputsPersisted(
     method: "PUT",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ inputs }),
+  });
+}
+
+export async function fetchInvestSimHistoryPersisted(): Promise<InvestSimHistoryPersistedPayload | null> {
+  try {
+    return await api<InvestSimHistoryPersistedPayload>("/api/investment/sim-history");
+  } catch {
+    return null;
+  }
+}
+
+export async function saveInvestSimHistoryPersisted(
+  points: InvestSimHistoryPoint[],
+): Promise<void> {
+  await api("/api/investment/sim-history", {
+    method: "PUT",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ points }),
   });
 }
 

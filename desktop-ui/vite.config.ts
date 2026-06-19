@@ -49,6 +49,13 @@ export default defineConfig(({ mode }) => {
       emptyOutDir: true,
       rollupOptions: {
         input: INDEX_HTML,
+        output: forElectron
+          ? {
+              // Electron carica file:// — un solo bundle evita chunk hash stale
+              // (es. investSim-XXXX.js mancante dopo ricompilazione parziale).
+              inlineDynamicImports: true,
+            }
+          : undefined,
       },
     },
     server: {

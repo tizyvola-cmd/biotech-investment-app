@@ -5,6 +5,41 @@ export type NowOffsetMarker = {
   label: string;
 };
 
+/**
+ * Subset of calendar offsets for the X axis — keeps anchor knots and «today» pins,
+ * drops labels closer than `minGap` days (e.g. T−10 / T−7 / T−5 / T−3 collapse to T−10).
+ */
+export function pickSparseCalTickOffsets(
+  gridOffsets: readonly number[],
+  extraOffsets: number[] = [],
+  minGap = 9,
+): number[] {
+  const anchors = new Set([-60, -30, 4, 7]);
+  const nowSet = new Set(extraOffsets);
+  const sorted = [...new Set([...gridOffsets, ...extraOffsets])].sort((a, b) => a - b);
+
+  const picked: number[] = [];
+  for (const off of sorted) {
+    const force = anchors.has(off) || nowSet.has(off);
+    if (picked.length === 0) {
+      picked.push(off);
+      continue;
+    }
+    const prev = picked[picked.length - 1]!;
+    if (force) {
+      if (Math.abs(off - prev) < minGap && !anchors.has(prev) && !nowSet.has(prev)) {
+        picked.pop();
+      }
+      picked.push(off);
+      continue;
+    }
+    if (Math.abs(off - prev) >= minGap) {
+      picked.push(off);
+    }
+  }
+  return picked;
+}
+
 function parseCompletionDate(v: unknown): Date | null {
   if (v == null || v === "") return null;
   const s = String(v).trim();
@@ -64,15 +99,37 @@ export function buildNowMarkersFromSimulationRows(
 
 export function interpolateAtOffset(
   points: { offset: number; y: number | null | undefined }[],
-  targetOffset: number
+  targetOffset: number,
+  options?: { extrapolate?: boolean },
 ): number | null {
   const sorted = points
     .map((p) => ({ off: p.offset, y: p.y }))
     .filter((p): p is { off: number; y: number } => p.y != null && Number.isFinite(p.y))
     .sort((a, b) => a.off - b.off);
   if (!sorted.length) return null;
-  if (targetOffset <= sorted[0].off) return sorted[0].y;
-  if (targetOffset >= sorted[sorted.length - 1].off) return sorted[sorted.length - 1].y;
+
+  const extrapolate = options?.extrapolate === true;
+
+  if (!extrapolate) {
+    if (targetOffset <= sorted[0].off) return sorted[0].y;
+    if (targetOffset >= sorted[sorted.length - 1].off) return sorted[sorted.length - 1].y;
+  } else if (sorted.length >= 2) {
+    if (targetOffset <= sorted[0].off) {
+      const a = sorted[0];
+      const b = sorted[1];
+      const t = (targetOffset - a.off) / (b.off - a.off);
+      return a.y + t * (b.y - a.y);
+    }
+    if (targetOffset >= sorted[sorted.length - 1].off) {
+      const a = sorted[sorted.length - 2];
+      const b = sorted[sorted.length - 1];
+      const t = (targetOffset - a.off) / (b.off - a.off);
+      return a.y + t * (b.y - a.y);
+    }
+  } else {
+    return sorted[0].y;
+  }
+
   for (let i = 0; i < sorted.length - 1; i++) {
     const a = sorted[i];
     const b = sorted[i + 1];

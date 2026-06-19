@@ -18,7 +18,7 @@ export function SimulationPortfolioSheetView({
   loading,
   error,
   onReload,
-  countLabel = "righe",
+  countLabel = "rows",
   layoutSheetId,
   renderCell,
   formatColumnHeader,
@@ -35,14 +35,14 @@ export function SimulationPortfolioSheetView({
   error: string | null;
   onReload: () => void;
   countLabel?: string;
-  /** Chiave localStorage per layout tabella (default: nome foglio API). */
+  /** localStorage key for table layout (default: API sheet name). */
   layoutSheetId?: string;
   renderCell?: SheetCellRenderer;
   formatColumnHeader?: (column: string) => string;
-  /** Pre-seleziona ticker (es. da link grafico K-8). */
+  /** Pre-select ticker (e.g. from K-8 chart link). */
   initialSelectedTicker?: string | null;
   onInitialSelectionConsumed?: () => void;
-  /** Banner CD/NCT da foglio Simulation (tab Clinical). */
+  /** CD/NCT banner from Simulation sheet (Clinical tab). */
   simCdByTicker?: Record<
     string,
     {
@@ -112,20 +112,20 @@ export function SimulationPortfolioSheetView({
     selected !== "all" ? simCdByTicker?.[selected] : undefined;
 
   return (
-    <div className="flex flex-1 min-h-0 flex-col gap-3">
+    <div className="sim-harmonize flex flex-1 min-h-0 flex-col gap-3">
       <div className="rounded-lg border border-[rgb(var(--border))] bg-surface px-4 py-3">
         <h2 className="text-sm font-semibold text-ink">{title}</h2>
         <p className="text-xs text-ink-muted mt-1">
           {simCdByTicker && Object.keys(simCdByTicker).length > 0
-            ? `${Object.keys(simCdByTicker).length} catalyst Simulation (prossima CD ≤60 gg)`
-            : `Solo le ${tickers.length} società in Simulation`}
+            ? `${Object.keys(simCdByTicker).length} Simulation catalysts (upcoming CD ≤60 d)`
+            : `Only the ${tickers.length} companies in Simulation`}
           {" — "}
           {sourceHint}.{" "}
           {dataTable?.row_count != null && (
             <>
-              {dataTable.row_count} {countLabel} totali
+              {dataTable.row_count} total {countLabel}
               {selected !== "all" && filteredTable
-                ? ` · ${filteredTable.row_count} per ${selected}`
+                ? ` · ${filteredTable.row_count} for ${selected}`
                 : ""}
               .
             </>
@@ -133,7 +133,7 @@ export function SimulationPortfolioSheetView({
         </p>
         {dataTable?.simulation_error && (
           <p className="text-xs text-ink-muted mt-1">
-            Avviso Simulation: {dataTable.simulation_error}
+            Simulation warning: {dataTable.simulation_error}
           </p>
         )}
       </div>
@@ -152,7 +152,7 @@ export function SimulationPortfolioSheetView({
           }`}
           onClick={() => setSelected("all")}
         >
-          Tutte ({dataTable?.row_count ?? 0})
+          All ({dataTable?.row_count ?? 0})
         </button>
         {tickers.map((tk) => {
           const n = countsByTicker.get(tk) ?? 0;
@@ -211,10 +211,10 @@ function ClinicalCatalystBanner({
     entry.daysToCd == null
       ? null
       : entry.daysToCd === 0
-        ? "oggi"
+        ? "today"
         : entry.daysToCd > 0
-          ? `tra ${entry.daysToCd} gg`
-          : `${Math.abs(entry.daysToCd)} gg fa`;
+          ? `in ${entry.daysToCd} d`
+          : `${Math.abs(entry.daysToCd)} d ago`;
 
   return (
     <div className="rounded-lg border border-accent/40 bg-accent/5 px-4 py-3">
@@ -253,7 +253,7 @@ function ClinicalCatalystBanner({
               rel="noopener noreferrer"
               className="inline-flex items-center rounded-md bg-accent px-3 py-1.5 text-xs font-medium text-white hover:opacity-90"
             >
-              Apri studio su ClinicalTrials.gov
+              Open study on ClinicalTrials.gov
             </a>
           ) : null}
         </div>

@@ -2,9 +2,10 @@ import {
   signedPctStyle,
   type CellStyle,
 } from "./variationColors";
+import { fmtPortfolioPnlPct, fmtPortfolioPnlUsd } from "./portfolioGainLossStyle";
 import { TABLE_COLORS_ENABLED } from "./tableColorsEnabled";
 
-/** Ordine display var.%: orizzonte lungo → corto. */
+/** Display order for var.%: long horizon → short. */
 export const SIM_VAR_COLUMNS_ORDER = [
   "Var. 6M %",
   "Var. 3M %",
@@ -14,9 +15,32 @@ export const SIM_VAR_COLUMNS_ORDER = [
 
 export const SIM_COLOR_SCALE_COLUMNS = SIM_VAR_COLUMNS_ORDER;
 
-export const SIM_VAR_HORIZON_LABELS = ["6M", "3M", "1M", "1g"] as const;
+export const SIM_VAR_HORIZON_LABELS = ["6M", "3M", "1M", "7d", "1d"] as const;
 
-/** Riordina il blocco Var.% mantenendo le altre colonne al posto originale. */
+/** Etichette legacy nello snapshot JSON (es. «1g») → etichette UI. */
+const VAR_HORIZON_LABEL_ALIASES: Record<string, string[]> = {
+  "6M": ["6M"],
+  "3M": ["3M"],
+  "1M": ["1M"],
+  "7d": ["7d", "7D", "7g", "7G"],
+  "1d": ["1d", "1g"],
+};
+
+/** % variazione per orizzonte dal bundle grafici (tollera alias «1g»). */
+export function resolveVarHorizonPct(
+  horizons: { label: string; pct: number | null }[] | undefined,
+  horizon: (typeof SIM_VAR_HORIZON_LABELS)[number],
+): number | null {
+  if (!horizons?.length) return null;
+  const aliases = VAR_HORIZON_LABEL_ALIASES[horizon] ?? [horizon];
+  for (const a of aliases) {
+    const h = horizons.find((x) => x.label === a);
+    if (h?.pct != null && h.pct === h.pct) return h.pct;
+  }
+  return null;
+}
+
+/** Reorders the Var.% block while keeping the other columns in their original position. */
 export function orderSimulationColumns(columns: string[]): string[] {
   const varSet = new Set<string>(SIM_VAR_COLUMNS_ORDER);
   const presentVars = SIM_VAR_COLUMNS_ORDER.filter((c) => columns.includes(c));
@@ -54,16 +78,16 @@ const MUTED = "rgb(var(--ink-muted))";
 
 export const SIM_LEGEND_GROUPS = [
   {
-    label: "Var. % (6M · 3M · 1M · giorno)",
-    hint: "verde = rialzo · rosso = calo · frecce ↑↓ trend",
+    label: "Var. % (6M · 3M · 1M · day)",
+    hint: "green = rise · red = decline · arrows ↑↓ trend",
   },
   {
     label: "P&L ($) / P&L (%)",
-    hint: "verde/rosso per guadagno/perdita",
+    hint: "green/red for gain/loss",
   },
   {
     label: "Completion Date / Ticker",
-    hint: "accento su catalyst imminente (≤7 gg)",
+    hint: "accent on imminent catalyst (≤7 d)",
   },
 ] as const;
 
@@ -276,16 +300,11 @@ export function fmtSimulationCell(column: string, raw: unknown): string {
   }
 
   if (column === "P&L ($)" && typeof raw === "number") {
-    const sign = raw >= 0 ? "+" : "-";
-    return `${sign}$ ${Math.abs(raw).toLocaleString("en-US", {
-      minimumFractionDigits: 2,
-      maximumFractionDigits: 2,
-    })}`;
+    return fmtPortfolioPnlUsd(raw);
   }
 
   if (column === "P&L (%)" && typeof raw === "number") {
-    const sign = raw > 0 ? "+" : "";
-    return `${sign}${raw.toFixed(2)}%`;
+    return fmtPortfolioPnlPct(raw);
   }
 
   if ((SIM_COLOR_SCALE_COLUMNS as readonly string[]).includes(column)) {

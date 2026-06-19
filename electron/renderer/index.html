@@ -1,0 +1,66 @@
+<!DOCTYPE html>
+<html lang="it">
+  <head>
+    <meta charset="UTF-8" />
+    <meta
+      http-equiv="Content-Security-Policy"
+      content="default-src 'self'; script-src 'self' https://cdn.plot.ly; style-src 'self' 'unsafe-inline'; connect-src http://127.0.0.1:*"
+    />
+    <title>SuperNova</title>
+    <link rel="stylesheet" href="styles.css" />
+  </head>
+  <body>
+    <header>
+      <h1>SuperNova</h1>
+      <p class="muted">Electron · API Python · prova grafici nodi</p>
+    </header>
+
+    <nav class="tabs">
+      <button type="button" class="tab active" data-tab="status">Stato</button>
+      <button type="button" class="tab" data-tab="charts">Grafici nodi</button>
+    </nav>
+
+    <section id="panel-status" class="tab-panel active">
+      <div class="toolbar">
+        <button id="btn-refresh">Aggiorna stato</button>
+        <button id="btn-quick">Run orchestrator (quick)</button>
+      </div>
+      <section id="status" class="panel">In attesa…</section>
+      <section class="panel">
+        <h2>Log orchestrator</h2>
+        <pre id="log"></pre>
+      </section>
+    </section>
+
+    <section id="panel-charts" class="tab-panel">
+      <div class="toolbar charts-toolbar">
+        <button id="btn-load-charts">Carica / aggiorna curve</button>
+        <label class="chk"
+          ><input type="checkbox" id="chk-all-cohort" checked /> Tutta la coorte</label
+        >
+        <label
+          >Società A (Var.% + grafici 1–4)
+          <select id="sel-co-a"></select>
+        </label>
+        <label
+          >Società B (Var.% + grafici 1–4)
+          <select id="sel-co-b"></select>
+        </label>
+      </div>
+      <div id="cohort-selection-panel" class="cohort-panel charts-toolbar"></div>
+      <p id="charts-note" class="charts-note muted">Carica i dati dal workbook Simulation…</p>
+      <div id="combo-control-slots" class="combo-toolbar" aria-label="Curve controllo sul combinato"></div>
+      <div class="charts-grid">
+        <div id="chart-curva" class="chart-box"></div>
+        <div id="chart-storico" class="chart-box"></div>
+        <div id="chart-modello" class="chart-box"></div>
+        <div id="chart-combo" class="chart-box chart-box-wide"></div>
+        <div id="chart-variations" class="chart-box chart-box-wide"></div>
+      </div>
+    </section>
+
+    <script src="https://cdn.plot.ly/plotly-2.27.0.min.js"></script>
+    <script src="charts.js"></script>
+    <script src="app.js"></script>
+  </body>
+</html>

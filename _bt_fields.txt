@@ -1,0 +1,13 @@
+﻿affidabilita 0
+affidabilita_calib 5
+exc_slope_vs_XBI None
+model_inferenza_affidabile False
+run_up_30d None
+run_up_7d None
+slope_20d None
+slope_45d None
+slope_5d None
+sponsor_match Partial
+vol_accel None
+vol_price_div 0
+vol_ratio None

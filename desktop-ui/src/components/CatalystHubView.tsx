@@ -1,192 +1,181 @@
-import { useEffect, useState } from "react";
-import type { CatalystRow, SheetTable } from "../types";
-import {
-  catalystSignalMeta,
-  daysUntilCompletion,
-  fmtPctSigned,
-  upcomingCatalystStrip,
-} from "./catalystUiHelpers";
-import { Dashboard } from "./Dashboard";
+import { useEffect, useMemo, useState } from "react";
+import type { SdsRow } from "../api/supernova";
+import type { SheetTable } from "../types";
 import { SimulationAnalysisView } from "./SimulationAnalysisView";
-import { SimulationSheetGrid } from "./SimulationSheetGrid";
-import { TickerDetail } from "./TickerDetail";
+import { SlopeErrorChartsPanel } from "./SlopeErrorChartsPanel";
+import { MarketInterestPanel } from "./MarketInterestPanel";
+import { countPortfolioSlopeFeedRows } from "../sheet/slopeEventsFeed";
+import { useInvestSimInputs } from "../hooks/useInvestSimInputs";
+import { loadSimulationChartsBundle } from "../data/simulationCharts";
+import { loadDismissedSlopeCharts } from "../sheet/slopeErrorCharts";
+import { RefreshControls } from "./RefreshControls";
+import { SelectionChip, SelectionChipGroup } from "./SelectionChip";
+import { useT } from "../shared/i18n";
+import { useRefreshStatus } from "../shared/refreshStatusStore";
 
-export type CatalystHubPanel = "charts" | "table" | "catalysts";
-
-function CatalystStrip({ rows }: { rows: CatalystRow[] }) {
-  const upcoming = upcomingCatalystStrip(rows, 5);
-  if (upcoming.length === 0) return null;
-
-  return (
-    <div className="shrink-0 flex items-center gap-2.5 px-1 py-3 border-b border-[rgb(var(--border))]/40 overflow-x-auto bg-[rgb(var(--bg-deep))]/60">
-      <span className="text-[10px] font-bold uppercase tracking-wider text-ink-muted/60 whitespace-nowrap pl-1">
-        Prossimi
-      </span>
-      {upcoming.map((r) => {
-        const signal = catalystSignalMeta(r);
-        const days = daysUntilCompletion(r.completionDate);
-        const urgent = days != null && days <= 7;
-        const d7 = r.modelD7Pct;
-        const d7Class =
-          d7 == null ? "text-ink-muted" : d7 >= 0 ? "text-[rgb(var(--signal-up))]" : "text-[rgb(var(--signal-down))]";
-        return (
-          <div
-            key={r.id}
-            className={`shrink-0 min-w-[130px] rounded-[10px] border px-3 py-2 bg-[rgb(var(--surface))] cursor-default transition hover:border-accent/50 hover:bg-[rgb(var(--surface-3))]/40 ${
-              urgent ? "border-[rgb(var(--warn))]" : "border-[rgb(var(--border))]/40"
-            }`}
-          >
-            <div className="flex items-center justify-between gap-2">
-              <span className="text-[13px] font-extrabold tracking-wide">{r.ticker}</span>
-              <span className={signal.className}>{signal.label.replace("Strong ", "")}</span>
-            </div>
-            <p className={`text-[11px] mt-0.5 ${urgent ? "text-[rgb(var(--warn))] font-semibold" : "text-ink-muted"}`}>
-              {days == null ? "—" : urgent ? `⚡ in ${days} gg` : `in ${days} giorni`}
-            </p>
-            <p className="text-[11px] text-ink-muted mt-0.5">
-              D+7 pred.{" "}
-              <span className={`font-semibold ${d7Class}`}>{fmtPctSigned(d7)}</span>
-            </p>
-          </div>
-        );
-      })}
-    </div>
-  );
-}
+export type CatalystChartsSubPanel = "curves" | "slopeErrors" | "marketInterest";
 
 export function CatalystHubView({
   simTable,
   simLoading,
-  simError,
   onReloadSimulation,
-  catalystRows,
-  catalystFilter,
-  onCatalystFilter,
-  catalystSelectedId,
-  onCatalystSelect,
-  catalystLoading,
-  catalystSource,
-  catalystTotal,
-  onCatalystLoadMore,
-  hasMoreCatalysts,
+  secK8Table = null,
+  onOpenSecK8,
   chartsFocusSeriesKey,
   chartsFocusTicker,
   onChartsFocusConsumed,
-  focusPanel,
-  onFocusPanelConsumed,
+  chartsSubPanelFocus,
+  slopeChartsFocusTicker,
+  onChartsSubPanelFocusConsumed,
+  onSlopeChartsFocusTickerConsumed,
+  onOpenPredictionCharts,
+  sdsRows: _sdsRows = null,
 }: {
   simTable: SheetTable | null;
   simLoading: boolean;
-  simError: string | null;
+  simError?: string | null;
   onReloadSimulation: () => void;
-  catalystRows: CatalystRow[];
-  catalystFilter: string;
-  onCatalystFilter: (v: string) => void;
-  catalystSelectedId: string | null;
-  onCatalystSelect: (row: CatalystRow) => void;
-  catalystLoading: boolean;
-  catalystSource: string;
-  catalystTotal: number;
-  onCatalystLoadMore: () => void;
-  hasMoreCatalysts: boolean;
-  /** Da Simulation: seleziona questa serie su Grafici. */
+  secK8Table?: SheetTable | null;
+  onOpenSecK8?: (ticker: string) => void;
+  /** From Simulation: selects this series in Charts. */
   chartsFocusSeriesKey?: string | null;
   chartsFocusTicker?: string | null;
   onChartsFocusConsumed?: () => void;
-  /** Da Simulation investimento: apri tab Tabella Simulation. */
-  focusPanel?: CatalystHubPanel | null;
-  onFocusPanelConsumed?: () => void;
+  /** Opens the Slope errors sub-tab in Charts (e.g. from Decision Lab banner). */
+  chartsSubPanelFocus?: CatalystChartsSubPanel | null;
+  slopeChartsFocusTicker?: string | null;
+  onChartsSubPanelFocusConsumed?: () => void;
+  onSlopeChartsFocusTickerConsumed?: () => void;
+  onOpenPredictionCharts?: (focus: { ticker: string; seriesKey: string | null }) => void;
+  sdsRows?: SdsRow[] | null;
 }) {
-  const [panel, setPanel] = useState<CatalystHubPanel>("charts");
-  const [catalystDetail, setCatalystDetail] = useState<CatalystRow | null>(null);
+  const t = useT();
+  const [chartsSub, setChartsSub] = useState<CatalystChartsSubPanel>("curves");
+  const investInputs = useInvestSimInputs(simTable);
+  const [chartsBundle, setChartsBundle] = useState<Awaited<
+    ReturnType<typeof loadSimulationChartsBundle>
+  >["bundle"] | null>(null);
+  const { lastReloadAt, finishedAt } = useRefreshStatus();
+  const chartsReloadKey = `${simTable?.rows?.length ?? 0}:${lastReloadAt?.getTime() ?? 0}:${finishedAt?.getTime() ?? 0}`;
 
   useEffect(() => {
-    if (chartsFocusSeriesKey || chartsFocusTicker) setPanel("charts");
-  }, [chartsFocusSeriesKey, chartsFocusTicker]);
+    let cancelled = false;
+    void loadSimulationChartsBundle().then(({ bundle }) => {
+      if (!cancelled) setChartsBundle(bundle);
+    });
+    return () => {
+      cancelled = true;
+    };
+  }, [chartsReloadKey]);
+
+  const slopeErrorsCount = useMemo(
+    () =>
+      countPortfolioSlopeFeedRows(
+        simTable,
+        chartsBundle,
+        investInputs,
+        loadDismissedSlopeCharts(),
+      ),
+    [simTable, chartsBundle, investInputs],
+  );
 
   useEffect(() => {
-    if (!focusPanel) return;
-    setPanel(focusPanel);
-    onFocusPanelConsumed?.();
-  }, [focusPanel, onFocusPanelConsumed]);
+    if (chartsSubPanelFocus === "slopeErrors") {
+      setChartsSub("slopeErrors");
+      onChartsSubPanelFocusConsumed?.();
+      return;
+    }
+    if (chartsFocusSeriesKey || chartsFocusTicker) {
+      setChartsSub("curves");
+    }
+  }, [
+    chartsFocusSeriesKey,
+    chartsFocusTicker,
+    chartsSubPanelFocus,
+    onChartsSubPanelFocusConsumed,
+  ]);
 
-  if (catalystDetail) {
-    return (
-      <div className="flex flex-col flex-1 min-h-0">
-        <TickerDetail row={catalystDetail} onBack={() => setCatalystDetail(null)} />
-      </div>
-    );
-  }
+  const openPredictionCharts = (focus: {
+    ticker: string;
+    seriesKey: string | null;
+  }) => {
+    onOpenPredictionCharts?.(focus);
+    setChartsSub("curves");
+  };
 
   return (
-    <div className="flex flex-col flex-1 min-h-0 gap-0">
-      <CatalystStrip rows={catalystRows} />
+    <div
+      className={`flex flex-col flex-1 min-h-0 gap-0 ${
+        chartsSub === "curves" ? "sim-harmonize" : ""
+      }`}
+    >
       <div className="flex flex-wrap items-center gap-2 border-b border-[rgb(var(--border))]/60 pb-2 shrink-0">
-        <div className="flex gap-1 p-0.5 rounded-lg bg-[rgb(var(--surface))] border border-[rgb(var(--border))]/60">
+        <SelectionChipGroup>
           {(
             [
-              ["charts", "Grafici"],
-              ["table", "Tabella Simulation"],
-              ["catalysts", "Lista Catalyst"],
+              ["curves", t("catalystHub.tab.curves")],
+              [
+                "slopeErrors",
+                slopeErrorsCount > 0
+                  ? t("catalystHub.tab.slopeErrorsCount", { n: slopeErrorsCount })
+                  : t("catalystHub.tab.slopeErrors"),
+              ],
+              ["marketInterest", t("catalystHub.tab.marketSlopes")],
             ] as const
           ).map(([id, label]) => (
-            <button
+            <SelectionChip
               key={id}
-              type="button"
-              className={`rounded-md px-3 py-1.5 text-xs transition ${
-                panel === id ? "bg-accent text-white" : "text-ink-muted hover:text-ink"
-              }`}
-              onClick={() => setPanel(id)}
+              active={chartsSub === id}
+              onClick={() => setChartsSub(id)}
             >
               {label}
-            </button>
+            </SelectionChip>
           ))}
+        </SelectionChipGroup>
+        <div className="ml-auto">
+          <RefreshControls
+            onLocalReload={onReloadSimulation}
+            localLoading={simLoading}
+            reloadTooltip={t("refresh.page.catalyst.tooltip")}
+            extraInfo={
+              simTable
+                ? t("catalystHub.simRows", { n: (simTable.rows ?? []).length })
+                : undefined
+            }
+          />
         </div>
       </div>
 
       <div className="flex flex-1 min-h-0 flex-col pt-3">
-        {panel === "charts" && (
+        {chartsSub === "curves" ? (
           <SimulationAnalysisView
             simTable={simTable}
             simLoading={simLoading}
+            secK8Table={secK8Table}
+            onOpenSecK8={onOpenSecK8}
             focusSeriesKey={chartsFocusSeriesKey}
             focusTicker={chartsFocusTicker}
             onFocusConsumed={onChartsFocusConsumed}
           />
-        )}
-        {panel === "table" && (
-          <SimulationSheetGrid
-            table={simTable}
-            loading={simLoading}
-            error={simError}
-            onReload={onReloadSimulation}
-          />
-        )}
-        {panel === "catalysts" && (
-          <>
-            <Dashboard
-              rows={catalystRows}
-              filter={catalystFilter}
-              onFilter={onCatalystFilter}
-              selectedId={catalystSelectedId}
-              onSelect={(r) => {
-                setCatalystDetail(r);
-                onCatalystSelect(r);
-              }}
-              loading={catalystLoading}
-              source={catalystSource}
-              total={catalystTotal}
+        ) : chartsSub === "marketInterest" ? (
+          <div className="slope-charts-panel mii-charts-panel flex flex-1 min-h-0 flex-col rounded-lg overflow-hidden p-3">
+            <MarketInterestPanel
+              simTable={simTable}
+              chartsBundle={chartsBundle}
+              onOpenPredictionCharts={openPredictionCharts}
             />
-            {hasMoreCatalysts && (
-              <button
-                type="button"
-                className="btn-ghost self-center mt-2"
-                onClick={onCatalystLoadMore}
-              >
-                Mostra altre ({catalystTotal - catalystRows.length} rimanenti)
-              </button>
-            )}
-          </>
+          </div>
+        ) : (
+          <div className="flex flex-1 min-h-0 flex-col rounded-lg overflow-hidden">
+            <SlopeErrorChartsPanel
+              simTable={simTable}
+              chartsBundle={chartsBundle}
+              focusTicker={slopeChartsFocusTicker}
+              onFocusTickerConsumed={onSlopeChartsFocusTickerConsumed}
+              onOpenPredictionCharts={openPredictionCharts}
+              slopeErrorsOnly
+            />
+          </div>
         )}
       </div>
     </div>

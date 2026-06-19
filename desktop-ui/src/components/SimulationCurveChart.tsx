@@ -5,6 +5,7 @@ import {
   Legend,
   Line,
   LineChart,
+  ReferenceDot,
   ReferenceLine,
   ResponsiveContainer,
   Scatter,
@@ -13,13 +14,44 @@ import {
   YAxis,
 } from "recharts";
 import type { ChartPoint } from "../types";
-import type { K8ChartMarker } from "../sheet/k8ChartLinks";
-import { openExternalUrl } from "../sheet/k8ChartLinks";
+import type { AiFeedChartMarker, K8ChartMarker } from "../sheet/k8ChartLinks";
+import { AI_FEED_MARKER_COLOR, openExternalUrl } from "../sheet/k8ChartLinks";
+import {
+  chartPointSortKey,
+  includeChartNode,
+  isRecalibExtraNode,
+} from "../sheet/chartNodes";
+import { fmtAxisPctTick } from "../sheet/chartAxisFormat";
+import { referenceMatchLabel } from "../sheet/referenceVerification";
 import {
   interpolateAtOffset,
   type NowOffsetMarker,
 } from "../sheet/chartNowOffset";
-import { SIM_VAR_HORIZON_LABELS } from "../sheet/simulationStyles";
+import {
+  ChartNowPinLabel,
+  NOW_MARKER_FILL,
+  NowCurvePinShape,
+} from "../sheet/nowTimelineMarker";
+import {
+  resolveVarHorizonPct,
+  SIM_VAR_HORIZON_LABELS,
+} from "../sheet/simulationStyles";
+import { chartXAnchorRows, renderCdZones } from "../sheet/chartCdZones";
+import {
+  CHART_CURVES_AXIS_TICK,
+  CHART_CURVES_EMPTY_MSG,
+  CHART_CURVES_FOOTER,
+  CHART_CURVES_GRID,
+  CHART_CURVES_PANEL,
+  CHART_CURVES_PANEL_EMPTY,
+  CHART_CURVES_PANEL_PAD,
+  CHART_CURVES_TITLE,
+  CHART_CURVES_TITLE_SIMPLE,
+  CHART_CURVES_TOOLTIP,
+  CHART_CURVES_TOOLTIP_MUTED,
+  CHART_CURVES_TOOLTIP_TITLE,
+  chartCurvesLegendStyle,
+} from "../sheet/chartTheme";
 
 export type { NowOffsetMarker } from "../sheet/chartNowOffset";
 
@@ -38,14 +70,28 @@ export type PriceChartRow = {
   x: number;
   y: number;
   xLabel: string;
-  /** Deviazione standard (aggregazione per offset o portafoglio). */
+  /** Standard deviation (aggregation per offset or portfolio). */
   ySd?: number;
-  /** ErrorBar Recharts: [sdDown, sdUp]. */
+  /** Recharts ErrorBar: [sdDown, sdUp]. */
   yErr?: [number, number];
   n?: number;
 };
 
 export type PricePathChartMode = "series" | "portfolio-mean";
+
+/** Normalize a series of absolute prices to index T−60=100 for each ticker. */
+function normalizeSeriesToIndex(rows: PriceChartRow[]): PriceChartRow[] {
+  const base = rows.find((r) => r.x === -60)?.y ?? rows[0]?.y;
+  if (!base || base <= 0) return rows;
+  return rows.map((r) => ({
+    ...r,
+    y: roundPrice((r.y / base) * 100),
+    ySd: r.ySd != null ? roundPrice((r.ySd / base) * 100) : undefined,
+    yErr: r.yErr
+      ? [roundPrice((r.yErr[0] / base) * 100), roundPrice((r.yErr[1] / base) * 100)] as [number, number]
+      : undefined,
+  }));
+}
 
 function fmtPriceAxis(v: number): string {
   if (!Number.isFinite(v)) return "";
@@ -63,7 +109,7 @@ function stdDev(vals: number[]): number {
   return Math.sqrt(v);
 }
 
-/** Più punti (es. K-8) sullo stesso offset → media ± SD. */
+/** Multiple points (e.g. K-8) at the same offset → mean ± SD. */
 function aggregateRowsByOffset(rows: PriceChartRow[]): PriceChartRow[] {
   const byX = new Map<number, number[]>();
   for (const r of rows) {
@@ -88,7 +134,7 @@ function aggregateRowsByOffset(rows: PriceChartRow[]): PriceChartRow[] {
 }
 
 /**
- * Media portafoglio su nodi standard: indice T−60 = 100 per ticker, poi μ ± σ tra ticker.
+ * Portfolio mean over standard nodes: index T−60 = 100 per ticker, then μ ± σ across tickers.
  */
 function portfolioMeanRows(
   lines: { points: ChartPoint[] }[],
@@ -99,7 +145,7 @@ function portfolioMeanRows(
 
   for (const line of lines) {
     const raw = pricePointsFromSeries(line.points, field, {
-      includeK8: field === "price_usd" && !opts.standardOnly,
+      includeRecalibExtras: field === "price_usd" && !opts.standardOnly,
       standardOnly: opts.standardOnly,
     });
     if (raw.length === 0) continue;
@@ -131,18 +177,12 @@ function portfolioMeanRows(
 }
 
 function pointSortKey(p: ChartPoint): [number, number] {
-  if (p.sort?.length === 2) return [p.sort[0], p.sort[1]];
-  const nodo = p.nodo ?? "standard";
-  const tier = nodo === "K-8" ? 1 : 0;
-  return [tier, p.offset];
+  return chartPointSortKey(p);
 }
 
 function offsetLabel(offset: number): string {
   return offset > 0 ? `+${offset}` : String(offset);
 }
-
-const NOW_LINE_STROKE = "rgb(var(--warn))";
-const NOW_DOT_FILL = "#f59e0b";
 
 function K8DiamondShape(props: {
   cx?: number;
@@ -159,6 +199,40 @@ function K8DiamondShape(props: {
       stroke="rgba(255,255,255,0.9)"
       strokeWidth={1}
     />
+  );
+}
+
+function AiFeedTriangleShape(props: {
+  cx?: number;
+  cy?: number;
+  payload?: AiFeedChartMarker;
+}) {
+  const { cx = 0, cy = 0, payload } = props;
+  const fill = payload?.color ?? AI_FEED_MARKER_COLOR;
+  const s = 5;
+  const showBadge = payload?.verified !== false;
+  return (
+    <g>
+      <path
+        d={`M${cx},${cy - s} L${cx + s},${cy + s} L${cx - s},${cy + s} Z`}
+        fill={fill}
+        stroke="rgba(255,255,255,0.9)"
+        strokeWidth={1}
+      />
+      {showBadge && (
+        <g transform={`translate(${cx + s - 1}, ${cy - s - 1})`}>
+          <circle r={4.5} fill="#16a34a" stroke="#fff" strokeWidth={1} />
+          <path
+            d="M -1.8 0.2 L -0.6 1.4 L 1.8 -1.2"
+            fill="none"
+            stroke="#fff"
+            strokeWidth={1.2}
+            strokeLinecap="round"
+            strokeLinejoin="round"
+          />
+        </g>
+      )}
+    </g>
   );
 }
 
@@ -180,21 +254,16 @@ function ChartNowMarkersLayer({ markers }: { markers: NowOffsetMarker[] }) {
         <ReferenceLine
           key={`now-line-${m.offset}-${i}`}
           x={m.offset}
-          stroke={NOW_LINE_STROKE}
-          strokeWidth={1.5}
-          strokeDasharray="6 4"
+          stroke="none"
           ifOverflow="extendDomain"
-          label={{
-            value: m.label,
-            position: "insideTopLeft",
-            fontSize: 9,
-            fill: NOW_LINE_STROKE,
-          }}
+          label={<ChartNowPinLabel text={i === 0 ? m.label : undefined} />}
         />
       ))}
     </>
   );
 }
+
+type NowCurveDot = { offset: number; y: number; id: string };
 
 function pctForPriceField(p: ChartPoint, field: PriceField): number | null {
   for (const key of PCT_FOR_PRICE[field]) {
@@ -204,11 +273,11 @@ function pctForPriceField(p: ChartPoint, field: PriceField): number | null {
   return null;
 }
 
-/** Base $ a T−60: prezzo al nodo −60 oppure ricavato da prezzo/(1+pct/100). */
+/** Base $ at T−60: price at node −60 or derived from price/(1+pct/100). */
 function baseM60Usd(
   points: ChartPoint[],
   field: PriceField,
-  includeK8: boolean
+  includeRecalibExtras: boolean
 ): number | null {
   const sorted = [...points].sort((a, b) => {
     const [a0, a1] = pointSortKey(a);
@@ -219,7 +288,7 @@ function baseM60Usd(
     sorted.find(
       (p) =>
         p.offset === -60 &&
-        (includeK8 || (p.nodo ?? "standard") === "standard")
+        includeChartNode(p, { includeRecalibExtras }),
     ) ?? null;
   if (anchor) {
     const px = anchor[field];
@@ -230,9 +299,7 @@ function baseM60Usd(
     }
   }
   for (const p of sorted) {
-    const nodo = p.nodo ?? "standard";
-    if (!includeK8 && nodo !== "standard") continue;
-    if (includeK8 && nodo !== "standard" && nodo !== "K-8") continue;
+    if (!includeChartNode(p, { includeRecalibExtras })) continue;
     const px = p[field];
     const pct = pctForPriceField(p, field);
     if (px == null || px !== px || px <= 0 || pct == null) continue;
@@ -272,7 +339,41 @@ function yDomainForRows(rows: PriceChartRow[]): [number, number] {
   return [roundPrice(min - pad), roundPrice(max + pad)];
 }
 
-/** Due serie con prezzi su scale molto diverse (es. ANIK ~15 vs TELA ~1). */
+/**
+ * Compute Y domain for the % chart from ALL sources: merged line data,
+ * K-8 markers, AI feed markers, and "now" interpolation dots.
+ * Without this, Recharts auto-domain ignores Scatter points and clips them.
+ */
+function yDomainAllSources(
+  data: Record<string, string | number>[],
+  extra: { y: number }[],
+): [number, number] {
+  const ys: number[] = [];
+  for (const row of data) {
+    for (const [k, v] of Object.entries(row)) {
+      if (k === "offset" || k === "xLabel") continue;
+      if (typeof v === "number" && Number.isFinite(v)) ys.push(v);
+    }
+  }
+  for (const m of extra) {
+    if (Number.isFinite(m.y)) ys.push(m.y);
+  }
+  if (!ys.length) return [-5, 5];
+  const min = Math.min(...ys);
+  const max = Math.max(...ys);
+  if (min === max) {
+    const pad = Math.max(Math.abs(min) * 0.15, 1);
+    return [min - pad, max + pad];
+  }
+  const span = max - min;
+  const pad = Math.max(span * 0.12, 0.5);
+  return [
+    Math.round((min - pad) * 100) / 100,
+    Math.round((max + pad) * 100) / 100,
+  ];
+}
+
+/** Two series with prices on very different scales (e.g. ANIK ~15 vs TELA ~1). */
 function needsDualPriceAxis(
   series: { rows: PriceChartRow[]; id: string }[]
 ): boolean {
@@ -290,26 +391,24 @@ function needsDualPriceAxis(
   return hi / lo > 4;
 }
 
-/** Allinea i grafici $ al motore DPG (`_xy_price_from_points`): un punto per riga, senza aggregare per offset. */
+/** Aligns $ charts with the DPG engine (`_xy_price_from_points`): one point per row, without aggregating by offset. */
 export function pricePointsFromSeries(
   points: ChartPoint[],
   field: PriceField,
-  opts: { includeK8?: boolean; standardOnly?: boolean } = {}
+  opts: { includeRecalibExtras?: boolean; includeK8?: boolean; standardOnly?: boolean } = {}
 ): PriceChartRow[] {
-  const includeK8 = opts.includeK8 ?? false;
+  const includeRecalibExtras =
+    opts.includeRecalibExtras ?? opts.includeK8 ?? false;
   const standardOnly = opts.standardOnly ?? false;
   const sorted = [...points].sort((a, b) => {
     const [a0, a1] = pointSortKey(a);
     const [b0, b1] = pointSortKey(b);
     return a0 - b0 || a1 - b1;
   });
-  const base = baseM60Usd(sorted, field, includeK8);
+  const base = baseM60Usd(sorted, field, includeRecalibExtras && !standardOnly);
   const rows: PriceChartRow[] = [];
   for (const p of sorted) {
-    const nodo = p.nodo ?? "standard";
-    if (standardOnly && nodo !== "standard") continue;
-    if (!includeK8 && nodo !== "standard") continue;
-    if (includeK8 && nodo !== "standard" && nodo !== "K-8") continue;
+    if (!includeChartNode(p, { standardOnly, includeRecalibExtras })) continue;
     let v = p[field];
     if ((v == null || v !== v) && base != null) {
       const pct = pctForPriceField(p, field);
@@ -331,19 +430,48 @@ export type CurveLineSpec = {
   color: string;
   strokeWidth?: number;
   strokeDasharray?: string;
-  field: keyof Pick<ChartPoint, "pct_curva" | "pct_foglio" | "pct_modello" | "pct_reale">;
+  field: keyof Pick<
+    ChartPoint,
+    "pct_curva" | "pct_foglio" | "pct_modello" | "pct_modello_raw" | "pct_reale" | "pct_eis_plus"
+  >;
+};
+
+export type ChartLineBundle = {
+  spec: CurveLineSpec;
+  points: ChartPoint[];
+  /** «Today» offset (days from CD) for this ticker. */
+  nowOffset?: number | null;
+};
+
+export type PriceLineBundle = {
+  id: string;
+  label: string;
+  color: string;
+  points: ChartPoint[];
+  nowOffset?: number | null;
 };
 
 function pointsToRows(
   points: ChartPoint[],
-  field: CurveLineSpec["field"]
+  field: CurveLineSpec["field"],
+  opts: { includeRecalibExtras?: boolean } = {}
 ): { offset: number; xLabel: string; y: number }[] {
+  const includeRecalibExtras = opts.includeRecalibExtras ?? true;
   return points
-    .filter((p) => (p.nodo === "standard" || !p.nodo))
+    .filter((p) => includeChartNode(p, { includeRecalibExtras }))
     .map((p) => {
       let raw = p[field];
+      if (field === "pct_modello_raw" && (raw == null || raw !== raw)) {
+        raw = p.pct_modello;
+      }
       if (field === "pct_foglio" && (raw == null || raw !== raw)) {
         raw = p.pct_curva;
+      }
+      if (field === "pct_eis_plus" && (raw == null || raw !== raw)) {
+        raw = p.pct_foglio ?? p.pct_curva;
+      }
+      if ((raw == null || raw !== raw) && isRecalibExtraNode(p)) {
+        raw = p.pct_reale ?? p.pct_curva;
       }
       return { p, raw };
     })
@@ -357,8 +485,7 @@ function pointsToRows(
 }
 
 function fmtPctAxis(v: number): string {
-  if (!Number.isFinite(v)) return "";
-  return (Math.round(v * 100) / 100).toFixed(2);
+  return fmtAxisPctTick(v);
 }
 
 function CurveTooltipBody({
@@ -371,6 +498,37 @@ function CurveTooltipBody({
   onOpenSecK8?: (ticker: string) => void;
 }) {
   if (!payload?.length) return null;
+  const aiFeed = payload.find((p) => {
+    const pl = p.payload as AiFeedChartMarker | undefined;
+    return pl != null && typeof pl.session === "number" && pl.session >= 1;
+  })?.payload as AiFeedChartMarker | undefined;
+
+  if (aiFeed) {
+    return (
+      <div className={`${CHART_CURVES_TOOLTIP} max-w-[260px]`}>
+        <p className={CHART_CURVES_TOOLTIP_TITLE}>{aiFeed.ticker} · {aiFeed.label}</p>
+        <p className={`${CHART_CURVES_TOOLTIP_MUTED} mt-0.5 text-[10px] leading-snug`}>{aiFeed.eventTitle}</p>
+        <p className={`${CHART_CURVES_TOOLTIP_MUTED} mt-0.5`}>Days from CD: {aiFeed.offset > 0 ? `+${aiFeed.offset}` : aiFeed.offset}</p>
+        <p className="tabular-nums mt-1">Δ% at publication: {fmtPctAxis(aiFeed.y)}%</p>
+        {aiFeed.verified && (
+          <p className="text-[10px] font-semibold mt-1" style={{ color: "#16a34a" }}>
+            ✓ {referenceMatchLabel(aiFeed.referenceMatch, false)}
+          </p>
+        )}
+        {aiFeed.eventDate && <p className={`text-[10px] ${CHART_CURVES_TOOLTIP_MUTED} mt-0.5`}>Event: {aiFeed.eventDate}</p>}
+        {aiFeed.link && (
+          <button
+            type="button"
+            className="text-accent hover:underline text-[10px] mt-2 block"
+            onClick={(e) => openExternalUrl(aiFeed.link!, e)}
+          >
+            Source →
+          </button>
+        )}
+      </div>
+    );
+  }
+
   const k8 = payload.find((p) => {
     const pl = p.payload as K8ChartMarker | undefined;
     return pl != null && typeof pl.k8Session === "number" && pl.k8Session >= 1;
@@ -378,11 +536,11 @@ function CurveTooltipBody({
 
   if (k8) {
     return (
-      <div className="rounded-lg border border-[rgb(var(--border))] bg-surface-elevated px-3 py-2 text-xs shadow-lg max-w-[240px]">
-        <p className="font-semibold text-ink">{k8.ticker} · {k8.label}</p>
-        <p className="text-ink-muted mt-0.5">Giorni da CD: {k8.offset > 0 ? `+${k8.offset}` : k8.offset}</p>
-        <p className="tabular-nums mt-1">Δ% storico: {fmtPctAxis(k8.y)}%</p>
-        {k8.filingDate && <p className="text-[10px] text-ink-muted mt-0.5">Filing: {k8.filingDate}</p>}
+      <div className={`${CHART_CURVES_TOOLTIP} max-w-[240px]`}>
+        <p className={CHART_CURVES_TOOLTIP_TITLE}>{k8.ticker} · {k8.label}</p>
+        <p className={`${CHART_CURVES_TOOLTIP_MUTED} mt-0.5`}>Days from CD: {k8.offset > 0 ? `+${k8.offset}` : k8.offset}</p>
+        <p className="tabular-nums mt-1">Δ% historical: {fmtPctAxis(k8.y)}%</p>
+        {k8.filingDate && <p className={`text-[10px] ${CHART_CURVES_TOOLTIP_MUTED} mt-0.5`}>Filing: {k8.filingDate}</p>}
         <div className="flex flex-wrap gap-2 mt-2">
           {k8.edgarHref && (
             <button
@@ -390,7 +548,7 @@ function CurveTooltipBody({
               className="text-accent hover:underline text-[10px]"
               onClick={(e) => openExternalUrl(k8.edgarHref!, e)}
             >
-              Leggi filing SEC →
+              Read SEC filing →
             </button>
           )}
           {k8.browseHref && (
@@ -399,7 +557,7 @@ function CurveTooltipBody({
               className="text-accent hover:underline text-[10px]"
               onClick={(e) => openExternalUrl(k8.browseHref!, e)}
             >
-              Elenco 8-K →
+              8-K list →
             </button>
           )}
           {onOpenSecK8 && (
@@ -411,7 +569,7 @@ function CurveTooltipBody({
                 onOpenSecK8(k8.ticker);
               }}
             >
-              Foglio SEC K-8 →
+              SEC 8-K sheet →
             </button>
           )}
         </div>
@@ -420,8 +578,8 @@ function CurveTooltipBody({
   }
 
   return (
-    <div className="rounded-lg border border-[rgb(var(--border))] bg-surface-elevated px-3 py-2 text-xs shadow-lg">
-      <p className="text-ink-muted mb-1">Giorni da CD: {label}</p>
+    <div className={CHART_CURVES_TOOLTIP}>
+      <p className={`${CHART_CURVES_TOOLTIP_MUTED} mb-1`}>Days from CD: {label}</p>
       {payload.map((p) => (
         <p key={String(p.dataKey)} className="tabular-nums">
           <span style={{ color: (p as { color?: string }).color }}>{p.dataKey}: </span>
@@ -433,11 +591,12 @@ function CurveTooltipBody({
 }
 
 function mergeRows(
-  specs: { spec: CurveLineSpec; points: ChartPoint[] }[]
+  specs: { spec: CurveLineSpec; points: ChartPoint[] }[],
+  includeRecalibExtras = true
 ): Record<string, string | number>[] {
   const byOff = new Map<number, Record<string, string | number>>();
   for (const { spec, points } of specs) {
-    for (const row of pointsToRows(points, spec.field)) {
+    for (const row of pointsToRows(points, spec.field, { includeRecalibExtras })) {
       let rec = byOff.get(row.offset);
       if (!rec) {
         rec = { offset: row.offset, xLabel: row.xLabel };
@@ -451,23 +610,25 @@ function mergeRows(
   );
 }
 
-function buildNowPctDots(
-  active: { spec: CurveLineSpec; points: ChartPoint[] }[],
-  markers: NowOffsetMarker[]
-): { offset: number; y: number; name: string }[] {
-  const dots: { offset: number; y: number; name: string }[] = [];
-  const predFields = new Set<CurveLineSpec["field"]>(["pct_foglio", "pct_curva", "pct_modello"]);
-  for (const { spec, points } of active) {
-    if (!predFields.has(spec.field)) continue;
-    for (const m of markers) {
-      const rows = pointsToRows(points, spec.field);
-      const y = interpolateAtOffset(
-        rows.map((r) => ({ offset: r.offset, y: r.y })),
-        m.offset
-      );
-      if (y == null) continue;
-      dots.push({ offset: m.offset, y, name: `● ${spec.label}` });
-    }
+function buildNowPctDots(active: ChartLineBundle[]): NowCurveDot[] {
+  const dots: NowCurveDot[] = [];
+  const dotFields = new Set<CurveLineSpec["field"]>([
+    "pct_foglio",
+    "pct_curva",
+    "pct_modello",
+    "pct_reale",
+    "pct_eis_plus",
+  ]);
+  for (const { spec, points, nowOffset } of active) {
+    if (!dotFields.has(spec.field)) continue;
+    if (nowOffset == null || !Number.isFinite(nowOffset)) continue;
+    const rows = pointsToRows(points, spec.field, { includeRecalibExtras: true });
+    const y = interpolateAtOffset(
+      rows.map((r) => ({ offset: r.offset, y: r.y })),
+      nowOffset
+    );
+    if (y == null) continue;
+    dots.push({ offset: nowOffset, y, id: spec.id });
   }
   return dots;
 }
@@ -476,65 +637,99 @@ export function SimulationCurveChart({
   title,
   lines,
   k8Markers = [],
+  aiFeedMarkers = [],
   nowMarkers = [],
   yLabel = "% vs T−60",
   height = 280,
   onOpenSecK8,
+  includeRecalibExtrasInCurves = true,
 }: {
   title: string;
-  lines: { spec: CurveLineSpec; points: ChartPoint[] }[];
-  /** Marker Δ% storici post K-8 (sedute +1/+2/+3). */
+  lines: ChartLineBundle[];
+  /** Historical Δ% markers post K-8 (sessions +1/+2/+3). */
   k8Markers?: K8ChartMarker[];
-  /** Linea verticale «oggi» sul calendario CD (da Completion Date Simulation). */
+  /** AI feed publication recalibration knots (violet ▲). */
+  aiFeedMarkers?: AiFeedChartMarker[];
+  /** Vertical «today» line on the CD calendar (from Simulation Completion Date). */
   nowMarkers?: NowOffsetMarker[];
   yLabel?: string;
   height?: number;
   onOpenSecK8?: (ticker: string) => void;
+  /** Include standard grid + K-8 +1/+2/+3 + AI pub +1/+2/+3 in % line paths (not only scatter). */
+  includeRecalibExtrasInCurves?: boolean;
 }) {
   const active = lines.filter((l) => l.points?.length);
-  const data = mergeRows(active);
+  const data = mergeRows(active, includeRecalibExtrasInCurves);
   const k8Active = k8Markers.filter((m) => Number.isFinite(m.y));
-  const nowDots = buildNowPctDots(active, nowMarkers);
+  const aiFeedActive = aiFeedMarkers.filter((m) => Number.isFinite(m.y));
+  const nowDots = buildNowPctDots(active);
+  const legendPayload = [
+    ...active.map(({ spec }) => ({
+      value: spec.label,
+      type: "line" as const,
+      color: spec.color,
+      id: spec.id,
+    })),
+    ...(nowDots.length
+      ? [{ value: "📍 Today on curve", type: "circle" as const, color: NOW_MARKER_FILL, id: "now-legend" }]
+      : []),
+    ...(k8Active.length
+      ? [{ value: "8-K post-filing (historical Δ%)", type: "diamond" as const, color: "#f59e0b", id: "k8-legend" }]
+      : []),
+    ...(aiFeedActive.length
+      ? [{ value: "AI feed · ref. verificata (▲✓)", type: "triangle" as const, color: AI_FEED_MARKER_COLOR, id: "aifeed-legend" }]
+      : []),
+  ];
   const allOffsets = [
     ...data.map((d) => Number(d.offset)),
     ...k8Active.map((m) => m.offset),
+    ...aiFeedActive.map((m) => m.offset),
     ...nowMarkers.map((m) => m.offset),
+    ...nowDots.map((d) => d.offset),
   ];
   const [xMin, xMax] = extendXDomain(
     allOffsets.length ? Math.min(...allOffsets) : -60,
     allOffsets.length ? Math.max(...allOffsets) : 7,
     nowMarkers
   );
+  const yDomain = yDomainAllSources(data, [...k8Active, ...aiFeedActive, ...nowDots]);
 
-  if (data.length < 2 && k8Active.length === 0) {
+  if (data.length < 2 && k8Active.length === 0 && aiFeedActive.length === 0) {
     return (
-      <div className="rounded-lg border border-[rgb(var(--border))]/60 bg-surface/50 p-4">
-        <h3 className="text-sm font-semibold text-ink mb-2">{title}</h3>
-        <p className="text-xs text-ink-muted py-6 text-center">
-          Dati insufficienti per il grafico (servono almeno 2 nodi).
+      <div className={CHART_CURVES_PANEL_EMPTY}>
+        <h3 className={CHART_CURVES_TITLE_SIMPLE}>{title}</h3>
+        <p className={CHART_CURVES_EMPTY_MSG}>
+          Not enough data for the chart (at least 2 nodes are required).
         </p>
       </div>
     );
   }
 
   return (
-    <div className="rounded-lg border border-[rgb(var(--border))]/60 bg-surface/50 p-3 flex flex-col min-h-0">
-      <h3 className="text-sm font-semibold text-ink mb-2 shrink-0">{title}</h3>
+    <div className={CHART_CURVES_PANEL_PAD}>
+      <h3 className={CHART_CURVES_TITLE}>{title}</h3>
       <div className="w-full" style={{ height }}>
         <ResponsiveContainer width="100%" height="100%">
           <ComposedChart
             data={data}
             margin={{ top: nowMarkers.length ? 20 : 8, right: 12, left: 4, bottom: 4 }}
           >
-            <CartesianGrid strokeDasharray="3 3" className="opacity-25" />
+            {renderCdZones({
+              cdX: 0,
+              xMin,
+              xMax,
+              todayX: null,
+              hideBadges: true,
+            })}
+            <CartesianGrid {...CHART_CURVES_GRID} />
             <XAxis
               type="number"
               dataKey="offset"
               domain={[xMin, xMax]}
-              tick={{ fontSize: 10 }}
+              tick={CHART_CURVES_AXIS_TICK}
               tickFormatter={(v) => offsetLabel(Number(v))}
             />
-            <YAxis tick={{ fontSize: 10 }} tickFormatter={fmtPctAxis} unit="%" width={48} />
+            <YAxis tick={CHART_CURVES_AXIS_TICK} tickFormatter={fmtPctAxis} unit="%" width={48} domain={yDomain} />
             <ChartNowMarkersLayer markers={nowMarkers} />
             <Tooltip
               content={({ label, payload }) => (
@@ -546,11 +741,11 @@ export function SimulationCurveChart({
               )}
             />
             <Legend
-              wrapperStyle={{
-                fontSize: 11,
-                maxHeight: active.length + k8Active.length > 8 ? 88 : undefined,
-                overflowY: active.length + k8Active.length > 8 ? "auto" : undefined,
-              }}
+              payload={legendPayload}
+              {...chartCurvesLegendStyle({
+                maxHeight: active.length + k8Active.length + aiFeedActive.length > 8 ? 88 : undefined,
+                overflowY: active.length + k8Active.length + aiFeedActive.length > 8 ? "auto" : undefined,
+              })}
             />
             {active.map(({ spec }) => (
               <Line
@@ -566,38 +761,53 @@ export function SimulationCurveChart({
                 connectNulls
               />
             ))}
-            {nowDots.length > 0 && (
-              <Scatter
-                data={nowDots}
-                dataKey="y"
-                name="Posizione attuale (pred.)"
-                fill={NOW_DOT_FILL}
-                stroke="#fff"
-                strokeWidth={1}
-                legendType="circle"
+            {nowDots.map((d) => (
+              <ReferenceDot
+                key={`now-curve-${d.id}`}
+                x={d.offset}
+                y={d.y}
+                ifOverflow="extendDomain"
+                isFront
+                shape={(props: { cx?: number; cy?: number }) => (
+                  <NowCurvePinShape cx={props.cx} cy={props.cy} />
+                )}
               />
-            )}
+            ))}
             {k8Active.length > 0 && (
               <Scatter
                 data={k8Active}
                 dataKey="y"
-                name="K-8 post-filing (Δ% storico)"
+                name="8-K post-filing (historical Δ%)"
                 legendType="none"
                 shape={(props: { cx?: number; cy?: number; payload?: K8ChartMarker }) => (
                   <K8DiamondShape cx={props.cx} cy={props.cy} payload={props.payload} />
                 )}
               />
             )}
+            {aiFeedActive.length > 0 && (
+              <Scatter
+                data={aiFeedActive}
+                dataKey="y"
+                name="AI feed publication (recalibration)"
+                legendType="none"
+                shape={(props: { cx?: number; cy?: number; payload?: AiFeedChartMarker }) => (
+                  <AiFeedTriangleShape cx={props.cx} cy={props.cy} payload={props.payload} />
+                )}
+              />
+            )}
           </ComposedChart>
         </ResponsiveContainer>
       </div>
-      <p className="text-[10px] text-ink-muted mt-1 shrink-0">
+      <p className={CHART_CURVES_FOOTER}>
         {yLabel}
         {nowMarkers.length > 0
-          ? " · linea tratteggiata = oggi sul calendario CD · ● = valore pred. interpolato"
+          ? " · 📍 pin = today on the CD calendar · value on the visible curve at today"
           : ""}
         {k8Active.length > 0
-          ? " · ◆ = Δ% storico post K-8 (colore = curva pred del ticker · tooltip → SEC)"
+          ? " · ◆ = historical Δ% post 8-K (color = ticker pred curve · tooltip → SEC)"
+          : ""}
+        {aiFeedActive.length > 0
+          ? " · ▲ viola + ✓ verde = pubblicazione clinica con referenza verificata (società/farmaco)"
           : ""}
       </p>
     </div>
@@ -622,41 +832,49 @@ export function VariationHorizonChart({
   const data = labels.map((lab, i) => {
     const row: Record<string, string | number> = { horizon: lab, idx: i };
     for (const s of series) {
-      const h = s.horizons.find((x) => x.label === lab);
-      if (h?.pct != null && h.pct === h.pct) row[s.id] = h.pct;
+      const pct = resolveVarHorizonPct(s.horizons, lab);
+      if (pct != null) row[s.id] = pct;
     }
     return row;
   });
 
   const hasData = series.some((s) =>
-    s.horizons.some((h) => h.pct != null && h.pct === h.pct)
+    labels.some((lab) => resolveVarHorizonPct(s.horizons, lab) != null),
+  );
+
+  const longHorizonsMissing = series.every((s) =>
+    (["6M", "3M", "1M"] as const).every(
+      (lab) => resolveVarHorizonPct(s.horizons, lab) == null,
+    ),
   );
 
   if (!hasData) {
     return (
-      <div className="rounded-lg border border-[rgb(var(--border))]/60 bg-surface/50 p-4">
-        <h3 className="text-sm font-semibold text-ink mb-2">{title}</h3>
-        <p className="text-xs text-ink-muted py-4 text-center">Variazioni non disponibili.</p>
+      <div className={CHART_CURVES_PANEL_EMPTY}>
+        <h3 className={CHART_CURVES_TITLE_SIMPLE}>{title}</h3>
+        <p className={`${CHART_CURVES_EMPTY_MSG} py-4`}>
+          Variations not available (6M / 3M / 1M / 1d empty in Simulation — run
+          fetch_variations or refresh data).
+        </p>
       </div>
     );
   }
 
   return (
-    <div className="rounded-lg border border-[rgb(var(--border))]/60 bg-surface/50 p-3">
-      <h3 className="text-sm font-semibold text-ink mb-2">{title}</h3>
+    <div className={CHART_CURVES_PANEL}>
+      <h3 className={CHART_CURVES_TITLE_SIMPLE}>{title}</h3>
       <div style={{ height }}>
         <ResponsiveContainer width="100%" height="100%">
           <LineChart data={data} margin={{ top: 8, right: 12, left: 4, bottom: 4 }}>
-            <CartesianGrid strokeDasharray="3 3" className="opacity-25" />
-            <XAxis dataKey="horizon" tick={{ fontSize: 10 }} />
-            <YAxis tick={{ fontSize: 10 }} unit="%" width={44} />
+            <CartesianGrid {...CHART_CURVES_GRID} />
+            <XAxis dataKey="horizon" tick={CHART_CURVES_AXIS_TICK} />
+            <YAxis tick={CHART_CURVES_AXIS_TICK} tickFormatter={(v) => `${fmtAxisPctTick(v)}%`} width={44} />
             <Tooltip formatter={(v: number) => [`${v.toFixed(2)}%`, ""]} />
             <Legend
-              wrapperStyle={{
-                fontSize: 11,
+              {...chartCurvesLegendStyle({
                 maxHeight: series.length > 8 ? 88 : undefined,
                 overflowY: series.length > 8 ? "auto" : undefined,
-              }}
+              })}
             />
             {series.map((s) => (
               <Line
@@ -673,26 +891,54 @@ export function VariationHorizonChart({
           </LineChart>
         </ResponsiveContainer>
       </div>
+      {longHorizonsMissing ? (
+        <p className={CHART_CURVES_FOOTER}>
+          6M · 3M · 1M missing — often no Yahoo price history in variations.json;
+          only daily % may appear after refresh.
+        </p>
+      ) : null}
     </div>
   );
 }
 
 function buildNowPriceDots(
-  active: { id: string; label: string; rows: PriceChartRow[] }[],
-  markers: NowOffsetMarker[]
-): { x: number; y: number; name: string }[] {
-  const dots: { x: number; y: number; name: string }[] = [];
+  active: { id: string; rows: PriceChartRow[]; nowOffset?: number | null }[]
+): { x: number; y: number; id: string }[] {
+  const dots: { x: number; y: number; id: string }[] = [];
   for (const s of active) {
-    for (const m of markers) {
-      const y = interpolateAtOffset(
-        s.rows.map((r) => ({ offset: r.x, y: r.y })),
-        m.offset
-      );
-      if (y == null) continue;
-      dots.push({ x: m.offset, y, name: `● ${s.label}` });
-    }
+    if (s.nowOffset == null || !Number.isFinite(s.nowOffset)) continue;
+    const y = interpolateAtOffset(
+      s.rows.map((r) => ({ offset: r.x, y: r.y })),
+      s.nowOffset
+    );
+    if (y == null) continue;
+    dots.push({ x: s.nowOffset, y, id: s.id });
   }
   return dots;
+}
+
+// Alternative palette for the "overlay" series (e.g. recalibrated path drawn
+// on top of historical closes). Picked to contrast with the primary palette
+// used in seriesColor() / MULTI_PALETTE so that the two lines for the same
+// ticker remain visually distinct.
+const OVERLAY_PALETTE = [
+  "#10b981", // emerald
+  "#a855f7", // purple
+  "#f59e0b", // amber
+  "#ec4899", // pink
+  "#06b6d4", // cyan
+  "#84cc16", // lime
+  "#ef4444", // red
+  "#0ea5e9", // sky
+];
+
+function pickOverlayColor(baseColor: string, idx: number): string {
+  const base = (baseColor || "").toLowerCase();
+  for (let off = 0; off < OVERLAY_PALETTE.length; off++) {
+    const cand = OVERLAY_PALETTE[(idx + off) % OVERLAY_PALETTE.length];
+    if (cand.toLowerCase() !== base) return cand;
+  }
+  return OVERLAY_PALETTE[idx % OVERLAY_PALETTE.length];
 }
 
 export function PricePathChart({
@@ -704,72 +950,211 @@ export function PricePathChart({
   standardNodesOnly = false,
   aggregateByOffset = false,
   nowMarkers = [],
+  indexNormalized = false,
+  overlayField,
+  primaryLabel,
+  overlayLabel,
+  primaryColorOverride,
+  overlayColorOverride,
 }: {
   title: string;
-  lines: { id: string; label: string; color: string; points: ChartPoint[] }[];
+  lines: PriceLineBundle[];
   field: PriceField;
   height?: number;
-  /** ``portfolio-mean``: una curva μ±σ (indice T−60=100) tra i ticker. */
+  /** ``portfolio-mean``: a single μ±σ curve (index T−60=100) across tickers. */
   mode?: PricePathChartMode;
-  /** Solo nodi calendario (no K-8) — meno caotico su multi-ticker. */
+  /** Only calendar nodes (no K-8) — less cluttered on multi-ticker. */
   standardNodesOnly?: boolean;
-  /** Un punto per offset (media se più K-8 sullo stesso giorno). */
+  /** One point per offset (mean if multiple K-8 on the same day). */
   aggregateByOffset?: boolean;
   nowMarkers?: NowOffsetMarker[];
+  /**
+   * Normalize every series to index T−60=100.
+   * Removes the dual Y axis when absolute prices are on different scales.
+   * Automatically applied in "series" mode with more than one ticker.
+   */
+  indexNormalized?: boolean;
+  /**
+   * Optional second field to draw on the same chart. When set, every line is
+   * rendered twice: once with ``field`` (solid, base color) and once with
+   * ``overlayField`` (dashed, contrasting color from {@link OVERLAY_PALETTE}).
+   *
+   * Use to compare historical closes ("price_storico_usd") with the
+   * recalibrated path ("price_usd") on a single chart instead of stacking two.
+   */
+  overlayField?: PriceField;
+  /** Suffix appended to legend label of primary series (e.g. "historical"). */
+  primaryLabel?: string;
+  /** Suffix appended to legend label of overlay series (e.g. "recalibrated path (+ K-8)"). */
+  overlayLabel?: string;
+  /**
+   * Force a fixed color for every primary series, overriding the per-ticker
+   * palette. Use for single-ticker overlay charts where the goal is to make
+   * the two curves (primary vs overlay) stand out by color, not by ticker.
+   */
+  primaryColorOverride?: string;
+  /**
+   * Force a fixed color for every overlay series (paired with
+   * {@link primaryColorOverride}). Ignored when ``overlayField`` is not set.
+   */
+  overlayColorOverride?: string;
 }) {
-  const includeK8 = field === "price_usd" && !standardNodesOnly;
+  // Include K-8 nodes (SEC filings with real price at filing) also for the
+  // historical curve: tickers with a future CD often only have the T-60 standard
+  // node before "today", and without the K-8 we would end up with 1 single
+  // point → curve discarded (>=2 required). The K-8 provide real historical
+  // prices at filing dates, which is exactly what "historical closes" shows.
+  const includeRecalibExtras = !standardNodesOnly;
+  const includeK8Overlay =
+    includeRecalibExtras &&
+    overlayField != null &&
+    (overlayField === "price_usd" || overlayField === "price_storico_usd");
+  const includeK8Primary =
+    includeRecalibExtras &&
+    (field === "price_usd" || field === "price_storico_usd") &&
+    !standardNodesOnly;
   const usePortfolio = mode === "portfolio-mean" && lines.length >= 2;
+  // Index-normalize when explicitly requested OR in series mode with multiple tickers
+  const doIndex = indexNormalized || (!usePortfolio && lines.length > 1);
+  const hasOverlay = !!overlayField && !usePortfolio;
 
-  const seriesData = usePortfolio
+  // Build rows for a given (field, includeK8) — used both for the primary and
+  // the overlay series so the same line is rendered twice with two metrics.
+  const buildRows = (
+    points: PriceLineBundle["points"],
+    fld: PriceField,
+    recalibExtras: boolean,
+  ): PriceChartRow[] => {
+    let rows = pricePointsFromSeries(points, fld, {
+      includeRecalibExtras: recalibExtras,
+      standardOnly: standardNodesOnly,
+    });
+    if (aggregateByOffset || recalibExtras) {
+      rows = aggregateRowsByOffset(rows);
+    }
+    if (doIndex) rows = normalizeSeriesToIndex(rows);
+    return rows;
+  };
+
+  type PathSeries = PriceLineBundle & {
+    rows: PriceChartRow[];
+    /** ``true`` = overlay series (dashed, contrasting color). */
+    isOverlay?: boolean;
+  };
+
+  const seriesData: PathSeries[] = usePortfolio
     ? [
         {
           id: "portfolio_mean",
-          label: `Media portafoglio (n=${lines.length})`,
+          label: `Portfolio mean (n=${lines.length})`,
           color: "#00dc96",
+          points: [],
           rows: portfolioMeanRows(lines, field, { standardOnly: true }),
-        },
+        } as PathSeries,
       ]
-    : lines.map((l) => {
-        let rows = pricePointsFromSeries(l.points, field, { includeK8, standardOnly: standardNodesOnly });
-        if (aggregateByOffset || (includeK8 && rows.length > 12)) {
-          rows = aggregateRowsByOffset(rows);
-        }
-        return { ...l, rows };
+    : lines.flatMap((l, idx): PathSeries[] => {
+        const primaryLabelText = primaryLabel
+          ? `${l.label.split(" · historical")[0].split(" · path")[0]} · ${primaryLabel}`
+          : l.label;
+        const primary: PathSeries = {
+          ...l,
+          label: primaryLabelText,
+          color: primaryColorOverride ?? l.color,
+          rows: buildRows(l.points, field, includeK8Primary),
+        };
+        if (!hasOverlay || !overlayField) return [primary];
+        const overlayColor =
+          overlayColorOverride ?? pickOverlayColor(l.color, idx);
+        const overlayLabelText = overlayLabel
+          ? `${l.label.split(" · historical")[0].split(" · path")[0]} · ${overlayLabel}`
+          : `${l.label} · overlay`;
+        const overlay: PathSeries = {
+          ...l,
+          id: `${l.id}_ov`,
+          label: overlayLabelText,
+          color: overlayColor,
+          rows: buildRows(l.points, overlayField, includeK8Overlay),
+          isOverlay: true,
+        };
+        return [primary, overlay];
       });
 
   const active = seriesData.filter((s) => s.rows.length >= 2);
-  const allX = active.flatMap((s) => s.rows.map((r) => r.x));
-  const dualAxis = !usePortfolio && needsDualPriceAxis(active);
+  // List of excluded series (for a diagnostic message in the UI when the chart
+  // displays fewer lines than the user selected).
+  const excluded = usePortfolio
+    ? []
+    : seriesData
+        .filter((s) => s.rows.length < 2)
+        .map((s) => ({
+          id: s.id,
+          label: s.label,
+          reason:
+            s.rows.length === 0
+              ? "no historical price available"
+              : "only 1 historical point (≥ 2 required to draw a line)",
+        }));
+  const allX = [
+    ...active.flatMap((s) => s.rows.map((r) => r.x)),
+    ...lines.map((l) => l.nowOffset).filter((x): x is number => x != null && Number.isFinite(x)),
+  ];
+  // With index normalization the dual Y axis is never needed
+  const dualAxis = !usePortfolio && !doIndex && needsDualPriceAxis(active);
   const flatSeries = active.filter((s) => priceSpreadPct(s.rows) < 0.75);
   const allFlat = active.length > 0 && flatSeries.length === active.length;
 
   if (active.length === 0 || allX.length < 2) {
     return (
-      <div className="rounded-lg border border-[rgb(var(--border))]/60 bg-surface/50 p-4">
-        <h3 className="text-sm font-semibold text-ink mb-2">{title}</h3>
-        <p className="text-xs text-ink-muted py-4 text-center">Prezzi non disponibili.</p>
+      <div className={CHART_CURVES_PANEL_EMPTY}>
+        <h3 className={CHART_CURVES_TITLE_SIMPLE}>{title}</h3>
+        <p className={`${CHART_CURVES_EMPTY_MSG} py-4`}>Prices not available.</p>
       </div>
     );
   }
 
   const [xMin, xMax] = extendXDomain(Math.min(...allX), Math.max(...allX), nowMarkers);
-  const nowDots = buildNowPriceDots(active, nowMarkers);
+  const nowDots = buildNowPriceDots(active);
+  const priceLegendPayload = [
+    ...active.map((s) => ({
+      value: s.label,
+      type: "line" as const,
+      color: s.color,
+      id: s.id,
+    })),
+    ...(nowDots.length
+      ? [{ value: "📍 Today", type: "circle" as const, color: NOW_MARKER_FILL, id: "now-legend" }]
+      : []),
+  ];
+  const allPriceRows: PriceChartRow[] = [
+    ...active.flatMap((s) => s.rows),
+    ...nowDots.map((d) => ({ x: d.x, y: d.y, xLabel: String(d.x) })),
+  ];
   const sharedDomain = dualAxis
     ? undefined
-    : yDomainForRows(active.flatMap((s) => s.rows));
+    : yDomainForRows(allPriceRows);
 
   return (
-    <div className="rounded-lg border border-[rgb(var(--border))]/60 bg-surface/50 p-3">
-      <h3 className="text-sm font-semibold text-ink mb-2">{title}</h3>
+    <div className={CHART_CURVES_PANEL}>
+      <h3 className={CHART_CURVES_TITLE_SIMPLE}>{title}</h3>
       <div style={{ height }}>
         <ResponsiveContainer width="100%" height="100%">
-          <LineChart margin={{ top: nowMarkers.length ? 20 : 8, right: dualAxis ? 48 : 12, left: 48, bottom: 4 }}>
-            <CartesianGrid strokeDasharray="3 3" className="opacity-25" />
+          <ComposedChart
+            data={chartXAnchorRows(xMin, xMax)}
+            margin={{ top: nowMarkers.length ? 24 : 8, right: dualAxis ? 48 : 12, left: 48, bottom: 4 }}
+          >
+            {renderCdZones({
+              cdX: 0,
+              xMin,
+              xMax,
+              todayX: null,
+              hideBadges: true,
+            })}
+            <CartesianGrid {...CHART_CURVES_GRID} />
             <XAxis
               type="number"
               dataKey="x"
               domain={[xMin, xMax]}
-              tick={{ fontSize: 10 }}
+              tick={CHART_CURVES_AXIS_TICK}
               tickFormatter={(v) => offsetLabel(Number(v))}
             />
             <ChartNowMarkersLayer markers={nowMarkers} />
@@ -778,7 +1163,7 @@ export function PricePathChart({
                 <YAxis
                   yAxisId="left"
                   orientation="left"
-                  tick={{ fontSize: 10 }}
+                  tick={CHART_CURVES_AXIS_TICK}
                   tickFormatter={fmtPriceAxis}
                   allowDecimals
                   width={52}
@@ -788,7 +1173,7 @@ export function PricePathChart({
                 <YAxis
                   yAxisId="right"
                   orientation="right"
-                  tick={{ fontSize: 10 }}
+                  tick={CHART_CURVES_AXIS_TICK}
                   tickFormatter={fmtPriceAxis}
                   allowDecimals
                   width={52}
@@ -798,7 +1183,7 @@ export function PricePathChart({
               </>
             ) : (
               <YAxis
-                tick={{ fontSize: 10 }}
+                tick={CHART_CURVES_AXIS_TICK}
                 tickFormatter={fmtPriceAxis}
                 allowDecimals
                 width={52}
@@ -810,11 +1195,11 @@ export function PricePathChart({
               formatter={(v: number, _name: string, item) => {
                 const row = item?.payload as PriceChartRow | undefined;
                 const sd = row?.ySd;
-                const val = usePortfolio
+                const val = (usePortfolio || doIndex)
                   ? `${fmtPriceAxis(v)} idx`
                   : `$${v.toFixed(2)}`;
                 if (sd != null && sd > 0) {
-                  return [`${val} ± ${sd.toFixed(2)}${usePortfolio ? " idx" : ""}`, ""];
+                  return [`${val} ± ${sd.toFixed(2)} idx`, ""];
                 }
                 return [val, ""];
               }}
@@ -822,10 +1207,11 @@ export function PricePathChart({
                 const row = payload?.[0]?.payload as PriceChartRow | undefined;
                 if (!row) return "";
                 const nNote = row.n && row.n > 1 ? ` · n=${row.n}` : "";
-                return `Giorni da CD: ${row.xLabel}${nNote}`;
+                return `Days from CD: ${row.xLabel}${nNote}`;
               }}
             />
             <Legend
+              payload={priceLegendPayload}
               wrapperStyle={{
                 fontSize: 11,
                 maxHeight: active.length > 8 ? 88 : undefined,
@@ -834,6 +1220,7 @@ export function PricePathChart({
             />
             {active.map((s, idx) => {
               const showErr = s.rows.some((r) => (r.ySd ?? 0) > 0);
+              const isOv = !!s.isOverlay;
               return (
                 <Line
                   key={s.id}
@@ -842,8 +1229,10 @@ export function PricePathChart({
                   dataKey="y"
                   name={s.label}
                   stroke={s.color}
-                  strokeWidth={usePortfolio ? 2.5 : 2}
-                  dot={{ r: showErr ? 4 : 2 }}
+                  strokeWidth={usePortfolio ? 2.5 : isOv ? 1.8 : 2}
+                  strokeDasharray={isOv ? "6 4" : undefined}
+                  dot={{ r: showErr ? 4 : isOv ? 1.6 : 2 }}
+                  opacity={isOv ? 0.92 : 1}
                   connectNulls
                   yAxisId={dualAxis ? (idx === 0 ? "left" : "right") : undefined}
                 >
@@ -859,44 +1248,65 @@ export function PricePathChart({
                 </Line>
               );
             })}
-            {nowDots.length > 0 && (
-              <Scatter
-                data={nowDots}
-                dataKey="y"
-                name="Posizione attuale"
-                fill={NOW_DOT_FILL}
-                stroke="#fff"
-                strokeWidth={1}
-                legendType="circle"
-              />
-            )}
-          </LineChart>
+            {nowDots.map((d) => {
+              const sIdx = active.findIndex((s) => s.id === d.id);
+              return (
+                <ReferenceDot
+                  key={`now-price-${d.id}`}
+                  x={d.x}
+                  y={d.y}
+                  yAxisId={dualAxis ? (sIdx === 0 ? "left" : "right") : undefined}
+                  ifOverflow="extendDomain"
+                  isFront
+                  shape={(props: { cx?: number; cy?: number }) => (
+                    <NowCurvePinShape cx={props.cx} cy={props.cy} />
+                  )}
+                />
+              );
+            })}
+          </ComposedChart>
         </ResponsiveContainer>
       </div>
       {nowMarkers.length > 0 && (
-        <p className="text-[10px] text-ink-muted mt-1">
-          Linea tratteggiata = oggi sul calendario CD (giorni da Completion Date).
+        <p className={CHART_CURVES_FOOTER}>
+          📍 Orange pin = today's position on the CD calendar (days from Completion Date).
         </p>
       )}
       {usePortfolio && (
-        <p className="text-[10px] text-ink-muted mt-1">
-          Indice T−60 = 100 per ogni ticker; linea = media portafoglio sui nodi di ricalibrazione (barre = ±1 σ).
+        <p className={CHART_CURVES_FOOTER}>
+          Index T−60 = 100 for each ticker; line = portfolio mean on recalibration nodes (bars = ±1 σ).
         </p>
       )}
-      {dualAxis && (
-        <p className="text-[10px] text-ink-muted mt-1">
-          Asse Y sinistro / destro: scale $ diverse tra le due società (es. ~$15 vs ~$1).
+      {doIndex && !usePortfolio && (
+        <p className={CHART_CURVES_FOOTER}>
+          Index T−60 = 100 for each ticker — prices normalized for comparison on a common scale (single Y axis).
         </p>
       )}
       {allFlat && (
-        <p className="text-[10px] text-ink-muted mt-1">
-          Curva $ quasi piatta: variazione &lt;0,75% sui nodi — i Δ% vs T−60 sono molto piccoli o
-          il prezzo storico è costante. Usa il grafico % sopra per vedere il movimento relativo.
+        <p className={CHART_CURVES_FOOTER}>
+          $ curve nearly flat: variation &lt;0.75% across nodes — the Δ% vs T−60 are very small or
+          the historical price is constant. Use the % chart above to see relative movement.
         </p>
       )}
-      {includeK8 && !usePortfolio && (
-        <p className="text-[10px] text-ink-muted mt-1">
-          Nodi K-8 aggregati per offset (media ± σ se più filing sullo stesso giorno).
+      {(includeK8Primary || includeK8Overlay) && !usePortfolio && (
+        <p className={CHART_CURVES_FOOTER}>
+          8-K nodes aggregated by offset (mean ± σ if multiple filings on the same day).
+          AI feed nodes = verified publication sessions (T…T+3) on the recalibrated path.
+        </p>
+      )}
+      {hasOverlay && (
+        <p className={CHART_CURVES_FOOTER}>
+          Solid line = <span className="font-medium">{primaryLabel ?? field}</span>; dashed line = <span className="font-medium">{overlayLabel ?? overlayField}</span> (same ticker, contrasting color).
+        </p>
+      )}
+      {excluded.length > 0 && (
+        <p className="text-[10px] text-warn mt-1">
+          ⚠ {active.length}/{active.length + excluded.length} tickers drawn. Excluded:{" "}
+          {excluded.map((e) => `${e.label.split(" · ")[0]} (${e.reason})`).join(", ")}
+          {field === "price_storico_usd" && (
+            <> · For tickers with a future CD and no recent 8-K filing the historical
+            prices may be insufficient.</>
+          )}
         </p>
       )}
     </div>

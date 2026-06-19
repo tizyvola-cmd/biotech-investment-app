@@ -1,0 +1,964 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>SuperNova — Mockup</title>
+<style>
+  :root {
+    --bg: #0f1221;
+    --surface: #1a1f3c;
+    --surface-2: #242a4a;
+    --surface-3: #2e3560;
+    --accent: #818cf8;
+    --accent-dim: #3730a3;
+    --ink: #f1f5f9;
+    --ink-muted: #94a3b8;
+    --ink-dim: #475569;
+    --border: rgba(255,255,255,0.07);
+    --up: #22c55e;
+    --up-bg: rgba(34,197,94,0.12);
+    --down: #ef4444;
+    --down-bg: rgba(239,68,68,0.12);
+    --neutral: #64748b;
+    --neutral-bg: rgba(100,116,139,0.12);
+    --warn: #f59e0b;
+    --warn-bg: rgba(245,158,11,0.12);
+    --purple: #a78bfa;
+    --sidebar-w: 200px;
+    --topbar-h: 52px;
+  }
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  body {
+    font-family: 'SF Pro Display', 'Segoe UI', system-ui, sans-serif;
+    background: var(--bg);
+    color: var(--ink);
+    display: flex;
+    height: 100vh;
+    overflow: hidden;
+    font-size: 13px;
+  }
+
+  /* ── SIDEBAR ── */
+  aside {
+    width: var(--sidebar-w);
+    background: var(--surface);
+    border-right: 1px solid var(--border);
+    display: flex; flex-direction: column;
+    flex-shrink: 0;
+    padding: 0 0 12px;
+    z-index: 10;
+  }
+  .logo {
+    display: flex; align-items: center; gap: 10px;
+    padding: 16px 14px 20px;
+    border-bottom: 1px solid var(--border);
+    margin-bottom: 8px;
+  }
+  .logo-icon {
+    width: 28px; height: 28px;
+    background: linear-gradient(135deg, #818cf8, #a78bfa);
+    border-radius: 7px;
+    display: flex; align-items: center; justify-content: center;
+    font-size: 14px;
+    box-shadow: 0 0 12px rgba(129,140,248,0.4);
+  }
+  .logo-text { font-weight: 700; font-size: 15px; letter-spacing: -0.3px; }
+  .logo-sub { font-size: 9px; color: var(--ink-muted); letter-spacing: 1px; text-transform: uppercase; }
+  .nav-section { margin-bottom: 4px; }
+  .nav-label { font-size: 9px; font-weight: 600; letter-spacing: 1.2px; text-transform: uppercase; color: var(--ink-dim); padding: 8px 14px 4px; }
+  .nav-item {
+    display: flex; align-items: center; gap: 9px;
+    padding: 8px 14px; border-radius: 8px; margin: 1px 8px;
+    cursor: pointer; color: var(--ink-muted);
+    transition: all 0.15s; font-size: 12.5px; font-weight: 500;
+  }
+  .nav-item:hover { background: var(--surface-2); color: var(--ink); }
+  .nav-item.active { background: rgba(129,140,248,0.15); color: var(--accent); }
+  .nav-item .icon { font-size: 14px; opacity: 0.9; }
+  .nav-badge { margin-left: auto; background: var(--accent-dim); color: var(--accent); font-size: 10px; font-weight: 700; padding: 1px 6px; border-radius: 99px; }
+  .sidebar-footer { margin-top: auto; border-top: 1px solid var(--border); padding-top: 8px; }
+  .model-status { margin: 4px 8px; padding: 8px 10px; background: var(--surface-2); border-radius: 8px; display: flex; align-items: center; gap: 8px; }
+  .dot { width: 7px; height: 7px; border-radius: 50%; background: var(--up); box-shadow: 0 0 6px var(--up); }
+  .model-label { font-size: 11px; color: var(--ink-muted); }
+  .model-val { font-size: 11px; font-weight: 600; color: var(--ink); margin-left: auto; }
+
+  /* ── MAIN ── */
+  main { flex: 1; display: flex; flex-direction: column; overflow: hidden; }
+  .topbar {
+    height: var(--topbar-h);
+    background: var(--surface);
+    border-bottom: 1px solid var(--border);
+    display: flex; align-items: center; gap: 12px;
+    padding: 0 20px; flex-shrink: 0;
+  }
+  .topbar-title { font-size: 15px; font-weight: 700; }
+  .topbar-right { margin-left: auto; display: flex; align-items: center; gap: 10px; }
+  .pill { padding: 4px 12px; border-radius: 99px; font-size: 11px; font-weight: 600; border: 1px solid var(--border); color: var(--ink-muted); cursor: pointer; background: var(--surface-2); }
+  .pill:hover { background: var(--surface-3); }
+  .pill.active { background: rgba(129,140,248,0.2); color: var(--accent); border-color: var(--accent); }
+  .avatar { width: 28px; height: 28px; border-radius: 50%; background: linear-gradient(135deg, #818cf8, #a78bfa); display: flex; align-items: center; justify-content: center; font-size: 11px; font-weight: 700; }
+
+  /* ── SCREEN ── */
+  .screen { display: none; flex-direction: column; overflow: hidden; flex: 1; }
+  .screen.active { display: flex; }
+
+  /* ── CATALYST STRIP ── */
+  .catalyst-strip { padding: 12px 20px; display: flex; gap: 10px; align-items: center; border-bottom: 1px solid var(--border); overflow-x: auto; flex-shrink: 0; background: rgba(15,18,33,0.6); }
+  .strip-label { font-size: 10px; font-weight: 700; letter-spacing: 1px; text-transform: uppercase; color: var(--ink-dim); white-space: nowrap; }
+  .catalyst-card { background: var(--surface); border: 1px solid var(--border); border-radius: 10px; padding: 9px 13px; display: flex; flex-direction: column; gap: 4px; min-width: 130px; cursor: pointer; transition: all 0.15s; }
+  .catalyst-card:hover { border-color: var(--accent); background: var(--surface-2); transform: translateY(-1px); }
+  .catalyst-card.urgent { border-color: var(--warn); }
+  .cc-top { display: flex; align-items: center; justify-content: space-between; }
+  .cc-ticker { font-size: 13px; font-weight: 800; letter-spacing: 0.3px; }
+  .cc-badge { font-size: 9px; font-weight: 700; padding: 2px 6px; border-radius: 99px; letter-spacing: 0.5px; }
+  .badge-up { background: var(--up-bg); color: var(--up); }
+  .badge-down { background: var(--down-bg); color: var(--down); }
+  .badge-neutral { background: var(--neutral-bg); color: var(--neutral); }
+  .cc-days { font-size: 11px; color: var(--warn); font-weight: 600; }
+  .cc-days.far { color: var(--ink-muted); font-weight: 400; }
+  .cc-d7 { font-size: 11px; color: var(--ink-muted); }
+  .cc-d7 span { color: var(--up); font-weight: 600; }
+  .cc-d7 span.neg { color: var(--down); }
+
+  /* ── TABLE AREA ── */
+  .content { flex: 1; display: flex; overflow: hidden; }
+  .table-area { flex: 1; overflow-y: auto; padding: 16px 20px; display: flex; flex-direction: column; gap: 12px; }
+  .section-header { display: flex; align-items: center; gap: 10px; margin-bottom: 4px; }
+  .section-title { font-size: 12px; font-weight: 700; color: var(--ink-muted); text-transform: uppercase; letter-spacing: 0.8px; }
+  .count-badge { font-size: 10px; color: var(--ink-dim); background: var(--surface-2); padding: 2px 8px; border-radius: 99px; }
+  .search-bar { display: flex; align-items: center; gap: 8px; background: var(--surface); border: 1px solid var(--border); border-radius: 8px; padding: 7px 12px; color: var(--ink-muted); font-size: 12px; flex: 1; }
+
+  table { width: 100%; border-collapse: collapse; }
+  thead th { text-align: left; padding: 8px 12px; font-size: 10px; font-weight: 700; letter-spacing: 0.8px; text-transform: uppercase; color: var(--ink-dim); border-bottom: 1px solid var(--border); white-space: nowrap; }
+  thead th.sortable { cursor: pointer; }
+  thead th.sortable:hover { color: var(--ink-muted); }
+  tbody tr { border-bottom: 1px solid rgba(255,255,255,0.03); cursor: pointer; transition: background 0.12s; }
+  tbody tr:hover { background: rgba(255,255,255,0.03); }
+  tbody tr.selected { background: rgba(129,140,248,0.08); }
+  tbody tr.warn-row { background: rgba(245,158,11,0.04); }
+  tbody td { padding: 9px 12px; font-size: 12px; }
+  .td-ticker { font-weight: 800; font-size: 13px; color: var(--ink); letter-spacing: 0.3px; }
+  .td-company { color: var(--ink-muted); font-size: 11px; margin-top: 1px; }
+  .td-date { color: var(--ink-muted); }
+  .td-countdown { color: var(--warn); font-weight: 600; font-size: 12px; }
+  .td-countdown.far { color: var(--ink-dim); font-weight: 400; }
+  .signal-badge { display: inline-flex; align-items: center; gap: 4px; padding: 3px 9px; border-radius: 99px; font-size: 11px; font-weight: 700; letter-spacing: 0.3px; }
+  .signal-up { background: var(--up-bg); color: var(--up); }
+  .signal-down { background: var(--down-bg); color: var(--down); }
+  .signal-neutral { background: var(--neutral-bg); color: var(--neutral); }
+  .conf-bar-wrap { display: flex; align-items: center; gap: 6px; }
+  .conf-bar { height: 4px; border-radius: 99px; background: var(--surface-3); width: 60px; overflow: hidden; }
+  .conf-fill { height: 100%; border-radius: 99px; }
+  .conf-fill.hi { background: var(--up); }
+  .conf-fill.mid { background: var(--warn); }
+  .conf-fill.lo { background: var(--neutral); }
+  .conf-num { font-size: 11px; color: var(--ink-muted); width: 28px; }
+  .quality-dot { width: 8px; height: 8px; border-radius: 50%; display: inline-block; }
+  .q-green { background: var(--up); box-shadow: 0 0 5px var(--up); }
+  .q-yellow { background: var(--warn); box-shadow: 0 0 5px var(--warn); }
+  .q-red { background: var(--down); box-shadow: 0 0 5px var(--down); }
+  .d7-val { font-weight: 700; }
+  .d7-pos { color: var(--up); }
+  .d7-neg { color: var(--down); }
+  .d7-neu { color: var(--ink-muted); }
+  .runup { color: var(--ink-muted); }
+
+  /* ── DRAWER ── */
+  .drawer { width: 340px; background: var(--surface); border-left: 1px solid var(--border); display: flex; flex-direction: column; overflow-y: auto; flex-shrink: 0; }
+  .drawer-header { padding: 16px 16px 12px; border-bottom: 1px solid var(--border); background: var(--surface-2); }
+  .drawer-top { display: flex; align-items: flex-start; gap: 10px; }
+  .drawer-ticker { font-size: 22px; font-weight: 900; letter-spacing: -0.5px; }
+  .drawer-company { font-size: 11px; color: var(--ink-muted); margin-top: 2px; }
+  .drawer-close { margin-left: auto; cursor: pointer; color: var(--ink-dim); font-size: 18px; padding: 4px; }
+  .big-signal { margin-top: 10px; display: inline-flex; align-items: center; gap: 8px; padding: 7px 14px; border-radius: 10px; font-size: 13px; font-weight: 800; letter-spacing: 0.5px; }
+  .big-up { background: var(--up-bg); color: var(--up); border: 1px solid rgba(34,197,94,0.25); }
+  .big-down { background: var(--down-bg); color: var(--down); border: 1px solid rgba(239,68,68,0.25); }
+  .big-neutral { background: var(--neutral-bg); color: var(--neutral); border: 1px solid rgba(100,116,139,0.25); }
+  .kpi-row { display: flex; gap: 8px; padding: 12px 16px; }
+  .kpi { flex: 1; background: var(--surface-2); border-radius: 9px; padding: 10px; display: flex; flex-direction: column; gap: 3px; border: 1px solid var(--border); }
+  .kpi-label { font-size: 9px; text-transform: uppercase; letter-spacing: 1px; color: var(--ink-dim); font-weight: 600; }
+  .kpi-val { font-size: 17px; font-weight: 800; }
+  .kpi-val.up { color: var(--up); }
+  .kpi-val.down { color: var(--down); }
+  .kpi-val.muted { color: var(--ink-muted); }
+  .kpi-sub { font-size: 10px; color: var(--ink-dim); }
+  .drawer-section { padding: 12px 16px; border-bottom: 1px solid var(--border); }
+  .drawer-section-title { font-size: 10px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.8px; color: var(--ink-dim); margin-bottom: 10px; }
+  .chart-mock { background: var(--surface-2); border-radius: 10px; border: 1px solid var(--border); height: 140px; position: relative; overflow: hidden; }
+  .chart-grid { position: absolute; inset: 0; display: flex; flex-direction: column; justify-content: space-between; padding: 8px 0; }
+  .chart-grid-line { width: 100%; height: 1px; background: rgba(255,255,255,0.04); }
+  svg.chart-svg { width: 100%; height: 100%; position: absolute; inset: 0; }
+  .chart-label { font-size: 9px; color: var(--ink-dim); position: absolute; }
+  .chart-label.tl { top: 6px; left: 8px; }
+  .chart-label.tr { top: 6px; right: 8px; }
+  .chart-label.bl { bottom: 6px; left: 8px; }
+  .chart-label.br { bottom: 6px; right: 8px; }
+  .chart-cd-line { position: absolute; top: 0; bottom: 0; width: 1px; background: rgba(245,158,11,0.5); left: 55%; }
+  .cd-label { position: absolute; top: 8px; left: 57%; font-size: 8px; color: var(--warn); font-weight: 600; }
+  .meta-row { display: flex; gap: 6px; flex-wrap: wrap; }
+  .meta-tag { font-size: 10px; padding: 3px 8px; border-radius: 99px; background: var(--surface-3); color: var(--ink-muted); border: 1px solid var(--border); }
+  .drawer-info-grid { display: flex; flex-direction: column; gap: 7px; }
+  .info-row { display: flex; justify-content: space-between; align-items: center; }
+  .info-key { font-size: 11px; color: var(--ink-dim); }
+  .info-val { font-size: 11px; color: var(--ink); font-weight: 600; }
+  .info-val.up { color: var(--up); }
+  .info-val.down { color: var(--down); }
+
+  /* ── SIMULATION SCREEN ── */
+  .sim-summary-bar { display: flex; gap: 12px; padding: 12px 20px; border-bottom: 1px solid var(--border); background: rgba(15,18,33,0.6); flex-shrink: 0; overflow-x: auto; }
+  .sim-kpi { background: var(--surface); border: 1px solid var(--border); border-radius: 10px; padding: 10px 16px; display: flex; flex-direction: column; gap: 3px; min-width: 130px; }
+  .sim-kpi-label { font-size: 9px; font-weight: 700; letter-spacing: 1px; text-transform: uppercase; color: var(--ink-dim); }
+  .sim-kpi-val { font-size: 18px; font-weight: 800; }
+  .sim-kpi-sub { font-size: 10px; color: var(--ink-dim); }
+
+  .col-group-header { background: var(--surface-2); }
+  .col-group-header th { color: var(--accent); font-size: 9px; letter-spacing: 1.5px; padding: 5px 12px; border-bottom: 1px solid var(--border); border-top: 1px solid var(--border); }
+
+  .phase-badge { font-size: 9px; font-weight: 700; padding: 2px 7px; border-radius: 99px; background: rgba(167,139,250,0.15); color: var(--purple); }
+  .infer-badge { font-size: 9px; font-weight: 600; padding: 2px 7px; border-radius: 99px; }
+  .infer-ok { background: var(--up-bg); color: var(--up); }
+  .infer-warn { background: var(--warn-bg); color: var(--warn); }
+
+  /* sparkline */
+  .spark { display: flex; align-items: flex-end; gap: 2px; height: 28px; }
+  .spark-bar { width: 5px; border-radius: 2px 2px 0 0; background: var(--up); min-height: 2px; }
+  .spark-bar.neg { background: var(--down); border-radius: 0 0 2px 2px; align-self: flex-start; margin-top: auto; }
+
+  /* portfolio row highlight */
+  tbody tr.portfolio-row { background: rgba(129,140,248,0.04); }
+  .pl-pos { color: var(--up); font-weight: 700; }
+  .pl-neg { color: var(--down); font-weight: 700; }
+
+  /* sub-tabs */
+  .subtabs { display: flex; gap: 2px; padding: 10px 20px 0; border-bottom: 1px solid var(--border); background: var(--surface); flex-shrink: 0; }
+  .subtab { padding: 8px 16px; font-size: 12px; font-weight: 600; color: var(--ink-muted); cursor: pointer; border-bottom: 2px solid transparent; }
+  .subtab:hover { color: var(--ink); }
+  .subtab.active { color: var(--accent); border-bottom-color: var(--accent); }
+
+  /* ── ACCURACY SCREEN ── */
+  .acc-summary-bar { display: flex; gap: 12px; padding: 14px 20px; border-bottom: 1px solid var(--border); background: rgba(15,18,33,0.6); flex-shrink: 0; align-items: center; }
+  .acc-kpi { background: var(--surface); border: 1px solid var(--border); border-radius: 10px; padding: 10px 18px; text-align: center; min-width: 110px; }
+  .acc-kpi-val { font-size: 22px; font-weight: 900; }
+  .acc-kpi-label { font-size: 9px; text-transform: uppercase; letter-spacing: 1px; color: var(--ink-dim); margin-top: 2px; }
+
+  .toggle-group { display: flex; background: var(--surface-2); border-radius: 8px; border: 1px solid var(--border); padding: 3px; gap: 2px; margin-left: auto; }
+  .toggle-btn { padding: 5px 12px; border-radius: 6px; font-size: 11px; font-weight: 600; cursor: pointer; color: var(--ink-muted); }
+  .toggle-btn.active { background: var(--accent-dim); color: var(--accent); }
+
+  .err-pos { color: var(--up); font-weight: 700; }
+  .err-neg { color: var(--down); font-weight: 700; }
+  .err-neu { color: var(--ink-muted); }
+
+  /* mini error bars for accuracy */
+  .err-bar-cell { display: flex; align-items: center; gap: 6px; }
+  .err-bar-track { height: 6px; background: var(--surface-3); border-radius: 99px; width: 80px; position: relative; overflow: visible; }
+  .err-bar-mid { position: absolute; left: 50%; top: -1px; width: 1px; height: 8px; background: var(--border); }
+  .err-bar-fill { position: absolute; top: 0; height: 6px; border-radius: 99px; }
+  .err-bar-fill.pos { left: 50%; background: var(--up); }
+  .err-bar-fill.neg { right: 50%; background: var(--down); }
+
+  .acc-horizon-row { display: flex; gap: 4px; align-items: center; }
+  .hz { font-size: 9px; padding: 1px 5px; border-radius: 4px; font-weight: 700; }
+  .hz.pos { background: var(--up-bg); color: var(--up); }
+  .hz.neg { background: var(--down-bg); color: var(--down); }
+  .hz.neu { background: var(--neutral-bg); color: var(--neutral); }
+
+  /* scrollbar */
+  ::-webkit-scrollbar { width: 4px; height: 4px; }
+  ::-webkit-scrollbar-track { background: transparent; }
+  ::-webkit-scrollbar-thumb { background: var(--surface-3); border-radius: 99px; }
+</style>
+</head>
+<body>
+
+<!-- ═══════════════ SIDEBAR ═══════════════ -->
+<aside>
+  <div class="logo">
+    <div class="logo-icon">✦</div>
+    <div>
+      <div class="logo-text">SuperNova</div>
+      <div class="logo-sub">Biotech Intel</div>
+    </div>
+  </div>
+  <div class="nav-section">
+    <div class="nav-label">Watch</div>
+    <div class="nav-item active" id="nav-catalyst" onclick="showScreen('catalyst')">
+      <span class="icon">⚡</span> Catalyst Hub <span class="nav-badge">5</span>
+    </div>
+    <div class="nav-item" id="nav-simulation" onclick="showScreen('simulation')">
+      <span class="icon">📈</span> Simulation
+    </div>
+  </div>
+  <div class="nav-section">
+    <div class="nav-label">Analyze</div>
+    <div class="nav-item" id="nav-accuracy" onclick="showScreen('accuracy')">
+      <span class="icon">🎯</span> Accuracy Lab
+    </div>
+    <div class="nav-item">
+      <span class="icon">🧠</span> Model Analysis
+    </div>
+  </div>
+  <div class="nav-section">
+    <div class="nav-label">Research</div>
+    <div class="nav-item"><span class="icon">🔬</span> Clinical Trials</div>
+    <div class="nav-item"><span class="icon">📄</span> SEC 8-K</div>
+    <div class="nav-item"><span class="icon">💰</span> Financial</div>
+  </div>
+  <div class="sidebar-footer">
+    <div class="nav-item"><span class="icon">⚙</span> System</div>
+    <div class="model-status">
+      <div class="dot"></div>
+      <div class="model-label">Model v4</div>
+      <div class="model-val">MAE 13pp</div>
+    </div>
+  </div>
+</aside>
+
+<!-- ═══════════════ MAIN ═══════════════ -->
+<main>
+
+  <!-- ══ SCREEN: CATALYST HUB ══ -->
+  <div class="screen active" id="screen-catalyst">
+    <div class="topbar">
+      <div class="topbar-title">Catalyst Hub</div>
+      <div style="font-size:11px;color:var(--ink-dim);padding-left:8px;">24 May 2026</div>
+      <div class="topbar-right">
+        <div class="pill active">All</div>
+        <div class="pill">↑ Long</div>
+        <div class="pill">↓ Short</div>
+        <div class="pill">⭐ High conf.</div>
+        <div class="avatar">TR</div>
+      </div>
+    </div>
+    <div class="catalyst-strip">
+      <div class="strip-label">Next 30d</div>
+      <div class="catalyst-card urgent" onclick="selectRow('ARWR')">
+        <div class="cc-top"><div class="cc-ticker">ARWR</div><div class="cc-badge badge-up">↑ LONG</div></div>
+        <div class="cc-days">⚡ in 3 giorni</div>
+        <div class="cc-d7">D+7 <span>+18.4%</span></div>
+      </div>
+      <div class="catalyst-card" onclick="selectRow('BEAM')">
+        <div class="cc-top"><div class="cc-ticker">BEAM</div><div class="cc-badge badge-up">↑ LONG</div></div>
+        <div class="cc-days">in 9 giorni</div>
+        <div class="cc-d7">D+7 <span>+12.1%</span></div>
+      </div>
+      <div class="catalyst-card" onclick="selectRow('FATE')">
+        <div class="cc-top"><div class="cc-ticker">FATE</div><div class="cc-badge badge-down">↓ SHORT</div></div>
+        <div class="cc-days">in 14 giorni</div>
+        <div class="cc-d7">D+7 <span class="neg">-9.2%</span></div>
+      </div>
+      <div class="catalyst-card" onclick="selectRow('NTLA')">
+        <div class="cc-top"><div class="cc-ticker">NTLA</div><div class="cc-badge badge-neutral">— NEUTRAL</div></div>
+        <div class="cc-days far">in 21 giorni</div>
+        <div class="cc-d7">D+7 <span style="color:var(--ink-muted)">+2.3%</span></div>
+      </div>
+      <div class="catalyst-card" onclick="selectRow('CRSP')">
+        <div class="cc-top"><div class="cc-ticker">CRSP</div><div class="cc-badge badge-up">↑ LONG</div></div>
+        <div class="cc-days far">in 28 giorni</div>
+        <div class="cc-d7">D+7 <span>+22.7%</span></div>
+      </div>
+    </div>
+    <div class="content">
+      <div class="table-area">
+        <div class="section-header">
+          <div class="section-title">Watchlist</div>
+          <div class="count-badge">42 ticker</div>
+          <div style="flex:1"></div>
+          <div class="search-bar" style="max-width:240px">🔍 &nbsp;Cerca ticker o company…</div>
+        </div>
+        <table>
+          <thead>
+            <tr>
+              <th>Ticker</th>
+              <th>Signal</th>
+              <th>D+7 Pred.</th>
+              <th>Confidence</th>
+              <th>Completion Date</th>
+              <th>Countdown</th>
+              <th>Run-up 30d</th>
+              <th>Quality</th>
+            </tr>
+          </thead>
+          <tbody>
+            <tr class="warn-row" id="row-ARWR" onclick="selectRow('ARWR')">
+              <td><div class="td-ticker">ARWR</div><div class="td-company">Arrowhead Pharma</div></td>
+              <td><span class="signal-badge signal-up">↑ Strong Long</span></td>
+              <td><span class="d7-val d7-pos">+18.4%</span></td>
+              <td><div class="conf-bar-wrap"><div class="conf-bar"><div class="conf-fill hi" style="width:87%"></div></div><div class="conf-num">87%</div></div></td>
+              <td class="td-date">27 May 2026</td>
+              <td class="td-countdown">⚡ 3 gg</td>
+              <td class="runup">+8.2%</td>
+              <td><span class="quality-dot q-green"></span></td>
+            </tr>
+            <tr id="row-BEAM" class="selected" onclick="selectRow('BEAM')">
+              <td><div class="td-ticker">BEAM</div><div class="td-company">Beam Therapeutics</div></td>
+              <td><span class="signal-badge signal-up">↑ Long</span></td>
+              <td><span class="d7-val d7-pos">+12.1%</span></td>
+              <td><div class="conf-bar-wrap"><div class="conf-bar"><div class="conf-fill hi" style="width:74%"></div></div><div class="conf-num">74%</div></div></td>
+              <td class="td-date">2 Jun 2026</td>
+              <td class="td-countdown">9 gg</td>
+              <td class="runup">+15.3%</td>
+              <td><span class="quality-dot q-green"></span></td>
+            </tr>
+            <tr id="row-FATE" onclick="selectRow('FATE')">
+              <td><div class="td-ticker">FATE</div><div class="td-company">Fate Therapeutics</div></td>
+              <td><span class="signal-badge signal-down">↓ Short</span></td>
+              <td><span class="d7-val d7-neg">-9.2%</span></td>
+              <td><div class="conf-bar-wrap"><div class="conf-bar"><div class="conf-fill mid" style="width:61%"></div></div><div class="conf-num">61%</div></div></td>
+              <td class="td-date">7 Jun 2026</td>
+              <td class="td-countdown">14 gg</td>
+              <td class="runup">-3.1%</td>
+              <td><span class="quality-dot q-yellow"></span></td>
+            </tr>
+            <tr id="row-NTLA" onclick="selectRow('NTLA')">
+              <td><div class="td-ticker">NTLA</div><div class="td-company">Intellia Therapeutics</div></td>
+              <td><span class="signal-badge signal-neutral">— Neutral</span></td>
+              <td><span class="d7-val d7-neu">+2.3%</span></td>
+              <td><div class="conf-bar-wrap"><div class="conf-bar"><div class="conf-fill lo" style="width:44%"></div></div><div class="conf-num">44%</div></div></td>
+              <td class="td-date">14 Jun 2026</td>
+              <td class="td-countdown far">21 gg</td>
+              <td class="runup">+1.8%</td>
+              <td><span class="quality-dot q-yellow"></span></td>
+            </tr>
+            <tr id="row-CRSP" onclick="selectRow('CRSP')">
+              <td><div class="td-ticker">CRSP</div><div class="td-company">CRISPR Therapeutics</div></td>
+              <td><span class="signal-badge signal-up">↑ Strong Long</span></td>
+              <td><span class="d7-val d7-pos">+22.7%</span></td>
+              <td><div class="conf-bar-wrap"><div class="conf-bar"><div class="conf-fill hi" style="width:91%"></div></div><div class="conf-num">91%</div></div></td>
+              <td class="td-date">21 Jun 2026</td>
+              <td class="td-countdown far">28 gg</td>
+              <td class="runup">+4.5%</td>
+              <td><span class="quality-dot q-green"></span></td>
+            </tr>
+            <tr id="row-EDIT" onclick="selectRow('EDIT')">
+              <td><div class="td-ticker">EDIT</div><div class="td-company">Editas Medicine</div></td>
+              <td><span class="signal-badge signal-down">↓ Short</span></td>
+              <td><span class="d7-val d7-neg">-14.6%</span></td>
+              <td><div class="conf-bar-wrap"><div class="conf-bar"><div class="conf-fill hi" style="width:78%"></div></div><div class="conf-num">78%</div></div></td>
+              <td class="td-date">3 Jul 2026</td>
+              <td class="td-countdown far">40 gg</td>
+              <td class="runup">-8.9%</td>
+              <td><span class="quality-dot q-red"></span></td>
+            </tr>
+          </tbody>
+        </table>
+      </div>
+      <!-- DRAWER -->
+      <div class="drawer" id="drawer">
+        <div class="drawer-header">
+          <div class="drawer-top">
+            <div><div class="drawer-ticker" id="d-ticker">BEAM</div><div class="drawer-company" id="d-company">Beam Therapeutics — Phase II</div></div>
+            <div class="drawer-close" onclick="closeDrawer()">✕</div>
+          </div>
+          <div class="big-signal big-up" id="d-signal">↑ STRONG LONG</div>
+        </div>
+        <div class="kpi-row">
+          <div class="kpi"><div class="kpi-label">D+7 Pred.</div><div class="kpi-val up" id="d-d7">+12.1%</div><div class="kpi-sub">v4 model</div></div>
+          <div class="kpi"><div class="kpi-label">Run-up 30d</div><div class="kpi-val muted" id="d-runup">+15.3%</div><div class="kpi-sub">pre-CD</div></div>
+          <div class="kpi"><div class="kpi-label">Confidence</div><div class="kpi-val up" id="d-conf">74%</div><div class="kpi-sub">★★★☆☆</div></div>
+        </div>
+        <div class="drawer-section">
+          <div class="drawer-section-title">Prediction Curve (v4 + v5 bands)</div>
+          <div class="chart-mock">
+            <div class="chart-grid"><div class="chart-grid-line"></div><div class="chart-grid-line"></div><div class="chart-grid-line"></div><div class="chart-grid-line"></div><div class="chart-grid-line"></div></div>
+            <svg class="chart-svg" viewBox="0 0 300 140" preserveAspectRatio="none">
+              <path d="M20,110 C60,108 100,95 140,88 C165,84 180,60 220,45 C250,35 270,30 290,28 L290,55 C270,55 250,62 220,72 C180,85 165,108 140,112 C100,118 60,120 20,120 Z" fill="rgba(129,140,248,0.10)"/>
+              <path d="M20,115 C60,113 100,106 140,99 C165,94 180,72 220,57 C250,47 270,43 290,40" fill="none" stroke="rgba(129,140,248,0.4)" stroke-width="1.5" stroke-dasharray="4,3"/>
+              <path d="M20,112 C60,110 100,100 140,93 C165,88 180,66 220,50 C250,39 270,35 290,33" fill="none" stroke="#818cf8" stroke-width="2.5"/>
+            </svg>
+            <div class="chart-cd-line"></div><div class="cd-label">CD</div>
+            <div class="chart-label tl">q95</div><div class="chart-label bl">q05</div>
+            <div class="chart-label tr" style="color:var(--accent)">+18%</div><div class="chart-label br">-30d</div>
+          </div>
+        </div>
+        <div class="drawer-section">
+          <div class="drawer-section-title">Trial Info</div>
+          <div class="meta-row"><div class="meta-tag">Phase II</div><div class="meta-tag">RNA Base Editing</div><div class="meta-tag">Sickle Cell</div><div class="meta-tag">BEAM-101</div></div>
+        </div>
+        <div class="drawer-section">
+          <div class="drawer-section-title">Key Metrics</div>
+          <div class="drawer-info-grid">
+            <div class="info-row"><div class="info-key">Completion Date</div><div class="info-val">2 Jun 2026</div></div>
+            <div class="info-row"><div class="info-key">v5 q05 / q95</div><div class="info-val">-4.1% / +28.3%</div></div>
+            <div class="info-row"><div class="info-key">Direction</div><div class="info-val up">↑ Long</div></div>
+            <div class="info-row"><div class="info-key">Data Quality</div><div class="info-val">0.8 🟢</div></div>
+            <div class="info-row"><div class="info-key">Sponsor Match</div><div class="info-val">✓ Exact</div></div>
+            <div class="info-row"><div class="info-key">R² fit</div><div class="info-val">0.86</div></div>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- ══ SCREEN: SIMULATION ══ -->
+  <div class="screen" id="screen-simulation">
+    <div class="topbar">
+      <div class="topbar-title">Simulation Sheet</div>
+      <div style="font-size:11px;color:var(--ink-dim);padding-left:8px;">21 ticker attivi</div>
+      <div class="topbar-right">
+        <div class="pill">↓ Esporta</div>
+        <div class="pill active">+ Aggiungi posizione</div>
+        <div class="avatar">TR</div>
+      </div>
+    </div>
+
+    <!-- Portfolio KPI Bar -->
+    <div class="sim-summary-bar">
+      <div class="sim-kpi">
+        <div class="sim-kpi-label">Portafoglio attivo</div>
+        <div class="sim-kpi-val" style="color:var(--ink)">2 / 21</div>
+        <div class="sim-kpi-sub">ticker con posizione</div>
+      </div>
+      <div class="sim-kpi">
+        <div class="sim-kpi-label">Capitale investito</div>
+        <div class="sim-kpi-val" style="color:var(--ink)">$10.000</div>
+        <div class="sim-kpi-sub">ANIK (10k)</div>
+      </div>
+      <div class="sim-kpi">
+        <div class="sim-kpi-label">P&L stimato</div>
+        <div class="sim-kpi-val" style="color:var(--up)">+$690</div>
+        <div class="sim-kpi-sub">a D+7 previsto</div>
+      </div>
+      <div class="sim-kpi">
+        <div class="sim-kpi-label">Affidabilità media</div>
+        <div class="sim-kpi-val" style="color:var(--warn)">51%</div>
+        <div class="sim-kpi-sub">watchlist completa</div>
+      </div>
+      <div class="sim-kpi">
+        <div class="sim-kpi-label">Prossima CD</div>
+        <div class="sim-kpi-val" style="color:var(--warn)">27 Mag</div>
+        <div class="sim-kpi-sub">CNSP — Phase II</div>
+      </div>
+    </div>
+
+    <!-- Sub-tabs -->
+    <div class="subtabs">
+      <div class="subtab active">Tutti i ticker</div>
+      <div class="subtab">Solo portafoglio</div>
+      <div class="subtab">Solo esplorativi</div>
+    </div>
+
+    <div class="content">
+      <div class="table-area">
+        <div class="section-header">
+          <div class="section-title">Watchlist simulazione</div>
+          <div class="count-badge">21 ticker</div>
+          <div style="flex:1"></div>
+          <div style="font-size:11px;color:var(--ink-dim);">Colonne:</div>
+          <div class="pill active" style="font-size:10px">Core</div>
+          <div class="pill" style="font-size:10px">Mercato</div>
+          <div class="pill" style="font-size:10px">Curva</div>
+          <div class="search-bar" style="max-width:200px">🔍 &nbsp;Cerca…</div>
+        </div>
+        <table>
+          <thead>
+            <!-- Column group labels -->
+            <tr class="col-group-header">
+              <th colspan="4">IDENTIFICATIVO</th>
+              <th colspan="3">PREDIZIONE MODELLO</th>
+              <th colspan="2">CURVA (Δ% vs T−60)</th>
+              <th colspan="2">PORTAFOGLIO</th>
+            </tr>
+            <tr>
+              <th class="sortable">Ticker</th>
+              <th>Phase</th>
+              <th class="sortable">CD</th>
+              <th>Inferenza</th>
+              <th class="sortable">Affidab. %</th>
+              <th class="sortable">Pred +7</th>
+              <th>R²</th>
+              <th>Sparkline</th>
+              <th>Pred +4 / +7</th>
+              <th>P&L %</th>
+              <th>Stato</th>
+            </tr>
+          </thead>
+          <tbody>
+            <tr class="warn-row">
+              <td><div class="td-ticker">CNSP</div><div class="td-company">CNS Pharmaceuticals</div></td>
+              <td><span class="phase-badge">Phase II</span></td>
+              <td><div class="td-date">27 Mag</div><div class="td-countdown">⚡ 3 gg</div></td>
+              <td><span class="infer-badge infer-ok">Applicabile</span></td>
+              <td>
+                <div class="conf-bar-wrap">
+                  <div class="conf-bar"><div class="conf-fill mid" style="width:49%"></div></div>
+                  <div class="conf-num">49%</div>
+                </div>
+              </td>
+              <td><span class="d7-val d7-pos">+6.97%</span></td>
+              <td style="color:var(--ink-muted);font-size:11px">0.71</td>
+              <td>
+                <div class="spark">
+                  <div class="spark-bar neg" style="height:4px"></div>
+                  <div class="spark-bar" style="height:10px"></div>
+                  <div class="spark-bar" style="height:12px"></div>
+                  <div class="spark-bar" style="height:13px"></div>
+                  <div class="spark-bar" style="height:12px"></div>
+                  <div class="spark-bar" style="height:12px"></div>
+                  <div class="spark-bar" style="height:12px"></div>
+                </div>
+              </td>
+              <td style="font-size:11px;color:var(--ink-muted)">+6.86% / +6.97%</td>
+              <td>—</td>
+              <td><span style="font-size:10px;color:var(--ink-dim)">Non in portafoglio</span></td>
+            </tr>
+            <tr class="portfolio-row">
+              <td><div class="td-ticker">ANIK</div><div class="td-company">Anika Therapeutics</div></td>
+              <td><span class="phase-badge">—</span></td>
+              <td><div class="td-date">31 Mag</div><div class="td-countdown">7 gg</div></td>
+              <td><span class="infer-badge infer-ok">Applicabile</span></td>
+              <td>
+                <div class="conf-bar-wrap">
+                  <div class="conf-bar"><div class="conf-fill hi" style="width:69%"></div></div>
+                  <div class="conf-num">69%</div>
+                </div>
+              </td>
+              <td><span class="d7-val d7-neg">-0.38%</span></td>
+              <td style="color:var(--ink-muted);font-size:11px">0.86</td>
+              <td>
+                <div class="spark">
+                  <div class="spark-bar neg" style="height:2px"></div>
+                  <div class="spark-bar neg" style="height:3px"></div>
+                  <div class="spark-bar neg" style="height:4px"></div>
+                  <div class="spark-bar neg" style="height:3px"></div>
+                  <div class="spark-bar neg" style="height:4px"></div>
+                  <div class="spark-bar neg" style="height:3px"></div>
+                  <div class="spark-bar neg" style="height:4px"></div>
+                </div>
+              </td>
+              <td style="font-size:11px;color:var(--ink-muted)">-0.17% / -0.38%</td>
+              <td><span class="pl-neg">-6.9%</span></td>
+              <td><span class="signal-badge signal-down" style="font-size:9px">Attiva</span></td>
+            </tr>
+            <tr>
+              <td><div class="td-ticker">HURA</div><div class="td-company">TuHURA Biosciences</div></td>
+              <td><span class="phase-badge">—</span></td>
+              <td><div class="td-date">31 Mag</div><div class="td-countdown">7 gg</div></td>
+              <td><span class="infer-badge infer-ok">Applicabile</span></td>
+              <td>
+                <div class="conf-bar-wrap">
+                  <div class="conf-bar"><div class="conf-fill mid" style="width:57%"></div></div>
+                  <div class="conf-num">57%</div>
+                </div>
+              </td>
+              <td><span class="d7-val d7-pos">+44.4%</span></td>
+              <td style="color:var(--ink-muted);font-size:11px">0.82</td>
+              <td>
+                <div class="spark">
+                  <div class="spark-bar" style="height:20px"></div>
+                  <div class="spark-bar" style="height:20px"></div>
+                  <div class="spark-bar" style="height:21px"></div>
+                  <div class="spark-bar" style="height:21px"></div>
+                  <div class="spark-bar" style="height:21px"></div>
+                  <div class="spark-bar" style="height:21px"></div>
+                  <div class="spark-bar" style="height:21px"></div>
+                </div>
+              </td>
+              <td style="font-size:11px;color:var(--ink-muted)">+44.3% / +44.4%</td>
+              <td>—</td>
+              <td><span style="font-size:10px;color:var(--ink-dim)">Non in portafoglio</span></td>
+            </tr>
+            <tr>
+              <td><div class="td-ticker">VRTX</div><div class="td-company">Vertex Pharmaceuticals</div></td>
+              <td><span class="phase-badge">Phase II</span></td>
+              <td><div class="td-date">31 Mag</div><div class="td-countdown">7 gg</div></td>
+              <td><span class="infer-badge infer-ok">Applicabile</span></td>
+              <td>
+                <div class="conf-bar-wrap">
+                  <div class="conf-bar"><div class="conf-fill lo" style="width:44%"></div></div>
+                  <div class="conf-num">44%</div>
+                </div>
+              </td>
+              <td><span class="d7-val d7-neg">-4.97%</span></td>
+              <td style="color:var(--ink-muted);font-size:11px">0.56</td>
+              <td>
+                <div class="spark">
+                  <div class="spark-bar neg" style="height:8px"></div>
+                  <div class="spark-bar neg" style="height:9px"></div>
+                  <div class="spark-bar neg" style="height:10px"></div>
+                  <div class="spark-bar neg" style="height:11px"></div>
+                  <div class="spark-bar neg" style="height:12px"></div>
+                  <div class="spark-bar neg" style="height:13px"></div>
+                  <div class="spark-bar neg" style="height:14px"></div>
+                </div>
+              </td>
+              <td style="font-size:11px;color:var(--ink-muted)">-4.76% / -4.97%</td>
+              <td>—</td>
+              <td><span style="font-size:10px;color:var(--ink-dim)">Non in portafoglio</span></td>
+            </tr>
+            <tr>
+              <td><div class="td-ticker">ENGNW</div><div class="td-company">enGene Therapeutics</div></td>
+              <td><span class="phase-badge">Phase I/II</span></td>
+              <td><div class="td-date">30 Giu</div><div class="td-countdown far">37 gg</div></td>
+              <td><span class="infer-badge infer-warn">Solo esplorativa</span></td>
+              <td>
+                <div class="conf-bar-wrap">
+                  <div class="conf-bar"><div class="conf-fill lo" style="width:30%"></div></div>
+                  <div class="conf-num">30%</div>
+                </div>
+              </td>
+              <td><span class="d7-val d7-pos">+0.43%</span></td>
+              <td style="color:var(--down);font-size:11px">0.39</td>
+              <td>
+                <div class="spark">
+                  <div class="spark-bar" style="height:1px"></div>
+                  <div class="spark-bar" style="height:2px"></div>
+                  <div class="spark-bar" style="height:2px"></div>
+                  <div class="spark-bar" style="height:2px"></div>
+                  <div class="spark-bar" style="height:2px"></div>
+                  <div class="spark-bar" style="height:1px"></div>
+                  <div class="spark-bar" style="height:2px"></div>
+                </div>
+              </td>
+              <td style="font-size:11px;color:var(--ink-muted)">+0.43% / +0.43%</td>
+              <td>—</td>
+              <td><span style="font-size:10px;color:var(--ink-dim)">Non in portafoglio</span></td>
+            </tr>
+          </tbody>
+        </table>
+        <div style="padding:8px 0;font-size:11px;color:var(--ink-dim);text-align:center">+ 16 altri ticker — scorri o usa i filtri</div>
+      </div>
+    </div>
+  </div>
+
+  <!-- ══ SCREEN: ACCURACY LAB ══ -->
+  <div class="screen" id="screen-accuracy">
+    <div class="topbar">
+      <div class="topbar-title">Accuracy Lab</div>
+      <div style="font-size:11px;color:var(--ink-dim);padding-left:8px;">828 eventi storici analizzati</div>
+      <div class="topbar-right">
+        <div class="avatar">TR</div>
+      </div>
+    </div>
+
+    <!-- Accuracy KPI Bar -->
+    <div class="acc-summary-bar">
+      <div class="acc-kpi">
+        <div class="acc-kpi-val" style="color:var(--up)">13.2pp</div>
+        <div class="acc-kpi-label">MAE v4 (T+7)</div>
+      </div>
+      <div class="acc-kpi">
+        <div class="acc-kpi-val" style="color:var(--warn)">21.1pp</div>
+        <div class="acc-kpi-label">MAE v5 raw (T+7)</div>
+      </div>
+      <div class="acc-kpi">
+        <div class="acc-kpi-val" style="color:var(--up)">68%</div>
+        <div class="acc-kpi-label">Hit Rate direz.</div>
+      </div>
+      <div class="acc-kpi">
+        <div class="acc-kpi-val" style="color:var(--ink)">828</div>
+        <div class="acc-kpi-label">Eventi analizzati</div>
+      </div>
+      <div class="acc-kpi">
+        <div class="acc-kpi-val" style="color:var(--down)">-2.7pp</div>
+        <div class="acc-kpi-label">Bias medio run-up 0-5%</div>
+      </div>
+      <div class="acc-kpi">
+        <div class="acc-kpi-val" style="color:var(--down)">-69pp</div>
+        <div class="acc-kpi-label">Bias run-up >30%</div>
+      </div>
+      <div class="toggle-group">
+        <div class="toggle-btn active">v4</div>
+        <div class="toggle-btn">v5 q50</div>
+        <div class="toggle-btn">v4 vs v5</div>
+      </div>
+    </div>
+
+    <!-- Filter row -->
+    <div class="subtabs">
+      <div class="subtab active">Tutti (828)</div>
+      <div class="subtab">Ultimi 90 gg</div>
+      <div class="subtab">Ultimi 180 gg</div>
+      <div class="subtab">↑ Long only</div>
+      <div class="subtab">↓ Short only</div>
+      <div class="subtab">Phase III</div>
+      <div style="margin-left:auto" class="search-bar" style="max-width:200px">🔍 &nbsp;Filtra ticker…</div>
+    </div>
+
+    <div class="content">
+      <div class="table-area">
+        <div class="section-header">
+          <div class="section-title">Storico predizioni</div>
+          <div class="count-badge">828 eventi</div>
+          <div style="flex:1"></div>
+          <div style="font-size:11px;color:var(--ink-dim)">Ordinato per: errore assoluto T+7 ↓</div>
+        </div>
+        <table>
+          <thead>
+            <tr class="col-group-header">
+              <th colspan="4">EVENTO</th>
+              <th colspan="4">PREDIZIONE v4 vs REALE (Δ% vs T−60)</th>
+              <th colspan="3">ERRORE PER ORIZZONTE</th>
+            </tr>
+            <tr>
+              <th>Ticker</th>
+              <th>CD</th>
+              <th>Match</th>
+              <th>K-8</th>
+              <th>T+7 Pred</th>
+              <th>T+7 Reale</th>
+              <th>Errore T+7</th>
+              <th>Barra errore</th>
+              <th>T−10</th>
+              <th>T+4</th>
+              <th>T+7</th>
+            </tr>
+          </thead>
+          <tbody>
+            <tr>
+              <td><div class="td-ticker">BNTX</div><div class="td-company">BioNTech SE</div></td>
+              <td class="td-date">13 Lug 2026</td>
+              <td><span class="meta-tag" style="font-size:9px">Exact</span></td>
+              <td style="color:var(--ink-dim);font-size:11px">0</td>
+              <td><span class="d7-val d7-pos">+0.32%</span></td>
+              <td style="color:var(--ink-muted);font-size:12px">—</td>
+              <td style="color:var(--ink-dim);font-size:11px">in attesa</td>
+              <td><div class="err-bar-cell">
+                <div class="err-bar-track">
+                  <div class="err-bar-mid"></div>
+                  <div class="err-bar-fill pos" style="width:1%"></div>
+                </div>
+                <span style="font-size:10px;color:var(--ink-dim)">—</span>
+              </div></td>
+              <td>
+                <div class="acc-horizon-row">
+                  <span class="hz neu">+0.3%</span>
+                </div>
+              </td>
+              <td><span class="hz neu">+0.3%</span></td>
+              <td><span class="hz neu">+0.3%</span></td>
+            </tr>
+            <tr>
+              <td><div class="td-ticker">OLMA</div><div class="td-company">Olema Pharmaceuticals</div></td>
+              <td class="td-date">30 Giu 2026</td>
+              <td><span class="meta-tag" style="font-size:9px">Exact</span></td>
+              <td style="color:var(--ink-muted);font-size:11px">7</td>
+              <td><span class="d7-val d7-pos">+0.75%</span></td>
+              <td style="color:var(--ink-muted);font-size:12px">—</td>
+              <td style="color:var(--ink-dim);font-size:11px">in attesa</td>
+              <td><div class="err-bar-cell">
+                <div class="err-bar-track"><div class="err-bar-mid"></div><div class="err-bar-fill pos" style="width:2%"></div></div>
+                <span style="font-size:10px;color:var(--ink-dim)">—</span>
+              </div></td>
+              <td><span class="hz pos">+0.7%</span></td>
+              <td><span class="hz pos">+0.7%</span></td>
+              <td><span class="hz pos">+0.8%</span></td>
+            </tr>
+            <tr style="background:rgba(34,197,94,0.03)">
+              <td><div class="td-ticker">CLRB</div><div class="td-company">Cellectar Biosciences</div></td>
+              <td class="td-date">22 Giu 2026</td>
+              <td><span class="meta-tag" style="font-size:9px">Partial</span></td>
+              <td style="color:var(--ink-muted);font-size:11px">4</td>
+              <td><span class="d7-val d7-pos">+8.37%</span></td>
+              <td><span class="d7-val d7-pos">+7.1%</span></td>
+              <td><span class="err-pos">+1.3pp</span></td>
+              <td><div class="err-bar-cell">
+                <div class="err-bar-track"><div class="err-bar-mid"></div><div class="err-bar-fill pos" style="width:5%"></div></div>
+                <span class="err-pos" style="font-size:10px">+1.3pp</span>
+              </div></td>
+              <td><span class="hz pos">+6.4%</span></td>
+              <td><span class="hz pos">+7.8%</span></td>
+              <td><span class="hz pos">+8.4%</span></td>
+            </tr>
+            <tr style="background:rgba(239,68,68,0.03)">
+              <td><div class="td-ticker">PLSE</div><div class="td-company">Pulse Biosciences</div></td>
+              <td class="td-date">30 Giu 2026</td>
+              <td><span class="meta-tag" style="font-size:9px">Exact</span></td>
+              <td style="color:var(--ink-muted);font-size:11px">17</td>
+              <td><span class="d7-val d7-neg">-0.0%</span></td>
+              <td><span class="d7-val d7-neg">-21.2%</span></td>
+              <td><span class="err-neg">-21.2pp</span></td>
+              <td><div class="err-bar-cell">
+                <div class="err-bar-track"><div class="err-bar-mid"></div><div class="err-bar-fill neg" style="width:38%"></div></div>
+                <span class="err-neg" style="font-size:10px">-21pp</span>
+              </div></td>
+              <td><span class="hz neg">-0.1%</span></td>
+              <td><span class="hz neg">-0.0%</span></td>
+              <td><span class="hz neg">-0.0%</span></td>
+            </tr>
+            <tr style="background:rgba(239,68,68,0.03)">
+              <td><div class="td-ticker">KPTI</div><div class="td-company">Karyopharm Therapeutics</div></td>
+              <td class="td-date">30 Giu 2026</td>
+              <td><span class="meta-tag" style="font-size:9px">Partial</span></td>
+              <td style="color:var(--ink-muted);font-size:11px">7</td>
+              <td><span class="d7-val d7-neg">-3.68%</span></td>
+              <td><span class="d7-val d7-neg">-5.9%</span></td>
+              <td><span class="err-neg">-2.2pp</span></td>
+              <td><div class="err-bar-cell">
+                <div class="err-bar-track"><div class="err-bar-mid"></div><div class="err-bar-fill neg" style="width:8%"></div></div>
+                <span class="err-neg" style="font-size:10px">-2.2pp</span>
+              </div></td>
+              <td><span class="hz neg">-1.6%</span></td>
+              <td><span class="hz neg">-3.3%</span></td>
+              <td><span class="hz neg">-3.7%</span></td>
+            </tr>
+            <tr>
+              <td><div class="td-ticker">IBRX</div><div class="td-company">ImmunityBio, Inc.</div></td>
+              <td class="td-date">30 Giu 2026</td>
+              <td><span class="meta-tag" style="font-size:9px">Exact</span></td>
+              <td style="color:var(--ink-muted);font-size:11px">10</td>
+              <td><span class="d7-val d7-neg">-0.54%</span></td>
+              <td><span class="d7-val" style="color:var(--ink-muted)">+2.1%</span></td>
+              <td><span class="err-pos">+2.6pp</span></td>
+              <td><div class="err-bar-cell">
+                <div class="err-bar-track"><div class="err-bar-mid"></div><div class="err-bar-fill pos" style="width:9%"></div></div>
+                <span class="err-pos" style="font-size:10px">+2.6pp</span>
+              </div></td>
+              <td><span class="hz neg">-0.7%</span></td>
+              <td><span class="hz neg">-0.5%</span></td>
+              <td><span class="hz neg">-0.5%</span></td>
+            </tr>
+          </tbody>
+        </table>
+        <div style="padding:8px 0;font-size:11px;color:var(--ink-dim);text-align:center">+ 822 eventi storici — scorri per vedere tutti</div>
+      </div>
+    </div>
+  </div>
+
+</main>
+
+<script>
+  const rows = {
+    ARWR: { ticker:'ARWR', company:'Arrowhead Pharma — Phase III', signal:'↑ STRONG LONG', signalClass:'big-up', d7:'+18.4%', d7Class:'up', runup:'+8.2%', conf:'87%' },
+    BEAM: { ticker:'BEAM', company:'Beam Therapeutics — Phase II', signal:'↑ STRONG LONG', signalClass:'big-up', d7:'+12.1%', d7Class:'up', runup:'+15.3%', conf:'74%' },
+    FATE: { ticker:'FATE', company:'Fate Therapeutics — Phase II', signal:'↓ SHORT', signalClass:'big-down', d7:'-9.2%', d7Class:'down', runup:'-3.1%', conf:'61%' },
+    NTLA: { ticker:'NTLA', company:'Intellia Therapeutics — Phase I/II', signal:'— NEUTRAL', signalClass:'big-neutral', d7:'+2.3%', d7Class:'muted', runup:'+1.8%', conf:'44%' },
+    CRSP: { ticker:'CRSP', company:'CRISPR Therapeutics — Phase III', signal:'↑ STRONG LONG', signalClass:'big-up', d7:'+22.7%', d7Class:'up', runup:'+4.5%', conf:'91%' },
+    EDIT: { ticker:'EDIT', company:'Editas Medicine — Phase I', signal:'↓ SHORT', signalClass:'big-down', d7:'-14.6%', d7Class:'down', runup:'-8.9%', conf:'78%' },
+  };
+
+  function showScreen(name) {
+    document.querySelectorAll('.screen').forEach(s => s.classList.remove('active'));
+    document.querySelectorAll('.nav-item').forEach(n => n.classList.remove('active'));
+    document.getElementById('screen-' + name).classList.add('active');
+    document.getElementById('nav-' + name).classList.add('active');
+    if (name !== 'catalyst') document.getElementById('drawer').style.display = 'none';
+  }
+
+  function selectRow(ticker) {
+    document.querySelectorAll('tbody tr').forEach(r => r.classList.remove('selected'));
+    const r = document.getElementById('row-' + ticker);
+    if (r) r.classList.add('selected');
+    const d = rows[ticker];
+    if (!d) return;
+    document.getElementById('d-ticker').textContent = d.ticker;
+    document.getElementById('d-company').textContent = d.company;
+    const sig = document.getElementById('d-signal');
+    sig.className = 'big-signal ' + d.signalClass;
+    sig.textContent = d.signal;
+    const d7el = document.getElementById('d-d7');
+    d7el.textContent = d.d7;
+    d7el.className = 'kpi-val ' + d.d7Class;
+    document.getElementById('d-runup').textContent = d.runup;
+    document.getElementById('d-conf').textContent = d.conf;
+    document.getElementById('drawer').style.display = 'flex';
+  }
+
+  function closeDrawer() {
+    document.getElementById('drawer').style.display = 'none';
+    document.querySelectorAll('tbody tr').forEach(r => r.classList.remove('selected'));
+  }
+</script>
+</body>
+</html>

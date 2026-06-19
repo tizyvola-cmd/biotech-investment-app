@@ -1,76 +1,96 @@
 import type { AppScreen } from "../types";
+import { useT, type TranslationKey } from "../shared/i18n";
 
 type NavItem = {
   id: AppScreen;
   icon: string;
-  label: string;
+  labelKey: TranslationKey;
   badge?: number;
 };
 
 type NavSection = {
-  title: string;
+  titleKey: TranslationKey;
   items: NavItem[];
 };
 
 const SECTIONS: NavSection[] = [
   {
-    title: "Overview",
+    titleKey: "sidebar.section.overview",
     items: [
-      { id: "main", icon: "🏠", label: "Main Dashboard" },
+      { id: "main", icon: "🏠", labelKey: "sidebar.item.mainDashboard" },
     ],
   },
   {
-    title: "Watch",
+    titleKey: "sidebar.section.portfolio",
     items: [
-      { id: "catalyst", icon: "⚡", label: "Catalyst Hub", badge: 5 },
-      { id: "simulation", icon: "📈", label: "Simulation" },
+      { id: "simulation", icon: "💼", labelKey: "sidebar.item.simulation" },
+      { id: "decisionLab", icon: "🎯", labelKey: "sidebar.item.decisionLab" },
     ],
   },
   {
-    title: "Analyze",
+    titleKey: "sidebar.section.market",
     items: [
-      { id: "decisionLab", icon: "📐", label: "Decision Lab" },
-      { id: "models", icon: "🧠", label: "Model Analysis" },
-      { id: "modelli", icon: "📊", label: "Distribuzione & curve" },
+      { id: "catalyst", icon: "⚡", labelKey: "sidebar.item.catalystHub", badge: 5 },
     ],
   },
   {
-    title: "Research",
+    titleKey: "sidebar.section.analyze",
     items: [
-      { id: "clinical", icon: "🔬", label: "Clinical Trials" },
-      { id: "secK8", icon: "📄", label: "SEC 8-K" },
-      { id: "financial", icon: "💰", label: "Financial" },
+      { id: "models", icon: "🧠", labelKey: "sidebar.item.modelAnalysis" },
+    ],
+  },
+  {
+    titleKey: "sidebar.section.research",
+    items: [
+      { id: "clinical", icon: "🔬", labelKey: "sidebar.item.clinical" },
+      { id: "catalystFeed", icon: "📰", labelKey: "sidebar.item.catalystFeed" },
+      { id: "financial", icon: "💰", labelKey: "sidebar.item.financial" },
+    ],
+  },
+  {
+    titleKey: "sidebar.section.collab",
+    items: [
+      { id: "testerMonitor", icon: "📱", labelKey: "sidebar.item.testerMonitor" },
     ],
   },
 ];
 
-const SCREEN_LABELS: Record<AppScreen, string> = {
-  main: "Main Dashboard",
-  catalyst: "Catalyst Hub",
-  simulation: "Simulation",
-  clinical: "Clinical Trials",
-  secK8: "SEC 8-K",
-  decisionLab: "Decision Lab",
-  financial: "Financial",
-  models: "Model Analysis",
-  modelli: "Distribuzione & curve",
-  system: "System",
+const SCREEN_LABEL_KEYS: Record<AppScreen, TranslationKey> = {
+  main: "sidebar.item.mainDashboard",
+  catalyst: "sidebar.item.catalystHub",
+  simulation: "sidebar.item.simulation",
+  clinical: "sidebar.item.clinical",
+  secK8: "sidebar.item.secK8",
+  decisionLab: "sidebar.item.decisionLab",
+  financial: "sidebar.item.financial",
+  models: "sidebar.item.modelAnalysis",
+  catalystFeed: "sidebar.item.catalystFeed",
+  testerMonitor: "sidebar.item.testerMonitor",
+  system: "sidebar.item.system",
 };
 
-export { SCREEN_LABELS };
+export { SCREEN_LABEL_KEYS };
 
 export function AppSidebar({
   screen,
   onScreen,
   apiOk,
+  mobileOpen = false,
+  onCloseMobile,
 }: {
   screen: AppScreen;
   onScreen: (s: AppScreen) => void;
   apiOk: boolean | null;
+  mobileOpen?: boolean;
+  onCloseMobile?: () => void;
 }) {
+  const t = useT();
   return (
     <aside
-      className="app-sidebar flex flex-col flex-shrink-0 border-r border-[rgb(var(--border))]/60 bg-[rgb(var(--surface))] min-w-[220px] w-[var(--sidebar-w,220px)]"
+      className={`app-sidebar flex flex-col flex-shrink-0 border-r border-[rgb(var(--border))]/60 bg-[rgb(var(--surface))] min-w-[220px] w-[var(--sidebar-w,220px)]${
+        mobileOpen ? " app-sidebar--open" : ""
+      }`}
+      aria-hidden={onCloseMobile != null && !mobileOpen ? true : undefined}
     >
       <div className="flex items-center gap-2.5 px-3.5 py-4 border-b border-[rgb(var(--border))]/60 mb-1">
         <div
@@ -79,17 +99,27 @@ export function AppSidebar({
         >
           ✦
         </div>
-        <div>
+        <div className="min-w-0 flex-1">
           <p className="font-bold text-[15px] tracking-tight leading-tight">SuperNova</p>
-          <p className="text-[9px] text-ink-muted uppercase tracking-[0.12em]">Biotech Intel</p>
+          <p className="text-[9px] text-ink-muted uppercase tracking-[0.12em]">{t("sidebar.brand.tagline")}</p>
         </div>
+        {onCloseMobile ? (
+          <button
+            type="button"
+            className="app-sidebar-close lg:hidden shrink-0 inline-flex items-center justify-center w-8 h-8 rounded-lg border border-[rgb(var(--border))]/60 text-ink-muted hover:text-ink hover:bg-[rgb(var(--panel-feed-row-hover))]/80 transition"
+            onClick={onCloseMobile}
+            aria-label={t("topbar.closeMenu")}
+          >
+            ✕
+          </button>
+        ) : null}
       </div>
 
       <nav className="app-sidebar-nav flex flex-col flex-1 overflow-y-auto overflow-x-hidden px-2 py-1 min-h-0">
         {SECTIONS.map((section) => (
-          <div key={section.title} className="mb-1">
+          <div key={section.titleKey} className="mb-1">
             <p className="text-[9px] font-semibold uppercase tracking-[0.12em] text-ink-muted/70 px-3 py-2">
-              {section.title}
+              {t(section.titleKey)}
             </p>
             {section.items.map((item) => {
               const active = screen === item.id;
@@ -100,12 +130,12 @@ export function AppSidebar({
                   className={`w-full flex items-center gap-2 rounded-lg px-3 py-2 mb-0.5 text-xs font-medium transition ${
                     active
                       ? "bg-accent/15 text-accent"
-                      : "text-ink-muted hover:bg-[rgb(var(--surface-3))] hover:text-white"
+                      : "text-ink-muted hover:bg-[rgb(var(--panel-feed-row-hover))]/80 hover:text-accent"
                   }`}
                   onClick={() => onScreen(item.id)}
                 >
                   <span className="text-sm opacity-90">{item.icon}</span>
-                  <span className="truncate text-left">{item.label}</span>
+                  <span className="truncate text-left">{t(item.labelKey)}</span>
                   {item.badge != null && (
                     <span className="ml-auto text-[10px] font-bold px-1.5 py-0.5 rounded-full bg-accent/20 text-accent">
                       {item.badge}
@@ -124,12 +154,12 @@ export function AppSidebar({
           className={`w-full flex items-center gap-2.5 rounded-lg px-3 py-2 text-xs font-medium transition ${
             screen === "system"
               ? "bg-accent/15 text-accent"
-              : "text-ink-muted hover:bg-[rgb(var(--surface-3))] hover:text-white"
+              : "text-ink-muted hover:bg-[rgb(var(--panel-feed-row-hover))]/80 hover:text-accent"
           }`}
           onClick={() => onScreen("system")}
         >
           <span className="text-sm">⚙</span>
-          System
+          {t("sidebar.item.system")}
         </button>
         <ModelStatusCard apiOk={apiOk} />
       </div>
@@ -139,7 +169,7 @@ export function AppSidebar({
 
 function ModelStatusCard({ apiOk }: { apiOk: boolean | null }) {
   return (
-    <div className="mx-1 mt-2 px-2.5 py-2 rounded-lg bg-[rgb(var(--surface-3))]/40 flex items-center gap-2">
+    <div className="sidebar-model-status mx-1 mt-2 px-2.5 py-2 rounded-lg bg-[rgb(var(--panel-feed-row-hover))]/70 border border-[rgb(var(--panel-feed-border))]/40 flex items-center gap-2">
       <span
         className={`w-[7px] h-[7px] rounded-full shrink-0 ${
           apiOk === false ? "bg-[rgb(var(--signal-down))]" : "bg-[rgb(var(--signal-up))] animate-pulse"
@@ -149,7 +179,7 @@ function ModelStatusCard({ apiOk }: { apiOk: boolean | null }) {
         }
       />
       <span className="text-[11px] text-ink-muted">Model v4</span>
-      <span className="text-[11px] font-semibold ml-auto tabular-nums">MAE 13pp</span>
+      <span className="sidebar-model-status-value text-[11px] font-semibold ml-auto tabular-nums">MAE 13pp</span>
     </div>
   );
 }

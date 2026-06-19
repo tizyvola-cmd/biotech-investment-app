@@ -1,12 +1,15 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import type { ChartBundle, ChartSeries, SheetTable } from "../types";
+import type { ChartBundle, SheetTable } from "../types";
 import {
   loadSimulationChartsBundle,
-  simulationRowPredAtOffset,
   simulationRowSeriesKey,
   findSimulationRow,
-  overlaySheetPredOnPoints,
 } from "../data/simulationCharts";
+import {
+  displayPredChartPoints,
+  resolveDisplayRecalibPoints,
+  snapshotSheetDrift,
+} from "../sheet/predictionCurveGrid";
 import { fetchDesktopManifest, type DesktopDataManifest } from "../data/projectData";
 import {
   defaultVisibleRefs,
@@ -15,17 +18,41 @@ import {
   MAX_CHART_COMPARE_SERIES,
   saveChartComparePrefs,
   saveSimChartPrefs,
-  type ChartCompareMode,
+  visibleRefsForPreset,
   type ChartComparePrefs,
+  type RefComparePreset,
   type SimChartPrefs,
 } from "../sheet/chartPrefs";
-import { buildNowMarkersFromSimulationRows } from "../sheet/chartNowOffset";
+import { useInvestSimInputs } from "../hooks/useInvestSimInputs";
+import { rowHasActivePortfolio } from "../sheet/simulationPosition";
+import { buildNowMarkersFromSimulationRows, completionDateToNowOffset } from "../sheet/chartNowOffset";
+import {
+  buildSecK8LinkIndex,
+  extractAiFeedMarkers,
+  extractPostK8Markers,
+  type AiFeedChartMarker,
+  type K8ChartMarker,
+} from "../sheet/k8ChartLinks";
+import {
+  PREDICTION_CURVE_RECALIB_LABEL,
+  predictionCurveRecalibChartTitle,
+} from "../sheet/chartNodes";
+import { hydrateClinicalPreCdRecords } from "../sheet/clinicalPreCdSnapshotCache";
+import {
+  formatEisPlusLegendShift,
+  resolveEisPlusCurve,
+} from "../sheet/eisPlusCurve";
+import { DailyOpenRecalibBadge } from "./DailyOpenRecalibBadge";
 import {
   PricePathChart,
   SimulationCurveChart,
   VariationHorizonChart,
+  type ChartLineBundle,
   type CurveLineSpec,
+  type PriceLineBundle,
 } from "./SimulationCurveChart";
+import { SHEET_GRID_TABLE_CLASS, gridTd, gridTh, sheetGridAlignForLabel } from "../sheet/sheetGridTable";
+import { SheetGridColgroup } from "../sheet/SheetGridColgroup";
 
 const REF_COLORS: Record<string, string> = {
   "Cluster 0": "#9ca3af",
@@ -35,13 +62,17 @@ const REF_COLORS: Record<string, string> = {
   "μ Post-CD rialzo": "#00c896",
   "Post-CD ribasso": "#fb7185",
   "μ Post-CD ribasso": "#fb7185",
+  "Post-CD neutro": "#a8b0bc",
+  "μ Post-CD neutro": "#a8b0bc",
   "Globale primaria": "#94a3b8",
   "controllo negativo": "#64748b",
 };
+// Note: REF_COLORS keys above are dataset labels from the JSON snapshot; not translated.
 
 const COMPANY_CURVA = ["#00dc96", "#00af78"] as const;
 const COMPANY_STORICO = ["#78c8ff", "#af8cff"] as const;
 const COMPANY_MODELLO = ["#ffa726", "#ff6b5a"] as const;
+const COMPANY_EIS_PLUS = ["#d946ef", "#a855f7"] as const;
 
 const MULTI_PALETTE = [
   "#00dc96",
@@ -58,35 +89,10 @@ const MULTI_PALETTE = [
   "#e879f9",
 ] as const;
 
-const COMPARE_MODE_LABELS: Record<ChartCompareMode, string> = {
-  single: "Singola",
-  pair2: "Confronto 2",
-  all: "Tutte Simulation",
-  multi: "Selezione multipla",
-};
 
 function seriesColor(slot: number): string {
   if (slot < 2) return COMPANY_STORICO[slot];
   return MULTI_PALETTE[slot % MULTI_PALETTE.length];
-}
-
-function simTableSeriesKeys(
-  simTable: SheetTable | null,
-  bundle: ChartBundle | null
-): string[] {
-  const keys: string[] = [];
-  const seen = new Set<string>();
-  for (const row of simTable?.rows ?? []) {
-    const k = simulationRowSeriesKey(row);
-    if (!k || seen.has(k) || !bundle?.series[k]) continue;
-    seen.add(k);
-    keys.push(k);
-  }
-  return keys.sort((a, b) => {
-    const la = bundle?.series[a]?.label ?? a;
-    const lb = bundle?.series[b]?.label ?? b;
-    return la.localeCompare(lb);
-  });
 }
 
 function refColor(label: string): string {
@@ -112,15 +118,106 @@ function listControls(bundle: ChartBundle | null): { id: string; label: string }
     .sort((a, b) => a.label.localeCompare(b.label));
 }
 
+function appendControlRefLines(
+  out: ChartLineBundle[],
+  bundle: ChartBundle,
+  controls: { id: string; label: string }[],
+  visibleRefs: Record<string, boolean>
+): void {
+  for (const c of controls) {
+    if (visibleRefs[c.id] === false) continue;
+    const meta = bundle.series[c.id];
+    if (!meta?.points) continue;
+    out.push({
+      spec: {
+        id: c.id,
+        label: `μ ${c.label}`,
+        color: refColor(c.label),
+        field: "pct_curva",
+        strokeWidth: 1.35,
+        strokeDasharray: "6 4",
+      },
+      points: meta.points,
+    });
+  }
+}
+
+function cdIsoFromSimRow(row: Record<string, unknown> | null): string | null {
+  if (!row) return null;
+  const raw = String(row["Completion Date"] ?? row.completion_date ?? "").trim();
+  if (!raw || raw === "—" || raw === "-") return null;
+  const slash = /^(\d{1,2})\/(\d{1,2})\/(\d{4})$/.exec(raw);
+  if (slash) {
+    const [, d, m, y] = slash;
+    return `${y}-${m.padStart(2, "0")}-${d.padStart(2, "0")}`;
+  }
+  const iso = /^(\d{4}-\d{2}-\d{2})/.exec(raw);
+  return iso ? iso[0] : null;
+}
+
+function tickerFromSeriesKey(sid: string): string {
+  const m = /^co:([^|]+)/.exec(sid);
+  return (m?.[1] ?? sid.split("|")[0] ?? "").trim().toUpperCase();
+}
+
+function portfolioSeriesIdsFromTable(
+  simTable: SheetTable | null,
+  inputs: ReturnType<typeof useInvestSimInputs>,
+): Set<string> {
+  const s = new Set<string>();
+  for (const row of simTable?.rows ?? []) {
+    if (!rowHasActivePortfolio(row, inputs)) continue;
+    const k = simulationRowSeriesKey(row);
+    if (k) s.add(k);
+  }
+  return s;
+}
+
+function portfolioSeriesKeysOrdered(
+  simTable: SheetTable | null,
+  inputs: ReturnType<typeof useInvestSimInputs>,
+  bundle: ChartBundle | null,
+): string[] {
+  const keys: string[] = [];
+  const seen = new Set<string>();
+  for (const row of simTable?.rows ?? []) {
+    if (!rowHasActivePortfolio(row, inputs)) continue;
+    const k = simulationRowSeriesKey(row);
+    if (!k || seen.has(k) || !bundle?.series[k]) continue;
+    seen.add(k);
+    keys.push(k);
+  }
+  return keys.sort((a, b) => {
+    const la = bundle?.series[a]?.label ?? a;
+    const lb = bundle?.series[b]?.label ?? b;
+    return la.localeCompare(lb);
+  });
+}
+
+function companyOptionLabel(
+  c: { id: string; label: string },
+  portfolioSeriesIds: Set<string>,
+  tableKeys: Set<string>,
+): string {
+  const mark = portfolioSeriesIds.has(c.id) ? "💼 " : "";
+  const suffix = tableKeys.has(c.id) ? "" : " (JSON only)";
+  return `${mark}${c.label}${suffix}`;
+}
+
 export function SimulationAnalysisView({
   simTable,
   simLoading,
+  secK8Table = null,
+  onOpenSecK8,
   focusSeriesKey,
   focusTicker,
   onFocusConsumed,
 }: {
   simTable: SheetTable | null;
   simLoading: boolean;
+  /** Optional SEC K-8 sheet for EDGAR links on K-8 chart markers. */
+  secK8Table?: SheetTable | null;
+  onOpenSecK8?: (ticker: string) => void;
   focusSeriesKey?: string | null;
   focusTicker?: string | null;
   onFocusConsumed?: () => void;
@@ -132,9 +229,11 @@ export function SimulationAnalysisView({
   const [manifest, setManifest] = useState<DesktopDataManifest | null>(null);
   const [prefs, setPrefs] = useState<SimChartPrefs>(() => loadSimChartPrefs());
   const [comparePrefs, setComparePrefs] = useState<ChartComparePrefs>(() =>
-    loadChartComparePrefs()
+    loadChartComparePrefs(),
   );
   const [filter, setFilter] = useState("");
+  const investSimInputs = useInvestSimInputs(simTable);
+  const clinicalRecords = useMemo(() => hydrateClinicalPreCdRecords(), [bundle?.loaded_at]);
 
   const companies = useMemo(() => listCompanies(bundle), [bundle]);
   const controls = useMemo(() => listControls(bundle), [bundle]);
@@ -182,8 +281,10 @@ export function SimulationAnalysisView({
     if (!sid) return;
 
     appliedChartsFocus.current = tag;
+    setComparePrefs({ mode: "pair2", selectedIds: [] });
+    saveChartComparePrefs({ mode: "pair2", selectedIds: [] });
     setPrefs((prev) => {
-      const next = { ...prev, companyA: sid };
+      const next = { ...prev, companyA: sid, companyB: null };
       saveSimChartPrefs(next);
       return next;
     });
@@ -217,51 +318,108 @@ export function SimulationAnalysisView({
     saveChartComparePrefs(next);
   }, []);
 
-  const simSeriesKeys = useMemo(
-    () => simTableSeriesKeys(simTable, bundle),
-    [simTable, bundle]
+  const exitPortfolioOverlay = useCallback(() => {
+    persistCompare({ mode: "pair2", selectedIds: [] });
+  }, [persistCompare]);
+
+  const applyRefPreset = useCallback(
+    (preset: RefComparePreset) => {
+      persist({
+        ...prefs,
+        showControls: preset !== "none",
+        visibleRefs: visibleRefsForPreset(controls, preset),
+      });
+    },
+    [prefs, controls, persist]
   );
 
+  const portfolioSeriesIds = useMemo(
+    () => portfolioSeriesIdsFromTable(simTable, investSimInputs),
+    [simTable, investSimInputs],
+  );
+
+  const portfolioSeriesKeys = useMemo(
+    () => portfolioSeriesKeysOrdered(simTable, investSimInputs, bundle),
+    [simTable, investSimInputs, bundle],
+  );
+
+  const portfolioOverlayActive =
+    comparePrefs.mode === "multi" && comparePrefs.selectedIds.length > 0;
+
   const companySlots = useMemo(() => {
-    const mode = comparePrefs.mode;
-    if (mode === "single") {
-      return prefs.companyA ? [{ sid: prefs.companyA, slot: 0 }] : [];
-    }
-    if (mode === "pair2") {
-      const slots: { sid: string; slot: number }[] = [];
-      if (prefs.companyA) slots.push({ sid: prefs.companyA, slot: 0 });
-      if (prefs.companyB && prefs.companyB !== prefs.companyA) {
-        slots.push({ sid: prefs.companyB, slot: 1 });
-      }
-      return slots;
-    }
-    if (mode === "all") {
-      return simSeriesKeys
+    if (portfolioOverlayActive) {
+      return comparePrefs.selectedIds
+        .filter((sid) => bundle?.series[sid])
         .slice(0, MAX_CHART_COMPARE_SERIES)
         .map((sid, slot) => ({ sid, slot }));
     }
-    const ids =
-      comparePrefs.selectedIds.length > 0
-        ? comparePrefs.selectedIds
-        : simSeriesKeys.slice(0, 3);
-    return ids
-      .filter((sid) => bundle?.series[sid])
-      .slice(0, MAX_CHART_COMPARE_SERIES)
-      .map((sid, slot) => ({ sid, slot }));
-  }, [comparePrefs, prefs.companyA, prefs.companyB, simSeriesKeys, bundle]);
+    const slots: { sid: string; slot: number }[] = [];
+    if (prefs.companyA) slots.push({ sid: prefs.companyA, slot: 0 });
+    if (prefs.companyB && prefs.companyB !== prefs.companyA) {
+      slots.push({ sid: prefs.companyB, slot: 1 });
+    }
+    return slots;
+  }, [
+    portfolioOverlayActive,
+    comparePrefs.selectedIds,
+    bundle,
+    prefs.companyA,
+    prefs.companyB,
+  ]);
 
   const compareTruncated =
-    (comparePrefs.mode === "all" && simSeriesKeys.length > MAX_CHART_COMPARE_SERIES) ||
-    (comparePrefs.mode === "multi" &&
-      (comparePrefs.selectedIds.length > MAX_CHART_COMPARE_SERIES ||
-        (comparePrefs.selectedIds.length === 0 &&
-          simSeriesKeys.length > MAX_CHART_COMPARE_SERIES)));
+    portfolioOverlayActive && portfolioSeriesKeys.length > MAX_CHART_COMPARE_SERIES;
+
+  const showPortfolioCurves = useCallback(() => {
+    const ids = portfolioSeriesKeys.filter((k) => bundle?.series[k]);
+    if (ids.length === 0) return;
+    const capped = ids.slice(0, MAX_CHART_COMPARE_SERIES);
+    persistCompare({ mode: "multi", selectedIds: capped });
+    persist({
+      ...prefs,
+      companyA: capped[0] ?? prefs.companyA,
+      companyB: capped[1] ?? null,
+    });
+  }, [portfolioSeriesKeys, bundle, persistCompare, persist, prefs]);
+
+  useEffect(() => {
+    if (!portfolioOverlayActive) return;
+    const fresh = portfolioSeriesKeys
+      .filter((k) => bundle?.series[k])
+      .slice(0, MAX_CHART_COMPARE_SERIES);
+    if (fresh.length === 0) {
+      exitPortfolioOverlay();
+      return;
+    }
+    const cur = comparePrefs.selectedIds.join("\0");
+    const next = fresh.join("\0");
+    if (cur !== next) {
+      persistCompare({ mode: "multi", selectedIds: fresh });
+    }
+  }, [
+    portfolioOverlayActive,
+    portfolioSeriesKeys,
+    bundle,
+    comparePrefs.selectedIds,
+    exitPortfolioOverlay,
+    persistCompare,
+  ]);
 
   const filteredCompanies = useMemo(() => {
     const q = filter.trim().toUpperCase();
-    if (!q) return companies;
-    return companies.filter((c) => c.label.toUpperCase().includes(q));
-  }, [companies, filter]);
+    let list = q
+      ? companies.filter((c) => c.label.toUpperCase().includes(q))
+      : companies;
+    if (portfolioSeriesIds.size > 0) {
+      list = [...list].sort((a, b) => {
+        const ap = portfolioSeriesIds.has(a.id) ? 0 : 1;
+        const bp = portfolioSeriesIds.has(b.id) ? 0 : 1;
+        if (ap !== bp) return ap - bp;
+        return a.label.localeCompare(b.label);
+      });
+    }
+    return list;
+  }, [companies, filter, portfolioSeriesIds]);
 
   const tableKeys = useMemo(() => {
     const keys = new Set<string>();
@@ -284,7 +442,7 @@ export function SimulationAnalysisView({
 
   const explorerLines = useMemo(() => {
     if (!bundle) return [];
-    const out: { spec: CurveLineSpec; points: ChartSeries["points"] }[] = [];
+    const out: ChartLineBundle[] = [];
 
     const fields: {
       on: boolean;
@@ -295,20 +453,20 @@ export function SimulationAnalysisView({
       {
         on: prefs.showCurva,
         field: "pct_foglio",
-        label: "Pred foglio",
+        label: PREDICTION_CURVE_RECALIB_LABEL,
         pickColor: (slot) =>
           slot < 2 ? COMPANY_CURVA[slot] : MULTI_PALETTE[slot % MULTI_PALETTE.length],
       },
       {
         on: prefs.showStorico,
         field: "pct_reale",
-        label: "storico",
+        label: "historical",
         pickColor: seriesColor,
       },
       {
         on: prefs.showModello,
-        field: "pct_modello",
-        label: "modello",
+        field: "pct_modello_raw",
+        label: "model (raw poly)",
         pickColor: (slot) =>
           slot < 2 ? COMPANY_MODELLO[slot] : MULTI_PALETTE[(slot + 4) % MULTI_PALETTE.length],
       },
@@ -318,51 +476,88 @@ export function SimulationAnalysisView({
       const meta = bundle.series[sid];
       if (!meta?.points) continue;
       const row = simTable?.rows?.length ? findSimulationRow(simTable.rows, sid) : null;
-      const points = overlaySheetPredOnPoints(meta.points, row);
+      const recalib = resolveDisplayRecalibPoints(meta.points, row);
+      const nowOffset = row ? completionDateToNowOffset(row["Completion Date"]) : undefined;
+      const extraNow =
+        nowOffset != null && Number.isFinite(nowOffset) ? [nowOffset] : [];
       const tk = meta.label.slice(0, 36);
-      const pfx =
-        comparePrefs.mode === "pair2"
-          ? slot === 0
-            ? "A"
-            : "B"
-          : comparePrefs.mode === "single"
-            ? ""
-            : `${slot + 1}`;
+      const pfx = slot === 1 ? "B" : "";
       for (const f of fields) {
         if (!f.on) continue;
+        const linePoints =
+          f.field === "pct_foglio"
+            ? displayPredChartPoints(recalib, row, extraNow)
+            : recalib;
         out.push({
           spec: {
             id: `${sid}_${f.field}`,
             label: pfx ? `${pfx} ${tk} · ${f.label}` : `${tk} · ${f.label}`,
             color: f.pickColor(slot),
             field: f.field,
-            strokeWidth: comparePrefs.mode === "pair2" && slot === 1 ? 2.5 : 2,
+            strokeWidth: slot === 1 ? 2.5 : 2,
           },
-          points,
+          points: linePoints,
+          nowOffset,
+        });
+      }
+
+      if (prefs.showEisPlus) {
+        const cdIso = cdIsoFromSimRow(row);
+        const ticker = tickerFromSeriesKey(sid);
+        const { points: eisPts, signal } = resolveEisPlusCurve(
+          recalib,
+          ticker,
+          cdIso,
+          clinicalRecords,
+          row,
+        );
+        const eisLabel = formatEisPlusLegendShift(signal);
+        out.push({
+          spec: {
+            id: `${sid}_pct_eis_plus`,
+            label: pfx ? `${pfx} ${tk} · ${eisLabel}` : `${tk} · ${eisLabel}`,
+            color:
+              slot < 2
+                ? COMPANY_EIS_PLUS[slot]
+                : MULTI_PALETTE[(slot + 6) % MULTI_PALETTE.length],
+            field: "pct_eis_plus",
+            strokeWidth: slot === 1 ? 2.25 : 1.85,
+            strokeDasharray: "6 4",
+          },
+          points: eisPts,
+          nowOffset,
         });
       }
     }
 
-    if (prefs.showControls && prefs.showCurva) {
-      for (const c of controls) {
-        if (prefs.visibleRefs[c.id] === false) continue;
-        const meta = bundle.series[c.id];
-        if (!meta?.points) continue;
-        out.push({
-          spec: {
-            id: c.id,
-            label: `μ ${c.label}`,
-            color: refColor(c.label),
-            field: "pct_curva",
-            strokeWidth: 1.25,
-            strokeDasharray: "6 4",
-          },
-          points: meta.points,
-        });
-      }
+    if (
+      prefs.showControls &&
+      (prefs.showCurva || prefs.showStorico || prefs.showModello || prefs.showEisPlus)
+    ) {
+      appendControlRefLines(out, bundle, controls, prefs.visibleRefs);
     }
     return out;
-  }, [bundle, prefs, controls, simTable, companySlots, comparePrefs.mode]);
+  }, [bundle, prefs, controls, simTable, companySlots, clinicalRecords]);
+
+  const k8LinkIndex = useMemo(() => buildSecK8LinkIndex(secK8Table), [secK8Table]);
+
+  const chartRecalibMarkers = useMemo(() => {
+    const k8: K8ChartMarker[] = [];
+    const aiFeed: AiFeedChartMarker[] = [];
+    if (!bundle) return { k8, aiFeed };
+    for (const { sid, slot } of companySlots) {
+      const meta = bundle.series[sid];
+      if (!meta?.points?.length) continue;
+      const row = simTable?.rows?.length ? findSimulationRow(simTable.rows, sid) : null;
+      const points = resolveDisplayRecalibPoints(meta.points, row);
+      const tk = meta.label.split("|")[0].trim().slice(0, 12) || sid.split("|")[0];
+      const color =
+        slot < 2 ? COMPANY_CURVA[slot] : MULTI_PALETTE[slot % MULTI_PALETTE.length];
+      k8.push(...extractPostK8Markers(points, tk, color, k8LinkIndex));
+      aiFeed.push(...extractAiFeedMarkers(points, tk));
+    }
+    return { k8, aiFeed };
+  }, [bundle, companySlots, simTable, k8LinkIndex]);
 
   const varSeries = useMemo(() => {
     if (!bundle) return [];
@@ -375,14 +570,7 @@ export function SimulationAnalysisView({
     for (const { sid, slot } of companySlots) {
       const m = bundle.series[sid];
       if (!m?.var_horizons?.length) continue;
-      const pfx =
-        comparePrefs.mode === "pair2"
-          ? slot === 0
-            ? "A "
-            : "B "
-          : comparePrefs.mode === "single"
-            ? ""
-            : `${slot + 1} `;
+      const pfx = slot === 0 ? "" : "B ";
       out.push({
         id: `var_${sid}`,
         label: `${pfx}${m.label}`,
@@ -391,46 +579,33 @@ export function SimulationAnalysisView({
       });
     }
     return out;
-  }, [bundle, companySlots, comparePrefs.mode]);
+  }, [bundle, companySlots]);
 
-  const { priceStorLines, priceRecalLines } = useMemo(() => {
-    const stor: {
-      id: string;
-      label: string;
-      color: string;
-      points: ChartSeries["points"];
-    }[] = [];
-    const recal: typeof stor = [];
-    if (!bundle) return { priceStorLines: stor, priceRecalLines: recal };
+  // Single source of lines for the unified historical + recalibrated chart.
+  // Each entry carries the ticker's points; the chart extracts both
+  // "price_storico_usd" (primary, solid) and "price_usd" (overlay, dashed)
+  // from the same points, so we no longer build two parallel arrays.
+  const priceStorLines = useMemo(() => {
+    const stor: PriceLineBundle[] = [];
+    if (!bundle) return stor;
 
     for (const { sid, slot } of companySlots) {
       const meta = bundle.series[sid];
       if (!meta) continue;
-      const pfx =
-        comparePrefs.mode === "pair2"
-          ? slot === 0
-            ? "A"
-            : "B"
-          : comparePrefs.mode === "single"
-            ? ""
-            : String(slot + 1);
+      const row = simTable?.rows?.length ? findSimulationRow(simTable.rows, sid) : null;
+      const nowOffset = row ? completionDateToNowOffset(row["Completion Date"]) : undefined;
+      const pfx = slot === 1 ? "B" : "";
       const short = meta.label.slice(0, 28);
       stor.push({
         id: `${sid}_stor`,
-        label: pfx ? `${pfx} ${short} · storico` : `${short} · storico`,
+        label: pfx ? `${pfx} ${short}` : short,
         color: seriesColor(slot),
-        points: meta.points,
-      });
-      recal.push({
-        id: `${sid}_path`,
-        label: pfx ? `${pfx} ${short} · path` : `${short} · path`,
-        color:
-          slot < 2 ? COMPANY_CURVA[slot] : MULTI_PALETTE[slot % MULTI_PALETTE.length],
-        points: meta.points,
+        points: resolveDisplayRecalibPoints(meta.points, row),
+        nowOffset,
       });
     }
-    return { priceStorLines: stor, priceRecalLines: recal };
-  }, [bundle, companySlots, comparePrefs.mode]);
+    return stor;
+  }, [bundle, companySlots, simTable?.rows]);
 
   const tableSeriesId = companySlots[0]?.sid ?? prefs.companyA;
   const tableMetaRaw = tableSeriesId ? bundle?.series[tableSeriesId] : null;
@@ -443,7 +618,7 @@ export function SimulationAnalysisView({
         : null;
     return {
       ...tableMetaRaw,
-      points: overlaySheetPredOnPoints(tableMetaRaw.points ?? [], row),
+      points: resolveDisplayRecalibPoints(tableMetaRaw.points ?? [], row),
     };
   }, [tableMetaRaw, tableSeriesId, simTable]);
 
@@ -452,70 +627,84 @@ export function SimulationAnalysisView({
     const chartDay = bundle.loaded_at?.slice(0, 10);
     const manifestDay = manifest?.updated_at?.slice(0, 10);
     if (chartDay && manifestDay && chartDay !== manifestDay) {
-      return `Export grafici (${chartDay}) ≠ snapshot desktop (${manifestDay}) — esegui Export_Desktop_Snapshots.bat.`;
+      return `Chart export (${chartDay}) ≠ desktop snapshot (${manifestDay}) — run Export_Desktop_Snapshots.bat.`;
     }
     if (tableMetaRaw?.points?.length && !tableMetaRaw.points.some((p) => p.pct_foglio != null)) {
-      return "JSON grafici senza pct_foglio (export precedente al fix) — rigenera simulation_charts_snapshot.json.";
+      return "Chart JSON without pct_foglio (export prior to fix) — regenerate simulation_charts_snapshot.json.";
     }
     return null;
   }, [bundle, manifest, tableMetaRaw]);
 
   const tableMatchInfo = useMemo(() => {
-    if (!tableMeta?.points?.length || !tableSeriesId || !simTable?.rows?.length) return null;
+    if (!tableMetaRaw?.points?.length || !tableSeriesId || !simTable?.rows?.length) return null;
     const row = findSimulationRow(simTable.rows, tableSeriesId);
     if (!row) {
-      return { inTable: false, mismatches: 0, compared: 0, nChart: tableMeta.points.length };
+      return { inTable: false, staleNodes: 0, compared: 0, maxDriftPp: 0, displaySynced: false };
     }
-    let mismatches = 0;
-    let compared = 0;
-    for (const p of tableMeta.points) {
-      if (p.nodo && p.nodo !== "standard") continue;
-      const sheetPred = simulationRowPredAtOffset(row, p.offset);
-      const chartPred = p.pct_foglio ?? p.pct_curva;
-      if (sheetPred == null || chartPred == null || chartPred !== chartPred) continue;
-      compared += 1;
-      if (Math.abs(sheetPred - chartPred) > 0.6) mismatches += 1;
-    }
+    const drift = snapshotSheetDrift(tableMetaRaw.points, row);
     return {
       inTable: true,
-      mismatches,
-      compared,
-      nChart: tableMeta.points.filter((p) => !p.nodo || p.nodo === "standard").length,
+      staleNodes: drift.staleNodes,
+      compared: drift.compared,
+      maxDriftPp: drift.maxDriftPp,
+      displaySynced: drift.staleNodes > 0,
     };
-  }, [tableMeta, tableSeriesId, simTable]);
+  }, [tableMetaRaw, tableSeriesId, simTable]);
 
-  function setPreset(curva: boolean, storico: boolean, modello: boolean) {
-    persist({ ...prefs, showCurva: curva, showStorico: storico, showModello: modello });
-  }
+  const recalibBadgeEntries = useMemo(() => {
+    if (!bundle || !simTable?.rows?.length) return [];
+    return companySlots
+      .map(({ sid, slot }) => {
+        const meta = bundle.series[sid];
+        if (!meta?.points?.length) return null;
+        const row = findSimulationRow(simTable.rows, sid);
+        if (!row) return null;
+        const tk =
+          meta.label.split("|")[0]?.trim().slice(0, 12) ||
+          String(row.Ticker ?? sid).slice(0, 12);
+        const label = slot === 1 ? `B · ${tk}` : tk;
+        return {
+          key: sid,
+          label,
+          points: meta.points,
+          row: {
+            ...row,
+            _manifest_updated_at: manifest?.updated_at ?? null,
+          },
+        };
+      })
+      .filter((e): e is NonNullable<typeof e> => e != null);
+  }, [bundle, companySlots, simTable?.rows, manifest?.updated_at]);
 
   return (
-    <section className="card flex flex-col flex-1 min-h-0 overflow-hidden">
+    <section className="card sim-harmonize flex flex-col flex-1 min-h-0 overflow-hidden">
       <div className="flex flex-wrap items-center gap-3 border-b border-[rgb(var(--border))] px-4 py-3 shrink-0">
         <div>
           <p className="text-xs text-ink-muted">
             {loading || simLoading
-              ? "Caricamento curve…"
-              : `${companies.length} società · ${controls.length} curve μ`}
+              ? "Loading curves…"
+              : `${companies.length} companies · ${controls.length} μ curves`}
             {source && ` · ${source}`}
-            {bundle?.loaded_at && ` · dati ${bundle.loaded_at}`}
+            {bundle?.loaded_at && ` · data ${bundle.loaded_at}`}
             {manifest?.updated_at && ` · snapshot ${manifest.updated_at.slice(0, 10)}`}
-            {tableMeta && comparePrefs.mode !== "all" && comparePrefs.mode !== "multi" && (
+            {tableMeta && (
               <>
                 {" · "}
-                {tableMeta.points.filter((p) => !p.nodo || p.nodo === "standard").length} nodi
-                {comparePrefs.mode === "pair2" && prefs.companyA ? " (A)" : ""}
+                {tableMeta.points.filter((p) => !p.nodo || p.nodo === "standard").length} nodes
+                {companySlots.length > 1 && prefs.companyA ? " (A)" : ""}
               </>
             )}
             {companySlots.length > 1 && (
               <>
                 {" · "}
-                {companySlots.length} serie
+                {companySlots.length} series
+                {portfolioOverlayActive ? " · 💼 portfolio" : ""}
               </>
             )}
           </p>
         </div>
         <button type="button" className="btn-ghost text-xs ml-auto" onClick={() => void reloadCharts()}>
-          Ricarica grafici
+          Reload charts
         </button>
       </div>
 
@@ -525,14 +714,14 @@ export function SimulationAnalysisView({
 
       {!loading && !error && !bundle && (
         <p className="px-4 py-2 text-sm text-amber-600 dark:text-amber-400 shrink-0">
-          Snapshot grafici assente — esegui <strong>Export_Desktop_Snapshots.bat</strong> (include
-          simulation_charts) o tab Refresh, poi Ricarica grafici.
+          Chart snapshot missing — run <strong>Export_Desktop_Snapshots.bat</strong> (includes
+          simulation_charts) or Refresh tab, then Reload charts.
         </p>
       )}
 
       {controls.length === 0 && bundle && !loading && (
         <p className="px-4 py-2 text-xs text-amber-600 dark:text-amber-400 shrink-0">
-          Nessuna curva μ di controllo nel JSON — rigenera simulation_charts_snapshot.json.
+          No μ control curve in JSON — regenerate simulation_charts_snapshot.json.
         </p>
       )}
 
@@ -544,36 +733,35 @@ export function SimulationAnalysisView({
 
       {compareTruncated && (
         <p className="px-4 py-1.5 text-xs text-amber-600 dark:text-amber-400 shrink-0">
-          Mostrate al massimo {MAX_CHART_COMPARE_SERIES} serie (
-          {simSeriesKeys.length} nel foglio Simulation) — usa Selezione multipla per scegliere
-          quali confrontare.
+          At most {MAX_CHART_COMPARE_SERIES} portfolio curves shown (
+          {portfolioSeriesKeys.length} open positions).
         </p>
       )}
 
-      {tableMatchInfo && tableSeriesId && comparePrefs.mode !== "all" && comparePrefs.mode !== "multi" && (
+      {tableMatchInfo && tableSeriesId && (
         <p
           className={`px-4 py-1.5 text-xs shrink-0 ${
             !tableMatchInfo.inTable
               ? "text-ink-muted"
-              : tableMatchInfo.mismatches > 0
+              : tableMatchInfo.staleNodes > 0
                 ? "text-amber-600 dark:text-amber-400"
                 : "text-ink-muted"
           }`}
         >
           {!tableMatchInfo.inTable
-            ? "Società A non presente nel foglio Simulation (tabella)."
+            ? "Company A not present in Simulation sheet (table)."
             : tableMatchInfo.compared === 0
-              ? "Nessun nodo comune tra Pred foglio e colonne Δ% del foglio Simulation."
-              : tableMatchInfo.mismatches > 0
-                ? `Attenzione: ${tableMatchInfo.mismatches}/${tableMatchInfo.compared} nodi con Δ>0.6 pp vs foglio Simulation — ricarica tabella o rigenera snapshot grafici.`
-                : `Pred foglio allineata al foglio Simulation (${tableMatchInfo.compared} nodi).`}
+              ? "No common node between Pred sheet and Δ% columns of Simulation sheet."
+              : tableMatchInfo.staleNodes > 0
+                ? `Snapshot JSON stale on ${tableMatchInfo.staleNodes}/${tableMatchInfo.compared} nodes (max Δ ${tableMatchInfo.maxDriftPp.toFixed(2)} pp) — chart uses Simulation sheet values (same grid as SuperNova). Regenerate simulation_charts_snapshot.json when convenient.`
+                : `Pred aligned with Simulation sheet (${tableMatchInfo.compared} nodes · grid T−60…T+7).`}
         </p>
       )}
 
       <div className="flex flex-1 min-h-0 overflow-hidden">
-        <aside className="w-72 shrink-0 border-r border-[rgb(var(--border))]/60 overflow-y-auto p-3 space-y-4 text-sm">
+        <aside className="w-56 shrink-0 border-r border-[rgb(var(--border))]/60 overflow-y-auto p-3 space-y-3 text-sm">
           <div>
-            <label className="text-xs font-medium text-ink-muted block mb-1">Cerca società</label>
+            <label className="text-xs font-medium text-ink-muted block mb-1">Search</label>
             <input
               className="input w-full text-xs"
               placeholder="Ticker…"
@@ -583,322 +771,187 @@ export function SimulationAnalysisView({
           </div>
 
           <div>
-            <p className="text-xs font-medium text-ink-muted mb-1">Modalità confronto</p>
-            <div className="flex flex-wrap gap-1">
-              {(Object.keys(COMPARE_MODE_LABELS) as ChartCompareMode[]).map((mode) => (
+            <button
+              type="button"
+              disabled={portfolioSeriesKeys.length === 0 || simLoading}
+              onClick={() => showPortfolioCurves()}
+              className={`w-full text-left text-[11px] px-2.5 py-1.5 rounded border transition ${
+                portfolioOverlayActive
+                  ? "bg-accent/15 border-accent/50 text-accent font-medium"
+                  : "border-[rgb(var(--border))]/50 text-ink-muted hover:text-ink hover:border-accent/40"
+              } disabled:opacity-45 disabled:cursor-not-allowed`}
+              title={
+                portfolioSeriesKeys.length === 0
+                  ? "Nessuna posizione aperta in Simulation"
+                  : "Mostra tutte le curve delle posizioni aperte"
+              }
+            >
+              💼 Curve portfolio
+              {portfolioSeriesKeys.length > 0 ? ` (${portfolioSeriesKeys.length})` : ""}
+            </button>
+            {portfolioOverlayActive && (
+              <button
+                type="button"
+                onClick={exitPortfolioOverlay}
+                className="mt-1 w-full text-[10px] text-ink-muted hover:text-ink underline"
+              >
+                Torna a confronto A/B
+              </button>
+            )}
+          </div>
+
+          <div>
+            <label className="text-xs font-medium text-ink-muted block mb-1">Company A</label>
+            <select
+              className="input w-full text-xs"
+              value={prefs.companyA ?? ""}
+              onChange={(e) => {
+                exitPortfolioOverlay();
+                persist({ ...prefs, companyA: e.target.value || null });
+              }}
+            >
+              {filteredCompanies.map((c) => (
+                <option key={c.id} value={c.id}>
+                  {companyOptionLabel(c, portfolioSeriesIds, tableKeys)}
+                </option>
+              ))}
+            </select>
+          </div>
+
+          <div>
+            <label className="text-xs font-medium text-ink-muted block mb-1">Company B</label>
+            <select
+              className="input w-full text-xs"
+              value={prefs.companyB ?? ""}
+              onChange={(e) => {
+                exitPortfolioOverlay();
+                persist({ ...prefs, companyB: e.target.value || null });
+              }}
+            >
+              <option value="">— none —</option>
+              {filteredCompanies.map((c) => (
+                <option key={c.id} value={c.id}>
+                  {companyOptionLabel(c, portfolioSeriesIds, tableKeys)}
+                </option>
+              ))}
+            </select>
+          </div>
+
+          <div>
+            <label className="text-xs font-medium text-ink-muted block mb-1">Curve visibili</label>
+            <div className="flex flex-col gap-1">
+              {(
+                [
+                  ["showCurva",    "Prediction + Recalib."],
+                  ["showStorico",  "Price $ — real data"],
+                  ["showModello",  "Modello (no recalib.)"],
+                  ["showEisPlus",  "+EIS (shift feed)"],
+                ] as const
+              ).map(([key, label]) => (
                 <button
-                  key={mode}
+                  key={key}
                   type="button"
-                  className={`rounded-md px-2 py-0.5 text-[10px] transition ${
-                    comparePrefs.mode === mode
-                      ? "bg-accent text-white"
-                      : "text-ink-muted hover:text-ink border border-[rgb(var(--border))]/60"
+                  onClick={() => persist({ ...prefs, [key]: !prefs[key] })}
+                  className={`text-left text-[11px] px-2.5 py-1 rounded border transition ${
+                    prefs[key]
+                      ? "bg-accent/15 border-accent/50 text-accent font-medium"
+                      : "border-[rgb(var(--border))]/50 text-ink-muted hover:text-ink"
                   }`}
-                  onClick={() => persistCompare({ ...comparePrefs, mode })}
                 >
-                  {COMPARE_MODE_LABELS[mode]}
+                  {label}
                 </button>
               ))}
             </div>
           </div>
 
-          {(comparePrefs.mode === "single" || comparePrefs.mode === "pair2") && (
           <div>
-            <label className="text-xs font-medium text-ink-muted block mb-1">Società A</label>
+            <label className="text-xs font-medium text-ink-muted block mb-1">Curve µ distribuzione</label>
             <select
               className="input w-full text-xs"
-              value={prefs.companyA ?? ""}
-              onChange={(e) =>
-                persist({ ...prefs, companyA: e.target.value || null })
-              }
+              defaultValue=""
+              onChange={(e) => {
+                if (e.target.value) applyRefPreset(e.target.value as RefComparePreset);
+                e.target.value = "";
+              }}
             >
-              {filteredCompanies.map((c) => (
-                <option key={c.id} value={c.id}>
-                  {c.label}
-                  {tableKeys.has(c.id) ? "" : " (solo JSON)"}
-                </option>
-              ))}
+              <option value="" disabled>— seleziona preset —</option>
+              <option value="supernova">SuperNova</option>
+              <option value="postRialzo">Post + (rialzo)</option>
+              <option value="postRibasso">Post − (ribasso)</option>
+              <option value="postNeutro">Post ↔ (neutro)</option>
+              <option value="postCd">Post-CD all</option>
+              <option value="supernovaPostCd">SN + Post-CD</option>
+              <option value="all">All µ</option>
+              <option value="none">Off</option>
             </select>
-          </div>
-          )}
-
-          {comparePrefs.mode === "pair2" && (
-          <div>
-            <label className="text-xs font-medium text-ink-muted block mb-1">
-              Società B (confronto)
-            </label>
-            <select
-              className="input w-full text-xs"
-              value={prefs.companyB ?? ""}
-              onChange={(e) =>
-                persist({
-                  ...prefs,
-                  companyB: e.target.value || null,
-                })
-              }
-            >
-              <option value="">— nessuna —</option>
-              {filteredCompanies.map((c) => (
-                <option key={c.id} value={c.id}>
-                  {c.label}
-                </option>
-              ))}
-            </select>
-          </div>
-          )}
-
-          {comparePrefs.mode === "multi" && simSeriesKeys.length > 0 && (
-            <div>
-              <p className="text-xs font-medium text-ink-muted mb-1">
-                Seleziona società ({comparePrefs.selectedIds.length || "nessuna"})
-              </p>
-              <div className="max-h-40 overflow-y-auto space-y-0.5 border border-[rgb(var(--border))]/40 rounded-md p-1">
-                {simSeriesKeys.map((sid) => {
-                  const label = bundle?.series[sid]?.label ?? sid;
-                  const checked = comparePrefs.selectedIds.includes(sid);
-                  return (
-                    <label
-                      key={sid}
-                      className="flex items-center gap-1.5 text-[10px] cursor-pointer px-1 py-0.5 rounded hover:bg-surface-elevated"
-                    >
-                      <input
-                        type="checkbox"
-                        checked={checked}
-                        onChange={(e) => {
-                          const next = e.target.checked
-                            ? [...comparePrefs.selectedIds, sid]
-                            : comparePrefs.selectedIds.filter((id) => id !== sid);
-                          persistCompare({ ...comparePrefs, selectedIds: next });
-                        }}
-                      />
-                      <span className="truncate">{label}</span>
-                    </label>
-                  );
-                })}
-              </div>
-              <button
-                type="button"
-                className="btn-ghost text-[10px] mt-1 w-full"
-                onClick={() =>
-                  persistCompare({
-                    ...comparePrefs,
-                    selectedIds: simSeriesKeys.slice(0, MAX_CHART_COMPARE_SERIES),
-                  })
-                }
-              >
-                Seleziona tutte (max {MAX_CHART_COMPARE_SERIES})
-              </button>
-            </div>
-          )}
-
-          {comparePrefs.mode === "all" && (
-            <p className="text-[10px] text-ink-muted">
-              Overlay di tutte le righe Simulation con grafico JSON (
-              {Math.min(simSeriesKeys.length, MAX_CHART_COMPARE_SERIES)}/
-              {simSeriesKeys.length}).
-            </p>
-          )}
-
-          {simTable && simTable.rows.length > 0 && (
-            <div>
-              <p className="text-xs font-medium text-ink-muted mb-1">Da foglio Simulation</p>
-              <div className="max-h-32 overflow-y-auto space-y-0.5">
-                {simTable.rows.map((row, i) => {
-                  const key = simulationRowSeriesKey(row);
-                  if (!key || !bundle?.series[key]) return null;
-                  return (
-                    <button
-                      key={i}
-                      type="button"
-                      className="block w-full text-left text-xs px-2 py-1 rounded hover:bg-surface-elevated truncate"
-                      onClick={() => persist({ ...prefs, companyA: key })}
-                    >
-                      {String(row.Ticker)} · {String(row["Completion Date"] ?? "")}
-                    </button>
-                  );
-                })}
-              </div>
-            </div>
-          )}
-
-          <div className="space-y-1">
-            <p className="text-xs font-medium text-accent">Curve società</p>
-            {(
-              [
-                ["showCurva", "Pred foglio (Δ% Simulation)"],
-                ["showStorico", "Storico (dato vero)"],
-                ["showModello", "Modello T−60"],
-                ["showControls", "μ controllo su grafico %"],
-              ] as const
-            ).map(([key, label]) => (
-              <label key={key} className="flex items-center gap-2 text-xs cursor-pointer">
-                <input
-                  type="checkbox"
-                  checked={prefs[key]}
-                  onChange={(e) => persist({ ...prefs, [key]: e.target.checked })}
-                />
-                {label}
-              </label>
-            ))}
-          </div>
-
-          <div className="flex flex-wrap gap-1">
-            <button
-              type="button"
-              className="btn-ghost text-[10px] px-2 py-0.5"
-              onClick={() => setPreset(true, false, false)}
-            >
-              Solo curva
-            </button>
-            <button
-              type="button"
-              className="btn-ghost text-[10px] px-2 py-0.5"
-              onClick={() => setPreset(false, true, false)}
-            >
-              Solo storico
-            </button>
-            <button
-              type="button"
-              className="btn-ghost text-[10px] px-2 py-0.5"
-              onClick={() => setPreset(false, false, true)}
-            >
-              Solo modello
-            </button>
-            <button
-              type="button"
-              className="btn-ghost text-[10px] px-2 py-0.5"
-              onClick={() => setPreset(true, true, true)}
-            >
-              Tutte e 3
-            </button>
-          </div>
-
-          <div className="space-y-1">
-            <p className="text-xs font-medium text-accent">Curve μ di riferimento</p>
-            {controls.map((c) => (
-              <label key={c.id} className="flex items-center gap-2 text-xs cursor-pointer">
-                <input
-                  type="checkbox"
-                  checked={prefs.visibleRefs[c.id] !== false}
-                  onChange={(e) =>
-                    persist({
-                      ...prefs,
-                      visibleRefs: { ...prefs.visibleRefs, [c.id]: e.target.checked },
-                    })
-                  }
-                />
-                <span
-                  className="inline-block w-2 h-2 rounded-full shrink-0"
-                  style={{ backgroundColor: refColor(c.label) }}
-                />
-                {c.label}
-              </label>
-            ))}
-            {controls.length === 0 && (
-              <p className="text-[10px] text-ink-muted">Nessun μ caricato.</p>
-            )}
-          </div>
-
-          <div className="space-y-1 border-t border-[rgb(var(--border))]/40 pt-2">
-            <p className="text-xs font-medium text-ink-muted">Pannelli</p>
-            {(
-              [
-                ["showVarChart", "Variazioni 6M·3M·1M·1g"],
-                ["showPricePath", "Prezzo $ path"],
-                ["showPriceModel", "Prezzo $ modello"],
-                ["showPointsTable", "Tabella punti"],
-              ] as const
-            ).map(([key, label]) => (
-              <label key={key} className="flex items-center gap-2 text-xs cursor-pointer">
-                <input
-                  type="checkbox"
-                  checked={prefs[key]}
-                  onChange={(e) => persist({ ...prefs, [key]: e.target.checked })}
-                />
-                {label}
-              </label>
-            ))}
           </div>
         </aside>
 
         <div className="flex-1 overflow-y-auto p-4 space-y-4 min-w-0">
           <SimulationCurveChart
-            title="% vs T−60 — società e curve μ selezionate"
+            title={predictionCurveRecalibChartTitle()}
             lines={explorerLines}
+            k8Markers={chartRecalibMarkers.k8}
+            aiFeedMarkers={chartRecalibMarkers.aiFeed}
             nowMarkers={chartNowMarkers}
+            onOpenSecK8={onOpenSecK8}
           />
+
+          {recalibBadgeEntries.length > 0 && (
+            <div className={recalibBadgeEntries.length > 1 ? "grid sm:grid-cols-2 gap-2" : "space-y-2"}>
+              {recalibBadgeEntries.map((e) => (
+                <DailyOpenRecalibBadge
+                  key={e.key}
+                  ticker={e.label}
+                  points={e.points}
+                  row={e.row}
+                  compact={recalibBadgeEntries.length > 1}
+                />
+              ))}
+            </div>
+          )}
 
           {prefs.showVarChart && (
             <VariationHorizonChart
-              title="Variazioni % (6M · 3M · 1M · 1g)"
+              title="Variations % (6M · 3M · 1M · 1d)"
               series={varSeries}
             />
           )}
 
           {prefs.showPricePath && (
-            <>
-              <PricePathChart
-                title="Prezzo $ — storico (close reali)"
-                lines={priceStorLines}
-                field="price_storico_usd"
-                nowMarkers={chartNowMarkers}
-              />
-              <PricePathChart
-                title="Prezzo $ — path ricalibrato (+ K-8)"
-                lines={priceRecalLines}
-                field="price_usd"
-                aggregateByOffset
-                nowMarkers={chartNowMarkers}
-              />
-            </>
-          )}
-
-          {prefs.showPriceModel && bundle && (
             <PricePathChart
-              title="Prezzo $ — solo modello T−60"
-              lines={companySlots
-                .map(({ sid, slot }) => {
-                  const meta = bundle.series[sid];
-                  if (!meta) return null;
-                  return {
-                    id: `pm_${sid}`,
-                    label: meta.label.slice(0, 32),
-                    color:
-                      slot < 2
-                        ? COMPANY_MODELLO[slot]
-                        : MULTI_PALETTE[(slot + 4) % MULTI_PALETTE.length],
-                    points: meta.points,
-                  };
-                })
-                .filter(Boolean) as {
-                id: string;
-                label: string;
-                color: string;
-                points: ChartSeries["points"];
-              }[]}
-              field="price_model_usd"
+              title="Price $ — real data"
+              lines={priceStorLines}
+              field="price_storico_usd"
+              overlayField="price_usd"
+              primaryLabel="historical close"
+              overlayLabel={PREDICTION_CURVE_RECALIB_LABEL}
+              aggregateByOffset
               nowMarkers={chartNowMarkers}
+              primaryColorOverride={priceStorLines.length === 1 ? "#3b82f6" : undefined}
+              overlayColorOverride={priceStorLines.length === 1 ? "#f97316" : undefined}
             />
           )}
 
           {prefs.showPointsTable && tableMeta && (
             <div className="rounded-lg border border-[rgb(var(--border))]/60 overflow-auto max-h-56">
-              <table className="w-full text-xs border-collapse">
+              <table className={`${SHEET_GRID_TABLE_CLASS} text-xs border-collapse`}>
+                <SheetGridColgroup columnCount={10} />
                 <thead className="bg-surface-elevated sticky top-0">
                   <tr>
                     {[
                       "Offset",
-                      "Nodo",
-                      "Tipo",
-                      "% Pred foglio",
+                      "Node",
+                      "Type",
+                      `% ${PREDICTION_CURVE_RECALIB_LABEL}`,
                       "% seq raw",
-                      "% modello",
-                      "% storico",
-                      "Prezzo path $",
-                      "Prezzo storico $",
-                      "Prezzo modello $",
+                      "% model",
+                      "% historical",
+                      "Price path $",
+                      "Price historical $",
+                      "Price model $",
                     ].map((h) => (
-                      <th key={h} className="px-2 py-1 text-left font-medium border-b">
+                      <th key={h} className={`${gridTh(sheetGridAlignForLabel(h), "py-1 font-medium")} border-b`}>
                         {h}
                       </th>
                     ))}
@@ -907,28 +960,28 @@ export function SimulationAnalysisView({
                 <tbody>
                   {(tableMeta.points ?? []).map((p, i) => (
                     <tr key={i} className="border-t border-[rgb(var(--border))]/40">
-                      <td className="px-2 py-0.5">{p.offset}</td>
-                      <td className="px-2 py-0.5">{p.nodo ?? "—"}</td>
-                      <td className="px-2 py-0.5">{p.tipo ?? "—"}</td>
-                      <td className="px-2 py-0.5 tabular-nums">
+                      <td className={gridTd("center", "py-0.5")}>{p.offset}</td>
+                      <td className={gridTd("left", "py-0.5")}>{p.nodo ?? "—"}</td>
+                      <td className={gridTd("left", "py-0.5")}>{p.tipo ?? "—"}</td>
+                      <td className={gridTd("center", "py-0.5")}>
                         {fmt(p.pct_foglio ?? p.pct_curva)}
                       </td>
-                      <td className="px-2 py-0.5 tabular-nums">
+                      <td className={gridTd("center", "py-0.5")}>
                         {fmt(p.pct_curva)}
                       </td>
-                      <td className="px-2 py-0.5 tabular-nums">
+                      <td className={gridTd("center", "py-0.5")}>
                         {fmt(p.pct_modello)}
                       </td>
-                      <td className="px-2 py-0.5 tabular-nums">
+                      <td className={gridTd("center", "py-0.5")}>
                         {fmt(p.pct_reale)}
                       </td>
-                      <td className="px-2 py-0.5 tabular-nums">
+                      <td className={gridTd("center", "py-0.5")}>
                         {fmtUsd(p.price_usd)}
                       </td>
-                      <td className="px-2 py-0.5 tabular-nums">
+                      <td className={gridTd("center", "py-0.5")}>
                         {fmtUsd(p.price_storico_usd)}
                       </td>
-                      <td className="px-2 py-0.5 tabular-nums">
+                      <td className={gridTd("center", "py-0.5")}>
                         {fmtUsd(p.price_model_usd)}
                       </td>
                     </tr>

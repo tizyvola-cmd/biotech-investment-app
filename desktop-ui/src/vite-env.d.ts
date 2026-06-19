@@ -3,6 +3,7 @@
 interface ImportMetaEnv {
   readonly VITE_SUPERNOVA_API_TOKEN?: string;
   readonly VITE_API_BASE?: string;
+  readonly VITE_DEFAULT_REMOTE_HOST?: string;
   readonly VITE_ELECTRON?: string;
 }
 
@@ -30,6 +31,12 @@ interface SupernovaDesktopBridge {
     relativePath: string,
     data: unknown
   ) => Promise<{ ok: boolean; path?: string; error?: string }>;
+  /**
+   * Notifica inviata dal main-process quando model_accuracy_monitor_history.json
+   * viene aggiornato (es. dal task settimanale domenica).
+   * Restituisce una funzione per rimuovere il listener.
+   */
+  onAccuracyMonitorUpdated?: (callback: () => void) => () => void;
   shell?: SupernovaDesktopShell;
 }
 

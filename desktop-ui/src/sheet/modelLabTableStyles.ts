@@ -104,7 +104,8 @@ export function hitCellStyle(
     if (value < 55) return { color: NEG };
     return { color: MUTED };
   }
-  const score = normHighBetter(value, range.min, range.max);
+  // normLowBetter → 1 quando value=max (alta Hit% = verde), 0 quando value=min (bassa Hit% = rosso)
+  const score = normLowBetter(value, range.min, range.max);
   return styleFromScore(score);
 }
 

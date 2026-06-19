@@ -1,25 +1,71 @@
-import { useEffect, useMemo, useState } from "react";
-import type { AppScreen, ChartBundle, SheetTable } from "../types";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import type { AppScreen, ChartBundle, ChartPoint, SheetTable } from "../types";
+import { loadSimulationChartsBundle } from "../data/simulationCharts";
+import { useInvestSimInputsMutable } from "../hooks/useInvestSimInputs";
 import {
-  loadSimulationChartsBundle,
-  overlaySheetPredOnPoints,
-  simulationRowSeriesKey,
-} from "../data/simulationCharts";
-import {
-  hydrateInvestSimInputs,
-  loadInvestSimInputs,
-} from "../sheet/investSimStorage";
-import { reconcileInvestSimInputs } from "../sheet/investSimKeys";
-import {
-  computeSimulationPosition,
+  aggregateOpenPortfolioPnl,
+  buildDashboardPortfolioChips,
+  buildPortfolioDailyPnlLedger,
   rowHasActivePortfolio,
 } from "../sheet/simulationPosition";
+import type { InvestSimHistoryPoint, InvestSimInputs } from "../sheet/investSimStorage";
+import { useInvestSimPortfolioHistory } from "../hooks/useInvestSimPortfolioHistory";
+import { useDashboardPortfolioMetricsReady } from "../hooks/useDashboardPortfolioMetricsReady";
+import { readLocalSdsSnapshot, type SdsRow } from "../api/supernova";
+import { buildSdsByTicker, setCachedSdsForTopOpps } from "../sheet/sdsTopOppGate";
+import { buildMigSolidityByKey } from "../sheet/entrySolidityMig";
+import { RefreshControls } from "./RefreshControls";
+import { useLang, useT } from "../shared/i18n";
+import { useDashboardAiFeed } from "./DashboardAiFeedCard";
 import {
-  PricePathChart,
-  SimulationCurveChart,
-} from "./SimulationCurveChart";
-
-type DashboardListMode = "portfolio" | "watch";
+  buildMobileDashboardSnapshot,
+  scheduleMobileDashboardSnapshotPublish,
+} from "../api/mobileDashboardSnapshot";
+import { loadEisSuperScoreState } from "../api/eisSuperScore";
+import { loadSdsReferenceCurves, type SdsRoiProfileId } from "../sheet/sdsRoiBlend";
+import { useCdPatternPolygonOverview } from "../sheet/useCdPatternPolygonOverview";
+import type { LossAnalysisProbOptions } from "../sheet/portfolioLossAnalysis";
+import { publishDashboardRecommendationsFromSimulation } from "../sheet/topOppsFromSimulation";
+import { subscribeTopOpps } from "../sheet/topOppsStore";
+import {
+  filterOffPortfolioHotZoneSimRows,
+  SIM_HOT_ZONE_DAYS,
+} from "../sheet/simCdHorizonScope";
+import { DashboardPulseTable } from "./DashboardPulseTable";
+import { SimLoopPulseView } from "./SimLoopPulseView";
+import { ViewErrorBoundary } from "./ViewErrorBoundary";
+import { DashboardRecommendationsModal } from "./DashboardRecommendationsModal";
+import { DashboardChartsRow } from "./DashboardChartsRow";
+import { subscribeTop2BuySell } from "../sheet/top2BuySellStore";
+import {
+  buildDashboardPulseData,
+  buildDashboardVisitSnapshotFromState,
+} from "../sheet/dashboardPulseView";
+import { saveDashboardVisitSnapshot, clearDashboardVisitSnapshot, loadDashboardVisitSnapshot } from "../sheet/dashboardVisitSnapshot";
+import { useRefreshStatus } from "../shared/refreshStatusStore";
+import { buildPnlRankIndexMap, piggyBankChipRankVisual } from "../sheet/dealRankIcon";
+import { buildSimRowByKeyMap } from "../sheet/investSimKeys";
+import {
+  portfolioChipToneFromAction,
+  resolvePortfolioPositionActionForRow,
+} from "../sheet/portfolioPositionAction";
+import {
+  PORTFOLIO_CHIP_CLS,
+  portfolioPiggyBankChipDisplay,
+  piggyBankNeedsDayVsTotalNote,
+  piggyBankPriorLegFromEntry,
+} from "../sheet/portfolioGainLossStyle";
+import { piggyTrendLooksLikeDataCorrection } from "../sheet/piggyBankTrend";
+import { PortfolioHeroRankIcon, RankAnimalIcon } from "./DealRankBadge";
+import { ClosedPiggyBankCompact } from "./ClosedPiggyBankBeerGlass";
+import { useClosedPiggyBank } from "../hooks/useClosedPiggyBank";
+import { DashboardPanelUpdatedLabel } from "./DashboardPanelUpdatedLabel";
+import { latestDashboardPanelIso } from "../sheet/dashboardPanelDailyRefresh";
+import {
+  countSynthCapitalSyncRows,
+  revertSynthCapitalSyncs,
+  SYNTH_CAPITAL_LOG_CHANGED_EVENT,
+} from "../sheet/synthCapitalSyncLog";
 
 // ── Utility ──────────────────────────────────────────────────
 
@@ -48,33 +94,438 @@ function fmtUsd(v: number): string {
   return `${sign}$${abs.toFixed(0)}`;
 }
 
-function fmtPctSigned(v: number): string {
-  return `${v >= 0 ? "+" : ""}${(v * 100).toFixed(1)}%`;
-}
-
-function dirIcon(v: number | null): string {
-  if (v == null) return "";
-  return v > 0.005 ? "▲ " : v < -0.005 ? "▼ " : "● ";
-}
-
-import {
-  buildSecK8LinkIndex,
-  extractPostK8Markers,
-  parseEdgarHrefFromCell,
-  type K8ChartMarker,
-} from "../sheet/k8ChartLinks";
-import { SimulationSparkline } from "../sheet/simulationSparkline";
-import { buildNowMarkersFromSimulationRows } from "../sheet/chartNowOffset";
-
-function findCol(columns: string[], keyword: string): string {
-  return columns.find((c) => c.includes(keyword)) ?? "";
-}
-
 function tickerFromRow(row: Record<string, unknown>): string {
   return String(row["Ticker"] ?? "")
     .trim()
     .toUpperCase();
 }
+
+// ── PiggyBankBar ─────────────────────────────────────────────────────────────
+// Horizontal full-width bar — sits between hero KPIs and main content.
+
+function PiggyBankBar({
+  simTable,
+  inputs,
+  history,
+  metricsReady,
+  onNavigateToPnl,
+}: {
+  simTable: SheetTable | null;
+  inputs: InvestSimInputs;
+  history: InvestSimHistoryPoint[];
+  /** False while Simulation / inputs / history are still merging — hide P&L numbers. */
+  metricsReady: boolean;
+  onNavigateToPnl?: () => void;
+}) {
+  const { lang } = useLang();
+
+  const rowByKey = useMemo(
+    () => buildSimRowByKeyMap(simTable?.rows ?? []),
+    [simTable?.rows],
+  );
+
+  const chips = useMemo(
+    () => buildDashboardPortfolioChips(simTable, inputs, history),
+    [simTable, inputs, history],
+  );
+
+  const portfolioTotals = useMemo(
+    () => aggregateOpenPortfolioPnl(simTable, inputs, history),
+    [simTable, inputs, history],
+  );
+
+  const closedLedger = useMemo(
+    () => buildPortfolioDailyPnlLedger(simTable, inputs, history),
+    [simTable, inputs, history],
+  );
+  const { display: closedPiggyDisplay, reset: resetClosedPiggy } =
+    useClosedPiggyBank(closedLedger);
+
+  const totalCapital = portfolioTotals.capital;
+  const totalPnl = portfolioTotals.pnlEur;
+  const isPos = totalPnl > 0;
+  const isNeg = totalPnl < 0;
+  const noData = totalCapital === 0 || !metricsReady;
+  const positionsReady = metricsReady && totalCapital > 0;
+  const pnlPct = portfolioTotals.pnlPct;
+  const fillPct = Math.min(100, Math.max(0, (pnlPct / 40) * 100));
+
+  // Track piggy delta since the previous data refresh, so we can flag with
+  // an up/down arrow whether the portfolio moved up or down from the last
+  // observed value. Both the baseline AND the last detected trend are
+  // persisted to localStorage so the arrow survives page reloads / tab
+  // remounts — i.e. it always reflects "since the last time this tab was
+  // updated" rather than only "since this React mount". Without persisting
+  // the trend itself, the arrow vanished every time the page reloaded with
+  // an unchanged value (very common: you reopen the dashboard, totalPnl
+  // matches the saved baseline, no delta is recomputed → no arrow).
+  const PIGGY_BASELINE_KEY = "dashboard.piggy.lastPnlEur";
+  const PIGGY_TREND_KEY = "dashboard.piggy.lastTrend";
+  // Stale trends past this age are ignored on hydration (default 48h) so a
+  // very old arrow can't keep pointing forever after a long idle period.
+  const PIGGY_TREND_MAX_AGE_MS = 48 * 60 * 60 * 1000;
+  const prevPnlRef = useRef<number | null>(null);
+  const [pnlTrend, setPnlTrend] = useState<{ delta: number; ts: number } | null>(null);
+  // Hydrate baseline + last trend once on mount — synchronously, so the
+  // FIRST totalPnl effect run can already compare against a real previous
+  // value, and so the user immediately sees the last-known arrow direction
+  // even when nothing has changed since the previous visit.
+  useEffect(() => {
+    if (typeof window === "undefined") return;
+    try {
+      const raw = window.localStorage.getItem(PIGGY_BASELINE_KEY);
+      if (raw != null) {
+        const n = Number(raw);
+        if (Number.isFinite(n)) prevPnlRef.current = n;
+      }
+    } catch {
+      /* localStorage unavailable — non-fatal */
+    }
+    try {
+      const raw = window.localStorage.getItem(PIGGY_TREND_KEY);
+      if (raw != null) {
+        const parsed = JSON.parse(raw) as { delta?: unknown; ts?: unknown };
+        const d = typeof parsed?.delta === "number" ? parsed.delta : NaN;
+        const ts = typeof parsed?.ts === "number" ? parsed.ts : NaN;
+        if (
+          Number.isFinite(d) &&
+          d !== 0 &&
+          Number.isFinite(ts) &&
+          Date.now() - ts < PIGGY_TREND_MAX_AGE_MS
+        ) {
+          setPnlTrend({ delta: d, ts });
+        }
+      }
+    } catch {
+      /* localStorage unavailable / corrupted JSON — non-fatal */
+    }
+  }, []);
+  useEffect(() => {
+    if (noData || !metricsReady) {
+      // Don't wipe the persisted baseline OR the persisted trend here: if
+      // data is temporarily unavailable (e.g. mid-refresh, simTable empty
+      // for an instant), we still want the next successful load to be able
+      // to compare against the last known value AND to keep showing the
+      // most recent arrow direction in the meantime.
+      return;
+    }
+    const prev = prevPnlRef.current;
+    const looksLikeCorrection =
+      prev != null &&
+      prev !== totalPnl &&
+      piggyTrendLooksLikeDataCorrection(
+        prev,
+        totalPnl,
+        portfolioTotals.pnlEurToday,
+        portfolioTotals.todayCovered,
+      );
+
+    if (looksLikeCorrection) {
+      setPnlTrend(null);
+      try {
+        window.localStorage.removeItem(PIGGY_TREND_KEY);
+      } catch {
+        /* localStorage unavailable — non-fatal */
+      }
+    } else if (prev != null && prev !== totalPnl) {
+      const next = { delta: totalPnl - prev, ts: Date.now() };
+      setPnlTrend(next);
+      try {
+        window.localStorage.setItem(PIGGY_TREND_KEY, JSON.stringify(next));
+      } catch {
+        /* localStorage unavailable — non-fatal */
+      }
+    }
+    prevPnlRef.current = totalPnl;
+    try {
+      window.localStorage.setItem(PIGGY_BASELINE_KEY, String(totalPnl));
+    } catch {
+      /* localStorage unavailable — non-fatal */
+    }
+  }, [totalPnl, noData, metricsReady, portfolioTotals.pnlEurToday, portfolioTotals.todayCovered]);
+
+  const positions = chips;
+
+  const chipRank = useMemo(() => {
+    const rows = positions.map((p) => ({
+      ticker: p.ticker,
+      pnlPct: p.pnlPct,
+      pnlEur: p.pnlEur,
+      pnlUnavailable: false,
+    }));
+    return buildPnlRankIndexMap(rows, "total", (r) => r.ticker);
+  }, [positions]);
+
+  /** Miglior → peggiore P&L totale (👑 … 🐔). */
+  const positionsForChips = useMemo(() => {
+    return [...positions]
+      .sort((a, b) => {
+        const ra = chipRank.rankByKey.get(a.ticker) ?? 999;
+        const rb = chipRank.rankByKey.get(b.ticker) ?? 999;
+        return ra - rb;
+      })
+      .slice(0, 6);
+  }, [positions, chipRank]);
+
+  const pnl24h = useMemo(
+    () => ({
+      eur: portfolioTotals.pnlEurToday,
+      pct: portfolioTotals.pnlPctToday,
+      covered: portfolioTotals.todayCovered,
+      total: portfolioTotals.todayTotal,
+    }),
+    [portfolioTotals],
+  );
+
+  const pnlColor = noData
+    ? "text-ink-muted"
+    : isPos
+      ? "text-[rgb(var(--signal-up))]"
+      : isNeg
+        ? "text-[rgb(var(--signal-down))]"
+        : "text-ink";
+
+  const has24h = pnl24h.covered > 0 && pnl24h.pct != null;
+  const is24hPos = pnl24h.eur > 0;
+  const is24hNeg = pnl24h.eur < 0;
+  const priorLegEur = has24h ? piggyBankPriorLegFromEntry(totalPnl, pnl24h.eur) : null;
+  const showDayVsTotalNote =
+    has24h && piggyBankNeedsDayVsTotalNote(totalPnl, pnl24h.eur);
+  const pnl24hColor = !has24h
+    ? "text-ink-muted"
+    : is24hPos
+      ? "text-[rgb(var(--signal-up))]"
+      : is24hNeg
+        ? "text-[rgb(var(--signal-down))]"
+        : "text-ink";
+
+  return (
+    <div
+      className="piggy-bank-bar piggy-bank-bar--compact shrink-0 flex items-center gap-2 px-3 py-1.5 overflow-hidden relative rounded-xl border"
+      title={
+        lang === "it"
+          ? "Salvadanaio portfolio: P&L totale dall'ingresso, variazione 24h, barra 0–40% del target gain, chip per ticker (verde=gain, giallo=attendi, rosso=vendi)"
+          : "Portfolio piggy bank: total P&L since entry, 24h move, 0–40% target gain bar, per-ticker chips (green=gain, yellow=wait, red=sell)"
+      }
+    >
+      {/* Portfolio rank pig (same tiers as P&L: 👑🐷 → 🐔) — clic → tab P&L */}
+      <div className="relative select-none shrink-0 flex items-end justify-center min-w-[3rem]">
+        {onNavigateToPnl && !noData ? (
+          <button
+            type="button"
+            onClick={onNavigateToPnl}
+            className="rounded-lg hover:opacity-85 focus:outline-none focus-visible:ring-2 focus-visible:ring-[rgb(var(--accent))]/50 transition-opacity"
+            title={
+              lang === "it"
+                ? "Apri tab P&L in Simulation"
+                : "Open P&L tab in Simulation"
+            }
+            aria-label={
+              lang === "it"
+                ? "Apri tab P&L in Simulation"
+                : "Open P&L tab in Simulation"
+            }
+          >
+            <PortfolioHeroRankIcon gainPct={pnlPct} noData={noData} basePx={40} />
+          </button>
+        ) : (
+          <PortfolioHeroRankIcon gainPct={pnlPct} noData={noData} basePx={40} />
+        )}
+        {isPos && !noData && (
+          <span
+            className="absolute -top-1 -right-1 text-sm leading-none"
+            style={{ animation: "bounce 2s ease-in-out infinite" }}
+          >
+            🪙
+          </span>
+        )}
+        {isNeg && !noData && (
+          <span className="absolute -top-1 -right-1 text-xs leading-none">💸</span>
+        )}
+        {has24h && is24hNeg && isPos && !noData && (
+          <span
+            className="absolute -bottom-0.5 -right-1 text-[10px] leading-none"
+            title={lang === "it" ? "Oggi in perdita" : "Down today"}
+          >
+            📉
+          </span>
+        )}
+      </div>
+
+      {/* P&L totale + 24h — blocco compatto */}
+      <div className="shrink-0 min-w-[7.25rem] space-y-0.5">
+        <p className="piggy-bank-bar-label text-[7px] uppercase tracking-widest font-semibold leading-none">
+          Piggy Bank
+        </p>
+        <p
+          className={`text-base font-bold tabular-nums leading-none ${pnlColor}`}
+          title={
+            !metricsReady
+              ? lang === "it"
+                ? "Caricamento prezzi e storico P&L…"
+                : "Loading prices and P&L history…"
+              : showDayVsTotalNote && priorLegEur != null
+              ? lang === "it"
+                ? `Totale dall'ingresso. Oggi ${fmtUsd(pnl24h.eur)}; prima ~${fmtUsd(priorLegEur)}`
+                : `Total since entry. Today ${fmtUsd(pnl24h.eur)}; prior ~${fmtUsd(priorLegEur)}`
+              : lang === "it"
+                ? "Somma (valore attuale − capitale) su posizioni aperte"
+                : "Sum of (current value − capital) on open positions"
+          }
+        >
+          {noData ? (metricsReady ? "—" : "…") : `${totalPnl >= 0 ? "+" : ""}${fmtUsd(totalPnl)}`}
+          {!noData && (
+            <span className="text-[10px] font-semibold opacity-90">
+              {" "}
+              ({totalPnl >= 0 ? "+" : ""}
+              {pnlPct.toFixed(1)}%)
+            </span>
+          )}
+          {!noData && pnlTrend && pnlTrend.delta !== 0 ? (
+            <span
+              key={pnlTrend.ts}
+              className={`piggy-refresh-trend inline-block ml-1 text-[11px] font-bold leading-none align-middle ${
+                pnlTrend.delta > 0
+                  ? "text-[rgb(var(--signal-up))]"
+                  : "text-[rgb(var(--signal-down))]"
+              }`}
+              title={
+                lang === "it"
+                  ? `${pnlTrend.delta > 0 ? "+" : ""}${fmtUsd(pnlTrend.delta)} dall'ultimo refresh`
+                  : `${pnlTrend.delta > 0 ? "+" : ""}${fmtUsd(pnlTrend.delta)} since last refresh`
+              }
+              aria-label={
+                pnlTrend.delta > 0
+                  ? lang === "it"
+                    ? "Piggy bank in aumento dall'ultimo refresh"
+                    : "Piggy bank up since last refresh"
+                  : lang === "it"
+                    ? "Piggy bank in calo dall'ultimo refresh"
+                    : "Piggy bank down since last refresh"
+              }
+            >
+              {pnlTrend.delta > 0 ? "▲" : "▼"}
+            </span>
+          ) : null}
+        </p>
+        <p
+          className="text-[9px] tabular-nums leading-snug font-medium"
+          title={
+            pnl24h.covered > 0
+              ? lang === "it"
+                ? `Var. 24h · ${pnl24h.covered}/${pnl24h.total} ticker`
+                : `24h move · ${pnl24h.covered}/${pnl24h.total} tickers`
+              : undefined
+          }
+        >
+          <span className="text-ink-muted/80 uppercase text-[7px] tracking-wide">
+            {lang === "it" ? "24h " : "24h "}
+          </span>
+          {has24h ? (
+            <span className={pnl24hColor}>
+              {pnl24h.eur >= 0 ? "+" : ""}
+              {fmtUsd(pnl24h.eur)} ({pnl24h.pct! >= 0 ? "+" : ""}
+              {pnl24h.pct!.toFixed(2)}%)
+            </span>
+          ) : (
+            <span className="text-ink-muted">—</span>
+          )}
+        </p>
+      </div>
+
+      {/* Fill bar — stretches to fill the middle */}
+      <div className="flex-1 min-w-0 px-2">
+        {!metricsReady ? (
+          <p className="piggy-bank-bar-meta text-xs text-ink-muted">
+            {lang === "it" ? "Caricamento P&L portfolio…" : "Loading portfolio P&L…"}
+          </p>
+        ) : totalCapital <= 0 ? (
+          <p className="piggy-bank-bar-meta text-xs">
+            {lang === "it"
+              ? "Inserisci capitale in Simulation per riempire il salvadanaio"
+              : "Enter capital in Simulation to start filling the piggy bank"}
+          </p>
+        ) : (
+          <>
+            <div className="piggy-bank-bar-scale flex justify-between text-[7px] mb-0.5 leading-none">
+              <span>0%</span>
+              <span className="font-medium">
+                {isPos ? "🪙" : isNeg ? "📉" : "●"} {Math.abs(pnlPct).toFixed(1)}% / 40%
+              </span>
+              <span>+40%</span>
+            </div>
+            <div className="piggy-bank-bar-track h-1.5 rounded-full overflow-hidden">
+              <div
+                className={`h-full rounded-full transition-[width] duration-1000 ease-out ${
+                  isPos
+                    ? "bg-gradient-to-r from-pink-300/80 via-emerald-400/80 to-[rgb(var(--signal-up))]"
+                    : "bg-[rgb(var(--signal-down))]/70"
+                }`}
+                style={{ width: `${fillPct}%` }}
+              />
+            </div>
+          </>
+        )}
+      </div>
+
+      {/* Salvadanaio opportunità chiuse — bicchiere birra */}
+      <ClosedPiggyBankCompact
+        display={closedPiggyDisplay}
+        onReset={resetClosedPiggy}
+        onOpenDetail={onNavigateToPnl}
+      />
+
+      {/* Per-ticker chips — same engine as Pulse (resolvePositionPnlBreakdown) */}
+      {positionsReady && positions.length > 0 && (
+        <div className="shrink-0 flex items-center gap-1 flex-wrap max-w-[280px]">
+          {positionsForChips.map(({ ticker, key, pnlEur, pnlPct: pp, pnlEur24h, pnlPct24h }) => {
+            const chip = portfolioPiggyBankChipDisplay(
+              pnlEur,
+              pp,
+              pnlEur24h,
+              pnlPct24h,
+              lang,
+            );
+            const action = resolvePortfolioPositionActionForRow(rowByKey.get(key) ?? null, {
+              pnlEur,
+              pnlPct: pp,
+            });
+            const chipTone = portfolioChipToneFromAction(action);
+            const rankIdx = chipRank.rankByKey.get(ticker);
+            const rankVisual = piggyBankChipRankVisual(
+              rankIdx ?? null,
+              chipRank.total,
+              action,
+              pp,
+            );
+            const todayLbl = lang === "it" ? "oggi" : "24h";
+            return (
+              <span
+                key={ticker}
+                className={`piggy-bank-chip piggy-bank-chip--${chipTone} ${PORTFOLIO_CHIP_CLS[chipTone]}`}
+                title={`${ticker}: ${chip.title}`}
+              >
+                {rankVisual ? <RankAnimalIcon visual={rankVisual} basePx={12} /> : null}
+                <span className="text-[10px] leading-snug">
+                  <span className="font-bold">{ticker}</span>{" "}
+                  <span>{chip.mainUsd}</span>
+                  {chip.dailySuffixUsd ? (
+                    <span className="opacity-75 font-normal text-[9px]">
+                      {" "}
+                      · {todayLbl} {chip.dailySuffixUsd}
+                    </span>
+                  ) : null}
+                </span>
+              </span>
+            );
+          })}
+        </div>
+      )}
+    </div>
+  );
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
 
 function HeroKpi({
   label,
@@ -111,146 +562,13 @@ function HeroKpi({
         className="absolute top-0 left-0 right-0 h-[2px]"
         style={{ background: lineColor }}
       />
-      <p className="text-[10px] font-semibold uppercase tracking-wider text-ink-muted/70 truncate">
+      <p className="text-[11px] font-semibold uppercase tracking-wider text-ink-muted/70 truncate">
         {label}
       </p>
       <p className={`text-xl font-bold tabular-nums mt-0.5 leading-tight ${valueColor}`}>
         {value}
       </p>
-      {sub && <p className="text-[10px] text-ink-muted mt-0.5">{sub}</p>}
-    </div>
-  );
-}
-
-function FocusKpiCell({
-  label,
-  value,
-  sub,
-  accent,
-}: {
-  label: string;
-  value: string;
-  sub?: string;
-  accent?: "up" | "down" | "muted";
-}) {
-  const valueClass =
-    accent === "up"
-      ? "text-[rgb(var(--signal-up))]"
-      : accent === "down"
-        ? "text-[rgb(var(--signal-down))]"
-        : "text-ink";
-  return (
-    <div className="rounded-lg border border-[rgb(var(--border))]/40 bg-[rgb(var(--surface-3))]/15 px-3 py-2 min-w-0">
-      <p className="text-[10px] uppercase tracking-wide text-ink-muted/80 truncate">{label}</p>
-      <p className={`text-sm font-semibold tabular-nums mt-0.5 truncate ${valueClass}`}>{value}</p>
-      {sub ? <p className="text-[10px] text-ink-muted mt-0.5 truncate">{sub}</p> : null}
-    </div>
-  );
-}
-
-function TickerFocusKpiPanel({
-  row,
-  inputs,
-}: {
-  row: Record<string, unknown>;
-  inputs: ReturnType<typeof loadInvestSimInputs>;
-}) {
-  const ticker = tickerFromRow(row);
-  const company = String(row["Società"] ?? row["Nome"] ?? row["Company"] ?? "").trim();
-  const cd = String(row["Completion Date"] ?? "");
-  const days = daysFromToday(cd);
-  const pos = computeSimulationPosition(row, inputs);
-  const pred7Raw = row["Δ% vs Pred−60\nPred\n+7"];
-  const pred7 = pred7Raw != null ? Number(pred7Raw) : null;
-  const affRaw = row["Affidabilità\n%"];
-  const aff = affRaw != null ? Number(affRaw) : null;
-  const nct = String(row["NCT"] ?? "").trim();
-  const linkCell = row["Link studio"];
-  const studyHref =
-    typeof linkCell === "object" &&
-    linkCell != null &&
-    "href" in linkCell &&
-    typeof (linkCell as { href?: string }).href === "string"
-      ? (linkCell as { href: string }).href
-      : nct
-        ? `https://clinicaltrials.gov/study/${nct.replace(/\s/g, "")}`
-        : null;
-
-  return (
-    <div className="shrink-0 px-4 py-3 border-b border-[rgb(var(--border))]/50 bg-accent/[0.04]">
-      <div className="flex flex-wrap items-baseline gap-2 mb-2">
-        <span className="text-base font-bold tracking-wide">{ticker}</span>
-        {company ? <span className="text-xs text-ink-muted">{company}</span> : null}
-        {studyHref ? (
-          <a
-            href={studyHref}
-            target="_blank"
-            rel="noopener noreferrer"
-            className="text-[10px] text-accent hover:underline ml-auto"
-          >
-            Studio CT.gov →
-          </a>
-        ) : null}
-      </div>
-      <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-6 gap-2">
-        <FocusKpiCell
-          label="Completion Date"
-          value={cd || "—"}
-          sub={
-            days != null
-              ? days === 0
-                ? "oggi"
-                : days > 0
-                  ? `tra ${days} gg`
-                  : `${Math.abs(days)} gg fa`
-              : undefined
-          }
-          accent={days != null && days <= 7 ? "up" : undefined}
-        />
-        <FocusKpiCell
-          label="Prezzo $"
-          value={
-            pos?.currPrice != null && Number.isFinite(pos.currPrice)
-              ? `$${pos.currPrice.toFixed(2)}`
-              : "—"
-          }
-        />
-        <FocusKpiCell
-          label="Pred +7"
-          value={pred7 != null ? fmtPctSigned(pred7) : "—"}
-          accent={pred7 == null ? "muted" : pred7 >= 0 ? "up" : "down"}
-        />
-        <FocusKpiCell
-          label="Affidabilità"
-          value={aff != null ? `${aff.toFixed(0)}%` : "—"}
-        />
-        <FocusKpiCell
-          label="Capitale"
-          value={
-            pos && pos.capital > 0 ? fmtUsd(pos.capital) : "—"
-          }
-        />
-        <FocusKpiCell
-          label="P&L"
-          value={
-            pos && pos.capital > 0 && !pos.pnlUnavailable
-              ? `${fmtUsd(pos.pnlEur)} (${pos.pnlPct >= 0 ? "+" : ""}${pos.pnlPct.toFixed(1)}%)`
-              : pos?.pnlUnavailable
-                ? "N/D prezzo"
-                : "—"
-          }
-          accent={
-            pos && pos.capital > 0 && !pos.pnlUnavailable
-              ? pos.pnlEur >= 0
-                ? "up"
-                : "down"
-              : "muted"
-          }
-        />
-      </div>
-      {nct ? (
-        <p className="text-[10px] text-ink-muted mt-2 font-mono">{nct}</p>
-      ) : null}
+      {sub && <p className="text-[11px] text-ink-muted mt-0.5">{sub}</p>}
     </div>
   );
 }
@@ -260,10 +578,20 @@ function TickerFocusKpiPanel({
 export function MainDashboardView({
   simTable,
   simLoading,
-  secK8Table,
   secK8Loading,
   onScreen,
-  onOpenSecK8,
+  onOpenSecK8: _onOpenSecK8,
+  onReload,
+  onNavigateToSimulationPnl,
+  onOpenSimulationRow,
+  onOpenSimulationSheet,
+  onOpen24hAssessment,
+  onRegisterBuy,
+  onSellPosition,
+  onOpenPredictionCharts: _onOpenPredictionCharts,
+  onOpenCatalystFeed: _onOpenCatalystFeed,
+  onOpenClinicalFeed: _onOpenClinicalFeed,
+  onOpenSupernovaTab,
 }: {
   simTable: SheetTable | null;
   simLoading: boolean;
@@ -271,827 +599,523 @@ export function MainDashboardView({
   secK8Loading: boolean;
   onScreen: (s: AppScreen) => void;
   onOpenSecK8?: (ticker: string) => void;
+  /** Full local reload of every snapshot used by the dashboard. */
+  onReload?: () => void | Promise<void>;
+  onNavigateToSimulationPnl?: () => void;
+  onOpenSimulationRow?: (focus: { ticker: string; cd?: string }) => void;
+  onOpenSimulationSheet?: (focus: {
+    ticker: string;
+    cd?: string;
+    action?: "buy" | "sell";
+  }) => void;
+  onOpen24hAssessment?: (focus: { ticker: string; cd?: string }) => void;
+  onRegisterBuy?: import("../hooks/useInvestSimInputs").PortfolioRegisterBuyHandler;
+  onSellPosition?: import("./PortfolioExitButton").PortfolioSellHandler;
+  onOpenPredictionCharts?: (focus: { seriesKey: string | null; ticker: string }) => void;
+  onOpenCatalystFeed?: () => void;
+  onOpenClinicalFeed?: (ticker: string) => void;
+  onOpenSupernovaTab?: (ticker: string) => void;
 }) {
   const simRows = simTable?.rows ?? [];
-  const k8Rows = secK8Table?.rows ?? [];
 
-  const [inputs, setInputs] = useState(() => loadInvestSimInputs());
-  const [listMode, setListMode] = useState<DashboardListMode>("portfolio");
-  const [leftTab, setLeftTab] = useState<"table" | "charts">("charts");
-  /** null = tutta la lista; altrimenti solo quel ticker (grafici + tabelle + sidebar). */
-  const [focusTicker, setFocusTicker] = useState<string | null>(null);
-  const [showK8OnChart, setShowK8OnChart] = useState(false);
+  const t = useT();
+  const { lang } = useLang();
+  const { dataUpdatedAt } = useRefreshStatus();
+  const [dashboardReloadToken, setDashboardReloadToken] = useState(0);
+  const [dashboardRefreshing, setDashboardRefreshing] = useState(false);
+  // "Since your last visit" pulse view mode — toggles between the real
+  // portfolio (default) and the sim loop's paper portfolio. Both views
+  // occupy the same slot (screen-swap, not popup) so the user can
+  // evaluate the advancement of one or the other — one at a time. The
+  // toggle button lives in each view's header (top-right).
+  const [pulseMode, setPulseMode] = useState<"portfolio" | "simLoop" | "simLoopSynth">(
+    "portfolio",
+  );
+  const [recModalOpen, setRecModalOpen] = useState(false);
+  const [recStats, setRecStats] = useState({ total: 0, newCount: 0, keySig: "" });
+  const recModalAckSigRef = useRef("");
+  const [synthRevertTick, setSynthRevertTick] = useState(0);
+  const { inputs, patchInputs } = useInvestSimInputsMutable(simTable, dashboardReloadToken);
+  const { history: portfolioHistory, historyReady } = useInvestSimPortfolioHistory(
+    dashboardReloadToken,
+  );
+  const portfolioInputsReady = useDashboardPortfolioMetricsReady(
+    simTable,
+    simLoading,
+    dashboardReloadToken,
+  );
+  const portfolioMetricsReady = portfolioInputsReady && historyReady;
 
-  // Chart bundle (for portfolio performance charts)
   const [chartBundle, setChartBundle] = useState<ChartBundle | null>(null);
-  const [chartLoading, setChartLoading] = useState(false);
+  const [eisState, setEisState] = useState<Awaited<ReturnType<typeof loadEisSuperScoreState>> | null>(
+    null,
+  );
+  const polygonOverview = useCdPatternPolygonOverview();
+  const [refCurves, setRefCurves] = useState<
+    Partial<Record<SdsRoiProfileId, (number | null)[]>>
+  >({});
+  const [sdsGateTick, setSdsGateTick] = useState(0);
+  const [sdsRowsForMig, setSdsRowsForMig] = useState<SdsRow[] | null>(null);
 
+  /** Grafici, SDS, EIS e curve di riferimento — riletti ad ogni Refresh pagina. */
   useEffect(() => {
     let cancelled = false;
-    const rows = simTable?.rows ?? [];
     void (async () => {
-      if (rows.length) {
-        const merged = await hydrateInvestSimInputs(rows);
-        if (!cancelled) setInputs(merged);
-        return;
-      }
-      if (!cancelled) setInputs(loadInvestSimInputs());
+      const [chartsRes, sdsDoc, eis, curves] = await Promise.all([
+        loadSimulationChartsBundle(),
+        readLocalSdsSnapshot(),
+        loadEisSuperScoreState(),
+        loadSdsReferenceCurves(),
+      ]);
+      if (cancelled) return;
+      setChartBundle(chartsRes.bundle);
+      setCachedSdsForTopOpps(buildSdsByTicker(sdsDoc?.rows));
+      setSdsRowsForMig(sdsDoc?.rows ?? null);
+      setEisState(eis);
+      setRefCurves(curves.refs);
+      if (dashboardReloadToken > 0) setSdsGateTick((n) => n + 1);
     })();
     return () => {
       cancelled = true;
     };
-  }, [simTable]);
-
-  useEffect(() => {
-    const onStorage = (e: StorageEvent) => {
-      if (e.key !== "supernova_invest_sim_inputs" || !e.newValue) return;
-      try {
-        const parsed = JSON.parse(e.newValue);
-        if (parsed && typeof parsed === "object") {
-          setInputs(reconcileInvestSimInputs(parsed, simRows));
-        }
-      } catch {
-        /* ignore */
-      }
-    };
-    window.addEventListener("storage", onStorage);
-    return () => window.removeEventListener("storage", onStorage);
-  }, [simRows]);
+  }, [dashboardReloadToken]);
 
   const portfolioRows = useMemo(
     () => simRows.filter((r) => rowHasActivePortfolio(r, inputs)),
-    [simRows, inputs]
+    [simRows, inputs],
   );
-  const watchRows = useMemo(
-    () => simRows.filter((r) => !rowHasActivePortfolio(r, inputs)),
-    [simRows, inputs]
+
+  const simRowByKeyForRevert = useMemo(
+    () => buildSimRowByKeyMap(simRows),
+    [simRows],
   );
-  const displayRows = listMode === "portfolio" ? portfolioRows : watchRows;
 
-  const sortedDisplayTickers = useMemo(() => {
-    const s = new Set<string>();
-    for (const r of displayRows) {
-      const t = tickerFromRow(r);
-      if (t && !t.includes("TOTALE")) s.add(t);
-    }
-    return [...s].sort();
-  }, [displayRows]);
-
-  const displayTickers = useMemo(() => new Set(sortedDisplayTickers), [sortedDisplayTickers]);
-
-  const k8ScopeTickers = useMemo(() => {
-    if (focusTicker) return new Set([focusTicker]);
-    return displayTickers;
-  }, [focusTicker, displayTickers]);
-
-  const focusedRows = useMemo(() => {
-    if (!focusTicker) return displayRows;
-    return displayRows.filter((r) => tickerFromRow(r) === focusTicker);
-  }, [displayRows, focusTicker]);
-
-  const focusPrimaryRow = focusedRows[0] ?? null;
+  const synthRevertableCount = useMemo(
+    () => countSynthCapitalSyncRows(),
+    [synthRevertTick, inputs],
+  );
 
   useEffect(() => {
-    if (focusTicker && !displayTickers.has(focusTicker)) {
-      setFocusTicker(null);
-    }
-  }, [focusTicker, displayTickers]);
-
-  const portfolioMetrics = useMemo(() => {
-    let cap = 0;
-    let pnl = 0;
-    for (const r of portfolioRows) {
-      const p = computeSimulationPosition(r, inputs);
-      if (!p || p.capital <= 0) continue;
-      cap += p.capital;
-      pnl += p.pnlEur;
-    }
-    return { cap, pnl };
-  }, [portfolioRows, inputs]);
-
-  // Lazily resolve K-8 column names (handle unicode variants)
-  const k8Cols = secK8Table?.columns ?? [];
-  const COL_K8_DATE = findCol(k8Cols, "filing 8-K");
-  const COL_K8_D1 = findCol(k8Cols, "seduta +1");
-  const COL_K8_EDGAR = findCol(k8Cols, "EDGAR");
-  const COL_K8_ITEMS = findCol(k8Cols, "Items");
-
-  // Portfolio rows use merged inputs (locale + foglio)
-  const totalCapital = portfolioMetrics.cap;
-  const totalPnl = portfolioMetrics.pnl;
-
-  const todayStart = useMemo(() => {
-    const d = new Date();
-    d.setHours(0, 0, 0, 0);
-    return d.getTime();
+    const bump = () => setSynthRevertTick((n) => n + 1);
+    window.addEventListener(SYNTH_CAPITAL_LOG_CHANGED_EVENT, bump);
+    return () => window.removeEventListener(SYNTH_CAPITAL_LOG_CHANGED_EVENT, bump);
   }, []);
 
-  const focusMetrics = useMemo(() => {
-    if (!focusTicker || !focusPrimaryRow) return null;
-    const pos = computeSimulationPosition(focusPrimaryRow, inputs);
-    const cdDays = daysFromToday(String(focusPrimaryRow["Completion Date"] ?? ""));
-    return { pos, cdDays };
-  }, [focusTicker, focusPrimaryRow, inputs]);
+  useEffect(() => {
+    const unsubTopOpps = subscribeTopOpps(() => {});
+    const unsubTop2 = subscribeTop2BuySell(() => {});
+    return () => {
+      unsubTopOpps();
+      unsubTop2();
+    };
+  }, []);
 
-  // Prossimo catalyst: ticker focalizzato o tutta Simulation
+  const sdsByTicker = useMemo(() => buildSdsByTicker(sdsRowsForMig), [sdsRowsForMig]);
+  const migSolidityByKey = useMemo(
+    () => buildMigSolidityByKey(simTable, chartBundle, sdsRowsForMig),
+    [simTable, chartBundle, sdsRowsForMig],
+  );
+
+  const probOptionsForPublish = useMemo((): LossAnalysisProbOptions | null => {
+    if (!simTable?.rows?.length) return null;
+    return {
+      sdsRows: sdsRowsForMig,
+      migSolidityByKey,
+      eisSuperScoreState: eisState,
+      polygonOverview,
+      lightweightPolygon: true,
+      mergedInputs: inputs,
+    };
+  }, [simTable, sdsRowsForMig, migSolidityByKey, eisState, polygonOverview, inputs]);
+
+  const opportunityRows = useMemo(
+    () => filterOffPortfolioHotZoneSimRows(simRows, inputs),
+    [simRows, inputs],
+  );
+
+  const top2ChartPointsByKey = useMemo(() => {
+    const m = new Map<string, ChartPoint[]>();
+    if (!chartBundle) return m;
+    for (const [key, series] of Object.entries(chartBundle.series)) {
+      if (series.points?.length) m.set(key, series.points);
+    }
+    return m;
+  }, [chartBundle]);
+
+  const dashboardPulseData = useMemo(
+    () =>
+      buildDashboardPulseData({
+        simTable,
+        inputs,
+        history: portfolioHistory,
+        chartPointsByKey: top2ChartPointsByKey,
+        sdsByTicker,
+        migByKey: migSolidityByKey,
+        lang,
+      }),
+    [simTable, inputs, portfolioHistory, top2ChartPointsByKey, sdsByTicker, migSolidityByKey, lang],
+  );
+
+  useEffect(() => {
+    const persistVisit = () => {
+      if (!portfolioMetricsReady || simLoading || !simTable?.rows?.length) return;
+      saveDashboardVisitSnapshot(
+        buildDashboardVisitSnapshotFromState({
+          simTable,
+          inputs,
+          history: portfolioHistory,
+          migByKey: migSolidityByKey,
+        }),
+      );
+    };
+    const onVis = () => {
+      if (document.visibilityState === "hidden") persistVisit();
+    };
+    window.addEventListener("beforeunload", persistVisit);
+    document.addEventListener("visibilitychange", onVis);
+    return () => {
+      window.removeEventListener("beforeunload", persistVisit);
+      document.removeEventListener("visibilitychange", onVis);
+    };
+  }, [
+    simTable,
+    inputs,
+    portfolioHistory,
+    migSolidityByKey,
+    portfolioMetricsReady,
+    simLoading,
+  ]);
+
+  useEffect(() => {
+    if (!portfolioMetricsReady || simLoading || !simTable?.rows?.length) return;
+    const prior = loadDashboardVisitSnapshot();
+    if (!prior) return;
+    const totals = aggregateOpenPortfolioPnl(simTable, inputs, portfolioHistory);
+    if (
+      piggyTrendLooksLikeDataCorrection(
+        prior.portfolioPnlEur,
+        totals.pnlEur,
+        totals.pnlEurToday,
+        totals.todayCovered,
+      )
+    ) {
+      clearDashboardVisitSnapshot();
+      try {
+        window.localStorage.removeItem("dashboard.piggy.lastPnlEur");
+        window.localStorage.removeItem("dashboard.piggy.lastTrend");
+      } catch {
+        /* non-fatal */
+      }
+    }
+  }, [simTable, inputs, portfolioHistory, portfolioMetricsReady, simLoading]);
+
+  useEffect(() => {
+    if (recStats.newCount <= 0) return;
+    if (recStats.keySig === recModalAckSigRef.current) return;
+    setRecModalOpen(true);
+  }, [recStats.newCount, recStats.keySig]);
+
+  const handleRecModalClose = useCallback(() => {
+    recModalAckSigRef.current = recStats.keySig;
+    setRecModalOpen(false);
+  }, [recStats.keySig]);
+
+  useEffect(() => {
+    if (simLoading || !simTable?.rows?.length) return;
+    publishDashboardRecommendationsFromSimulation(simTable, inputs, top2ChartPointsByKey);
+  }, [simTable, inputs, simLoading, top2ChartPointsByKey, sdsGateTick]);
+
+  const feedScopeTickers = useMemo(() => {
+    const s = new Set<string>();
+    for (const r of portfolioRows) {
+      const tk = tickerFromRow(r);
+      if (tk && !tk.includes("TOTALE")) s.add(tk);
+    }
+    return s;
+  }, [portfolioRows]);
+
+  const portfolioMetrics = useMemo(() => {
+    const totals = aggregateOpenPortfolioPnl(simTable, inputs, portfolioHistory);
+    return { cap: totals.capital, pnl: totals.pnlEur };
+  }, [simTable, inputs, portfolioHistory]);
+
+  const totalCapital = portfolioMetrics.cap;
+
   const nextCdDays = useMemo(() => {
-    const rows = focusTicker ? focusedRows : simRows;
-    return rows.reduce<number | null>((best, r) => {
+    return portfolioRows.reduce<number | null>((best, r) => {
       const days = daysFromToday(String(r["Completion Date"] ?? ""));
       if (days == null || days < 0) return best;
       return best == null || days < best ? days : best;
     }, null);
-  }, [focusTicker, focusedRows, simRows]);
+  }, [portfolioRows]);
 
-  // K-8 feed: ultimi filing, solo ticker della lista corrente (Portfolio o To Watch)
-  const k8Feed = useMemo(() => {
-    return [...k8Rows]
-      .filter((r) => {
-        const t = String(r["Ticker"] ?? "").trim().toUpperCase();
-        return t && k8ScopeTickers.has(t);
-      })
-      .sort((a, b) => {
-        const da = parseDMY(String(a[COL_K8_DATE] ?? ""));
-        const db = parseDMY(String(b[COL_K8_DATE] ?? ""));
-        if (!da || !db) return 0;
-        return db.getTime() - da.getTime();
-      })
-      .slice(0, 10);
-  }, [k8Rows, k8ScopeTickers, COL_K8_DATE]);
+  const {
+    feed: aiFeedTop,
+    recentCount: aiFeedRecentCount,
+    loading: aiFeedLoading,
+    loadError: aiFeedLoadError,
+    updatedAt: aiFeedUpdatedAt,
+    reload: reloadAiFeed,
+  } = useDashboardAiFeed(feedScopeTickers);
 
-  const k8RecentCount = useMemo(() => {
-    return k8Rows.filter((r) => {
-      const t = String(r["Ticker"] ?? "").trim().toUpperCase();
-      if (!t || !k8ScopeTickers.has(t)) return false;
-      const d = parseDMY(String(r[COL_K8_DATE] ?? ""));
-      if (!d) return false;
-      return (todayStart - d.getTime()) / 86400000 <= 30;
-    }).length;
-  }, [k8Rows, k8ScopeTickers, COL_K8_DATE, todayStart]);
-
-  // Load chart bundle once on mount
-  useEffect(() => {
-    setChartLoading(true);
-    void loadSimulationChartsBundle().then((res) => {
-      setChartBundle(res.bundle);
-      setChartLoading(false);
-    });
-  }, []);
-
-  // Portfolio series: only invested tickers that have chart data
-  const PRED_COLOR = ["#00dc96", "#00af78", "#5eead4", "#34d399", "#6ee7b7", "#2dd4bf"] as const;
-  const HIST_COLOR = ["#78c8ff", "#af8cff"] as const;
-
-  const displayChartLines = useMemo(() => {
-    if (!chartBundle) return { curve: [], price: [], k8: [] as K8ChartMarker[] };
-    const curve: { spec: { id: string; label: string; color: string; strokeWidth: number; field: "pct_foglio" }; points: import("../types").ChartPoint[] }[] = [];
-    const price: { id: string; label: string; color: string; points: import("../types").ChartPoint[] }[] = [];
-    const k8: K8ChartMarker[] = [];
-    const k8Links = buildSecK8LinkIndex(secK8Table);
-
-    focusedRows.forEach((row, i) => {
-      const key = simulationRowSeriesKey(row);
-      if (!key || !chartBundle.series[key]) return;
-      const ticker = String(row["Ticker"] ?? "");
-      const meta = chartBundle.series[key];
-      const points = overlaySheetPredOnPoints(meta.points, row);
-      const ci = i % PRED_COLOR.length;
-      const color = PRED_COLOR[ci];
-      curve.push({
-        spec: {
-          id: `${key}_foglio`,
-          label: `${ticker} · pred ricalibrata`,
-          color,
-          strokeWidth: 2.5,
-          field: "pct_foglio",
-        },
-        points,
-      });
-      k8.push(...extractPostK8Markers(points, ticker, color, k8Links));
-      price.push({ id: `${key}_price`, label: `${ticker} · prezzo $`, color: HIST_COLOR[i % 2], points });
-    });
-    return { curve, price, k8 };
-  }, [chartBundle, focusedRows, secK8Table]);
-
-  const chartNowMarkers = useMemo(
-    () => buildNowMarkersFromSimulationRows(focusedRows),
-    [focusedRows]
+  const chartsSectionUpdatedAt = useMemo(
+    () => latestDashboardPanelIso(dataUpdatedAt, aiFeedUpdatedAt),
+    [dataUpdatedAt, aiFeedUpdatedAt],
   );
 
-  const k8MarkersInScope = useMemo(() => {
-    if (!focusTicker) return [];
-    return displayChartLines.k8.filter((m) => m.ticker === focusTicker);
-  }, [displayChartLines.k8, focusTicker]);
-
-  const visibleK8Markers = useMemo(() => {
-    if (!showK8OnChart || !focusTicker) return [];
-    return k8MarkersInScope;
-  }, [showK8OnChart, focusTicker, k8MarkersInScope]);
+  const handleDashboardRefresh = useCallback(async () => {
+    setDashboardRefreshing(true);
+    try {
+      await Promise.all([onReload?.(), reloadAiFeed()]);
+      setDashboardReloadToken((n) => n + 1);
+    } finally {
+      setDashboardRefreshing(false);
+    }
+  }, [onReload, reloadAiFeed]);
 
   useEffect(() => {
-    if (!focusTicker) setShowK8OnChart(false);
-  }, [focusTicker]);
-
-  // Catalyst timeline dalla lista corrente (portfolio o to watch)
-  const upcoming = useMemo(() => {
-    return focusedRows
-      .map((r) => ({
-        ticker: String(r["Ticker"] ?? ""),
-        cd: String(r["Completion Date"] ?? ""),
-        days: daysFromToday(String(r["Completion Date"] ?? "")),
-        pred7: r["Δ% vs Pred−60\nPred\n+7"] != null ? Number(r["Δ% vs Pred−60\nPred\n+7"]) : null,
-        aff: r["Affidabilità\n%"] != null ? Number(r["Affidabilità\n%"]) : null,
-      }))
-      .filter((r) => r.days != null && r.days >= 0)
-      .sort((a, b) => (a.days ?? 999) - (b.days ?? 999))
-      .slice(0, 6);
-  }, [focusedRows]);
-
-  const setListModeAndTab = (mode: DashboardListMode) => {
-    setListMode(mode);
-    setFocusTicker(null);
-    setShowK8OnChart(false);
-    const rows = mode === "portfolio" ? portfolioRows : watchRows;
-    if (rows.length > 0) setLeftTab("charts");
-    else setLeftTab("table");
-  };
-
-  const heroCapital = focusMetrics?.pos?.capital ?? totalCapital;
-  const heroPnl = focusMetrics?.pos?.pnlEur ?? totalPnl;
-  const heroPnlPct =
-    heroCapital > 0 ? (heroPnl / heroCapital) * 100 : null;
-  const focusLabel = focusTicker ? ` · ${focusTicker}` : "";
-
-  const listModeToggle = (
-    <div className="flex gap-0.5 p-0.5 rounded-md bg-[rgb(var(--surface-3))]/30">
-      {(
-        [
-          ["portfolio", "Portfolio"],
-          ["watch", "To Watch"],
-        ] as const
-      ).map(([id, label]) => (
-        <button
-          key={id}
-          type="button"
-          className={`rounded px-2.5 py-1 text-[10px] font-medium transition ${
-            listMode === id ? "bg-accent/20 text-accent" : "text-ink-muted hover:text-ink"
-          }`}
-          onClick={() => setListModeAndTab(id)}
-        >
-          {label}
-        </button>
-      ))}
-    </div>
-  );
+    if (simLoading || !simTable?.rows?.length) return;
+    scheduleMobileDashboardSnapshotPublish(
+      buildMobileDashboardSnapshot({
+        simTable,
+        inputs,
+        history: portfolioHistory,
+        chartBundle,
+        probOptions: probOptionsForPublish,
+        simTableVersion: null,
+        portfolioRows,
+        opportunityRows,
+        totalCapital,
+        aiFeed: aiFeedTop,
+        aiFeedRecentCount,
+        lang: lang === "it" ? "it" : "en",
+        refCurves,
+      }),
+    );
+  }, [
+    simLoading,
+    simTable,
+    inputs,
+    portfolioHistory,
+    chartBundle,
+    probOptionsForPublish,
+    portfolioRows,
+    opportunityRows,
+    totalCapital,
+    aiFeedTop,
+    aiFeedRecentCount,
+    lang,
+    refCurves,
+  ]);
 
   return (
-    <div className="flex flex-col flex-1 min-h-0 gap-3">
+    <div className="sim-harmonize flex flex-col gap-3 pr-1 w-full min-h-0">
+
+      {/* Refresh toolbar */}
+      <div className="flex items-center justify-between gap-2 shrink-0">
+        <div className="flex items-center gap-3 min-w-0">
+          <div>
+            <h2 className="text-base font-semibold">Dashboard</h2>
+            <p className="text-[11px] text-ink-muted">
+              Pulse · Piggy Bank · Portfolio · catalyst timeline
+            </p>
+          </div>
+        </div>
+        <RefreshControls
+          onRefresh={handleDashboardRefresh}
+          loading={dashboardRefreshing || simLoading || secK8Loading || aiFeedLoading}
+          tooltip={t("refresh.page.dashboard.tooltip")}
+          dataUpdatedAt={dataUpdatedAt}
+          extraInfo={
+            simTable
+              ? `${(simTable.rows ?? []).length} Simulation rows`
+              : undefined
+          }
+        />
+      </div>
 
       {/* Hero KPI strip */}
       <div className="flex gap-2 shrink-0">
         <HeroKpi
-          label="Portfolio / To Watch"
-          value={`${portfolioRows.length} / ${watchRows.length}`}
-          sub="investiti · in osservazione"
-        />
-        <HeroKpi
-          label={focusTicker ? `Capitale${focusLabel}` : "Capitale Totale"}
-          value={heroCapital > 0 ? fmtUsd(heroCapital) : "—"}
-          accent="accent"
-        />
-        <HeroKpi
-          label={focusTicker ? `P&L${focusLabel}` : "P&L"}
-          value={heroCapital > 0 ? fmtUsd(heroPnl) : "—"}
-          accent={heroPnl > 0 ? "up" : heroPnl < 0 ? "down" : undefined}
+          label={lang === "it" ? "Portafoglio / Opp." : "Portfolio / Opp."}
+          value={`${portfolioRows.length} / ${opportunityRows.length}`}
           sub={
-            heroCapital > 0 && heroPnl !== 0 && heroPnlPct != null
-              ? `${heroPnl >= 0 ? "+" : ""}${heroPnlPct.toFixed(1)}%`
-              : undefined
+            lang === "it"
+              ? `investiti · CD ≤${SIM_HOT_ZONE_DAYS}g fuori portafoglio`
+              : `invested · off-portfolio CD ≤${SIM_HOT_ZONE_DAYS}d`
           }
         />
+        <div className="flex-1 card px-4 py-3 relative overflow-hidden min-w-0">
+          <div
+            className="absolute top-0 left-0 right-0 h-[2px]"
+            style={{ background: "rgb(var(--accent))" }}
+          />
+          <p className="text-[11px] font-semibold uppercase tracking-wider text-ink-muted/70 truncate">
+            {lang === "it" ? "Capitale totale" : "Total Capital"}
+          </p>
+          <p className="text-xl font-bold tabular-nums mt-0.5 leading-tight text-ink">
+            {totalCapital > 0 ? fmtUsd(totalCapital) : "—"}
+          </p>
+          {synthRevertableCount > 0 ? (
+            <button
+              type="button"
+              className="mt-1.5 w-full rounded border border-amber-500/40 bg-amber-500/10 px-1.5 py-0.5 text-[10px] font-semibold text-amber-900 dark:text-amber-100 hover:bg-amber-500/18 transition tabular-nums"
+              title={
+                lang === "it"
+                  ? "Annulla l’ultimo allineamento synth e ripristina il capitale € precedente"
+                  : "Undo the last synth alignment and restore previous € capital"
+              }
+              onClick={() => {
+                const n = synthRevertableCount;
+                const ok = window.confirm(
+                  lang === "it"
+                    ? `Ripristinare il capitale investito com’era prima dell’ultimo sync synth (${n} posizione${n === 1 ? "" : "i"})?`
+                    : `Restore invested capital to before the last synth sync (${n} position${n === 1 ? "" : "s"})?`,
+                );
+                if (!ok) return;
+                const restored = revertSynthCapitalSyncs(
+                  patchInputs,
+                  inputs,
+                  simRowByKeyForRevert,
+                );
+                if (restored === 0) {
+                  window.alert(
+                    lang === "it"
+                      ? "Nessun allineamento synth da annullare (log vuoto o capitale già ripristinato)."
+                      : "Nothing to revert (empty log or capital already restored).",
+                  );
+                }
+              }}
+            >
+              {lang === "it"
+                ? `↩ Annulla synth (${synthRevertableCount})`
+                : `↩ Synth revert (${synthRevertableCount})`}
+            </button>
+          ) : null}
+        </div>
         <HeroKpi
-          label={focusTicker ? `Catalyst${focusLabel}` : "Prossimo Catalyst"}
-          value={nextCdDays != null ? `${nextCdDays} gg` : "—"}
+          label={lang === "it" ? "Prossimo CD" : "Next Catalyst"}
+          value={nextCdDays != null ? `${nextCdDays} d` : "—"}
           accent={nextCdDays != null && nextCdDays <= 3 ? "warn" : undefined}
-          sub={nextCdDays != null && nextCdDays <= 7 ? "⚡ imminente" : undefined}
+          sub={nextCdDays != null && nextCdDays <= 7 ? "⚡ imminent" : undefined}
         />
         <HeroKpi
-          label={focusTicker ? `K-8${focusLabel}` : "K-8 Recenti"}
-          value={String(k8RecentCount)}
-          sub="ultimi 30 giorni"
+          label={lang === "it" ? "AI feed" : "Top AI feed"}
+          value={String(aiFeedRecentCount)}
+          sub="clinical pubs · 30d"
           accent="accent"
         />
       </div>
 
-      {/* Main content area */}
-      <div className="flex flex-1 min-h-0 gap-3">
+      {/* Piggy bank bar — full-width, below KPIs */}
+      <PiggyBankBar
+        simTable={simTable}
+        inputs={inputs}
+        history={portfolioHistory}
+        metricsReady={portfolioMetricsReady}
+        onNavigateToPnl={onNavigateToSimulationPnl}
+      />
 
-        {/* Left: Portfolio / To Watch */}
-        <div className="flex flex-col min-h-0 min-w-0" style={{ flex: "3" }}>
-          <div className="card flex flex-col flex-1 min-h-0 overflow-hidden">
-            <div className="flex flex-wrap items-center gap-2 px-4 py-3 border-b border-[rgb(var(--border))]/60 shrink-0">
-              {listModeToggle}
-              <h2 className="font-semibold text-sm">
-                {listMode === "portfolio" ? "Investimenti attivi" : "Società in osservazione"}
-              </h2>
-              <span className="text-[10px] text-ink-muted">
-                {focusTicker
-                  ? `focus ${focusTicker}`
-                  : `${displayRows.length} ticker`}
-                {listMode === "watch" ? " · elenco Simulation" : ""}
-              </span>
-              {focusTicker && (
-                <button
-                  type="button"
-                  className="text-[10px] text-accent hover:underline"
-                  onClick={() => setFocusTicker(null)}
-                >
-                  ✕ Tutti
-                </button>
-              )}
-              {displayRows.length > 0 && (
-                <div className="flex gap-0.5 p-0.5 rounded-md bg-[rgb(var(--surface-3))]/30 ml-1">
-                  {(["table", "charts"] as const).map((t) => (
-                    <button
-                      key={t}
-                      type="button"
-                      className={`rounded px-2 py-0.5 text-[10px] font-medium transition ${
-                        leftTab === t
-                          ? "bg-accent/20 text-accent"
-                          : "text-ink-muted hover:text-ink"
-                      }`}
-                      onClick={() => setLeftTab(t)}
-                    >
-                      {t === "table" ? "Tabella" : "Grafici"}
-                    </button>
-                  ))}
-                </div>
-              )}
-              {leftTab === "charts" && (
-                <button
-                  type="button"
-                  className={`rounded-md px-2 py-0.5 text-[10px] font-medium border transition ${
-                    showK8OnChart
-                      ? "bg-[rgb(var(--warn))]/15 text-[rgb(var(--warn))] border-[rgb(var(--warn))]/40"
-                      : "border-[rgb(var(--border))]/50 text-ink-muted hover:text-ink"
-                  } ${!focusTicker ? "opacity-50" : ""}`}
-                  title={
-                    focusTicker
-                      ? `Mostra filing K-8 di ${focusTicker} (colore = curva pred)`
-                      : "Seleziona un ticker (chip o riga) per mostrare i K-8 sul grafico"
-                  }
-                  disabled={!focusTicker || k8MarkersInScope.length === 0}
-                  onClick={() => setShowK8OnChart((v) => !v)}
-                >
-                  ◆ K-8
-                  {focusTicker && showK8OnChart && k8MarkersInScope.length > 0
-                    ? ` · ${focusTicker} (${k8MarkersInScope.length})`
-                    : focusTicker
-                      ? ` · ${focusTicker}`
-                      : ""}
-                </button>
-              )}
-              <button
-                type="button"
-                className="ml-auto text-[11px] text-accent/80 hover:text-accent transition"
-                onClick={() => onScreen("simulation")}
-              >
-                → Simulation
-              </button>
-            </div>
-
-            {sortedDisplayTickers.length > 0 && (
-              <div className="flex flex-wrap items-center gap-1 px-4 py-2 border-b border-[rgb(var(--border))]/40 shrink-0">
-                <span className="text-[10px] text-ink-muted mr-1">Ticker</span>
-                <button
-                  type="button"
-                  className={`rounded-md px-2 py-0.5 text-[10px] font-medium border transition ${
-                    !focusTicker
-                      ? "bg-accent/20 text-accent border-accent/40"
-                      : "border-[rgb(var(--border))]/50 text-ink-muted hover:text-ink"
-                  }`}
-                  onClick={() => setFocusTicker(null)}
-                >
-                  Tutti
-                </button>
-                {sortedDisplayTickers.map((tk) => (
-                  <button
-                    key={tk}
-                    type="button"
-                    className={`rounded-md px-2 py-0.5 text-[10px] font-semibold border transition ${
-                      focusTicker === tk
-                        ? "bg-accent/20 text-accent border-accent/40"
-                        : "border-[rgb(var(--border))]/50 text-ink-muted hover:text-ink"
-                    }`}
-                    onClick={() => {
-                      setFocusTicker(tk);
-                      setLeftTab("charts");
-                    }}
-                  >
-                    {tk}
-                  </button>
-                ))}
-              </div>
-            )}
-
-            {focusTicker && focusPrimaryRow && (
-              <TickerFocusKpiPanel row={focusPrimaryRow} inputs={inputs} />
-            )}
-
-            {leftTab === "charts" && focusedRows.length > 0 ? (
-              <div className="overflow-y-auto flex-1 min-h-0 p-3 space-y-4">
-                {chartLoading ? (
-                  <div className="flex items-center justify-center h-32 text-ink-muted text-sm">
-                    Caricamento grafici…
-                  </div>
-                ) : displayChartLines.curve.length === 0 ? (
-                  <p className="text-ink-muted text-sm p-4">
-                    {chartBundle
-                      ? `Nessun dato grafico per i ticker in ${listMode === "portfolio" ? "Portfolio" : "To Watch"}.`
-                      : "Snapshot grafici assente — esegui Export_Desktop_Snapshots.bat."}
-                  </p>
-                ) : (
-                  <>
-                    <SimulationCurveChart
-                      title={
-                        focusTicker
-                          ? `Curva predittiva · ${focusTicker}`
-                          : `Curva predittiva · ${listMode === "portfolio" ? "Portfolio" : "To Watch"}`
-                      }
-                      lines={displayChartLines.curve}
-                      k8Markers={visibleK8Markers}
-                      nowMarkers={chartNowMarkers}
-                      onOpenSecK8={onOpenSecK8}
-                      yLabel="% vs T−60 · predizione ricalibrata (foglio Simulation)"
-                      height={focusTicker ? 300 : 260}
-                    />
-                    <PricePathChart
-                      title={
-                        focusTicker
-                          ? `Prezzo $ · ${focusTicker}`
-                          : "Andamento prezzo $ (close storici)"
-                      }
-                      lines={displayChartLines.price}
-                      field="price_storico_usd"
-                      nowMarkers={chartNowMarkers}
-                      height={focusTicker ? 220 : 200}
-                    />
-                    <PricePathChart
-                      title={
-                        focusTicker
-                          ? `Prezzo ricalibrato · ${focusTicker}`
-                          : listMode === "portfolio" &&
-                              !focusTicker &&
-                              displayChartLines.price.length >= 2
-                            ? "Prezzo $ path ricalibrato (μ portafoglio · nodi CD)"
-                            : `Prezzo $ path ricalibrato · ${listMode === "portfolio" ? "Portfolio" : "To Watch"}`
-                      }
-                      lines={displayChartLines.price}
-                      field="price_usd"
-                      nowMarkers={chartNowMarkers}
-                      height={220}
-                      mode={
-                        listMode === "portfolio" &&
-                        !focusTicker &&
-                        displayChartLines.price.length >= 2
-                          ? "portfolio-mean"
-                          : "series"
-                      }
-                      standardNodesOnly
-                      aggregateByOffset
-                    />
-                    <p className="text-[10px] text-ink-muted">
-                      Storico reale e confronto dettagliato in{" "}
-                      <button type="button" className="text-accent underline" onClick={() => onScreen("catalyst")}>Grafici</button>
-                      {" · "}
-                      <button type="button" className="text-accent underline" onClick={() => onScreen("secK8")}>SEC K-8</button>
-                      .
-                    </p>
-                  </>
-                )}
-              </div>
-            ) : (
-            <div className="overflow-auto flex-1 min-h-0">
-              {simLoading ? (
-                <div className="p-4 space-y-2">
-                  {[1, 2, 3, 4, 5].map((i) => (
-                    <div
-                      key={i}
-                      className="h-8 rounded bg-[rgb(var(--surface-3))]/30 animate-pulse"
-                    />
-                  ))}
-                </div>
-              ) : focusedRows.length === 0 ? (
-                <p className="text-ink-muted text-sm p-4">
-                  {listMode === "portfolio"
-                    ? "Nessun investimento attivo — inserisci capitale in Simulation."
-                    : "Nessun ticker in osservazione."}
-                </p>
-              ) : (
-                <table className="w-full text-xs border-collapse table-zebra">
-                  <thead className="sticky top-0 z-10 bg-[rgb(var(--surface-elevated))]">
-                    <tr className="text-[10px] uppercase tracking-wide text-ink-muted/70">
-                      <th className="text-left px-4 py-2 font-medium">Ticker</th>
-                      <th className="text-left px-2 py-2 font-medium">CD</th>
-                      <th className="text-right px-2 py-2 font-medium">Prezzo</th>
-                      <th className="text-right px-2 py-2 font-medium">Pred +7</th>
-                      <th className="text-center px-2 py-2 font-medium">Curva</th>
-                      <th className="text-right px-4 py-2 font-medium">P&amp;L</th>
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {focusedRows.map((row, i) => {
-                      const ticker = String(row["Ticker"] ?? "");
-                      const tkUpper = tickerFromRow(row);
-                      const isFocused = focusTicker === tkUpper;
-                      const cd = String(row["Completion Date"] ?? "");
-                      const days = daysFromToday(cd);
-                      const pos = computeSimulationPosition(row, inputs);
-                      const price = pos?.currPrice ?? Number(row["Prezzo Corrente ($)"]);
-                      const pred7Raw = row["Δ% vs Pred−60\nPred\n+7"];
-                      const pred7 = pred7Raw != null ? Number(pred7Raw) : null;
-                      const hasPosition = pos != null && pos.capital > 0 && pos.buyPrice > 0;
-                      const pnl = hasPosition ? pos.pnlEur : null;
-                      const pnlPct = hasPosition ? pos.pnlPct : null;
-
-                      const pred7Color =
-                        pred7 == null
-                          ? "text-ink-muted"
-                          : pred7 >= 0
-                            ? "text-[rgb(var(--signal-up))]"
-                            : "text-[rgb(var(--signal-down))]";
-                      const pnlColor =
-                        !hasPosition || pnl == null
-                          ? "text-ink-muted"
-                          : pnl >= 0
-                            ? "text-[rgb(var(--signal-up))]"
-                            : "text-[rgb(var(--signal-down))]";
-
-                      return (
-                        <tr
-                          key={ticker + String(i)}
-                          role="button"
-                          tabIndex={0}
-                          onClick={() => {
-                            setFocusTicker(tkUpper);
-                            setLeftTab("charts");
-                          }}
-                          onKeyDown={(e) => {
-                            if (e.key === "Enter" || e.key === " ") {
-                              e.preventDefault();
-                              setFocusTicker(tkUpper);
-                              setLeftTab("charts");
-                            }
-                          }}
-                          className={`border-b border-[rgb(var(--border))]/20 transition-colors cursor-pointer hover:bg-[rgb(var(--surface-3))]/25 ${
-                            hasPosition ? "bg-accent/[0.04]" : ""
-                          } ${isFocused ? "ring-1 ring-inset ring-accent/60 bg-accent/[0.08]" : ""}`}
-                        >
-                          <td className="px-4 py-2.5">
-                            <div className="flex items-center gap-1.5">
-                              {hasPosition && (
-                                <span className="w-1.5 h-1.5 rounded-full bg-accent shrink-0" />
-                              )}
-                              <span className="font-bold tracking-wide">{ticker}</span>
-                            </div>
-                          </td>
-                          <td className="px-2 py-2.5 text-ink-muted tabular-nums">
-                            {days != null ? (
-                              <span
-                                className={
-                                  days <= 7 ? "text-[rgb(var(--warn))] font-semibold" : ""
-                                }
-                              >
-                                {days === 0 ? "oggi" : `${days}gg`}
-                              </span>
-                            ) : (
-                              cd
-                            )}
-                          </td>
-                          <td className="px-2 py-2.5 text-right tabular-nums">
-                            {Number.isFinite(price) ? `$${price.toFixed(2)}` : "—"}
-                          </td>
-                          <td className={`px-2 py-2.5 text-right tabular-nums font-semibold ${pred7Color}`}>
-                            {pred7 != null ? `${dirIcon(pred7)}${fmtPctSigned(pred7)}` : "—"}
-                          </td>
-                          <td className="px-2 py-2.5">
-                            <div className="flex justify-center">
-                              <SimulationSparkline row={row} />
-                            </div>
-                          </td>
-                          <td className={`px-4 py-2.5 text-right tabular-nums font-semibold ${pnlColor}`}>
-                            {hasPosition && pnl != null ? (
-                              <>
-                                {fmtUsd(pnl)}
-                                {pnlPct != null && (
-                                  <span className="ml-1 text-[10px] opacity-70">
-                                    ({pnlPct >= 0 ? "+" : ""}
-                                    {pnlPct.toFixed(0)}%)
-                                  </span>
-                                )}
-                              </>
-                            ) : (
-                              "—"
-                            )}
-                          </td>
-                        </tr>
-                      );
-                    })}
-                  </tbody>
-                </table>
-              )}
-            </div>
-            )}
-          </div>
-        </div>
-
-        {/* Right column: Catalyst timeline + K-8 feed (stesso filtro Portfolio / To Watch) */}
-        <div className="flex flex-col min-h-0 min-w-0 gap-3" style={{ flex: "2" }}>
-          <div className="flex items-center gap-2 shrink-0 px-1">
-            {listModeToggle}
-            <span className="text-[10px] text-ink-muted">
-              {focusTicker ? (
-                <>
-                  Catalyst e K-8 per <strong>{focusTicker}</strong>
-                </>
-              ) : (
-                <>
-                  Prossimi catalyst e K-8 filtrati per{" "}
-                  <strong>{listMode === "portfolio" ? "Portfolio" : "To Watch"}</strong>
-                </>
-              )}
-            </span>
-          </div>
-
-          {/* Catalyst timeline */}
-          <div className="card flex flex-col overflow-hidden shrink-0" style={{ maxHeight: "46%" }}>
-            <div className="flex items-center gap-2 px-4 py-3 border-b border-[rgb(var(--border))]/60 shrink-0">
-              <h2 className="font-semibold text-sm">
-                Prossimi Catalyst
-                <span className="ml-1 font-normal text-ink-muted">
-                  · {focusTicker ?? (listMode === "portfolio" ? "Portfolio" : "To Watch")}
-                </span>
-              </h2>
-              {focusTicker && (
-                <button
-                  type="button"
-                  className="text-[10px] text-accent hover:underline"
-                  onClick={() => setFocusTicker(null)}
-                >
-                  Tutti
-                </button>
-              )}
-              <button
-                type="button"
-                className="ml-auto text-[11px] text-accent/80 hover:text-accent transition"
-                onClick={() => onScreen("catalyst")}
-              >
-                → Catalyst Hub
-              </button>
-            </div>
-            <div className="overflow-y-auto flex-1 px-3 py-2 space-y-1">
-              {upcoming.length === 0 ? (
-                <p className="text-ink-muted text-xs p-2">
-                  {simLoading
-                    ? "Caricamento..."
-                    : `Nessun catalyst imminente in ${listMode === "portfolio" ? "Portfolio" : "To Watch"}.`}
-                </p>
-              ) : (
-                upcoming.map((r) => {
-                  const urgent = r.days != null && r.days <= 7;
-                  const direction =
-                    r.pred7 == null ? "neutral" : r.pred7 >= 0 ? "up" : "down";
-                  const signalClass =
-                    direction === "up"
-                      ? "signal-up"
-                      : direction === "down"
-                        ? "signal-down"
-                        : "signal-neutral";
-                  const signalLabel =
-                    direction === "up" ? "▲ Long" : direction === "down" ? "▼ Short" : "● Neutro";
-
-                  return (
-                    <div
-                      key={r.ticker + r.cd}
-                      className={`flex items-center gap-2.5 rounded-lg px-3 py-2 border transition ${
-                        urgent
-                          ? "border-[rgb(var(--warn))]/50 bg-[rgb(var(--warn))]/5"
-                          : "border-[rgb(var(--border))]/30 bg-[rgb(var(--surface-3))]/10"
-                      }`}
-                    >
-                      <span className={signalClass}>{signalLabel}</span>
-                      <span className="font-bold text-xs tracking-wide">{r.ticker}</span>
-                      {r.pred7 != null && (
-                        <span
-                          className={`text-[10px] tabular-nums ${
-                            r.pred7 >= 0
-                              ? "text-[rgb(var(--signal-up))]"
-                              : "text-[rgb(var(--signal-down))]"
-                          }`}
-                        >
-                          {fmtPctSigned(r.pred7)}
-                        </span>
-                      )}
-                      <span className="text-[11px] text-ink-muted ml-auto tabular-nums">
-                        {r.days == null ? "—" : urgent ? `⚡ ${r.days}gg` : `${r.days} gg`}
-                      </span>
-                    </div>
-                  );
-                })
-              )}
-            </div>
-          </div>
-
-          {/* K-8 feed */}
-          <div className="card flex flex-col flex-1 min-h-0 overflow-hidden">
-            <div className="flex items-center gap-2 px-4 py-3 border-b border-[rgb(var(--border))]/60 shrink-0">
-              <h2 className="font-semibold text-sm">
-                K-8 Recenti
-                <span className="ml-1 font-normal text-ink-muted">
-                  · {focusTicker ?? (listMode === "portfolio" ? "Portfolio" : "To Watch")}
-                </span>
-              </h2>
-              <span className="text-[10px] text-ink-muted">{k8RecentCount} ultimi 30gg</span>
-              <button
-                type="button"
-                className="ml-auto text-[11px] text-accent/80 hover:text-accent transition"
-                onClick={() => onScreen("secK8")}
-              >
-                → SEC 8-K
-              </button>
-            </div>
-            <div className="overflow-y-auto flex-1 px-3 py-2 space-y-1.5">
-              {secK8Loading ? (
-                <div className="p-2 space-y-2">
-                  {[1, 2, 3].map((i) => (
-                    <div
-                      key={i}
-                      className="h-10 rounded bg-[rgb(var(--surface-3))]/30 animate-pulse"
-                    />
-                  ))}
-                </div>
-              ) : k8Feed.length === 0 ? (
-                <p className="text-ink-muted text-xs p-2">
-                  Nessun filing K-8 negli ultimi periodi per i ticker in{" "}
-                  {listMode === "portfolio" ? "Portfolio" : "To Watch"}.
-                </p>
-              ) : (
-                k8Feed.map((row, i) => {
-                  const ticker = String(row["Ticker"] ?? "");
-                  const date = String(row[COL_K8_DATE] ?? "");
-                  const d1Raw = COL_K8_D1 ? row[COL_K8_D1] : null;
-                  const d1 = d1Raw != null ? Number(d1Raw) : null;
-                  const href = COL_K8_EDGAR ? parseEdgarHrefFromCell(row[COL_K8_EDGAR]) : null;
-                  const itemsRaw = COL_K8_ITEMS ? String(row[COL_K8_ITEMS] ?? "") : "";
-                  const items = itemsRaw.split("\n")[0].replace("Items 8-K: ", "Items: ");
-
-                  const d1Color =
-                    d1 == null
-                      ? "text-ink-muted"
-                      : d1 >= 0
-                        ? "text-[rgb(var(--signal-up))]"
-                        : "text-[rgb(var(--signal-down))]";
-
-                  return (
-                    <div
-                      key={ticker + date + String(i)}
-                      className="flex items-start gap-2 rounded-lg border border-[rgb(var(--border))]/30 px-3 py-2 bg-[rgb(var(--surface-3))]/10 hover:bg-[rgb(var(--surface-3))]/20 transition"
-                    >
-                      <div className="flex flex-col min-w-0 flex-1">
-                        <div className="flex items-center gap-2 flex-wrap">
-                          <span className="font-bold text-xs tracking-wide">{ticker}</span>
-                          <span className="text-[10px] text-ink-muted">{date}</span>
-                          {d1 != null && (
-                            <span
-                              className={`ml-auto font-semibold text-xs tabular-nums ${d1Color}`}
-                            >
-                              D+1 {dirIcon(d1)}{fmtPctSigned(d1)}
-                            </span>
-                          )}
-                        </div>
-                        {items && (
-                          <p className="text-[10px] text-ink-muted mt-0.5 truncate">{items}</p>
-                        )}
-                      </div>
-                      {href && (
-                        <a
-                          href={href}
-                          target="_blank"
-                          rel="noopener noreferrer"
-                          className="shrink-0 text-[10px] text-accent hover:underline whitespace-nowrap mt-0.5"
-                          onClick={(e) => e.stopPropagation()}
-                        >
-                          SEC →
-                        </a>
-                      )}
-                    </div>
-                  );
-                })
-              )}
-            </div>
-          </div>
-        </div>
+      {/* "Since your last visit" — promoted right under the Piggy Bank so
+          the delta-since-last-session story is the first thing the user
+          reads. Three pulse scopes (portfolio · sim loop equal · sim loop synth)
+          share one slot; PulseScopeSwitcher selects which session is active. */}
+      <div className="shrink-0 min-w-0">
+      {pulseMode === "portfolio" ? (
+        <DashboardPulseTable
+          data={dashboardPulseData}
+          history={portfolioHistory}
+          simTable={simTable}
+          sdsRows={sdsRowsForMig}
+          chartBundle={chartBundle}
+          reloadToken={dashboardReloadToken}
+          onOpenSimulationRow={onOpenSimulationRow}
+          onOpen24hAssessment={onOpen24hAssessment}
+          onOpenSupernovaTab={onOpenSupernovaTab}
+          pulseScope={pulseMode}
+          onPulseScopeChange={setPulseMode}
+        />
+      ) : (
+        <ViewErrorBoundary label="Sim loop pulse">
+        <SimLoopPulseView
+          variant={pulseMode === "simLoopSynth" ? "synth" : "equal"}
+          pulseScope={pulseMode}
+          onPulseScopeChange={setPulseMode}
+          simTable={simTable}
+          sdsRows={sdsRowsForMig}
+          chartBundle={chartBundle}
+          investInputs={inputs}
+          reloadToken={dashboardReloadToken}
+          onOpenSimulationRow={onOpenSimulationRow}
+          onOpen24hAssessment={onOpen24hAssessment}
+        />
+        </ViewErrorBoundary>
+      )}
       </div>
+
+      {!recModalOpen && recStats.total > 0 ? (
+        <div className="shrink-0 min-w-0 px-1">
+          <button
+            type="button"
+            className="w-full rounded-lg border border-[rgb(var(--accent))]/35 bg-[rgb(var(--accent))]/8 px-3 py-2 text-left text-[11px] font-medium text-ink hover:bg-[rgb(var(--accent))]/12 transition"
+            onClick={() => setRecModalOpen(true)}
+          >
+            {t("dashboard.rec.reviewOpen", {
+              n: String(recStats.total),
+              new: String(recStats.newCount),
+            })}
+          </button>
+        </div>
+      ) : null}
+
+      <DashboardRecommendationsModal
+        open={recModalOpen}
+        onClose={handleRecModalClose}
+        simTable={simTable}
+        simLoading={simLoading}
+        chartBundle={chartBundle}
+        sdsRows={sdsRowsForMig}
+        onOpenSimulationSheet={onOpenSimulationSheet}
+        onOpen24hAssessment={onOpen24hAssessment}
+        onRegisterBuy={onRegisterBuy}
+        onSell={onSellPosition}
+        onStatsChange={setRecStats}
+      />
+
+      {/* Grafici · P(plan) + paper sim · poi 24h + AI feed */}
+      <section
+        className="dashboard-charts-section card dashboard-middle-panel flex flex-col gap-3 min-w-0 shrink-0"
+        aria-label={lang === "it" ? "Grafici e AI feed" : "Charts and AI feed"}
+      >
+        <div className="shrink-0 px-4 py-3 border-b border-[rgb(var(--border))]/60 bg-[rgb(var(--surface-elevated))]">
+          <h2 className="text-base font-semibold text-ink">
+            {lang === "it" ? "Grafici e AI feed" : "Charts & AI feed"}
+          </h2>
+          <p className="mt-1 text-[11px] text-ink-muted leading-snug">
+            {lang === "it"
+              ? "P(plan) e paper sim · sotto: performance 24h e feed AI"
+              : "P(plan) and paper sim · below: 24h performance and AI feed"}
+          </p>
+          <DashboardPanelUpdatedLabel updatedAt={chartsSectionUpdatedAt} className="!text-[11px]" />
+        </div>
+        <div className="px-3 pb-4 min-w-0">
+          <DashboardChartsRow
+            simTable={simTable}
+            chartBundle={chartBundle}
+            sdsRows={sdsRowsForMig}
+            dataUpdatedAt={dataUpdatedAt}
+            aiFeed={{
+              feed: aiFeedTop,
+              recentCount: aiFeedRecentCount,
+              loading: aiFeedLoading,
+              loadError: aiFeedLoadError,
+              updatedAt: aiFeedUpdatedAt,
+              scopeLabel: t("dashboard.list.portfolio"),
+              onOpenFeed: () => onScreen("catalystFeed"),
+            }}
+          />
+        </div>
+      </section>
     </div>
   );
 }

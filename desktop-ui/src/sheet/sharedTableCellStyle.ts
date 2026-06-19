@@ -1,5 +1,5 @@
 /**
- * Logica colori condivisa (stile Simulation): ▲▼● + testo verde/rosso su colonne %.
+ * Shared color logic (Simulation style): ▲▼● + green/red text on % columns.
  */
 import type { CellStyle } from "./variationColors";
 import { sheetCellPlainText } from "./cellLinks";
@@ -123,7 +123,7 @@ function rowIsPast(row: Record<string, unknown>): boolean {
   return info?.past ?? false;
 }
 
-/** Stile celle condiviso — logica Simulation (testo + icona, no sfondo su var.%). */
+/** Shared cell style — Simulation logic (text + icon, no background on var.%). */
 export function sharedTableCellExtras(
   column: string,
   raw: unknown,

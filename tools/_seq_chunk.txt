@@ -1,0 +1,414 @@
+def _pred_curve_close_cal(close_series, cd, cal_off: int):
+    """Close reale vicina al giorno di calendario ``CD + cal_off`` (gg cal.)."""
+    if close_series is None or getattr(close_series, "empty", True):
+        return None
+    from datetime import timedelta as _td
+    try:
+        tgt = cd + _td(days=int(cal_off))
+    except Exception:
+        return None
+    td = _nearest_hist_trade_date_to_calendar(
+        close_series, tgt, max_snap_days=5)
+    if td is None:
+        return None
+    return _histlib_close_on_trade_date(close_series, td)
+
+
+def _pred_curve_trade_date_at_offset(close_series, cd, cal_off: int):
+    """Data di negoziazione (calendario) usata per il nodo ``CD+cal_off`` — senza close."""
+    if close_series is None or getattr(close_series, "empty", True):
+        return None
+    from datetime import timedelta as _td
+    try:
+        tgt = cd + _td(days=int(cal_off))
+    except Exception:
+        return None
+    return _nearest_hist_trade_date_to_calendar(
+        close_series, tgt, max_snap_days=5)
+
+
+def _pred_curve_series_upto_trade_date(ser, end_trade_date) -> "object | None":
+    """
+    Restituisce ``ser`` ristretta alle sole barre con giorno di calendario
+    ``<= end_trade_date`` (nessun dato successivo al nodo — anti look-ahead).
+    """
+    if ser is None or getattr(ser, "empty", True) or end_trade_date is None:
+        return ser
+    import pandas as pd
+    try:
+        out = ser.copy()
+        mask = []
+        for ix in out.index:
+            try:
+                id_ = pd.Timestamp(ix).normalize().date()
+            except Exception:
+                mask.append(False)
+                continue
+            mask.append(id_ <= end_trade_date)
+        out = out.loc[mask]
+        return out if not getattr(out, "empty", True) else None
+    except Exception:
+        return None
+
+
+def _pred_curve_knot_metrics_asof(
+    close_upto: "object | None",
+    vol_upto: "object | None",
+    xbi_upto: "object | None",
+) -> dict:
+    """
+    RSI, volume, pendenza vs XBI calcolati **solo** sulle serie già troncate
+    alla seduta del nodo (stesso arco temporale del punto).
+    """
+    import numpy as np
+    import pandas as pd
+
+    out: dict = {}
+    if close_upto is None or getattr(close_upto, "empty", True):
+        return out
+    c = close_upto.dropna().astype(float)
+    if len(c) < 5:
+        return out
+
+    def _rsi14_local(s: pd.Series):
+        try:
+            dlt = s.diff().dropna()
+            if len(dlt) < 14:
+                return None
+            gain = dlt.clip(lower=0).rolling(14).mean()
+            loss = (-dlt.clip(upper=0)).rolling(14).mean()
+            rs = gain / loss.replace(0, float("nan"))
+            rsi = 100 - 100 / (1 + rs)
+            val = rsi.iloc[-1]
+            return float(val) if pd.notna(val) else None
+        except Exception:
+            return None
+
+    def _vol_ratio_local(v: pd.Series):
+        try:
+            v = v.dropna().astype(float)
+            if len(v) < 20:
+                return None
+            avg5 = float(v.iloc[-5:].mean())
+            avg15 = float(v.iloc[-20:-5].mean())
+            return round(avg5 / avg15, 3) if avg15 > 0 else None
+        except Exception:
+            return None
+
+    def _vol_accel_local(v: pd.Series):
+        try:
+            v = v.dropna().astype(float)
+            if len(v) < 10:
+                return None
+            last5 = float(v.tail(5).mean())
+            prev5 = float(v.tail(10).head(5).mean())
+            return round(last5 / prev5, 2) if prev5 > 0 else None
+        except Exception:
+            return None
+
+    def _slope_pct_local(s: pd.Series):
+        try:
+            s = s.dropna().astype(float).tail(45)
+            if len(s) < 5:
+                return None
+            x = np.arange(len(s), dtype=float)
+            y = s.values.astype(float)
+            p0 = y[0] if y[0] > 0 else 1.0
+            coef = np.polyfit(x, (y / p0 - 1.0) * 100.0, 1)
+            return round(float(coef[0]), 4)
+        except Exception:
+            return None
+
+    def _vol_px_div_local(cs: pd.Series, vs: pd.Series, n: int = 20):
+        try:
+            ix = cs.index.intersection(vs.index)
+            if len(ix) < max(6, n // 2):
+                return None
+            cs2 = cs.loc[ix].sort_index().astype(float).tail(n)
+            vs2 = vs.loc[ix].sort_index().astype(float).tail(n)
+            if len(cs2) < max(3, n // 2) or len(vs2) < max(3, n // 2):
+                return None
+            x = np.arange(len(cs2), dtype=float)
+            y = cs2.values.astype(float)
+            p0 = y[0] if y[0] > 0 else 1.0
+            p_sl = float(np.polyfit(x, (y / p0 - 1.0) * 100.0, 1)[0])
+            xv = np.arange(len(vs2), dtype=float)
+            yv = vs2.values.astype(float)
+            v_sl = float(np.polyfit(xv, yv / (yv.mean() or 1.0), 1)[0]) * 100.0
+            if p_sl < -0.3 and v_sl > 0.5:
+                return 1
+            if p_sl > 0.3 and v_sl < -0.5:
+                return -1
+            return 0
+        except Exception:
+            return None
+
+    rsi = _rsi14_local(c)
+    if rsi is not None:
+        out["rsi_14"] = round(rsi, 2)
+    sl = _slope_pct_local(c)
+    if sl is not None:
+        out["slope_pct_45d"] = sl
+    if xbi_upto is not None and not getattr(xbi_upto, "empty", True):
+        xb = xbi_upto.dropna().astype(float)
+        common = c.index.intersection(xb.index)
+        if len(common) >= 5:
+            try:
+                s_tk = _slope_pct_local(c.loc[common].sort_index())
+                s_xb = _slope_pct_local(xb.loc[common].sort_index())
+                if s_tk is not None and s_xb is not None:
+                    out["exc_slope_vs_xbi"] = round(float(s_tk) - float(s_xb), 4)
+            except Exception:
+                pass
+    if vol_upto is not None and not getattr(vol_upto, "empty", True):
+        v0 = vol_upto.dropna().astype(float)
+        ixv = c.index.intersection(v0.index)
+        if len(ixv) >= 20:
+            v1 = v0.loc[ixv].sort_index()
+            vr = _vol_ratio_local(v1)
+            if vr is not None:
+                out["vol_ratio"] = vr
+            va = _vol_accel_local(v1)
+            if va is not None:
+                out["vol_accel"] = va
+            if len(ixv) >= 10:
+                vpd = _vol_px_div_local(c.loc[ixv].sort_index(), v1)
+                if vpd is not None:
+                    out["vol_price_div"] = int(vpd)
+    out["close_last"] = round(float(c.iloc[-1]), 4) if len(c) else None
+    return out
+
+
+def _pred_curve_seq_apply_to_predictions(
+    result: dict,
+    closes_long: dict,
+    volumes_long: dict | None,
+    xbi_long: "object | None",
+    *,
+    today,
+    financial_df=None,
+) -> None:
+    """
+    Aggiorna in-place i record predizione (chiavi ``TICKER|CD``) con:
+
+    - ``seq_curve_pct_vs_m60``: lista allineata a ``SIMULATION_PRED_CAL_OFFSETS`` — % vs
+      prezzo **reale** a T−60, con nodi passati ancorati ai close di mercato e nodi futuri
+      ottenuti sommando al reale l'incremento **del modello** dall'ultimo nodo osservato;
+    - ``seq_curve_t60_usd``: prezzo reale (USD) al nodo T−60 quando disponibile;
+    - ``seq_curve_knot_snapshots``: per ogni offset **già raggiunto** nel calendario, metriche
+      (RSI, vol_ratio, vol_accel, slope vs XBI, …) calcolate **solo** su serie troncate alla
+      seduta del nodo — nessun dato «di oggi» applicato a −60/−30/…;
+    - ``seq_curve_recalib_note``: riepilogo sintetico.
+
+    Con ``ORCH_SKIP_SEC_K8`` disattivo e CIK disponibile (Financial o cache SEC), gli 8‑K in
+    [CD−60, CD] aggiungono punti % vs T−60 ai **soli** nodi ancora senza close storico
+    (stesso schema della curva storica, senza sovrascrivere i nodi già ancorati).
+
+    Persistenza non bloccante: ``data/pred_curve_seq_state.json``.
+    """
+    if not result or not closes_long:
+        return
+    from datetime import date as _date, timedelta as _td
+
+    if today is None:
+        _today = _date.today()
+    elif hasattr(today, "date"):
+        _today = today.date()
+    else:
+        _today = today
+
+    offsets = SIMULATION_PRED_CAL_OFFSETS
+    n = len(offsets)
+    doc = _pred_curve_seq_load()
+    ev = doc.setdefault("events", {})
+    dirty_state = False
+    n_seq_events = 0
+    _k8_merge = _pred_curve_k8_seq_merge_enabled()
+    _sub_cache_k8: dict[str, dict | None] = {}
+    _tk_cik_fb: dict[str, str] = {}
+    _sec_sleep_k8 = 0.0
+    if _k8_merge:
+        try:
+            _tk_cik_fb = _build_ticker_cik_map()
+        except Exception:
+            _tk_cik_fb = {}
+        try:
+            _sec_sleep_k8 = float(
+                os.environ.get("SEC_K8_SUBMISSIONS_SLEEP_SEC", "").strip() or "0.15")
+        except Exception:
+            _sec_sleep_k8 = 0.15
+
+    for k, pred in list(result.items()):
+        if not isinstance(k, str) or "|" not in k or not isinstance(pred, dict):
+            continue
+        part = k.split("|", 1)
+        if len(part) != 2:
+            continue
+        tk = part[0].strip().upper()
+        cd_s = part[1].strip()
+        if not tk:
+            continue
+        try:
+            cd = _date.fromisoformat(cd_s)
+        except Exception:
+            continue
+        ser = closes_long.get(tk)
+        if ser is None or getattr(ser, "empty", True):
+            continue
+        if _today < cd + _td(days=-60):
+            continue
+        p60 = _pred_curve_close_cal(ser, cd, -60)
+        if p60 is None or float(p60) <= 0:
+            continue
+        pw = dict(pred)
+        _accuracy_sim_impute_missing_pre_cd_model_pcts(pw)
+        _accuracy_sim_synthesize_interp_nodes_from_post_d_only(pw)
+        raw = _interp_pred_pct_vs_m60_calendar(
+            pw,
+            offsets,
+            log_row_key=None,
+            pair_empty_logged=None,
+        )
+        if not isinstance(raw, list) or len(raw) < n:
+            continue
+        vol_long = None
+        if isinstance(volumes_long, dict):
+            vol_long = volumes_long.get(tk)
+        act: list = [None] * n
+        for i, off in enumerate(offsets):
+            if _today < cd + _td(days=int(off)):
+                continue
+            if int(off) == -60:
+                act[i] = 0.0
+                continue
+            po = _pred_curve_close_cal(ser, cd, int(off))
+            if po is not None and float(po) > 0:
+                try:
+                    act[i] = round((float(po) / float(p60) - 1.0) * 100.0, 4)
+                except Exception:
+                    act[i] = None
+        _n_k8_nodes = 0
+        if _k8_merge:
+            _cik_raw = None
+            try:
+                _fr_k8 = _financial_series_for_ticker(financial_df, tk)
+                _cik_raw = _accuracy_cik_str_from_financial_row(_fr_k8)
+            except Exception:
+                _cik_raw = None
+            if not _cik_raw:
+                _cik_raw = (_tk_cik_fb.get(tk) or None)
+            _cik10 = _sec_cik_pad_10(str(_cik_raw or ""))
+            if len(_cik10) == 10:
+                if _cik10 not in _sub_cache_k8:
+                    _sub_cache_k8[_cik10] = _fetch_sec_company_submissions_json(_cik10)
+                    if _sec_sleep_k8 > 0:
+                        import time as _time_sub_k8
+                        _time_sub_k8.sleep(_sec_sleep_k8)
+                _sub_k8 = _sub_cache_k8.get(_cik10)
+                try:
+                    _n_k8_nodes = int(_pred_curve_seq_merge_k8_observations_into_act(
+                        tk=tk,
+                        cd=cd,
+                        p60=float(p60),
+                        sub=_sub_k8,
+                        today=_today,
+                        offsets=offsets,
+                        act=act,
+                    ))
+                except Exception:
+                    _n_k8_nodes = 0
+        last = -1
+        for i in range(n):
+            if act[i] is not None:
+                last = i
+        if last < 0:
+            continue
+        adj: list = [None] * n
+        for j in range(n):
+            if j <= last:
+                adj[j] = act[j] if act[j] is not None else raw[j]
+            else:
+                L = last
+                a_l = act[L]
+                if (
+                    a_l is not None
+                    and j < len(raw)
+                    and L < len(raw)
+                    and raw[j] is not None
+                    and raw[L] is not None
+                ):
+                    try:
+                        adj[j] = round(
+                            float(a_l) + float(raw[j]) - float(raw[L]), 4)
+                    except Exception:
+                        adj[j] = raw[j]
+                else:
+                    adj[j] = raw[j] if j < len(raw) else None
+        knot_snapshots: list = []
+        knots_export: dict = {}
+        for i, off in enumerate(offsets):
+            if _today < cd + _td(days=int(off)):
+                knot_snapshots.append(None)
+                continue
+            td_i = _pred_curve_trade_date_at_offset(ser, cd, int(off))
+            if td_i is None:
+                knot_snapshots.append(None)
+                continue
+            c_u = _pred_curve_series_upto_trade_date(ser, td_i)
+            v_u = (
+                _pred_curve_series_upto_trade_date(vol_long, td_i)
+                if vol_long is not None
+                else None
+            )
+            x_u = (
+                _pred_curve_series_upto_trade_date(xbi_long, td_i)
+                if xbi_long is not None
+                else None
+            )
+            mets = _pred_curve_knot_metrics_asof(c_u, v_u, x_u)
+            mets["trade_date"] = td_i.isoformat()
+            mets["cal_offset"] = int(off)
+            if act[i] is not None:
+                mets["pct_vs_p60"] = act[i]
+            knot_snapshots.append(mets)
+            knots_export[str(int(off))] = mets
+        pred["seq_curve_pct_vs_m60"] = [
+            (round(float(x), 2) if x is not None and x == x else None)
+            for x in adj
+        ]
+        pred["seq_curve_t60_usd"] = round(float(p60), 6)
+        pred["seq_curve_knot_snapshots"] = knot_snapshots
+        _note_k8 = (
+            f" | 8‑K: {_n_k8_nodes} nodi da chiusure −1/+1…+3 (solo dove mancava il close)"
+            if _n_k8_nodes
+            else "")
+        pred["seq_curve_recalib_note"] = (
+            f"seq T−60 reale; ultimo nodo oss. offset={offsets[last]}; "
+            f"metriche per nodo su serie ≤ trade_date nodo "
+            f"({_today.isoformat()}){_note_k8}"
+        )
+        ev[k] = {
+            "ticker": tk,
+            "completion_date": cd.isoformat(),
+            "p60_usd": float(p60),
+            "locked_pct": {
+                str(offsets[ii]): act[ii]
+                for ii in range(n)
+                if act[ii] is not None
+            },
+            "knots": knots_export,
+            "last_run": _today.isoformat(),
+        }
+        dirty_state = True
+        n_seq_events += 1
+
+    if dirty_state:
+        try:
+            _pred_curve_seq_save(doc)
+            print(
+                f"[Pred/seq_curve] Ricalibrati {n_seq_events} eventi "
+                f"(stato audit → {_CURVE_SEQ_STATE_PATH})",
+                flush=True,
+            )
+        except Exception as _se:
+            print(f"[Pred/seq_curve] salvataggio stato: {_se}", flush=True)

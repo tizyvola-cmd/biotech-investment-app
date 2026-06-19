@@ -1,4 +1,4 @@
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState, type CSSProperties } from "react";
 import type { TableDensity, TableFontSize, TableViewPrefs } from "../sheet/tableViewPrefs";
 import { DEFAULT_TABLE_VIEW_PREFS, moveColumn } from "../sheet/tableViewPrefs";
 
@@ -14,6 +14,26 @@ export function TableViewSettings({
   onChange: (next: TableViewPrefs) => void;
 }) {
   const [open, setOpen] = useState(false);
+  const btnRef = useRef<HTMLButtonElement>(null);
+  const panelRef = useRef<HTMLDivElement>(null);
+
+  // Reposition panel after it mounts to keep it within the viewport.
+  useEffect(() => {
+    if (!open || !btnRef.current || !panelRef.current) return;
+    const btn = btnRef.current.getBoundingClientRect();
+    const panelW = Math.min(352, window.innerWidth * 0.92);
+    const vw = window.innerWidth;
+    let left = btn.left;
+    if (left + panelW > vw - 8) left = Math.max(8, vw - panelW - 8);
+    const style: CSSProperties = {
+      position: "fixed",
+      top: btn.bottom + 4,
+      left,
+      width: panelW,
+      zIndex: 50,
+    };
+    Object.assign(panelRef.current.style, style);
+  }, [open]);
   const hidden = useMemo(() => new Set(prefs.hiddenColumns), [prefs.hiddenColumns]);
 
   const ordered = useMemo(() => {
@@ -57,6 +77,7 @@ export function TableViewSettings({
   return (
     <div className="relative">
       <button
+        ref={btnRef}
         type="button"
         className="btn-ghost text-xs"
         onClick={() => setOpen((v) => !v)}
@@ -72,7 +93,7 @@ export function TableViewSettings({
             aria-label="Chiudi pannello layout"
             onClick={() => setOpen(false)}
           />
-          <div className="absolute right-0 top-full z-50 mt-1 w-[min(22rem,92vw)] rounded-xl border border-[rgb(var(--border))] bg-[rgb(var(--surface-elevated))] shadow-xl p-4 space-y-4 max-h-[min(70vh,32rem)] overflow-y-auto">
+          <div ref={panelRef} className="rounded-xl border border-[rgb(var(--border))] bg-[rgb(var(--surface-elevated))] shadow-xl p-4 space-y-4 max-h-[min(70vh,32rem)] overflow-y-auto">
             <div className="flex items-start justify-between gap-2">
               <div>
                 <p className="text-sm font-semibold">Layout — {sheetId}</p>

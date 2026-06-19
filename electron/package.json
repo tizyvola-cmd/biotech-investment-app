@@ -1,0 +1,17 @@
+{
+  "name": "supernova-electron",
+  "version": "0.1.0",
+  "description": "SuperNova — shell Electron + API Python",
+  "main": "main-modern.cjs",
+  "private": true,
+  "scripts": {
+    "start": "electron main-modern.cjs",
+    "start:legacy": "electron main.cjs",
+    "dev": "electron . --enable-logging",
+    "dev:modern": "set ELECTRON_DEV=1&& electron main-modern.cjs",
+    "ui:modern": "echo Dev: API via Electron; UI su :5173 con ELECTRON_DEV=1 oppure scripts\\Avvia_Desktop_UI_Moderna.bat"
+  },
+  "devDependencies": {
+    "electron": "^33.2.0"
+  }
+}

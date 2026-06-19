@@ -47,3 +47,5 @@ cd
 data/
 cik_tickers.json
 *.png
+!assets/supernova_mobile_icon_source.png
+.env

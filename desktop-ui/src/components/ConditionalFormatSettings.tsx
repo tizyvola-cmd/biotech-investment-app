@@ -1,4 +1,4 @@
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState, type CSSProperties } from "react";
 import {
   COLOR_SCALE_LABELS,
   DATA_BAR_COLORS,
@@ -26,6 +26,20 @@ export function ConditionalFormatSettings({
   onChange?: (prefs: ConditionalFormatPrefs) => void;
 }) {
   const [open, setOpen] = useState(false);
+  const btnRef = useRef<HTMLButtonElement>(null);
+  const panelRef = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    if (!open || !btnRef.current || !panelRef.current) return;
+    const btn = btnRef.current.getBoundingClientRect();
+    const panelW = Math.min(416, window.innerWidth * 0.94);
+    const vw = window.innerWidth;
+    let left = btn.left;
+    if (left + panelW > vw - 8) left = Math.max(8, vw - panelW - 8);
+    const style: CSSProperties = { position: "fixed", top: btn.bottom + 4, left, width: panelW, zIndex: 50 };
+    Object.assign(panelRef.current.style, style);
+  }, [open]);
+
   const [prefs, setPrefs] = useState<ConditionalFormatPrefs>(() =>
     loadConditionalFormatPrefs(sheetId)
   );
@@ -91,36 +105,37 @@ export function ConditionalFormatSettings({
   }
 
   function ruleSummary(r: CfRule): string {
-    const col = r.column === "*" ? "tutte le colonne numeriche" : r.column.replace(/\n/g, " ");
+    const col = r.column === "*" ? "all numeric columns" : r.column.replace(/\n/g, " ");
     if (r.type === "colorScale") return `${COLOR_SCALE_LABELS[r.preset]} → ${col}`;
-    if (r.type === "dataBar") return `Barra ${DATA_BAR_LABELS[r.preset]} → ${col}`;
+    if (r.type === "dataBar") return `Bar ${DATA_BAR_LABELS[r.preset]} → ${col}`;
     return `${ICON_SET_LABELS[r.preset]} → ${col}`;
   }
 
   return (
     <div className="relative">
       <button
+        ref={btnRef}
         type="button"
         className="btn-ghost text-xs"
         onClick={() => setOpen((v) => !v)}
-        title="Scale colore, barre dati, set di icone"
+        title="Color scales, data bars, icon sets"
       >
-        Formattazione
+        Formatting
       </button>
       {open && (
         <>
           <button
             type="button"
             className="fixed inset-0 z-40 cursor-default"
-            aria-label="Chiudi formattazione"
+            aria-label="Close formatting"
             onClick={() => setOpen(false)}
           />
-          <div className="absolute right-0 top-full z-50 mt-1 w-[min(26rem,94vw)] rounded-xl border border-[rgb(var(--border))] bg-[rgb(var(--surface-elevated))] shadow-xl p-4 space-y-3 max-h-[min(78vh,36rem)] overflow-y-auto">
+          <div ref={panelRef} className="rounded-xl border border-[rgb(var(--border))] bg-[rgb(var(--surface-elevated))] shadow-xl p-4 space-y-3 max-h-[min(78vh,36rem)] overflow-y-auto">
             <div className="flex items-start justify-between gap-2">
               <div>
-                <p className="text-sm font-semibold">Formattazione condizionale</p>
+                <p className="text-sm font-semibold">Conditional formatting</p>
                 <p className="text-[11px] text-ink-muted mt-0.5">
-                  {sheetId} — regole salvate su questo dispositivo (come Excel).
+                  {sheetId} — rules saved on this device (like Excel).
                 </p>
               </div>
               <button type="button" className="btn-ghost text-xs px-2" onClick={() => setOpen(false)}>
@@ -136,7 +151,7 @@ export function ConditionalFormatSettings({
                   persist({ ...prefs, overrideBuiltInBackground: e.target.checked })
                 }
               />
-              Le regole utente sostituiscono gli sfondi automatici del foglio
+              User rules override the sheet's automatic backgrounds
             </label>
 
             <div className="flex flex-wrap gap-1">
@@ -145,37 +160,37 @@ export function ConditionalFormatSettings({
                 className="btn-ghost text-[10px] px-2 py-0.5"
                 onClick={() => startAdd("colorScale")}
               >
-                + Scala colori
+                + Color scale
               </button>
               <button
                 type="button"
                 className="btn-ghost text-[10px] px-2 py-0.5"
                 onClick={() => startAdd("dataBar")}
               >
-                + Barra dati
+                + Data bar
               </button>
               <button
                 type="button"
                 className="btn-ghost text-[10px] px-2 py-0.5"
                 onClick={() => startAdd("iconSet")}
               >
-                + Icone
+                + Icons
               </button>
             </div>
 
             {draft && (
               <div className="rounded-lg border border-accent/40 bg-surface/60 p-3 space-y-2 text-xs">
                 <p className="font-medium text-accent">
-                  {editingId ? "Modifica regola" : "Nuova regola"}
+                  {editingId ? "Edit rule" : "New rule"}
                 </p>
                 <label className="flex flex-col gap-1">
-                  <span className="text-ink-muted">Colonna</span>
+                  <span className="text-ink-muted">Column</span>
                   <select
                     className="input text-xs py-1"
                     value={draft.column}
                     onChange={(e) => setDraft({ ...draft, column: e.target.value })}
                   >
-                    <option value="*">* Tutte le colonne numeriche</option>
+                    <option value="*">* All numeric columns</option>
                     {allColumns.map((c) => (
                       <option key={c} value={c}>
                         {c.replace(/\n/g, " ")}
@@ -186,7 +201,7 @@ export function ConditionalFormatSettings({
 
                 {draft.type === "colorScale" && (
                   <label className="flex flex-col gap-1">
-                    <span className="text-ink-muted">Scala colori</span>
+                    <span className="text-ink-muted">Color scale</span>
                     <select
                       className="input text-xs py-1"
                       value={draft.preset}
@@ -209,7 +224,7 @@ export function ConditionalFormatSettings({
                 {draft.type === "dataBar" && (
                   <>
                     <label className="flex flex-col gap-1">
-                      <span className="text-ink-muted">Colore barra</span>
+                      <span className="text-ink-muted">Bar color</span>
                       <select
                         className="input text-xs py-1"
                         value={draft.preset}
@@ -256,7 +271,7 @@ export function ConditionalFormatSettings({
                           setDraft({ ...draft, gradient: e.target.checked })
                         }
                       />
-                      Gradiente semitrasparente
+                      Semi-transparent gradient
                     </label>
                   </>
                 )}
@@ -264,7 +279,7 @@ export function ConditionalFormatSettings({
                 {draft.type === "iconSet" && (
                   <>
                     <label className="flex flex-col gap-1">
-                      <span className="text-ink-muted">Set icone</span>
+                      <span className="text-ink-muted">Icon set</span>
                       <select
                         className="input text-xs py-1"
                         value={draft.preset}
@@ -290,13 +305,13 @@ export function ConditionalFormatSettings({
                           setDraft({ ...draft, iconOnly: e.target.checked })
                         }
                       />
-                      Solo icona (nascondi numero)
+                      Icon only (hide number)
                     </label>
                   </>
                 )}
 
                 <label className="flex flex-col gap-1">
-                  <span className="text-ink-muted">Priorità (ordine applicazione)</span>
+                  <span className="text-ink-muted">Priority (application order)</span>
                   <input
                     className="input text-xs py-1 w-20"
                     type="number"
@@ -311,7 +326,7 @@ export function ConditionalFormatSettings({
 
                 <div className="flex gap-2 pt-1">
                   <button type="button" className="btn-ghost text-xs" onClick={saveDraft}>
-                    Salva regola
+                    Save rule
                   </button>
                   <button
                     type="button"
@@ -321,7 +336,7 @@ export function ConditionalFormatSettings({
                       setEditingId(null);
                     }}
                   >
-                    Annulla
+                    Cancel
                   </button>
                 </div>
               </div>
@@ -329,11 +344,11 @@ export function ConditionalFormatSettings({
 
             <div>
               <p className="text-xs font-medium mb-1">
-                Regole attive ({prefs.rules.filter((r) => r.enabled).length}/{prefs.rules.length})
+                Active rules ({prefs.rules.filter((r) => r.enabled).length}/{prefs.rules.length})
               </p>
               {prefs.rules.length === 0 ? (
                 <p className="text-[11px] text-ink-muted py-2">
-                  Nessuna regola. Aggiungi scala colori, barra dati o icone.
+                  No rules. Add a color scale, data bar or icons.
                 </p>
               ) : (
                 <ul className="space-y-1 max-h-40 overflow-y-auto border border-[rgb(var(--border))]/60 rounded-lg p-1">
@@ -379,7 +394,7 @@ export function ConditionalFormatSettings({
                   setDraft(null);
                 }}
               >
-                Elimina tutte
+                Delete all
               </button>
               <button
                 type="button"

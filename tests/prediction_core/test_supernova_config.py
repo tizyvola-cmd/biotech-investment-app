@@ -26,3 +26,32 @@ def test_bind_all_host(monkeypatch):
     c = cfg.SupernovaConfig.from_env()
     assert c.bind_all is True
     assert c.uvicorn_host == "0.0.0.0"
+
+
+def test_sds_refresh_env(monkeypatch):
+    cfg.reset_supernova_config()
+    monkeypatch.setenv("SUPERNOVA_SDS_REFRESH", "1")
+    monkeypatch.setenv("SUPERNOVA_SDS_REFRESH_TIME", "09:15")
+    c = cfg.SupernovaConfig.from_env()
+    assert c.sds_refresh_enabled is True
+    assert c.sds_refresh_time == "09:15"
+
+
+def test_model_lab_refresh_env(monkeypatch):
+    cfg.reset_supernova_config()
+    monkeypatch.setenv("SUPERNOVA_MODEL_LAB_REFRESH", "1")
+    monkeypatch.setenv("SUPERNOVA_MODEL_LAB_REFRESH_TIME", "16:30")
+    c = cfg.SupernovaConfig.from_env()
+    assert c.model_lab_refresh_enabled is True
+    assert c.model_lab_refresh_time == "16:30"
+
+
+def test_saturday_weekly_full_env(monkeypatch):
+    cfg.reset_supernova_config()
+    monkeypatch.setenv("SUPERNOVA_SATURDAY_WEEKLY_FULL", "1")
+    monkeypatch.setenv("SUPERNOVA_SATURDAY_WEEKLY_FULL_TIME", "07:30")
+    monkeypatch.setenv("SUPERNOVA_SATURDAY_WEEKLY_FULL_END", "13:00")
+    c = cfg.SupernovaConfig.from_env()
+    assert c.saturday_weekly_full_enabled is True
+    assert c.saturday_weekly_full_time == "07:30"
+    assert c.saturday_weekly_full_window_end == "13:00"

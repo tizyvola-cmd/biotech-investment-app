@@ -6,6 +6,6 @@ export function formatSecK8ColumnHeader(column: string): string {
     if (m) return `Δ% +${m[1]}`;
   }
   const parts = column.split("\n").map((s) => s.trim()).filter(Boolean);
-  if (parts.length > 1) return parts.join(" · ");
-  return column;
+  const joined = parts.length > 1 ? parts.join(" · ") : column;
+  return joined.replace(/\bK-8\b/g, "8-K");
 }

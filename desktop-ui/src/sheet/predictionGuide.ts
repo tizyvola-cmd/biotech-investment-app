@@ -1,9 +1,11 @@
 /**
- * Predizione-guida — curve μ macro-gruppi attorno al CD (allineamento foglio / grafici Simulation).
- * Aggregazione client da foglio Accuracy; μ di riferimento da simulation_charts quando presenti.
+ * Prediction Guide — μ macro-group curves around the CD (alignment with the Simulation sheet / charts).
+ * Client-side aggregation from the Accuracy sheet; reference μ from simulation_charts when present.
  */
 
 import type { ChartBundle, ChartSeries } from "../types";
+import { api } from "../api/supernova";
+import { loadSimulationChartsBundle } from "../data/simulationCharts";
 import {
   ACCURACY_OFFSETS,
   parseSheetPct,
@@ -13,10 +15,10 @@ import {
 
 export const GUIDE_OFFSETS = [...ACCURACY_OFFSETS] as const;
 
-/** Soglia Post-CD: media post − media pre (pp), come PRED_EXPLAIN_POST_CD_SPLIT_EPS_PP. */
+/** Post-CD threshold: post mean − pre mean (pp), like PRED_EXPLAIN_POST_CD_SPLIT_EPS_PP. */
 export const POST_CD_EPS_PP = 0.25;
 
-/** Pre-CD (~2 mesi): variazione T−10 vs T−60 (pp). */
+/** Pre-CD (~2 months): T−10 vs T−60 change (pp). */
 export const PRE_CD_RALLY_PP = 5;
 export const PRE_CD_FALL_PP = -5;
 
@@ -28,6 +30,8 @@ export type PreCdClass = "pre_rally" | "pre_fall" | "pre_flat";
 
 export type MacroGroupId =
   | "globale"
+  | "cluster0"
+  | "cluster1"
   | "post_rialzo"
   | "post_ribasso"
   | "post_neutro"
@@ -36,17 +40,21 @@ export type MacroGroupId =
   | "pre_flat";
 
 export const MACRO_GROUP_LABELS: Record<MacroGroupId, string> = {
-  globale: "Globale (coorte primaria)",
-  post_rialzo: "Post-CD rialzo",
-  post_ribasso: "Post-CD ribasso",
-  post_neutro: "Post-CD neutro",
-  pre_rally: "Pre-CD rialzo (~2 mesi)",
-  pre_fall: "Pre-CD ribasso (~2 mesi)",
-  pre_flat: "Pre-CD laterale (~2 mesi)",
+  globale: "Global (primary cohort)",
+  cluster0: "Cluster 0 (majority)",
+  cluster1: "SuperNova (cl.1)",
+  post_rialzo: "Post-CD rise",
+  post_ribasso: "Post-CD decline",
+  post_neutro: "Post-CD neutral",
+  pre_rally: "Pre-CD rise (~2 months)",
+  pre_fall: "Pre-CD decline (~2 months)",
+  pre_flat: "Pre-CD flat (~2 months)",
 };
 
 export const MACRO_GROUP_COLORS: Record<MacroGroupId, string> = {
   globale: "#94a3b8",
+  cluster0: "#9ca3af",
+  cluster1: "#c8ff00",
   post_rialzo: "#00c896",
   post_ribasso: "#fb7185",
   post_neutro: "#a8b0bc",
@@ -68,7 +76,7 @@ export type PredictionGuideSnapshot = {
   nClassifiedPost: number;
   groupCounts: Partial<Record<MacroGroupId, number>>;
   curves: Partial<Record<MacroGroupId, GuideCurvePoint[]>>;
-  /** μ da JSON grafici (ref:…) — sovrascrive solo le serie omonime. */
+  /** μ from chart JSON (ref:…) — overrides only series with matching names. */
   refCurves: Partial<Record<string, GuideCurvePoint[]>>;
   refSource: string;
   dataSource: string;
@@ -86,20 +94,113 @@ export type WeeklyGuideEntry = {
 
 const WEEKLY_STORAGE_KEY = "supernova_prediction_guide_weekly_v1";
 
-function sponsorPrimary(row: Record<string, unknown>): boolean {
-  const sm = String(row["Exact·Partial vs Unmatch"] ?? row["Sponsor Match"] ?? "")
-    .trim()
-    .toLowerCase();
-  return sm === "exact" || sm === "partial";
+function resolveSponsorColumn(columns?: string[]): string | null {
+  const candidates = [
+    "Exact·Partial vs Unmatch",
+    "Sponsor Match",
+    "Sponsor match",
+    "Sponsor\nmatch",
+  ];
+  for (const c of candidates) {
+    if (columns?.includes(c)) return c;
+  }
+  if (columns) {
+    for (const col of columns) {
+      const norm = col.replace(/\s/g, "").toLowerCase();
+      if (norm.includes("sponsormatch") || norm.includes("exactpartial")) return col;
+    }
+  }
+  return null;
 }
 
-function trajectoryFromRow(row: Record<string, unknown>): Map<number, number> | null {
+function sponsorPrimary(row: Record<string, unknown>, columns?: string[]): boolean {
+  const sponsorCol = resolveSponsorColumn(columns);
+  const sm = String(
+    (sponsorCol ? row[sponsorCol] : null) ??
+      row["Exact·Partial vs Unmatch"] ??
+      row["Sponsor Match"] ??
+      row["Sponsor match"] ??
+      row["Sponsor\nmatch"] ??
+      ""
+  )
+    .trim()
+    .toLowerCase()
+    .replace(/·/g, " ")
+    .replace(/\s+/g, " ");
+  if (!sm || sm === "n/d" || sm === "—") return true;
+  if (sm === "exact" || sm === "partial") return true;
+  if (sm.startsWith("exact") || sm.startsWith("partial")) return true;
+  return false;
+}
+
+/** Find Storico % column for offset (tolerant to − vs - and spaces). */
+export function resolveStoricoColumn(columns: string[] | undefined, off: number): string {
+  const canonical = storicoColumn(off);
+  if (!columns?.length) return canonical;
+  if (columns.includes(canonical)) return canonical;
+
+  const tail = off > 0 ? `+${off}` : String(off);
+  const tailUnicode = off > 0 ? `+${off}` : `−${Math.abs(off)}`;
+
+  for (const col of columns) {
+    if (!/storico/i.test(col)) continue;
+    const norm = col.replace(/\s/g, "").replace(/−/g, "-");
+    if (
+      col.includes(`T${tail}`) ||
+      col.includes(`T${tailUnicode}`) ||
+      col.endsWith(tail) ||
+      col.endsWith(tailUnicode) ||
+      norm.includes(`T${tail}`) ||
+      norm.includes(`T${tailUnicode}`)
+    ) {
+      return col;
+    }
+  }
+  return canonical;
+}
+
+function trajectoryFromRow(
+  row: Record<string, unknown>,
+  columns?: string[]
+): Map<number, number> | null {
   const map = new Map<number, number>();
   for (const off of GUIDE_OFFSETS) {
-    const v = parseSheetPct(row[storicoColumn(off)]);
+    const col = resolveStoricoColumn(columns, off);
+    const v = parseSheetPct(row[col]);
     if (v !== null) map.set(off, v);
   }
   return map.size >= 4 ? map : null;
+}
+
+export type GuideBuildDiagnostics = {
+  nRows: number;
+  nPastCd: number;
+  nSponsorOk: number;
+  nWithTrajectory: number;
+};
+
+function normalizeRefLabel(label: string): string {
+  return label.trim().toLowerCase().replace(/^μ\s+/, "").replace(/\s+/g, " ");
+}
+
+function macroGroupFromRefLabel(label: string, sid: string): MacroGroupId | undefined {
+  const direct = REF_LABEL_TO_GROUP[label];
+  if (direct) return direct;
+
+  const norm = normalizeRefLabel(label);
+  const sidNorm = normalizeRefLabel(sid.replace(/^ref:/, ""));
+
+  if (norm.includes("globale") || norm.includes("primaria") || sidNorm.includes("primary")) {
+    return "globale";
+  }
+  if (norm.includes("post-cd") && norm.includes("rialzo")) return "post_rialzo";
+  if (norm.includes("post-cd") && norm.includes("ribasso")) return "post_ribasso";
+  if (norm.includes("post-cd") && norm.includes("neutro")) return "post_neutro";
+  if (norm.includes("supernova") || norm.includes("cl.1") || norm.includes("cluster 1")) {
+    return "cluster1";
+  }
+  if (norm.includes("cluster 0") || norm.includes("cluster0")) return "cluster0";
+  return undefined;
 }
 
 function avg(vals: number[]): number {
@@ -157,8 +258,15 @@ function aggregateCurves(
 
 export function buildPredictionGuideFromAccuracy(
   rows: Record<string, unknown>[],
-  dataSource = "foglio Accuracy"
-): PredictionGuideSnapshot {
+  dataSource = "foglio Accuracy",
+  columns?: string[]
+): PredictionGuideSnapshot & { diagnostics: GuideBuildDiagnostics } {
+  const diag: GuideBuildDiagnostics = {
+    nRows: 0,
+    nPastCd: 0,
+    nSponsorOk: 0,
+    nWithTrajectory: 0,
+  };
   const buckets = new Map<MacroGroupId, Map<number, number[]>>();
   const groupCounts: Partial<Record<MacroGroupId, number>> = {};
   let nEligible = 0;
@@ -181,11 +289,15 @@ export function buildPredictionGuideFromAccuracy(
   for (const row of rows) {
     const tk = String(row.Ticker ?? "").trim().toUpperCase();
     if (!tk || tk.startsWith("──")) continue;
+    diag.nRows += 1;
     if (!rowIsPast(row)) continue;
-    if (!sponsorPrimary(row)) continue;
+    diag.nPastCd += 1;
+    if (!sponsorPrimary(row, columns)) continue;
+    diag.nSponsorOk += 1;
 
-    const traj = trajectoryFromRow(row);
+    const traj = trajectoryFromRow(row, columns);
     if (!traj) continue;
+    diag.nWithTrajectory += 1;
 
     nEligible += 1;
     pushTraj("globale", traj);
@@ -211,12 +323,17 @@ export function buildPredictionGuideFromAccuracy(
     refSource: "",
     dataSource,
     signature,
+    diagnostics: diag,
   };
 }
 
 const REF_LABEL_TO_GROUP: Record<string, MacroGroupId> = {
   "Globale primaria": "globale",
   "μ Globale primaria": "globale",
+  "Cluster 0": "cluster0",
+  "μ Cluster 0": "cluster0",
+  "SuperNova (cl.1)": "cluster1",
+  "μ SuperNova (cl.1)": "cluster1",
   "Post-CD rialzo": "post_rialzo",
   "Post-CD ribasso": "post_ribasso",
   "μ Post-CD rialzo": "post_rialzo",
@@ -224,6 +341,26 @@ const REF_LABEL_TO_GROUP: Record<string, MacroGroupId> = {
   "Post-CD neutro": "post_neutro",
   "μ Post-CD neutro": "post_neutro",
 };
+
+function curvePeakPct(points: GuideCurvePoint[] | undefined): number | null {
+  if (!points?.length) return null;
+  const vals = points
+    .map((p) => p.meanPct)
+    .filter((v): v is number => v != null && Number.isFinite(v));
+  return vals.length ? Math.max(...vals) : null;
+}
+
+/** k-means id 1 = minority by count; swap μ refs when minority curve is flatter. */
+export function fixInvertedClusterRefCurves(
+  curves: Partial<Record<MacroGroupId, GuideCurvePoint[]>>,
+): Partial<Record<MacroGroupId, GuideCurvePoint[]>> {
+  const c0 = curves.cluster0;
+  const c1 = curves.cluster1;
+  const p0 = curvePeakPct(c0);
+  const p1 = curvePeakPct(c1);
+  if (p0 == null || p1 == null || p0 <= p1 + 8) return curves;
+  return { ...curves, cluster0: c1, cluster1: c0 };
+}
 
 export function refCurvesFromChartBundle(bundle: ChartBundle | null): {
   curves: Partial<Record<MacroGroupId, GuideCurvePoint[]>>;
@@ -236,13 +373,7 @@ export function refCurvesFromChartBundle(bundle: ChartBundle | null): {
   for (const [sid, meta] of Object.entries(bundle.series)) {
     if (meta.kind !== "control") continue;
     const label = meta.label || sid.replace(/^ref:/, "");
-    let gid: MacroGroupId | undefined;
-    for (const [needle, id] of Object.entries(REF_LABEL_TO_GROUP)) {
-      if (label.includes(needle) || needle.includes(label)) {
-        gid = id;
-        break;
-      }
-    }
+    const gid = macroGroupFromRefLabel(label, sid);
     if (!gid) continue;
     const points = seriesToGuidePoints(meta);
     if (points.some((p) => p.meanPct != null)) {
@@ -251,10 +382,39 @@ export function refCurvesFromChartBundle(bundle: ChartBundle | null): {
     }
   }
 
+  const curves = fixInvertedClusterRefCurves(out);
+
   return {
-    curves: out,
+    curves,
     source: n > 0 ? `simulation_charts (${n} μ)` : "",
   };
+}
+
+/** Loads reference μ curves: local snapshot → simulation API → restricted API. */
+export async function loadPredictionGuideRefCurves(): Promise<{
+  curves: Partial<Record<MacroGroupId, GuideCurvePoint[]>>;
+  source: string;
+}> {
+  const local = await loadSimulationChartsBundle();
+  let ref = refCurvesFromChartBundle(local.bundle);
+  if (ref.source) return ref;
+
+  for (const path of ["/api/charts/simulation", "/api/charts/ristretta"] as const) {
+    try {
+      const bundle = await api<ChartBundle>(path, undefined, { timeoutMs: 8_000 });
+      ref = refCurvesFromChartBundle(bundle);
+      if (ref.source) {
+        return {
+          curves: ref.curves,
+          source: `${ref.source} · ${path}`,
+        };
+      }
+    } catch {
+      /* API not available */
+    }
+  }
+
+  return { curves: {}, source: "" };
 }
 
 function seriesToGuidePoints(meta: ChartSeries): GuideCurvePoint[] {
@@ -318,7 +478,7 @@ export type WeeklyGuideState = {
   deltaVsLastWeek: number | null;
 };
 
-/** Mantiene al massimo 2 settimane (corrente + precedente). */
+/** Keeps at most 2 weeks (current + previous). */
 export function persistWeeklyGuide(snapshot: PredictionGuideSnapshot): WeeklyGuideState {
   const weekKey = isoWeekKey();
   const store = loadWeeklyStore();
@@ -372,4 +532,111 @@ export function guideToChartRows(
     }
   }
   return [...byOff.values()].sort((a, b) => Number(a.offset) - Number(b.offset));
+}
+
+/** Post-CD macro-groups in the Distribution & curves panel. */
+export const GUIDE_POST_MACRO_GROUPS: MacroGroupId[] = [
+  "globale",
+  "cluster0",
+  "cluster1",
+  "post_rialzo",
+  "post_ribasso",
+  "post_neutro",
+];
+
+/** Pre-CD macro-groups (~2 months). */
+export const GUIDE_PRE_MACRO_GROUPS: MacroGroupId[] = ["pre_rally", "pre_fall", "pre_flat"];
+
+/** Only μ JSON — no empirical Accuracy aggregation. */
+export const GUIDE_REF_ONLY_MACRO_GROUPS = new Set<MacroGroupId>(["cluster0", "cluster1"]);
+
+export type GuideCurveVisibilityPrefs = {
+  post: Partial<Record<MacroGroupId, boolean>>;
+  pre: Partial<Record<MacroGroupId, boolean>>;
+};
+
+const VISIBILITY_STORAGE_KEY = "supernova_prediction_guide_visible_v1";
+
+function defaultVisibility(all: MacroGroupId[]): Partial<Record<MacroGroupId, boolean>> {
+  const out: Partial<Record<MacroGroupId, boolean>> = {};
+  for (const id of all) out[id] = true;
+  return out;
+}
+
+export function loadGuideCurveVisibility(): GuideCurveVisibilityPrefs {
+  if (typeof window === "undefined") {
+    return {
+      post: defaultVisibility(GUIDE_POST_MACRO_GROUPS),
+      pre: defaultVisibility(GUIDE_PRE_MACRO_GROUPS),
+    };
+  }
+  try {
+    const raw = localStorage.getItem(VISIBILITY_STORAGE_KEY);
+    if (!raw) {
+      return {
+        post: defaultVisibility(GUIDE_POST_MACRO_GROUPS),
+        pre: defaultVisibility(GUIDE_PRE_MACRO_GROUPS),
+      };
+    }
+    const p = JSON.parse(raw) as Partial<GuideCurveVisibilityPrefs>;
+    return {
+      post: { ...defaultVisibility(GUIDE_POST_MACRO_GROUPS), ...(p.post ?? {}) },
+      pre: { ...defaultVisibility(GUIDE_PRE_MACRO_GROUPS), ...(p.pre ?? {}) },
+    };
+  } catch {
+    return {
+      post: defaultVisibility(GUIDE_POST_MACRO_GROUPS),
+      pre: defaultVisibility(GUIDE_PRE_MACRO_GROUPS),
+    };
+  }
+}
+
+export function saveGuideCurveVisibility(prefs: GuideCurveVisibilityPrefs): void {
+  if (typeof window === "undefined") return;
+  localStorage.setItem(VISIBILITY_STORAGE_KEY, JSON.stringify(prefs));
+}
+
+export function filterVisibleGuideGroups(
+  all: MacroGroupId[],
+  vis: Partial<Record<MacroGroupId, boolean>>
+): MacroGroupId[] {
+  return all.filter((id) => vis[id] !== false);
+}
+
+export type GuideVisibilityPreset =
+  | "all"
+  | "none"
+  | "noSupernova"
+  | "noCluster"
+  | "postCdOnly"
+  | "empiricalOnly";
+
+export function visibilityForGuidePreset(
+  preset: GuideVisibilityPreset,
+  chart: "post" | "pre"
+): Partial<Record<MacroGroupId, boolean>> {
+  const all = chart === "post" ? GUIDE_POST_MACRO_GROUPS : GUIDE_PRE_MACRO_GROUPS;
+  const out = defaultVisibility(all);
+  if (preset === "all") return out;
+  if (preset === "none") {
+    for (const id of all) out[id] = false;
+    return out;
+  }
+  if (chart === "post") {
+    if (preset === "noSupernova") out.cluster1 = false;
+    if (preset === "noCluster") {
+      out.cluster0 = false;
+      out.cluster1 = false;
+    }
+    if (preset === "postCdOnly") {
+      out.globale = false;
+      out.cluster0 = false;
+      out.cluster1 = false;
+    }
+    if (preset === "empiricalOnly") {
+      out.cluster0 = false;
+      out.cluster1 = false;
+    }
+  }
+  return out;
 }

@@ -1,4 +1,4 @@
-/** Metriche accuratezza v4/v5 da foglio Accuracy e JSON storico. */
+/** v4/v5 accuracy metrics from the Accuracy sheet and historical JSON. */
 
 export const ACCURACY_OFFSETS = [-60, -30, -10, -7, -5, -3, 4, 7] as const;
 
@@ -80,13 +80,64 @@ export function horizonLabel(off: number): string {
   return off > 0 ? `T+${off}` : `T${off}`;
 }
 
+/**
+ * Per-horizon weights used in the global "weighted" KPI of the Predictive
+ * diagnostics.
+ *
+ * Rationale: the prediction is based on the trend of the pre-CD curve, so
+ * the nodes closer to the CD (T−3, T−5, T−7) are the ones directly relevant
+ * for the "entry before catalyst" signal. Post-CD horizons (T+4, T+7) fall
+ * in the zone where accuracy approaches 50% (random) and are weighted less.
+ *
+ *   T−60 / T−30  →  1.0   (historical context, baseline trend)
+ *   T−10         →  1.0
+ *   T−7  / T−5   →  1.5   (optimal entry zone)
+ *   T−3          →  2.0   (max information: imminent setup)
+ *   T+4  / T+7   →  0.3   (post-CD: prediction tends to 50% — random zone)
+ */
+export const HORIZON_WEIGHTS: Readonly<Record<number, number>> = Object.freeze({
+  [-60]: 1.0,
+  [-30]: 1.0,
+  [-10]: 1.0,
+  [-7]: 1.5,
+  [-5]: 1.5,
+  [-3]: 2.0,
+  4: 0.3,
+  7: 0.3,
+});
+
+export function horizonWeight(off: number): number {
+  return HORIZON_WEIGHTS[off] ?? 1.0;
+}
+
+/** A horizon is considered post-CD if its offset is positive (T+x). */
+export function isPostCdOffset(off: number): boolean {
+  return off > 0;
+}
+
+/**
+ * Half-width of the "random zone" around 50% in percentage points.
+ * Hit% values in [50 − ε, 50 + ε] are indistinguishable from chance (post-CD
+ * typically falls here).
+ */
+export const ACCURACY_RANDOM_ZONE_HALFWIDTH_PP = 5.0;
+
+/** Minimum threshold to declare "solid directional edge". */
+export const ACCURACY_SOLID_EDGE_PP = 60.0;
+
+/** Hit% indistinguishable from chance? (50 ± random zone). */
+export function isInRandomZone(hit: number | null | undefined): boolean {
+  if (hit == null || !Number.isFinite(hit)) return false;
+  return Math.abs(hit - 50) <= ACCURACY_RANDOM_ZONE_HALFWIDTH_PP;
+}
+
 export function parseNum(raw: unknown): number | null {
   if (raw == null || raw === "" || raw === "—" || raw === "-") return null;
   const n = typeof raw === "number" ? raw : Number(String(raw).replace(/%/g, "").replace(/,/g, ""));
   return Number.isFinite(n) ? n : null;
 }
 
-/** Excel %: frazione (0.0615 → 6.15 pp) o già in punti percentuali. */
+/** Excel %: fraction (0.0615 → 6.15 pp) or already in percentage points. */
 export function parseSheetPct(raw: unknown): number | null {
   const n = parseNum(raw);
   if (n === null) return null;
@@ -120,7 +171,51 @@ export type ModelAgg = {
   model: AccuracyModelId;
   horizons: HorizonAgg[];
   global: { n: number; mae: number | null; hitPct: number | null; bias: number | null };
+  /**
+   * KPI weighted across horizons (greater weight for offsets close to CD,
+   * reduced weight for post-CD offsets). Weighted MAE = sumW(MAE_h × w_h × n_h) /
+   * sumW(w_h × n_h). Weighted Hit% = sumW(Hit_h × w_h × n_h) / sumW(w_h × n_h).
+   */
+  globalWeighted: {
+    mae: number | null;
+    hitPct: number | null;
+  };
 };
+
+/**
+ * Summary of the accuracy curve vs distance from CD for a model.
+ * Used for the "Accuracy vs days from CD" chart.
+ */
+export type AccuracyDecayPoint = {
+  offset: number;
+  label: string;
+  n: number;
+  mae: number | null;
+  hitPct: number | null;
+  bias: number | null;
+  rmse: number | null;
+  /** True if hitPct falls inside the random zone (50 ± ε). */
+  randomZone: boolean;
+  /** Weight applied to the global weighted KPI. */
+  weight: number;
+  /** Side relative to CD ("pre" if offset < 0, "cd" if 0, "post" if > 0). */
+  side: "pre" | "cd" | "post";
+};
+
+export function buildAccuracyDecayPoints(agg: ModelAgg): AccuracyDecayPoint[] {
+  return agg.horizons.map((h) => ({
+    offset: h.offset,
+    label: h.label,
+    n: h.n,
+    mae: h.mae,
+    hitPct: h.hitPct,
+    bias: h.bias,
+    rmse: h.rmse,
+    randomZone: isInRandomZone(h.hitPct),
+    weight: horizonWeight(h.offset),
+    side: h.offset < 0 ? "pre" : h.offset > 0 ? "post" : "cd",
+  }));
+}
 
 function sponsorOk(row: Record<string, unknown>, filter: ModelLabParams["sponsorFilter"]): boolean {
   const sm = String(row["Exact·Partial vs Unmatch"] ?? row["Sponsor Match"] ?? "").trim().toLowerCase();
@@ -130,14 +225,27 @@ function sponsorOk(row: Record<string, unknown>, filter: ModelLabParams["sponsor
 }
 
 export function rowIsPast(row: Record<string, unknown>): boolean {
-  const cd = String(row["Completion Date"] ?? "").trim();
-  if (!cd || cd === "—") return false;
-  const m = /^(\d{1,2})\/(\d{1,2})\/(\d{4})$/.exec(cd);
-  if (!m) return true;
-  const [, d, mo, y] = m;
-  const dt = new Date(Number(y), Number(mo) - 1, Number(d));
+  const cd = String(row["Completion Date"] ?? row.CD ?? "").trim();
+  if (!cd || cd === "—" || cd === "-") return false;
+
+  let dt: Date | null = null;
+  const dmy = /^(\d{1,2})\/(\d{1,2})\/(\d{4})$/.exec(cd);
+  if (dmy) {
+    dt = new Date(Number(dmy[3]), Number(dmy[2]) - 1, Number(dmy[1]));
+  } else {
+    const iso = /^(\d{4})-(\d{2})-(\d{2})/.exec(cd);
+    if (iso) {
+      dt = new Date(Number(iso[1]), Number(iso[2]) - 1, Number(iso[3]));
+    } else {
+      const ms = Date.parse(cd);
+      if (Number.isFinite(ms)) dt = new Date(ms);
+    }
+  }
+
+  if (!dt || Number.isNaN(dt.getTime())) return false;
   const today = new Date();
   today.setHours(0, 0, 0, 0);
+  dt.setHours(0, 0, 0, 0);
   return dt.getTime() < today.getTime();
 }
 
@@ -199,6 +307,26 @@ export function aggregateFromAccuracySheet(
     }
 
     const globalN = absAll.length;
+
+    // Per-horizon weighted KPIs: weight MAE and Hit% by (w_h × n_h) — horizons
+    // close to CD (T−3, T−5, T−7) have weight > 1, post-CD weight 0.3.
+    let wMaeNum = 0;
+    let wMaeDen = 0;
+    let wHitNum = 0;
+    let wHitDen = 0;
+    for (const h of horizonStats) {
+      if (h.n < params.minSamples) continue;
+      const w = horizonWeight(h.offset);
+      if (h.mae != null) {
+        wMaeNum += h.mae * w * h.n;
+        wMaeDen += w * h.n;
+      }
+      if (h.hitPct != null) {
+        wHitNum += h.hitPct * w * h.n;
+        wHitDen += w * h.n;
+      }
+    }
+
     out.push({
       model,
       horizons: horizonStats,
@@ -208,13 +336,17 @@ export function aggregateFromAccuracySheet(
         bias: globalN ? signedAll.reduce((a, b) => a + b, 0) / globalN : null,
         hitPct: globalN ? (100 * hitsAll.filter(Boolean).length) / globalN : null,
       },
+      globalWeighted: {
+        mae: wMaeDen > 0 ? wMaeNum / wMaeDen : null,
+        hitPct: wHitDen > 0 ? wHitNum / wHitDen : null,
+      },
     });
   }
 
   return out;
 }
 
-/** Estrae MAE/Hit da blocco modello nel JSON summary (v4/v5/v5_raw). */
+/** Extracts MAE/Hit from a model block in the summary JSON (v4/v5/v5_raw). */
 export function metricsFromSummaryBlock(
   model: AccuracyModelId,
   block: Record<string, unknown> | undefined,
@@ -336,7 +468,10 @@ export function parseSummaryRuns(doc: {
 export type MonitorEntry = {
   runIso: string;
   accV4Pct: number | null;
+  accV4SimPct: number | null;
   nEval: number | null;
+  nEvalSim: number | null;
+  nSimPending: number | null;
   m2Mae7: number | null;
   m2HitD5: number | null;
   m2Bias7: number | null;
@@ -368,7 +503,10 @@ export function parseMonitorEntries(doc: { entries?: unknown[] }): MonitorEntry[
         const entry: MonitorEntry = {
           runIso: String(e.run_iso ?? ""),
           accV4Pct: parseNum(e.acc_v4_pct),
+          accV4SimPct: parseNum(e.acc_v4_sim_pct),
           nEval: parseNum(e.n_evaluable_ok_v4),
+          nEvalSim: parseNum(e.n_evaluable_ok_v4_sim),
+          nSimPending: parseNum(e.n_sim_pending),
           m2Mae7: parseNum(e.m2_mae_7_pp),
           m2HitD5: parseNum(e.m2_hit_rate_d5_pct),
           m2Bias7: parseNum(e.m2_bias_signed_7_pp),
@@ -398,7 +536,7 @@ export function metricValue(h: HorizonAgg, kind: AccuracyMetricKind): number | n
   }
 }
 
-/** Righe per tab «Accuratezza temporale» (da ``accuracy_v4_v5_summary.json``). */
+/** Rows for the «Accuratezza temporale» tab (from ``accuracy_v4_v5_summary.json``). */
 export function buildTemporalRowsFromSummary(
   doc: {
     history?: unknown[];
@@ -461,12 +599,12 @@ export function buildTemporalRowsFromSummary(
   return sortTemporalModelRows(out, newestFirst);
 }
 
-export function formatPct(n: number | null, digits = 1): string {
+export function formatPct(n: number | null | undefined, digits = 1): string {
   if (n == null || !Number.isFinite(n)) return "—";
   return `${n.toFixed(digits)}%`;
 }
 
-export function formatPp(n: number | null, digits = 2): string {
+export function formatPp(n: number | null | undefined, digits = 2): string {
   if (n == null || !Number.isFinite(n)) return "—";
   return `${n.toFixed(digits)} pp`;
 }

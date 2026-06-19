@@ -15,7 +15,7 @@ export const THEME_OPTIONS: {
 }[] = [
   { id: "light", label: "Chiaro", hint: "Bianco" },
   { id: "dark", label: "Blu", hint: "Scuro con gradienti indaco" },
-  { id: "black", label: "Nero", hint: "Schermo nero piatto" },
+  { id: "black", label: "Nero", hint: "Nero piatto stile Cursor" },
 ];
 
 function prefersDark(): boolean {
@@ -53,12 +53,14 @@ export function saveStoredTheme(theme: StoredTheme | ResolvedTheme): void {
   localStorage.setItem(THEME_STORAGE_KEY, theme);
 }
 
-/** Applica classi tema su `<html>`. `dark` = blu; `theme-black` = nero piatto. */
+/** Applica classi tema su `<html>`. `light` = theme-chiaro; `dark` = blu; `black` = nero piatto. */
 export function applyThemeToDocument(resolved: ResolvedTheme): void {
   if (typeof document === "undefined") return;
   const root = document.documentElement;
-  root.classList.remove("dark", "theme-black");
-  if (resolved === "dark" || resolved === "black") {
+  root.classList.remove("dark", "theme-black", "theme-chiaro");
+  if (resolved === "light") {
+    root.classList.add("theme-chiaro");
+  } else if (resolved === "dark" || resolved === "black") {
     root.classList.add("dark");
   }
   if (resolved === "black") {

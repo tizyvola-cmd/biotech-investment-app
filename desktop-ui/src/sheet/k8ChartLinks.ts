@@ -14,6 +14,24 @@ export type K8ChartMarker = {
   color: string;
 };
 
+/** Clinical publication recalibration marker (AI feed T…T+3). */
+export type AiFeedChartMarker = {
+  id: string;
+  ticker: string;
+  offset: number;
+  y: number;
+  label: string;
+  eventDate: string;
+  session: number;
+  eventTitle: string;
+  sourceType: string;
+  link: string | null;
+  /** Fixed violet — distinct from K-8 amber and ticker curve color. */
+  color: string;
+  verified: boolean;
+  referenceMatch: string | null;
+};
+
 export type SecK8LinkEntry = {
   ticker: string;
   filingDate: string;
@@ -115,7 +133,7 @@ export function extractPostK8Markers(
   const tk = ticker.trim().toUpperCase();
   const out: K8ChartMarker[] = [];
   for (const p of points) {
-    if (p.nodo !== "K-8") continue;
+    if (p.nodo !== "K-8" && p.nodo !== "8-K") continue;
     const sess = Number((p as ChartPoint & { k8_session?: number }).k8_session ?? 0);
     if (sess < 1) continue;
     const raw = p.pct_reale ?? p.pct_curva;
@@ -130,7 +148,7 @@ export function extractPostK8Markers(
       ticker: tk,
       offset: p.offset,
       y: Number(raw),
-      label: p.label ?? `K-8 +${sess}`,
+      label: p.label ?? `8-K +${sess}`,
       filingDate: fd,
       k8Session: sess,
       edgarHref: links?.edgarHref ?? null,
@@ -139,6 +157,42 @@ export function extractPostK8Markers(
     });
   }
   return out.sort((a, b) => a.offset - b.offset || a.k8Session - b.k8Session);
+}
+
+/** AI feed publication sessions used as seq-curve recalibration knots. */
+export const AI_FEED_MARKER_COLOR = "#7c3aed";
+
+export function extractAiFeedMarkers(
+  points: ChartPoint[],
+  ticker: string,
+): AiFeedChartMarker[] {
+  const tk = ticker.trim().toUpperCase();
+  const out: AiFeedChartMarker[] = [];
+  for (const p of points) {
+    if (p.nodo !== "AI feed") continue;
+    if (p.reference_verified === false) continue;
+    const raw = p.pct_reale ?? p.pct_curva;
+    if (raw == null || raw !== raw || !Number.isFinite(Number(raw))) continue;
+    const sess = Number(p.ai_feed_session ?? 0);
+    if (sess < 1) continue;
+    const evDate = normalizeFilingDateKey(p.ai_feed_event_date ?? p.data_cal);
+    out.push({
+      id: `${tk}_aifeed_${p.offset}_${sess}`,
+      ticker: tk,
+      offset: p.offset,
+      y: Number(raw),
+      label: p.label ?? `Pub ${sess}`,
+      eventDate: evDate,
+      session: sess,
+      eventTitle: String(p.event_title ?? p.label ?? "Clinical publication"),
+      sourceType: String(p.source_type ?? "publication"),
+      link: p.link ? String(p.link) : null,
+      color: AI_FEED_MARKER_COLOR,
+      verified: p.reference_verified ?? true,
+      referenceMatch: p.reference_match ? String(p.reference_match) : null,
+    });
+  }
+  return out.sort((a, b) => a.offset - b.offset || a.session - b.session);
 }
 
 export function openExternalUrl(href: string, e?: { preventDefault?: () => void; stopPropagation?: () => void }) {

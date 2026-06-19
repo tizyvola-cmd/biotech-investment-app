@@ -1,0 +1,717 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8"/>
+<meta name="viewport" content="width=device-width, initial-scale=1.0"/>
+<title>SuperNova — Main Dashboard</title>
+<style>
+:root {
+  --bg: #0b0e1a;
+  --surface: #141929;
+  --surface-2: #1c2340;
+  --surface-3: #252d52;
+  --accent: #818cf8;
+  --accent-dim: rgba(129,140,248,0.15);
+  --ink: #f1f5f9;
+  --ink-muted: #94a3b8;
+  --ink-dim: #475569;
+  --border: rgba(255,255,255,0.07);
+  --up: #22c55e;
+  --up-bg: rgba(34,197,94,0.10);
+  --down: #ef4444;
+  --down-bg: rgba(239,68,68,0.10);
+  --warn: #f59e0b;
+  --warn-bg: rgba(245,158,11,0.10);
+  --purple: #a78bfa;
+  --sidebar-w: 200px;
+}
+* { box-sizing:border-box; margin:0; padding:0; }
+body {
+  font-family:'SF Pro Display','Segoe UI',system-ui,sans-serif;
+  background: var(--bg);
+  color: var(--ink);
+  display:flex; height:100vh; overflow:hidden; font-size:13px;
+  background-image:
+    radial-gradient(ellipse 70% 40% at 15% 0%, rgba(99,102,241,0.14) 0%, transparent 60%),
+    radial-gradient(ellipse 50% 30% at 85% 100%, rgba(139,92,246,0.10) 0%, transparent 60%);
+}
+
+/* ── SIDEBAR ── */
+aside {
+  width:var(--sidebar-w); background:var(--surface); border-right:1px solid var(--border);
+  display:flex; flex-direction:column; flex-shrink:0;
+}
+.logo { display:flex;align-items:center;gap:10px;padding:16px 14px 18px;border-bottom:1px solid var(--border);margin-bottom:6px; }
+.logo-icon { width:28px;height:28px;background:linear-gradient(135deg,#818cf8,#a78bfa);border-radius:7px;display:flex;align-items:center;justify-content:center;font-size:14px;box-shadow:0 0 12px rgba(129,140,248,0.4); }
+.logo-text { font-weight:700;font-size:15px;letter-spacing:-0.3px; }
+.logo-sub { font-size:9px;color:var(--ink-muted);letter-spacing:1px;text-transform:uppercase; }
+.nav-section { margin-bottom:3px; }
+.nav-label { font-size:9px;font-weight:600;letter-spacing:1.2px;text-transform:uppercase;color:var(--ink-dim);padding:7px 14px 3px; }
+.nav-item { display:flex;align-items:center;gap:9px;padding:7px 14px;border-radius:8px;margin:1px 8px;cursor:pointer;color:var(--ink-muted);font-size:12.5px;font-weight:500;transition:all 0.12s; }
+.nav-item:hover { background:var(--surface-2);color:var(--ink); }
+.nav-item.active { background:var(--accent-dim);color:var(--accent); }
+.nav-item .icon { font-size:14px; }
+.nav-badge { margin-left:auto;background:var(--accent-dim);color:var(--accent);font-size:10px;font-weight:700;padding:1px 6px;border-radius:99px; }
+.sidebar-footer { margin-top:auto;border-top:1px solid var(--border);padding-top:8px; }
+.model-status { margin:4px 8px 8px;padding:8px 10px;background:var(--surface-2);border-radius:8px;display:flex;align-items:center;gap:8px; }
+.dot-green { width:7px;height:7px;border-radius:50%;background:var(--up);box-shadow:0 0 6px var(--up);flex-shrink:0; }
+.model-label { font-size:11px;color:var(--ink-muted); }
+.model-val { font-size:11px;font-weight:600;margin-left:auto; }
+
+/* ── MAIN ── */
+main { flex:1;display:flex;flex-direction:column;overflow:hidden; }
+
+/* ── TOP BAR ── */
+.topbar { height:52px;background:var(--surface);border-bottom:1px solid var(--border);display:flex;align-items:center;gap:14px;padding:0 20px;flex-shrink:0; }
+.topbar-title { font-size:15px;font-weight:700; }
+.topbar-date { font-size:11px;color:var(--ink-dim); }
+.topbar-right { margin-left:auto;display:flex;align-items:center;gap:10px; }
+.avatar { width:28px;height:28px;border-radius:50%;background:linear-gradient(135deg,#818cf8,#a78bfa);display:flex;align-items:center;justify-content:center;font-size:11px;font-weight:700; }
+.refresh-btn { padding:5px 12px;border-radius:7px;font-size:11px;font-weight:600;background:var(--accent-dim);color:var(--accent);border:1px solid rgba(129,140,248,0.25);cursor:pointer; }
+
+/* ── CONTENT ── */
+.content { flex:1;overflow-y:auto;padding:16px 20px;display:flex;flex-direction:column;gap:16px; }
+
+/* ── HERO KPI ROW ── */
+.hero-row { display:flex;gap:12px;flex-shrink:0; }
+.hero-kpi {
+  flex:1;background:var(--surface);border:1px solid var(--border);border-radius:14px;
+  padding:14px 16px;display:flex;flex-direction:column;gap:4px;position:relative;overflow:hidden;
+  transition:border-color 0.15s;
+}
+.hero-kpi::before {
+  content:'';position:absolute;top:0;left:0;right:0;height:2px;
+  background:linear-gradient(90deg,transparent,var(--accent-color,#818cf8),transparent);
+  opacity:0.6;
+}
+.hero-kpi.green::before { --accent-color:#22c55e; }
+.hero-kpi.red::before { --accent-color:#ef4444; }
+.hero-kpi.warn::before { --accent-color:#f59e0b; }
+.hero-kpi.purple::before { --accent-color:#a78bfa; }
+.hero-kpi-label { font-size:9px;font-weight:700;letter-spacing:1.2px;text-transform:uppercase;color:var(--ink-dim); }
+.hero-kpi-val { font-size:22px;font-weight:900;letter-spacing:-0.5px;line-height:1; }
+.hero-kpi-val.green { color:var(--up); }
+.hero-kpi-val.red { color:var(--down); }
+.hero-kpi-val.warn { color:var(--warn); }
+.hero-kpi-val.purple { color:var(--purple); }
+.hero-kpi-sub { font-size:10px;color:var(--ink-dim);margin-top:1px; }
+.hero-kpi-delta { font-size:11px;font-weight:600; }
+.delta-up { color:var(--up); }
+.delta-down { color:var(--down); }
+
+/* ── GRID LAYOUT ── */
+.grid-2 { display:grid;grid-template-columns:1fr 360px;gap:14px;flex:1;min-height:0; }
+.grid-col { display:flex;flex-direction:column;gap:14px;overflow:hidden; }
+
+/* ── PANEL ── */
+.panel {
+  background:var(--surface);border:1px solid var(--border);border-radius:14px;
+  display:flex;flex-direction:column;overflow:hidden;
+}
+.panel-header {
+  display:flex;align-items:center;gap:10px;padding:12px 16px;
+  border-bottom:1px solid var(--border);flex-shrink:0;
+}
+.panel-title { font-size:12px;font-weight:700;letter-spacing:0.3px; }
+.panel-sub { font-size:10px;color:var(--ink-dim);margin-left:2px; }
+.panel-badge { margin-left:auto;font-size:10px;color:var(--ink-dim);background:var(--surface-2);padding:2px 8px;border-radius:99px; }
+.panel-body { flex:1;overflow-y:auto; }
+
+/* ── PORTFOLIO TABLE ── */
+table { width:100%;border-collapse:collapse; }
+thead th { text-align:left;padding:7px 14px;font-size:9px;font-weight:700;letter-spacing:1px;text-transform:uppercase;color:var(--ink-dim);border-bottom:1px solid var(--border);white-space:nowrap;background:var(--surface); position:sticky;top:0; }
+tbody tr { border-bottom:1px solid rgba(255,255,255,0.025);cursor:pointer;transition:background 0.1s; }
+tbody tr:hover { background:rgba(255,255,255,0.025); }
+tbody td { padding:10px 14px;font-size:12px; }
+.cell-ticker { font-weight:800;font-size:13px;letter-spacing:0.3px; }
+.cell-company { font-size:10px;color:var(--ink-muted);margin-top:1px; }
+.cell-phase { font-size:9px;font-weight:700;padding:2px 7px;border-radius:99px;background:rgba(167,139,250,0.15);color:var(--purple);display:inline-block; }
+.cell-price { font-weight:700;font-size:13px; }
+.cell-entry { font-size:10px;color:var(--ink-dim);margin-top:1px; }
+
+/* PL heatmap */
+.pl-cell { display:flex;flex-direction:column;gap:2px; }
+.pl-val { font-weight:800;font-size:13px; }
+.pl-val.pos { color:var(--up); }
+.pl-val.neg { color:var(--down); }
+.pl-bar-track { height:3px;background:var(--surface-3);border-radius:99px;width:60px;overflow:hidden; }
+.pl-bar-fill { height:100%;border-radius:99px; }
+.pl-bar-pos { background:var(--up); }
+.pl-bar-neg { background:var(--down); }
+
+/* stock sparkline mock */
+.spark-wrap { display:flex;align-items:flex-end;gap:1.5px;height:24px; }
+.s-bar { width:4px;border-radius:1px 1px 0 0;min-height:2px; }
+.s-bar.up { background:var(--up); }
+.s-bar.dn { background:var(--down); }
+.s-bar.nu { background:var(--ink-dim); }
+
+/* status badge */
+.status-pill { font-size:9px;font-weight:700;padding:2px 8px;border-radius:99px; }
+.sp-long { background:var(--up-bg);color:var(--up); }
+.sp-short { background:var(--down-bg);color:var(--down); }
+.sp-neutral { background:rgba(100,116,139,0.12);color:var(--ink-muted); }
+.sp-watch { background:var(--warn-bg);color:var(--warn); }
+
+/* ── CATALYST TIMELINE ── */
+.catalyst-list { display:flex;flex-direction:column; }
+.cat-item { display:flex;gap:12px;padding:11px 16px;border-bottom:1px solid var(--border);transition:background 0.1s;cursor:pointer; }
+.cat-item:hover { background:rgba(255,255,255,0.02); }
+.cat-item:last-child { border-bottom:none; }
+.cat-dot-col { display:flex;flex-direction:column;align-items:center;gap:4px;padding-top:2px; }
+.cat-dot { width:10px;height:10px;border-radius:50%;flex-shrink:0; }
+.cat-line { width:1px;flex:1;background:var(--border); }
+.cat-content { flex:1;min-width:0; }
+.cat-top { display:flex;align-items:center;gap:6px;margin-bottom:4px; }
+.cat-ticker { font-weight:800;font-size:13px; }
+.cat-company { font-size:10px;color:var(--ink-muted);truncate;flex:1; }
+.cat-date { font-size:10px;color:var(--ink-dim);white-space:nowrap; }
+.cat-metrics { display:flex;align-items:center;gap:8px;flex-wrap:wrap; }
+.cat-metric { font-size:10px;color:var(--ink-muted); }
+.cat-metric strong { color:var(--ink);font-weight:600; }
+.cat-metric .up { color:var(--up);font-weight:700; }
+.cat-metric .dn { color:var(--down);font-weight:700; }
+.cat-cd-badge {
+  font-size:9px;font-weight:800;padding:1px 7px;border-radius:99px;white-space:nowrap;
+  background:var(--warn-bg);color:var(--warn);border:1px solid rgba(245,158,11,0.25);
+}
+.cat-cd-badge.far { background:var(--surface-2);color:var(--ink-dim);border-color:var(--border); }
+
+/* ── K-8 FEED ── */
+.k8-feed { display:flex;flex-direction:column; }
+.k8-item { display:flex;gap:10px;padding:10px 14px;border-bottom:1px solid rgba(255,255,255,0.025); }
+.k8-item:last-child { border-bottom:none; }
+.k8-icon { width:28px;height:28px;border-radius:7px;display:flex;align-items:center;justify-content:center;font-size:12px;flex-shrink:0;margin-top:1px; }
+.k8-icon.pos { background:var(--up-bg); }
+.k8-icon.neg { background:var(--down-bg); }
+.k8-icon.mix { background:var(--warn-bg); }
+.k8-body { flex:1;min-width:0; }
+.k8-top { display:flex;align-items:baseline;gap:6px;margin-bottom:3px; }
+.k8-ticker { font-weight:800;font-size:12px; }
+.k8-date { font-size:10px;color:var(--ink-dim); }
+.k8-type { font-size:9px;padding:1px 6px;border-radius:99px;font-weight:600; }
+.k8-type.pos { background:var(--up-bg);color:var(--up); }
+.k8-type.neg { background:var(--down-bg);color:var(--down); }
+.k8-type.mix { background:var(--warn-bg);color:var(--warn); }
+.k8-returns { display:flex;gap:8px;align-items:center;flex-wrap:wrap; }
+.k8-ret { font-size:10px;color:var(--ink-muted); }
+.k8-ret span { font-weight:700; }
+.k8-ret span.up { color:var(--up); }
+.k8-ret span.dn { color:var(--down); }
+.k8-company { font-size:10px;color:var(--ink-dim);margin-top:2px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis; }
+
+/* scrollbar */
+::-webkit-scrollbar { width:4px;height:4px; }
+::-webkit-scrollbar-track { background:transparent; }
+::-webkit-scrollbar-thumb { background:var(--surface-3);border-radius:99px; }
+</style>
+</head>
+<body>
+
+<!-- SIDEBAR -->
+<aside>
+  <div class="logo">
+    <div class="logo-icon">✦</div>
+    <div><div class="logo-text">SuperNova</div><div class="logo-sub">Biotech Intel</div></div>
+  </div>
+  <div class="nav-section">
+    <div class="nav-label">—</div>
+    <div class="nav-item active"><span class="icon">🏠</span> Main <span class="nav-badge">NEW</span></div>
+  </div>
+  <div class="nav-section">
+    <div class="nav-label">Watch</div>
+    <div class="nav-item"><span class="icon">⚡</span> Catalyst Hub <span class="nav-badge">5</span></div>
+    <div class="nav-item"><span class="icon">📈</span> Simulation</div>
+  </div>
+  <div class="nav-section">
+    <div class="nav-label">Analyze</div>
+    <div class="nav-item"><span class="icon">🎯</span> Accuracy Lab</div>
+    <div class="nav-item"><span class="icon">🧠</span> Model Analysis</div>
+  </div>
+  <div class="nav-section">
+    <div class="nav-label">Research</div>
+    <div class="nav-item"><span class="icon">🔬</span> Clinical Trials</div>
+    <div class="nav-item"><span class="icon">📄</span> SEC 8-K</div>
+    <div class="nav-item"><span class="icon">💰</span> Financial</div>
+  </div>
+  <div class="sidebar-footer">
+    <div class="nav-item"><span class="icon">⚙</span> System</div>
+    <div class="model-status">
+      <div class="dot-green"></div>
+      <div class="model-label">Model v4</div>
+      <div class="model-val">MAE 13pp</div>
+    </div>
+  </div>
+</aside>
+
+<!-- MAIN -->
+<main>
+  <div class="topbar">
+    <div class="topbar-title">Main Dashboard</div>
+    <div class="topbar-date">Domenica, 24 Mag 2026</div>
+    <div class="topbar-right">
+      <div class="refresh-btn">↻ Aggiorna</div>
+      <div class="avatar">TR</div>
+    </div>
+  </div>
+
+  <div class="content">
+
+    <!-- ── HERO KPI ROW ── -->
+    <div class="hero-row">
+      <div class="hero-kpi">
+        <div class="hero-kpi-label">Posizioni Aperte</div>
+        <div class="hero-kpi-val purple">2</div>
+        <div class="hero-kpi-sub">su 21 ticker monitorati</div>
+      </div>
+      <div class="hero-kpi">
+        <div class="hero-kpi-label">Capitale Investito</div>
+        <div class="hero-kpi-val">$10.000</div>
+        <div class="hero-kpi-sub">ANIK · CNSP (watchlist)</div>
+      </div>
+      <div class="hero-kpi red">
+        <div class="hero-kpi-label">P&amp;L Stimato D+7</div>
+        <div class="hero-kpi-val red">−$690</div>
+        <div class="hero-kpi-sub"><span class="delta-down">−6.9%</span> vs prezzo acquisto</div>
+      </div>
+      <div class="hero-kpi warn">
+        <div class="hero-kpi-label">Prossimo Catalyst</div>
+        <div class="hero-kpi-val warn">3 gg</div>
+        <div class="hero-kpi-sub">CNSP · 27 Mag 2026</div>
+      </div>
+      <div class="hero-kpi green">
+        <div class="hero-kpi-label">K-8 Recenti (30d)</div>
+        <div class="hero-kpi-val green">14</div>
+        <div class="hero-kpi-sub">filing SEC nella finestra CD</div>
+      </div>
+    </div>
+
+    <!-- ── MAIN GRID ── -->
+    <div class="grid-2" style="flex:1;min-height:0;">
+
+      <!-- COL LEFT -->
+      <div class="grid-col" style="overflow:hidden;">
+
+        <!-- Investimenti attivi -->
+        <div class="panel" style="flex:1.2;min-height:0;">
+          <div class="panel-header">
+            <div>
+              <div class="panel-title">📊 Portafoglio Attivo</div>
+              <div class="panel-sub">prezzi live · snapshot 24 Mag 12:04</div>
+            </div>
+            <div class="panel-badge">2 posizioni aperte</div>
+          </div>
+          <div class="panel-body">
+            <table>
+              <thead>
+                <tr>
+                  <th>Ticker</th>
+                  <th>Phase</th>
+                  <th>Prezzo corrente</th>
+                  <th>Trend 30d</th>
+                  <th>P&amp;L %</th>
+                  <th>Pred D+7</th>
+                  <th>CD</th>
+                  <th>Segnale</th>
+                </tr>
+              </thead>
+              <tbody>
+                <!-- ANIK — posizione attiva -->
+                <tr style="background:rgba(239,68,68,0.04)">
+                  <td>
+                    <div class="cell-ticker">ANIK</div>
+                    <div class="cell-company">Anika Therapeutics</div>
+                  </td>
+                  <td><span class="cell-phase">—</span></td>
+                  <td>
+                    <div class="cell-price">$15.02</div>
+                    <div class="cell-entry">Acquisto: $20.00</div>
+                  </td>
+                  <td>
+                    <div class="spark-wrap">
+                      <div class="s-bar dn" style="height:14px"></div>
+                      <div class="s-bar dn" style="height:16px"></div>
+                      <div class="s-bar dn" style="height:12px"></div>
+                      <div class="s-bar nu" style="height:8px"></div>
+                      <div class="s-bar dn" style="height:13px"></div>
+                      <div class="s-bar dn" style="height:15px"></div>
+                      <div class="s-bar dn" style="height:14px"></div>
+                      <div class="s-bar dn" style="height:16px"></div>
+                    </div>
+                  </td>
+                  <td>
+                    <div class="pl-cell">
+                      <div class="pl-val neg">−24.9%</div>
+                      <div class="pl-bar-track"><div class="pl-bar-fill pl-bar-neg" style="width:50%"></div></div>
+                    </div>
+                  </td>
+                  <td><span style="color:#ef4444;font-weight:700;font-size:12px">−0.38%</span></td>
+                  <td style="font-size:11px;color:#f59e0b;font-weight:600">31 Mag <span style="font-size:9px;color:var(--ink-dim)">(7 gg)</span></td>
+                  <td><span class="status-pill sp-short">↓ Short</span></td>
+                </tr>
+
+                <!-- CNSP — watchlist urgente -->
+                <tr style="background:rgba(245,158,11,0.04)">
+                  <td>
+                    <div class="cell-ticker">CNSP</div>
+                    <div class="cell-company">CNS Pharmaceuticals</div>
+                  </td>
+                  <td><span class="cell-phase">Phase II</span></td>
+                  <td>
+                    <div class="cell-price">$5.05</div>
+                    <div class="cell-entry" style="color:#f59e0b">⚡ Non ancora in portafoglio</div>
+                  </td>
+                  <td>
+                    <div class="spark-wrap">
+                      <div class="s-bar up" style="height:8px"></div>
+                      <div class="s-bar up" style="height:12px"></div>
+                      <div class="s-bar up" style="height:18px"></div>
+                      <div class="s-bar up" style="height:22px"></div>
+                      <div class="s-bar nu" style="height:14px"></div>
+                      <div class="s-bar up" style="height:16px"></div>
+                      <div class="s-bar up" style="height:20px"></div>
+                      <div class="s-bar up" style="height:22px"></div>
+                    </div>
+                  </td>
+                  <td><span style="color:var(--ink-dim);font-size:11px">—</span></td>
+                  <td><span style="color:#22c55e;font-weight:700;font-size:12px">+6.97%</span></td>
+                  <td style="font-size:11px;color:#f59e0b;font-weight:700">27 Mag <span style="font-size:9px">⚡ 3 gg</span></td>
+                  <td><span class="status-pill sp-watch">👀 Watch</span></td>
+                </tr>
+
+                <!-- HURA — watchlist -->
+                <tr>
+                  <td>
+                    <div class="cell-ticker">HURA</div>
+                    <div class="cell-company">TuHURA Biosciences</div>
+                  </td>
+                  <td><span class="cell-phase">—</span></td>
+                  <td>
+                    <div class="cell-price">$2.34</div>
+                    <div class="cell-entry" style="color:var(--ink-dim)">Watchlist</div>
+                  </td>
+                  <td>
+                    <div class="spark-wrap">
+                      <div class="s-bar up" style="height:10px"></div>
+                      <div class="s-bar dn" style="height:6px"></div>
+                      <div class="s-bar dn" style="height:4px"></div>
+                      <div class="s-bar up" style="height:14px"></div>
+                      <div class="s-bar up" style="height:18px"></div>
+                      <div class="s-bar up" style="height:20px"></div>
+                      <div class="s-bar nu" style="height:12px"></div>
+                      <div class="s-bar up" style="height:14px"></div>
+                    </div>
+                  </td>
+                  <td><span style="color:var(--ink-dim);font-size:11px">—</span></td>
+                  <td><span style="color:#22c55e;font-weight:700;font-size:12px">+44.4%</span></td>
+                  <td style="font-size:11px;color:var(--ink-muted)">31 Mag <span style="font-size:9px;color:var(--ink-dim)">(7 gg)</span></td>
+                  <td><span class="status-pill sp-long">↑ Long</span></td>
+                </tr>
+
+                <!-- OLMA -->
+                <tr>
+                  <td>
+                    <div class="cell-ticker">OLMA</div>
+                    <div class="cell-company">Olema Pharmaceuticals</div>
+                  </td>
+                  <td><span class="cell-phase">Phase III</span></td>
+                  <td>
+                    <div class="cell-price">$14.06</div>
+                    <div class="cell-entry" style="color:var(--ink-dim)">Watchlist</div>
+                  </td>
+                  <td>
+                    <div class="spark-wrap">
+                      <div class="s-bar up" style="height:20px"></div>
+                      <div class="s-bar up" style="height:16px"></div>
+                      <div class="s-bar dn" style="height:10px"></div>
+                      <div class="s-bar dn" style="height:8px"></div>
+                      <div class="s-bar dn" style="height:12px"></div>
+                      <div class="s-bar dn" style="height:10px"></div>
+                      <div class="s-bar dn" style="height:8px"></div>
+                      <div class="s-bar nu" style="height:9px"></div>
+                    </div>
+                  </td>
+                  <td><span style="color:var(--ink-dim);font-size:11px">—</span></td>
+                  <td><span style="color:#22c55e;font-weight:700;font-size:12px">+0.75%</span></td>
+                  <td style="font-size:11px;color:var(--ink-muted)">30 Giu</td>
+                  <td><span class="status-pill sp-long">↑ Long</span></td>
+                </tr>
+
+                <!-- PLSE -->
+                <tr>
+                  <td>
+                    <div class="cell-ticker">PLSE</div>
+                    <div class="cell-company">Pulse Biosciences</div>
+                  </td>
+                  <td><span class="cell-phase">—</span></td>
+                  <td>
+                    <div class="cell-price">$25.56</div>
+                    <div class="cell-entry" style="color:var(--ink-dim)">Watchlist</div>
+                  </td>
+                  <td>
+                    <div class="spark-wrap">
+                      <div class="s-bar dn" style="height:16px"></div>
+                      <div class="s-bar dn" style="height:12px"></div>
+                      <div class="s-bar up" style="height:8px"></div>
+                      <div class="s-bar up" style="height:14px"></div>
+                      <div class="s-bar up" style="height:18px"></div>
+                      <div class="s-bar up" style="height:20px"></div>
+                      <div class="s-bar nu" style="height:14px"></div>
+                      <div class="s-bar up" style="height:16px"></div>
+                    </div>
+                  </td>
+                  <td><span style="color:var(--ink-dim);font-size:11px">—</span></td>
+                  <td><span style="color:var(--ink-muted);font-weight:700;font-size:12px">0.0%</span></td>
+                  <td style="font-size:11px;color:var(--ink-muted)">30 Giu</td>
+                  <td><span class="status-pill sp-neutral">— Neutral</span></td>
+                </tr>
+              </tbody>
+            </table>
+          </div>
+        </div>
+
+      </div><!-- /col left -->
+
+      <!-- COL RIGHT -->
+      <div class="grid-col" style="overflow:hidden;">
+
+        <!-- Catalyst Timeline -->
+        <div class="panel" style="flex:1;min-height:0;">
+          <div class="panel-header">
+            <div>
+              <div class="panel-title">⚡ Prossimi Catalyst</div>
+              <div class="panel-sub">ordinati per data CD</div>
+            </div>
+            <div class="panel-badge">5 eventi</div>
+          </div>
+          <div class="panel-body">
+            <div class="catalyst-list">
+
+              <div class="cat-item">
+                <div class="cat-dot-col">
+                  <div class="cat-dot" style="background:#f59e0b;box-shadow:0 0 6px #f59e0b"></div>
+                  <div class="cat-line"></div>
+                </div>
+                <div class="cat-content">
+                  <div class="cat-top">
+                    <span class="cat-ticker">CNSP</span>
+                    <span class="cat-company">CNS Pharmaceuticals</span>
+                    <span class="cat-cd-badge">⚡ 3 gg</span>
+                  </div>
+                  <div class="cat-metrics">
+                    <span class="cat-metric">27 Mag 2026 · Phase II</span>
+                    <span class="cat-metric">D+7 <strong class="up">+6.97%</strong></span>
+                    <span class="cat-metric">Conf. <strong>49%</strong></span>
+                    <span class="cat-metric">K-8 <strong>5</strong></span>
+                  </div>
+                </div>
+              </div>
+
+              <div class="cat-item">
+                <div class="cat-dot-col">
+                  <div class="cat-dot" style="background:#ef4444;box-shadow:0 0 6px #ef4444"></div>
+                  <div class="cat-line"></div>
+                </div>
+                <div class="cat-content">
+                  <div class="cat-top">
+                    <span class="cat-ticker">ANIK</span>
+                    <span class="cat-company">Anika Therapeutics</span>
+                    <span class="cat-cd-badge">7 gg</span>
+                  </div>
+                  <div class="cat-metrics">
+                    <span class="cat-metric">31 Mag 2026</span>
+                    <span class="cat-metric">D+7 <strong class="dn">−0.38%</strong></span>
+                    <span class="cat-metric">Conf. <strong>69%</strong></span>
+                    <span class="cat-metric">K-8 <strong>3</strong></span>
+                  </div>
+                </div>
+              </div>
+
+              <div class="cat-item">
+                <div class="cat-dot-col">
+                  <div class="cat-dot" style="background:#22c55e;box-shadow:0 0 6px #22c55e"></div>
+                  <div class="cat-line"></div>
+                </div>
+                <div class="cat-content">
+                  <div class="cat-top">
+                    <span class="cat-ticker">HURA</span>
+                    <span class="cat-company">TuHURA Biosciences</span>
+                    <span class="cat-cd-badge far">7 gg</span>
+                  </div>
+                  <div class="cat-metrics">
+                    <span class="cat-metric">31 Mag 2026</span>
+                    <span class="cat-metric">D+7 <strong class="up">+44.4%</strong></span>
+                    <span class="cat-metric">Conf. <strong>57%</strong></span>
+                    <span class="cat-metric">K-8 <strong>8</strong></span>
+                  </div>
+                </div>
+              </div>
+
+              <div class="cat-item">
+                <div class="cat-dot-col">
+                  <div class="cat-dot" style="background:#818cf8;box-shadow:0 0 6px #818cf8"></div>
+                  <div class="cat-line"></div>
+                </div>
+                <div class="cat-content">
+                  <div class="cat-top">
+                    <span class="cat-ticker">PTGX</span>
+                    <span class="cat-company">Protagonist Therapeutics</span>
+                    <span class="cat-cd-badge far">22 gg</span>
+                  </div>
+                  <div class="cat-metrics">
+                    <span class="cat-metric">15 Giu 2026 · Phase I</span>
+                    <span class="cat-metric">D+7 <strong class="dn">−1.9%</strong></span>
+                    <span class="cat-metric">Conf. <strong>55%</strong></span>
+                    <span class="cat-metric">K-8 <strong>3</strong></span>
+                  </div>
+                </div>
+              </div>
+
+              <div class="cat-item" style="border:none">
+                <div class="cat-dot-col">
+                  <div class="cat-dot" style="background:#22c55e;box-shadow:0 0 6px #22c55e"></div>
+                </div>
+                <div class="cat-content">
+                  <div class="cat-top">
+                    <span class="cat-ticker">OLMA</span>
+                    <span class="cat-company">Olema Pharmaceuticals</span>
+                    <span class="cat-cd-badge far">37 gg</span>
+                  </div>
+                  <div class="cat-metrics">
+                    <span class="cat-metric">30 Giu 2026 · Phase III</span>
+                    <span class="cat-metric">D+7 <strong class="up">+0.75%</strong></span>
+                    <span class="cat-metric">Conf. <strong>60%</strong></span>
+                    <span class="cat-metric">K-8 <strong>7</strong></span>
+                  </div>
+                </div>
+              </div>
+
+            </div>
+          </div>
+        </div>
+
+        <!-- K-8 Activity Feed -->
+        <div class="panel" style="flex:1;min-height:0;">
+          <div class="panel-header">
+            <div>
+              <div class="panel-title">📄 Attività SEC K-8 Recente</div>
+              <div class="panel-sub">variazioni prezzi giorno filing</div>
+            </div>
+            <div class="panel-badge">ultimi 14</div>
+          </div>
+          <div class="panel-body">
+            <div class="k8-feed">
+
+              <div class="k8-item">
+                <div class="k8-icon pos">📈</div>
+                <div class="k8-body">
+                  <div class="k8-top">
+                    <span class="k8-ticker">CNSP</span>
+                    <span class="k8-date">04 Mag 2026</span>
+                    <span class="k8-type pos">+221% D+0</span>
+                  </div>
+                  <div class="k8-returns">
+                    <span class="k8-ret">D+0 <span class="up">+221.3%</span></span>
+                    <span class="k8-ret">D+1 <span class="dn">−5.3%</span></span>
+                    <span class="k8-ret">D+3 <span class="up">+193.0%</span></span>
+                  </div>
+                  <div class="k8-company">CNS Pharmaceuticals · 8-K filing SEC</div>
+                </div>
+              </div>
+
+              <div class="k8-item">
+                <div class="k8-icon pos">📈</div>
+                <div class="k8-body">
+                  <div class="k8-top">
+                    <span class="k8-ticker">PLSE</span>
+                    <span class="k8-date">27 Apr 2026</span>
+                    <span class="k8-type pos">+8.7% D+0</span>
+                  </div>
+                  <div class="k8-returns">
+                    <span class="k8-ret">D+0 <span class="up">+8.7%</span></span>
+                    <span class="k8-ret">D+1 <span class="up">+10.5%</span></span>
+                    <span class="k8-ret">D+3 <span class="up">+4.8%</span></span>
+                  </div>
+                  <div class="k8-company">Pulse Biosciences · 8-K filing SEC</div>
+                </div>
+              </div>
+
+              <div class="k8-item">
+                <div class="k8-icon neg">📉</div>
+                <div class="k8-body">
+                  <div class="k8-top">
+                    <span class="k8-ticker">ANIK</span>
+                    <span class="k8-date">29 Apr 2026</span>
+                    <span class="k8-type neg">−17.3% D+0</span>
+                  </div>
+                  <div class="k8-returns">
+                    <span class="k8-ret">D+0 <span class="dn">−17.3%</span></span>
+                    <span class="k8-ret">D+1 <span class="up">+1.9%</span></span>
+                    <span class="k8-ret">D+3 <span class="dn">−16.9%</span></span>
+                  </div>
+                  <div class="k8-company">Anika Therapeutics · 8-K filing SEC</div>
+                </div>
+              </div>
+
+              <div class="k8-item">
+                <div class="k8-icon mix">📊</div>
+                <div class="k8-body">
+                  <div class="k8-top">
+                    <span class="k8-ticker">IBRX</span>
+                    <span class="k8-date">18 Mag 2026</span>
+                    <span class="k8-type mix">+12.5% D+0</span>
+                  </div>
+                  <div class="k8-returns">
+                    <span class="k8-ret">D+0 <span class="up">+12.5%</span></span>
+                    <span class="k8-ret">D+1 <span class="up">+12.1%</span></span>
+                    <span class="k8-ret">D+3 <span class="up">+9.1%</span></span>
+                  </div>
+                  <div class="k8-company">ImmunityBio · 8-K filing SEC</div>
+                </div>
+              </div>
+
+              <div class="k8-item">
+                <div class="k8-icon pos">📈</div>
+                <div class="k8-body">
+                  <div class="k8-top">
+                    <span class="k8-ticker">HURA</span>
+                    <span class="k8-date">15 Mag 2026</span>
+                    <span class="k8-type pos">+42.6% D+0</span>
+                  </div>
+                  <div class="k8-returns">
+                    <span class="k8-ret">D+0 <span class="up">+42.6%</span></span>
+                    <span class="k8-ret">D+1 <span class="up">+54.9%</span></span>
+                    <span class="k8-ret">D+3 <span class="up">+57.4%</span></span>
+                  </div>
+                  <div class="k8-company">TuHURA Biosciences · 8-K filing SEC</div>
+                </div>
+              </div>
+
+              <div class="k8-item" style="border:none">
+                <div class="k8-icon neg">📉</div>
+                <div class="k8-body">
+                  <div class="k8-top">
+                    <span class="k8-ticker">KPTI</span>
+                    <span class="k8-date">14 Mag 2026</span>
+                    <span class="k8-type neg">+1.5% D+0</span>
+                  </div>
+                  <div class="k8-returns">
+                    <span class="k8-ret">D+0 <span class="up">+1.5%</span></span>
+                    <span class="k8-ret">D+1 <span class="up">+0.9%</span></span>
+                    <span class="k8-ret">D+3 <span class="dn">−12.5%</span></span>
+                  </div>
+                  <div class="k8-company">Karyopharm Therapeutics · 8-K filing SEC</div>
+                </div>
+              </div>
+
+            </div>
+          </div>
+        </div>
+
+      </div><!-- /col right -->
+    </div><!-- /grid -->
+  </div><!-- /content -->
+</main>
+
+</body>
+</html>

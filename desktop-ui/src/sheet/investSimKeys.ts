@@ -1,4 +1,5 @@
 import type { InvestSimInputEntry, InvestSimInputs } from "./investSimStorage";
+import { sanitizeInvestSimEntry, sanitizeInvestSimInputs } from "./investSimStorage";
 
 /** Normalizza Completion Date in ``YYYY-MM-DD`` per chiavi stabili (allineato a simulation_preserve.py). */
 export function normalizeCompletionDateForKey(cd: unknown): string {
@@ -33,6 +34,34 @@ export function normalizedRowKey(ticker: string, cd: unknown): string {
   return `${tk}|${normalizeCompletionDateForKey(cd)}`;
 }
 
+/** ID DOM stabile per scroll Simulation → card Decision Lab. */
+export function decisionLabSignalDomId(ticker: string, cd: unknown): string {
+  const tk = String(ticker ?? "")
+    .trim()
+    .toUpperCase();
+  const cdKey = normalizeCompletionDateForKey(cd).replace(/[^\w-]/g, "-");
+  return `decision-lab-signal-${tk}-${cdKey}`;
+}
+
+/** Scroll target for 24h assessment deep-dive cards (Simulation → Returns & Loss). */
+export function lossAnalysisCardDomId(key: string): string {
+  const safe = String(key ?? "")
+    .trim()
+    .replace(/\|/g, "-")
+    .replace(/[^\w-]/g, "");
+  return `loss-analysis-${safe || "row"}`;
+}
+
+export function matchDecisionLabSignalFocus(
+  ticker: string,
+  cd: string,
+  focus: { ticker: string; cd?: string },
+): boolean {
+  if (ticker.trim().toUpperCase() !== focus.ticker.trim().toUpperCase()) return false;
+  if (!focus.cd?.trim()) return true;
+  return normalizedRowKey(ticker, cd) === normalizedRowKey(focus.ticker, focus.cd);
+}
+
 /** Mappa righe Simulation per chiave normalizzata (sparkline, dettaglio, ecc.). */
 export function buildSimRowByKeyMap(
   rows: Record<string, unknown>[]
@@ -57,14 +86,85 @@ function entryWeight(e: InvestSimInputEntry): number {
 }
 
 function mergeEntry(a: InvestSimInputEntry, b: InvestSimInputEntry): InvestSimInputEntry {
+  const explicitlySold = (e: InvestSimInputEntry) =>
+    Boolean(e.ignoreSheet && e.soldAt);
+  if (explicitlySold(a) || explicitlySold(b)) {
+    const sold = explicitlySold(a) ? a : b;
+    const other = sold === a ? b : a;
+    const rebuy =
+      !other.ignoreSheet &&
+      other.capital > 0 &&
+      other.investedAt &&
+      sold.soldAt &&
+      Date.parse(other.investedAt) > Date.parse(sold.soldAt);
+    if (rebuy) {
+      return sanitizeInvestSimEntry({ ...other, ignoreSheet: false });
+    }
+    const pickClosed = explicitlySold(a) ? a : b;
+    return sanitizeInvestSimEntry({
+      buyPrice: 0,
+      capital: 0,
+      ignoreSheet: true,
+      investedAt: earliestInvestedAt(a.investedAt, b.investedAt),
+      purchaseDate: a.purchaseDate || b.purchaseDate,
+      soldAt: latestIso(a.soldAt, b.soldAt),
+      closedCapital: pickClosed.closedCapital ?? other.closedCapital,
+      closedValue: pickClosed.closedValue ?? other.closedValue,
+      closedPnlEur: pickClosed.closedPnlEur ?? other.closedPnlEur,
+    });
+  }
+
   const pick =
     entryWeight(b) > entryWeight(a) ? b : entryWeight(a) > entryWeight(b) ? a : b;
   const other = pick === a ? b : a;
+  const ignoreSheet = Boolean(pick.ignoreSheet || other.ignoreSheet);
+  if (ignoreSheet) {
+    const pickClosed = pick.ignoreSheet ? pick : other;
+    return sanitizeInvestSimEntry({
+      buyPrice: 0,
+      capital: 0,
+      ignoreSheet: true,
+      investedAt: earliestInvestedAt(pick.investedAt, other.investedAt),
+      purchaseDate: pick.purchaseDate || other.purchaseDate,
+      soldAt: latestIso(pick.soldAt, other.soldAt),
+      closedCapital: pickClosed.closedCapital ?? other.closedCapital,
+      closedValue: pickClosed.closedValue ?? other.closedValue,
+      closedPnlEur: pickClosed.closedPnlEur ?? other.closedPnlEur,
+    });
+  }
+  const buyPrice =
+    pick.buyPrice > 0
+      ? pick.buyPrice
+      : other.buyPrice > 0
+        ? other.buyPrice
+        : 0;
   return {
-    buyPrice: pick.buyPrice > 0 ? pick.buyPrice : other.buyPrice,
-    capital: pick.capital > 0 ? pick.capital : other.capital,
-    ignoreSheet: Boolean(pick.ignoreSheet || other.ignoreSheet),
+    buyPrice,
+    capital: Math.max(pick.capital, other.capital),
+    ignoreSheet: false,
+    investedAt: earliestInvestedAt(pick.investedAt, other.investedAt),
+    purchaseDate: pick.purchaseDate || other.purchaseDate,
   };
+}
+
+function earliestInvestedAt(a?: string, b?: string): string | undefined {
+  if (!a) return b;
+  if (!b) return a;
+  const am = Date.parse(a);
+  const bm = Date.parse(b);
+  if (!Number.isFinite(am)) return b;
+  if (!Number.isFinite(bm)) return a;
+  return am <= bm ? a : b;
+}
+
+function latestIso(a?: string, b?: string): string | undefined {
+  if (!a) return b;
+  if (!b) return a;
+  const am = Date.parse(a);
+  const bm = Date.parse(b);
+  if (!Number.isFinite(am)) return b;
+  if (!Number.isFinite(bm)) return a;
+  return am >= bm ? a : b;
 }
 
 /**
@@ -105,9 +205,9 @@ export function reconcileInvestSimInputs(
       canonByAlias.get(normalizedRowKey(tk, cdPart)) ??
       normalizedRowKey(tk, cdPart);
     const prev = out[canon];
-    out[canon] = prev ? mergeEntry(prev, entry) : { ...entry };
+    out[canon] = prev ? mergeEntry(prev, entry) : sanitizeInvestSimEntry({ ...entry });
   }
-  return out;
+  return sanitizeInvestSimInputs(out);
 }
 
 export function mergeInvestSimInputs(

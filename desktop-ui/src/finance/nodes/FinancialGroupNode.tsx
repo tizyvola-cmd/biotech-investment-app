@@ -17,10 +17,10 @@ export function FinancialGroupNode({ data, selected }: NodeProps) {
     >
       <Handle type="source" position={Position.Bottom} className="!bg-accent !w-2.5 !h-2.5 !border-0" />
       <div className="text-[10px] uppercase tracking-wider text-ink-muted font-medium">
-        {isSector ? "Settore" : "Fascia cap."}
+        {isSector ? "Sector" : "Cap tier"}
       </div>
       <div className="font-semibold text-sm text-ink mt-0.5 leading-tight">{d.label}</div>
-      <div className="text-xs text-ink-muted mt-1">{d.count} titoli</div>
+      <div className="text-xs text-ink-muted mt-1">{d.count} stocks</div>
     </div>
   );
 }

@@ -62,8 +62,15 @@ import {
 
 import { orderSimulationColumns } from "../sheet/simulationStyles";
 import { sharedTableCellRenderer } from "../sheet/sharedTableCellRenderer";
+import {
+  SHEET_GRID_TABLE_CLASS,
+  sheetGridAlignForColumn,
+  sheetGridTdClassAlign,
+  sheetGridThClassAlign,
+} from "../sheet/sheetGridTable";
 
 import { sheetCellPlainText } from "../sheet/cellLinks";
+import { useLang } from "../shared/i18n";
 
 
 
@@ -71,7 +78,7 @@ export type SheetCellRenderResult = {
 
   text: string;
 
-  /** Se impostato, sostituisce il testo nella cella (es. hyperlink da Excel). */
+  /** If set, replaces the text in the cell (e.g. hyperlink from Excel). */
 
   content?: ReactNode;
 
@@ -84,6 +91,8 @@ export type SheetCellRenderResult = {
   iconColor?: string;
 
   iconOnly?: boolean;
+
+  cellClassName?: string;
 
 };
 
@@ -151,6 +160,8 @@ export function ConfigurableSheetGrid({
 
   onReload,
 
+  hideToolbarReload = false,
+
   sheetId,
 
   headerNote,
@@ -159,23 +170,50 @@ export function ConfigurableSheetGrid({
 
   headerCellClassName = "font-medium border border-[rgb(var(--border))]/40",
 
-  tableClassName = "w-full whitespace-nowrap border-collapse",
+  tableClassName = `${SHEET_GRID_TABLE_CLASS} whitespace-nowrap`,
 
   renderCell,
 
   formatColumnHeader,
 
+  /** Extra class on `<th>` per column (e.g. Financial key metrics). */
+  headerCellClassForColumn,
+
   initialColumnOrder,
+
+  initialHiddenColumns,
+
+  forcedHiddenColumns,
 
   toolbarExtra,
 
-  filterPlaceholder = "Filtra…",
+  filterPlaceholder = "Filter…",
 
   rowFilter,
 
-  /** Sfondo tenue per riga (es. P&L portafoglio Simulation). */
+  /** Subtle background for the row (e.g. Simulation portfolio P&L). */
 
   rowStyle,
+
+  rowClassName,
+
+  rowId,
+
+  onClearToolbarFilters,
+
+  zebraRows = false,
+
+  /** Verdino chiaro — readable table in blue/dark theme (legacy sheets). */
+  mintPresentation = false,
+
+  /** Violet/indigo skin allineato a Catalyst Feed (Financial). */
+  feedPresentation = false,
+
+  /** Skip CF rules on these columns (Financial uses built-in Simulation-style cells). */
+  skipConditionalFormatColumns,
+
+  /** Override column width/min-width (e.g. Financial horizontal scroll). */
+  columnWidthStyleFn,
 
 }: {
 
@@ -186,6 +224,8 @@ export function ConfigurableSheetGrid({
   error: string | null;
 
   onReload: () => void;
+
+  hideToolbarReload?: boolean;
 
   sheetId: string;
 
@@ -199,13 +239,20 @@ export function ConfigurableSheetGrid({
 
   renderCell?: SheetCellRenderer;
 
-  /** Etichetta header (default: newline → spazio). */
+  /** Header label (default: newline → space). */
 
   formatColumnHeader?: (column: string) => string;
 
-  /** Ordine colonne al primo utilizzo (se non c'è layout salvato). */
+  headerCellClassForColumn?: (column: string) => string | undefined;
+
+  /** Column order at first use (if no saved layout exists). */
 
   initialColumnOrder?: string[];
+
+  /** Hidden columns at first use (if no saved layout exists). */
+  initialHiddenColumns?: string[];
+  /** Always hidden columns (applied even with saved layouts). */
+  forcedHiddenColumns?: string[];
 
   toolbarExtra?: ReactNode;
 
@@ -215,7 +262,28 @@ export function ConfigurableSheetGrid({
 
   rowStyle?: (row: Record<string, unknown>) => CSSProperties | undefined;
 
+  /** Extra class names per data row (e.g. Financial portfolio stripe). */
+  rowClassName?: (row: Record<string, unknown>, index: number) => string | undefined;
+
+  /** Returns a string id placed as data-row-id on each <tr> for external scroll targeting. */
+  rowId?: (row: Record<string, unknown>) => string | undefined;
+
+  /** Called when the user clears filters from the empty state (e.g. ticker/sector on Financial). */
+  onClearToolbarFilters?: () => void;
+
+  /** Alternating row backgrounds for readability. */
+  zebraRows?: boolean;
+
+  mintPresentation?: boolean;
+
+  feedPresentation?: boolean;
+
+  skipConditionalFormatColumns?: ReadonlySet<string>;
+
+  columnWidthStyleFn?: typeof columnWidthStyle;
+
 }) {
+  const { lang } = useLang();
 
   const [filter, setFilter] = useState(() => loadTableViewPrefs(sheetId).tableFilter);
 
@@ -237,6 +305,9 @@ export function ConfigurableSheetGrid({
 
   prefsRef.current = prefs;
 
+  const resolveColWidth = columnWidthStyleFn ?? columnWidthStyle;
+  const wideTableScroll = Boolean(columnWidthStyleFn);
+
 
 
   const allColumns = table?.columns ?? [];
@@ -257,37 +328,28 @@ export function ConfigurableSheetGrid({
 
     setFilter(loaded.tableFilter);
 
-    if (
-
-      initialColumnOrder?.length &&
-
-      loaded.columnOrder.length === 0 &&
-
-      allColumns.length > 0
-
-    ) {
-
-      const order = initialColumnOrder.filter((c) => allColumns.includes(c));
-
+    if (loaded.columnOrder.length === 0 && allColumns.length > 0) {
+      const order = initialColumnOrder?.length
+        ? initialColumnOrder.filter((c) => allColumns.includes(c))
+        : [...allColumns];
       for (const c of allColumns) {
-
         if (!order.includes(c)) order.push(c);
-
       }
-
-      const seeded = { ...loaded, columnOrder: order };
-
+      const hidden = (initialHiddenColumns ?? []).filter((c) => allColumns.includes(c));
+      const seeded = {
+        ...loaded,
+        columnOrder: order,
+        hiddenColumns: hidden.length > 0 ? hidden : loaded.hiddenColumns,
+      };
       setPrefs(seeded);
-
       saveTableViewPrefs(sheetId, seeded);
-
     } else {
 
       setPrefs(loaded);
 
     }
 
-  }, [sheetId, initialColumnOrder, allColumns.join("\0")]);
+  }, [sheetId, initialColumnOrder, initialHiddenColumns, allColumns.join("\0")]);
 
 
 
@@ -373,15 +435,26 @@ export function ConfigurableSheetGrid({
 
   const { visibleColumns } = useMemo(() => {
     const resolved = resolveTableColumns(allColumns, prefs);
-    if (sheetId !== "Simulation") return resolved;
-    const order = orderSimulationColumns(resolved.mergedPrefs.columnOrder);
-    if (order.join("\0") === resolved.mergedPrefs.columnOrder.join("\0")) return resolved;
-    const hidden = new Set(prefs.hiddenColumns);
+    const hidden = new Set([...prefs.hiddenColumns, ...(forcedHiddenColumns ?? [])]);
+    const order =
+      sheetId === "Simulation"
+        ? orderSimulationColumns(resolved.mergedPrefs.columnOrder)
+        : resolved.mergedPrefs.columnOrder;
+    if (
+      order.join("\0") === resolved.mergedPrefs.columnOrder.join("\0") &&
+      hidden.size === prefs.hiddenColumns.length
+    ) {
+      return resolved;
+    }
     return {
       visibleColumns: order.filter((c) => !hidden.has(c)),
-      mergedPrefs: { ...resolved.mergedPrefs, columnOrder: order },
+      mergedPrefs: {
+        ...resolved.mergedPrefs,
+        columnOrder: order,
+        hiddenColumns: Array.from(hidden),
+      },
     };
-  }, [allColumns, prefs, sheetId]);
+  }, [allColumns, prefs, sheetId, forcedHiddenColumns]);
 
 
 
@@ -507,23 +580,58 @@ export function ConfigurableSheetGrid({
 
 
 
+  const sheetSkin = feedPresentation ? "feed" : mintPresentation ? "mint" : "default";
+  const sectionCls =
+    sheetSkin === "feed"
+      ? "card sheet-feed-surface flex flex-col min-h-0 flex-1 overflow-hidden"
+      : sheetSkin === "mint"
+        ? "card sheet-mint-surface flex flex-col min-h-0 flex-1 overflow-hidden"
+        : "card flex flex-col min-h-0 flex-1 overflow-hidden";
+  const toolbarCls =
+    sheetSkin === "feed"
+      ? "sheet-feed-toolbar flex flex-wrap items-center gap-3 border-b px-4 py-3"
+      : sheetSkin === "mint"
+        ? "sheet-mint-toolbar flex flex-wrap items-center gap-3 border-b px-4 py-3"
+        : "flex flex-wrap items-center gap-3 border-b border-[rgb(var(--border))] px-4 py-3";
+  const scrollCls =
+    sheetSkin === "feed"
+      ? `sheet-feed-scroll overflow-x-auto${resizingCol ? " select-none cursor-col-resize" : ""}`
+      : sheetSkin === "mint"
+        ? `sheet-mint-scroll overflow-x-auto${resizingCol ? " select-none cursor-col-resize" : ""}`
+        : `overflow-x-auto${resizingCol ? " select-none cursor-col-resize" : ""}`;
+  const resolvedHeaderClass =
+    sheetSkin === "feed"
+      ? "sticky top-0 z-10 text-left sheet-feed-muted sheet-feed-thead"
+      : sheetSkin === "mint"
+        ? "sticky top-0 z-10 text-left sheet-mint-muted sheet-mint-thead"
+        : headerClassName;
+  const resolvedHeaderCellClass =
+    sheetSkin === "feed"
+      ? "font-semibold border sheet-feed-border sheet-feed-text"
+      : sheetSkin === "mint"
+        ? "font-semibold border sheet-mint-border sheet-mint-text"
+        : headerCellClassName;
+  const useZebra = zebraRows || sheetSkin !== "default";
+  const sheetTextCls = sheetSkin === "feed" ? "sheet-feed-text" : sheetSkin === "mint" ? "sheet-mint-text" : "";
+  const sheetMutedCls = sheetSkin === "feed" ? "sheet-feed-muted" : sheetSkin === "mint" ? "sheet-mint-muted" : "text-ink-muted";
+
   return (
 
-    <section className="card flex flex-col min-h-0 flex-1 overflow-hidden">
+    <section className={sectionCls}>
 
-      <div className="flex flex-wrap items-center gap-3 border-b border-[rgb(var(--border))] px-4 py-3">
+      <div className={toolbarCls}>
 
         <div>
 
-          <h2 className="text-lg font-semibold">{table?.sheet ?? sheetId}</h2>
+          <h2 className={`text-lg font-semibold ${sheetTextCls}`}>{table?.sheet ?? sheetId}</h2>
 
-          <span className="text-xs text-ink-muted block">
+          <span className={`text-xs block ${sheetMutedCls}`}>
 
-            {loading ? "Caricamento…" : `${filteredRows.length} / ${total} righe`}
+            {loading ? "Loading…" : `${filteredRows.length} / ${total} rows`}
 
             {visibleColumns.length < allColumns.length &&
 
-              ` · ${visibleColumns.length}/${allColumns.length} colonne`}
+              ` · ${visibleColumns.length}/${allColumns.length} columns`}
 
           </span>
 
@@ -565,11 +673,13 @@ export function ConfigurableSheetGrid({
 
         />
 
+        {!hideToolbarReload ? (
         <button type="button" className="btn-ghost text-xs" onClick={onReload}>
 
-          Ricarica
+          Reload
 
         </button>
+        ) : null}
 
       </div>
 
@@ -585,15 +695,15 @@ export function ConfigurableSheetGrid({
 
         <p className="p-6 text-sm text-ink-muted text-center space-y-2 max-w-lg mx-auto">
 
-          <span className="block font-medium text-ink">Caricamento dati…</span>
+          <span className="block font-medium text-ink">Loading data…</span>
 
           {table?.sheet === "Accuracy" && (
 
             <span className="block text-xs leading-relaxed">
 
-              Il foglio Accuracy è grande: la prima lettura può richiedere ~30 secondi. In
+              The Accuracy sheet is large: the first read can take ~30 seconds. As an
 
-              alternativa esegui <code className="text-[10px]">Export_Accuracy_Snapshot.bat</code>.
+              alternative run <code className="text-[10px]">Export_Accuracy_Snapshot.bat</code>.
 
             </span>
 
@@ -603,29 +713,52 @@ export function ConfigurableSheetGrid({
 
       ) : !loading && filteredRows.length === 0 ? (
 
-        <p className="p-6 text-sm text-ink-muted text-center">
+        <div className="p-6 text-sm text-ink-muted text-center space-y-3 max-w-md mx-auto">
 
-          Nessuna riga — eseguire l&apos;orchestrator e chiudere Excel.
+          {total > 0 ? (
+            <>
+              <p>
+                {lang === "it" ? "Nessuna riga corrisponde ai filtri attivi" : "No rows match active filters"}{" "}
+                <span className="tabular-nums font-medium text-ink">
+                  (0 / {total})
+                </span>
+                .
+              </p>
+              <button
+                type="button"
+                className="seg-btn-outline text-xs"
+                onClick={() => {
+                  setFilter("");
+                  debouncedSaveFilter("");
+                  onClearToolbarFilters?.();
+                }}
+              >
+                {lang === "it" ? "Cancella filtri" : "Clear filters"}
+              </button>
+            </>
+          ) : (
+            <p>No rows — run the orchestrator and close Excel.</p>
+          )}
 
-        </p>
+        </div>
 
       ) : visibleColumns.length === 0 ? (
 
         <p className="p-6 text-sm text-ink-muted text-center">
 
-          Nessuna colonna visibile — apri <strong>Layout tabella</strong> e seleziona almeno una
+          No visible columns — open <strong>Table layout</strong> and select at least one
 
-          colonna.
+          column.
 
         </p>
 
       ) : (
 
-        <div className={`overflow-auto flex-1 ${resizingCol ? "select-none cursor-col-resize" : ""}`}>
+        <div className={scrollCls}>
 
           <table className={`${tableClassName} ${fontCls}`}>
 
-            <thead className={headerClassName}>
+            <thead className={resolvedHeaderClass}>
 
               <tr>
 
@@ -637,9 +770,11 @@ export function ConfigurableSheetGrid({
 
                     : c.replace(/\n/g, " ");
 
-                  const headerTitle = `${c.replace(/\n/g, " ")} — trascina per riordinare`;
+                  const headerExtraClass = headerCellClassForColumn?.(c) ?? "";
 
-                  const colStyle = columnWidthStyle(c, prefs);
+                  const headerTitle = `${c.replace(/\n/g, " ")} — drag to reorder`;
+
+                  const colStyle = resolveColWidth(c, prefs);
 
                   return (
 
@@ -657,7 +792,7 @@ export function ConfigurableSheetGrid({
 
                       onDrop={() => onHeaderDrop(c)}
 
-                      className={`relative ${dens.head} ${headerCellClassName} cursor-grab active:cursor-grabbing select-none ${
+                      className={`relative ${sheetGridThClassAlign(sheetGridAlignForColumn(c))} ${dens.head} ${resolvedHeaderCellClass} ${headerExtraClass} cursor-grab active:cursor-grabbing select-none ${
 
                         formatColumnHeader ? "whitespace-nowrap" : "truncate"
 
@@ -677,7 +812,7 @@ export function ConfigurableSheetGrid({
 
                         aria-orientation="vertical"
 
-                        aria-label={`Ridimensiona colonna ${headerLabel}`}
+                        aria-label={`Resize column ${headerLabel}`}
 
                         className="absolute right-0 top-0 h-full w-1.5 cursor-col-resize hover:bg-accent/40"
 
@@ -708,6 +843,7 @@ export function ConfigurableSheetGrid({
               {filteredRows.map((row, i) => {
 
                 const rowBg = rowStyle?.(row);
+                const rowDataId = rowId?.(row);
 
                 return (
 
@@ -715,9 +851,21 @@ export function ConfigurableSheetGrid({
 
                   key={i}
 
-                  className="border-t border-[rgb(var(--border))]/60 hover:bg-surface/80"
+                  className={`${
+                    sheetSkin !== "default"
+                      ? ""
+                      : "border-t border-[rgb(var(--border))]/60 hover:bg-surface/80"
+                  } ${
+                    useZebra && sheetSkin === "default"
+                      ? i % 2 === 0
+                        ? "bg-[rgb(var(--surface))]"
+                        : "bg-[rgb(var(--surface-3))]/12"
+                      : ""
+                  } ${rowClassName?.(row, i) ?? ""}`}
 
                   style={rowBg}
+
+                  {...(rowDataId ? { "data-row-id": rowDataId } : {})}
 
                 >
 
@@ -729,7 +877,9 @@ export function ConfigurableSheetGrid({
                       ? renderCell(c, raw, row)
                       : sharedTableCellRenderer(c, raw, row);
 
-                    const cf = applyConditionalFormatToCell(c, raw, cfPrefs, cfStatsMap);
+                    const cf = skipConditionalFormatColumns?.has(c)
+                      ? null
+                      : applyConditionalFormatToCell(c, raw, cfPrefs, cfStatsMap);
 
                     const style = mergeCellStyles(
 
@@ -753,11 +903,13 @@ export function ConfigurableSheetGrid({
 
                         key={c}
 
-                        className={`${dens.cell} truncate border border-[rgb(var(--border))]/30`}
+                        className={`${sheetGridTdClassAlign(sheetGridAlignForColumn(c))} ${dens.cell} ${wideTableScroll ? "" : "truncate"} ${base.cellClassName ?? ""} ${
+                          sheetSkin !== "default" ? "" : "border border-[rgb(var(--border))]/30"
+                        }`}
 
                         style={{
 
-                          ...columnWidthStyle(c, prefs),
+                          ...resolveColWidth(c, prefs),
 
                           ...style,
 

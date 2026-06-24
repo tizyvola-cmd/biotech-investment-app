@@ -36,6 +36,13 @@ HISTLIB_PATH = Path("data/model_historical_input_library.json")
 PNL_FLAT_PCT = 1.0
 PNL_FLAT_EUR = 25.0
 
+# Slope BUY/SELL rule neutralized: walk-forward backtest showed slope_20d is
+# non-predictive of forward returns (corr=-0.03; BUY momentum < take-all; SELL
+# net-negative). The signal is kept for reference only, never graded/actioned.
+_SLOPE_RULE_NEUTRALIZED_NOTE = (
+    "slope non-predittivo (backtest walk-forward) — segnale neutralizzato"
+)
+
 PROTOCOL: dict[str, Any] = {
     "schema_version": 1,
     "title": "Simulazioni investimento — Analisi esiti",
@@ -848,31 +855,21 @@ def build_investment_sim_outcomes(
             entry_s20 = p.get("pre_cd_slope_20d")
         if entry_s20 is None:
             entry_s20 = p.get("latest_slope_20d")
-        buy_signal = bool(entry_s20 is not None and entry_s20 >= 0.10)
-        p["buy_signal_suggested"] = buy_signal
+        # Slope BUY/SELL rule neutralized: a walk-forward backtest proved slope_20d
+        # is non-predictive (corr=-0.03; momentum < take-all; SELL net-negative).
+        # We keep the basis slope for reference but no longer emit an actionable
+        # signal or grade it.
+        p["buy_signal_suggested"] = False
         p["buy_signal_basis_slope_20d"] = round(float(entry_s20), 4) if entry_s20 is not None else None
-        buy_delta_pct = p.get("pnl_pct")
-        p["buy_signal_result"] = _signal_result(buy_delta_pct, expect="up") if buy_signal else "not_applicable"
+        p["buy_signal_result"] = "not_applicable"
+        p["buy_signal_note"] = _SLOPE_RULE_NEUTRALIZED_NOTE
 
-        # SELL side: only if we have a recorded exit with slope rule met.
         exit_s20 = p.get("exit_slope_20d")
-        sell_signal = bool(exit_s20 is not None and exit_s20 <= -0.30)
-        p["sell_signal_suggested"] = sell_signal
+        p["sell_signal_suggested"] = False
         p["sell_signal_basis_slope_20d"] = round(float(exit_s20), 4) if exit_s20 is not None else None
-        if sell_signal:
-            exit_px = _num(p.get("exit_current_price_usd"))
-            base_key = str(p.get("row_key", "")).split("#cycle", 1)[0]
-            current_px = _num(market_price_by_key.get(base_key))
-            if exit_px is not None and exit_px > 0 and current_px is not None and current_px > 0:
-                after_sell_pct = ((current_px - exit_px) / exit_px) * 100.0
-                p["sell_signal_after_move_pct"] = round(after_sell_pct, 2)
-                p["sell_signal_result"] = _signal_result(after_sell_pct, expect="down")
-            else:
-                p["sell_signal_after_move_pct"] = None
-                p["sell_signal_result"] = "pending"
-        else:
-            p["sell_signal_after_move_pct"] = None
-            p["sell_signal_result"] = "not_applicable"
+        p["sell_signal_after_move_pct"] = None
+        p["sell_signal_result"] = "not_applicable"
+        p["sell_signal_note"] = _SLOPE_RULE_NEUTRALIZED_NOTE
 
     closed = [p for p in positions if p.get("cd_passed")]
     open_pos = [p for p in positions if not p.get("cd_passed")]

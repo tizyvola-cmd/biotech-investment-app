@@ -108,38 +108,18 @@ def _mirror_entry_score(p: dict) -> float | None:
     return round(affid_score + r2_score + timing_score + slope_align + pred_score)
 
 
-def _grid_pick(
-    candidates: list[float],
-    cases: list[dict],
-    *,
-    apply_threshold,
-    min_n: int = MIN_CASES_RELIABLE,
-) -> tuple[float, dict[str, Any]]:
-    """Sceglie la soglia con miglior win_rate tra i casi che la attivano."""
-    best_t = candidates[0]
-    best_stats: dict[str, Any] = {
-        "n": 0,
-        "win_rate_pct": None,
-        "score": -1.0,
-    }
-    for t in candidates:
-        triggered = [c for c in cases if apply_threshold(c, t)]
-        n = len(triggered)
-        if n < 1:
-            continue
-        wins = sum(1 for c in triggered if c.get("_win"))
-        wr = wins / n
-        # Preferisce win_rate alta; a parità, più campioni
-        score = wr + min(n, 20) * 0.002
-        if score > best_stats.get("score", -1):
-            best_t = t
-            best_stats = {
-                "n": n,
-                "win_rate_pct": round(100.0 * wr, 1),
-                "score": score,
-            }
-    reliable = best_stats["n"] >= min_n
-    return best_t, {**best_stats, "reliable": reliable}
+# Slope_20d is non-predictive of forward returns: a walk-forward backtest on the
+# full event pool (~1.8k matched events) found corr(slope_20d, move) = -0.03, the
+# BUY-momentum rule (slope >= +0.10) UNDER-performs 'take everything' out-of-
+# sample, and the SELL-on-slope rule is net-negative. Fitting slope thresholds to
+# the handful of closed trades just overfits that noise. We therefore neutralize
+# the slope BUY/SELL rule: thresholds are pinned to neutral defaults, flagged
+# non-predictive (display/reference only), and slope_significant is no longer
+# derived from them.
+_SLOPE_RULE_NOTE = (
+    "slope non-predittivo (walk-forward: corr=-0.03; BUY momentum < take-all; "
+    "SELL in perdita) — soglia neutralizzata, solo riferimento"
+)
 
 
 def compute_trade_calibration(positions: list[dict] | None) -> dict[str, Any]:
@@ -170,24 +150,25 @@ def compute_trade_calibration(positions: list[dict] | None) -> dict[str, Any]:
         if _mirror_entry_score(p) is not None and _num(p.get("pnl_pct")) is not None
     ]
 
-    buy_t, buy_stats = _grid_pick(
-        [round(x * 0.025, 3) for x in range(2, 11)],  # 0.05 .. 0.25
-        buy_cases,
-        apply_threshold=lambda c, t: (_entry_slope20(c) or 0) >= t,
-    )
-    if not buy_stats.get("reliable"):
-        buy_t = DEFAULTS["buy_slope20d_min_pp_per_day"]
-        buy_stats["note"] = "default (pochi trade con slope entry + P&L)"
-
-    sell_t, sell_stats = _grid_pick(
-        [round(-0.15 - i * 0.05, 2) for i in range(7)],  # -0.15 .. -0.45
-        sell_cases,
-        apply_threshold=lambda c, t: (_num(c.get("exit_slope_20d")) or 0) <= t,
-        min_n=max(3, MIN_CASES_RELIABLE - 2),
-    )
-    if not sell_stats.get("reliable"):
-        sell_t = DEFAULTS["sell_slope20d_max_pp_per_day"]
-        sell_stats["note"] = "default (pochi exit con slope)"
+    # Neutralized: do NOT fit slope thresholds (non-predictive — see note above).
+    # We still report how many cases existed (diagnostic) but pin values to
+    # defaults and mark them non-predictive so nothing treats them as actionable.
+    buy_t = DEFAULTS["buy_slope20d_min_pp_per_day"]
+    buy_stats = {
+        "n": len(buy_cases),
+        "win_rate_pct": None,
+        "reliable": False,
+        "predictive": False,
+        "note": _SLOPE_RULE_NOTE,
+    }
+    sell_t = DEFAULTS["sell_slope20d_max_pp_per_day"]
+    sell_stats = {
+        "n": len(sell_cases),
+        "win_rate_pct": None,
+        "reliable": False,
+        "predictive": False,
+        "note": _SLOPE_RULE_NOTE,
+    }
 
     # Soglie score: massimizza win_rate su bucket forte/watch
     forte_t = DEFAULTS["score_forte_min"]
@@ -265,10 +246,10 @@ def compute_trade_calibration(positions: list[dict] | None) -> dict[str, Any]:
             **sell_stats,
         },
         "slope_significant_pp_per_day": {
-            "value": round(min(0.45, max(0.15, buy_t * 2.5)), 3),
+            "value": DEFAULTS["slope_significant_pp_per_day"],
             "default": DEFAULTS["slope_significant_pp_per_day"],
-            "reliable": buy_stats.get("reliable", False),
-            "note": "derivato da buy_slope (≈2.5×) se calib buy affidabile",
+            "reliable": False,
+            "note": "fisso; non più derivato da buy_slope (slope non-predittivo)",
         },
         "slope_flat_pp_per_day": {
             "value": DEFAULTS["slope_flat_pp_per_day"],
@@ -314,8 +295,11 @@ def compute_trade_calibration(positions: list[dict] | None) -> dict[str, Any]:
         },
     }
 
+    # Slope thresholds are non-predictive; calibration is 'reliable' only when the
+    # legitimate score/affidabilita levers were actually fit from enough cases.
     any_reliable = any(
-        thresholds[k].get("reliable") for k in ("buy_slope20d_min_pp_per_day", "sell_slope20d_max_pp_per_day")
+        thresholds[k].get("reliable")
+        for k in ("score_forte_min", "score_watch_min", "affid_min_pct_for_quality")
     )
 
     return {

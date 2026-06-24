@@ -35,7 +35,10 @@ def test_compute_defaults_with_no_positions():
     ]
 
 
-def test_buy_threshold_picks_stricter_when_high_slope_wins():
+def test_slope_thresholds_are_neutralized_not_fit():
+    # Even when high-slope trades all win in-sample, the slope rule is NOT fit:
+    # a walk-forward backtest proved slope_20d is non-predictive, so the
+    # thresholds stay pinned to defaults and are flagged non-predictive.
     rows = [
         _pos(entry_s20=0.15, pnl_pct=5.0, win=True),
         _pos(entry_s20=0.18, pnl_pct=8.0, win=True),
@@ -51,10 +54,16 @@ def test_buy_threshold_picks_stricter_when_high_slope_wins():
     ]
     out = compute_trade_calibration(rows)
     buy = out["thresholds"]["buy_slope20d_min_pp_per_day"]
-    assert buy["value"] >= 0.075
-    assert buy.get("reliable") is True
-    assert buy.get("n", 0) >= 5
-    assert (buy.get("win_rate_pct") or 0) >= 80
+    sell = out["thresholds"]["sell_slope20d_max_pp_per_day"]
+    assert buy["value"] == DEFAULTS["buy_slope20d_min_pp_per_day"]
+    assert buy.get("reliable") is False
+    assert buy.get("predictive") is False
+    assert sell["value"] == DEFAULTS["sell_slope20d_max_pp_per_day"]
+    assert sell.get("predictive") is False
+    # slope_significant must no longer be derived from the (noise) buy threshold
+    assert out["thresholds"]["slope_significant_pp_per_day"]["value"] == DEFAULTS[
+        "slope_significant_pp_per_day"
+    ]
 
 
 def test_get_threshold_from_payload():

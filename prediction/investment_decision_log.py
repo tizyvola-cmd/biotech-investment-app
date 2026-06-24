@@ -55,11 +55,12 @@ from __future__ import annotations
 
 import json
 import math
-from datetime import datetime, timezone
+from datetime import date, datetime, timezone
 from pathlib import Path
 from typing import Any
 
 from orchestrator_io_paths import DATA_DIR
+from prediction.sds_investment_decision import classify_exit_reason
 
 DECISION_LOG_PATH = Path(DATA_DIR) / "investment_decision_log.json"
 SCHEMA_VERSION = 1
@@ -67,6 +68,16 @@ SCHEMA_VERSION = 1
 
 def _utcnow_iso() -> str:
     return datetime.now(timezone.utc).isoformat()
+
+
+def _days_to_cd_from_key(row_key: str) -> int | None:
+    """Days from today to the CD encoded in ``TICKER|YYYY-MM-DD`` row keys."""
+    cd_part = str(row_key).split("|", 1)[1] if "|" in str(row_key) else ""
+    try:
+        cd = date.fromisoformat(cd_part[:10])
+    except ValueError:
+        return None
+    return (cd - date.today()).days
 
 
 def _ronr(v: Any, digits: int = 4) -> float | None:
@@ -254,7 +265,11 @@ def update_decision_log(
             "market_regime": last_open.get("market_regime"),
             "pnl_pct_at_event": _ronr(last_open.get("pnl_pct_at_event"), 2),
             "pnl_eur_at_event": _ronr(last_open.get("pnl_eur_at_event"), 2),
-            "exit_reason": "capital_removed",
+            "exit_reason": classify_exit_reason(
+                pnl_pct=_ronr(last_open.get("pnl_pct_at_event"), 2),
+                sds_live=_ronr(last_open.get("sds_score"), 1),
+                days_to_cd=_days_to_cd_from_key(rk),
+            ),
         }
         last_cycle["exit"] = exit_snap
         entry["current_open"] = False

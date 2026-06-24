@@ -2,7 +2,9 @@
 matter for the app, as structured data for the redesigned Model Recalibration tab:
 
   1. PREDICTION CURVE -> direction-hit % + calibration error (signed bias / MAE)
-  2. RECOMMENDATION   -> hit-rate of the recommended action (SDS + regime gate)
+  2. RECOMMENDATION   -> directional follow-through by action: BUY -> P(price up),
+                         SELL -> P(price down) after exit (by exit reason),
+                         HOLD -> rescue-score vs rebound (computed in the UI sheet)
   3. TRADING (output) -> P&L per trade + win-rate
 
 This mirrors the read-only diagnostic (``diag_loop_channel_impact.py``) but returns
@@ -41,6 +43,12 @@ _MAE_NOISE_PP = 0.5
 # week-over-week sign-hit must move at least this much to be flagged "significant".
 _PRED_WEEK_MIN_N = 20
 _PRED_SIGNIFICANT_PP = 3.0
+
+# Recommendation channel: a |move| under this band (pp) is treated as flat (no
+# direction), matching the sim's PNL_FLAT_PCT. SELL exits classified by these
+# reasons count as rule-driven SELL recommendations (see sds_investment_decision).
+_REC_FLAT_PCT = 1.0
+_SELL_REASONS = ("stop_loss", "sds_below_40", "pre_cd_exit")
 
 
 # ────────────────────────── numeric helpers ──────────────────────────
@@ -198,6 +206,39 @@ def _winrate(rows: list[dict[str, Any]]) -> float | None:
     return (sum(wins) / len(wins)) if wins else None
 
 
+# ────────────────────────── directional follow-through (recommendation) ──────────────────────────
+def _price_up(r: dict[str, Any]) -> bool | None:
+    """Realized direction after a BUY: True if the price rose past the flat band,
+    False if it fell, None when flat/unknown (excluded from the hit-rate)."""
+    pnl = _num(r.get("pnl_pct"))
+    if pnl is None or abs(pnl) <= _REC_FLAT_PCT:
+        return None
+    return pnl > 0
+
+
+def _buy_up_rate(rows: list[dict[str, Any]]) -> tuple[float | None, int]:
+    """P(price up | BUY) over BUY positions with a non-flat realized move."""
+    graded = [u for r in rows if (u := _price_up(r)) is not None]
+    return ((sum(graded) / len(graded)) if graded else None, len(graded))
+
+
+def _sell_down_hit(r: dict[str, Any]) -> bool | None:
+    """Whether a rule-driven SELL was followed by a price drop, from the
+    post-exit move already scored in the sim (``sell_signal_result``).
+    None when still pending/flat (excluded from the hit-rate)."""
+    res = r.get("sell_signal_result")
+    if res == "success":
+        return True
+    if res == "failure":
+        return False
+    return None
+
+
+def _sell_down_rate(rows: list[dict[str, Any]]) -> tuple[float | None, int]:
+    graded = [d for r in rows if (d := _sell_down_hit(r)) is not None]
+    return ((sum(graded) / len(graded)) if graded else None, len(graded))
+
+
 def _mean_pnl(rows: list[dict[str, Any]]) -> float | None:
     pnls = [p for r in rows if (p := _num(r.get("pnl_pct"))) is not None]
     return statistics.mean(pnls) if pnls else None
@@ -283,11 +324,11 @@ def _weekly_series(
 
 def _recommendation_week(rs: list[dict[str, Any]]) -> dict[str, Any]:
     buy = [r for r in rs if _recommended_action(r).startswith("BUY")]
-    wins = [w for r in buy if (w := _is_win(r)) is not None]
+    rate, graded_n = _buy_up_rate(buy)
     return {
         "buy_n": len(buy),
-        "buy_win_pct": _round_pct((sum(wins) / len(wins)) if wins else None),
-        "buy_mean_pnl_pct": _round(_mean_pnl(buy)),
+        "buy_up_hit_pct": _round_pct(rate),
+        "buy_graded_n": graded_n,
     }
 
 
@@ -420,43 +461,62 @@ def _prediction_channel(outcomes: list[dict[str, Any]], sign_curve: dict[str, An
 
 
 def _recommendation_channel(rows: list[dict[str, Any]]) -> dict[str, Any]:
-    book_wins = [w for r in rows if (w := _is_win(r)) is not None]
-    book_wr = (sum(book_wins) / len(book_wins)) if book_wins else None
-    have = [r for r in rows if _recommended_action(r) != "UNKNOWN"]
-    if not have:
-        return {
-            "available": False,
-            "n": 0,
-            "book_win_pct": _round_pct(book_wr),
-            "actions": [],
-            "weekly": [],
-            "note": "nessuna posizione porta ancora SDS/regime all'ingresso — si popola con i nuovi cicli",
-        }
-    buckets: dict[str, list[dict[str, Any]]] = {}
-    for r in have:
-        buckets.setdefault(_recommended_action(r), []).append(r)
-    actions: list[dict[str, Any]] = []
-    for act in ("BUY_FULL", "BUY_HALF", "HOLD"):
-        rs = buckets.get(act, [])
+    """Directional follow-through of the recommendation, by action.
+
+    BUY  -> P(price up | BUY): share of BUY positions whose realized move rose.
+    SELL -> P(price down | SELL): share of rule-driven exits (stop_loss /
+            sds_below_40 / pre_cd_exit) followed by a price drop, from the
+            post-exit move scored in the sim. Populates forward.
+    HOLD -> rescue-score vs actual rebound: computed in the UI sheet (the rescue
+            score lives there); the backend only reports the HOLD count here.
+    """
+    buy_rows = [r for r in rows if _recommended_action(r).startswith("BUY")]
+    hold_rows = [r for r in rows if _recommended_action(r) == "HOLD"]
+    sell_rows = [r for r in rows if r.get("exit_reason") in _SELL_REASONS]
+
+    buy_rate, buy_graded = _buy_up_rate(buy_rows)
+    sell_rate, sell_graded = _sell_down_rate(sell_rows)
+    sell_pending = sum(1 for r in sell_rows if _sell_down_hit(r) is None)
+
+    by_reason: list[dict[str, Any]] = []
+    for reason in _SELL_REASONS:
+        rs = [r for r in sell_rows if r.get("exit_reason") == reason]
         if not rs:
             continue
-        wr = _winrate(rs)
-        lift = (wr - book_wr) if (wr is not None and book_wr is not None) else None
-        actions.append(
+        rate, graded = _sell_down_rate(rs)
+        by_reason.append(
             {
-                "action": act,
+                "reason": reason,
                 "n": len(rs),
-                "win_pct": _round_pct(wr),
-                "mean_pnl_pct": _round(_mean_pnl(rs)),
-                "lift_vs_book_pp": _round_pct(lift),
+                "graded_n": graded,
+                "down_hit_pct": _round_pct(rate),
             }
         )
+
+    available = bool(buy_graded or sell_graded)
     return {
-        "available": True,
-        "n": len(have),
-        "book_win_pct": _round_pct(book_wr),
-        "actions": actions,
-        "weekly": _weekly_series(have, ("entry_ts", "entry_date", "exit_ts"), _recommendation_week),
+        "available": available,
+        "buy": {
+            "n": len(buy_rows),
+            "graded_n": buy_graded,
+            "up_hit_pct": _round_pct(buy_rate),
+        },
+        "sell": {
+            "n": len(sell_rows),
+            "graded_n": sell_graded,
+            "pending_n": sell_pending,
+            "down_hit_pct": _round_pct(sell_rate),
+            "by_reason": by_reason,
+        },
+        "hold": {
+            "n": len(hold_rows),
+            "rescue_available": False,
+            "note": "rimbalzo vs rescue score calcolato nella UI sheet",
+        },
+        "weekly": _weekly_series(buy_rows, ("entry_ts", "entry_date", "exit_ts"), _recommendation_week),
+        "note": None if available else (
+            "nessun BUY/SELL valutabile ancora — si popola con i cicli chiusi"
+        ),
     }
 
 
@@ -533,13 +593,11 @@ def persist_weekly_channel_snapshot(impact: dict[str, Any] | None = None) -> dic
             "benchmark_sign_hit_pct": pred.get("benchmark_sign_hit_pct"),
         },
         "recommendation": {
-            "n": rec.get("n"),
             "available": rec.get("available"),
-            "book_win_pct": rec.get("book_win_pct"),
-            "buy_lift_pp": next(
-                (a.get("lift_vs_book_pp") for a in (rec.get("actions") or []) if a.get("action") == "BUY_FULL"),
-                None,
-            ),
+            "buy_up_hit_pct": (rec.get("buy") or {}).get("up_hit_pct"),
+            "buy_n": (rec.get("buy") or {}).get("graded_n"),
+            "sell_down_hit_pct": (rec.get("sell") or {}).get("down_hit_pct"),
+            "sell_n": (rec.get("sell") or {}).get("graded_n"),
         },
         "trading": {
             "n": trd.get("n"),

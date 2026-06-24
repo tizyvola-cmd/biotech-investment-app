@@ -26,7 +26,6 @@ import type { SdsRow } from "../api/supernova";
 import { fetchLearningPipelineOverview, fetchLearningAuditLog, type LearningAuditLog, type LearningPipelineOverview } from "../api/learningBus";
 import { LearningLabAuditLogPanel } from "./LearningLabAuditLogPanel";
 import { LearningLabUnifiedView } from "./LearningLabUnifiedView";
-import { EisSuperScoreLearningSection } from "./EisSuperScoreLearningSection";
 import { LearningEffectivenessStrip } from "./LearningEffectivenessStrip";
 import { ValidationFeedbackSection } from "./ValidationFeedbackSection";
 import { SignalCalibrationLearningSection } from "./SignalCalibrationLearningSection";
@@ -34,7 +33,6 @@ import { CurveImpactLearningSection } from "./CurveImpactLearningSection";
 import { ExpectedMoveSection } from "./ExpectedMoveSection";
 import { GlobalCalFactorReadOnly, LearningPipelinePanel } from "./LearningPipelinePanel";
 import { LearningLabPortfolioTab } from "./LearningLabPortfolioTab";
-import type { EisSuperScoreOverview } from "../sheet/eisSuperScoreLearningView";
 import { seedCdPatternPolygonOverviewFromLab } from "../sheet/useCdPatternPolygonOverview";
 
 const REFRESH_MS = 5 * 60_000;
@@ -1019,7 +1017,6 @@ export function LearningLabView({
 
         {data && topTab === "signals" ? (
           <div className="space-y-4">
-            <EisSuperScoreLearningSection overview={data.eis_super_score as EisSuperScoreOverview | undefined} />
             <ValidationFeedbackSection
               data={data.validation_feedback}
               active={topTab === "signals"}
@@ -1065,20 +1062,7 @@ export function LearningLabView({
                     {String(c.regime)}: {String(c.from)} → {String(c.to)}
                   </li>
                 ))}
-                {(preview.diff.eis_super_changes ?? []).map((c) => (
-                  <li key={String(c.window)}>
-                    EIS {String(c.window)}: {String(c.from)} → {String(c.to)}
-                  </li>
-                ))}
-                {(preview.diff.polygon_changes ?? []).map((c, i) => (
-                  <li key={`poly-${i}`}>
-                    Polygon ρ: {String(c.from)} → {String(c.to)}
-                  </li>
-                ))}
-                {!preview.diff.cluster_changes.length &&
-                !preview.diff.regime_changes.length &&
-                !(preview.diff.eis_super_changes ?? []).length &&
-                !(preview.diff.polygon_changes ?? []).length ? (
+                {!preview.diff.cluster_changes.length && !preview.diff.regime_changes.length ? (
                   <li>{it ? "Nessuna modifica proposta." : "No proposed changes."}</li>
                 ) : null}
               </ul>

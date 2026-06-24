@@ -29,7 +29,6 @@ from prediction.cluster_cal_factor import (
 from prediction.regime_calibration import (
     compute_regime_multipliers,
     get_current_regime,
-    get_regime_at_date,
     resolve_regime_outcomes_for_learning,
     sync_outcomes_from_signal_audit,
 )
@@ -408,58 +407,6 @@ def build_effectiveness_delta(
         },
     ]
 
-    from prediction.cd_pattern_polygon_accuracy import load_cd_pattern_polygon_accuracy
-
-    poly = polygon_doc if polygon_doc is not None else load_cd_pattern_polygon_accuracy()
-    poly_hist = poly.get("learning_history") if isinstance(poly.get("learning_history"), list) else []
-    poly_eff = poly.get("effectiveness") if isinstance(poly.get("effectiveness"), dict) else {}
-    poly_latest = poly_hist[-1] if poly_hist else poly_eff
-    poly_prev = poly_hist[-2] if len(poly_hist) >= 2 else {}
-    poly_dir_before = poly_prev.get("mean_corr_match_stock") if isinstance(poly_prev, dict) else None
-    poly_dir_after = (
-        poly_latest.get("mean_corr_match_stock")
-        if isinstance(poly_latest, dict)
-        else poly_eff.get("mean_corr_match_stock")
-    )
-    rows.append(
-        {
-            "mechanism": "polygon_match",
-            "label": "CD pattern polygon",
-            "mae_before": None,
-            "mae_after": None,
-            "dir_before": poly_dir_before,
-            "dir_after": poly_dir_after,
-            "n": poly.get("n_samples") or 0,
-            "min_n": 15,
-        }
-    )
-
-    from prediction.eis_super_score_learning import build_eis_super_score_overview
-
-    eis = eis_overview if eis_overview is not None else build_eis_super_score_overview()
-    eis_hist = eis.get("learning_history") if isinstance(eis.get("learning_history"), list) else []
-    eis_eff = eis.get("effectiveness") if isinstance(eis.get("effectiveness"), dict) else {}
-    eis_prev = eis_hist[-2] if len(eis_hist) >= 2 else {}
-    eis_latest = eis_hist[-1] if eis_hist else eis_eff
-    eis_dir_before = eis_prev.get("mean_corr_super_7d") if isinstance(eis_prev, dict) else None
-    eis_dir_after = (
-        eis_latest.get("mean_corr_super_7d")
-        if isinstance(eis_latest, dict)
-        else eis_eff.get("mean_corr_super_7d")
-    )
-    rows.append(
-        {
-            "mechanism": "eis_super",
-            "label": "EIS Super Score",
-            "mae_before": None,
-            "mae_after": None,
-            "dir_before": eis_dir_before,
-            "dir_after": eis_dir_after,
-            "n": eis.get("n_events_scored") or 0,
-            "min_n": 20,
-        }
-    )
-
     fb = load_validation_feedback_snippet()
     fb_hist = fb.get("history") if isinstance(fb.get("history"), list) else []
     fb_latest = (fb_hist[-1].get("summary") if fb_hist and isinstance(fb_hist[-1], dict) else None) or fb.get(
@@ -562,7 +509,7 @@ def build_effectiveness_delta(
         if abs_lift is None and mech == "daily_recalib":
             abs_lift = r["mae_delta_pp"]  # base vs daily over the same events = real lift
         r["abs_lift_pp"] = abs_lift
-        if mech in ("polygon_match", "eis_super", "signal_calibration"):
+        if mech in ("signal_calibration",):
             r["verdict"] = _verdict_corr(r["dir_delta_pp"], r["n"], r["min_n"])
         else:
             r["verdict"] = _verdict(
@@ -966,12 +913,6 @@ def build_overview_payload(*, use_mock: bool = False, force_refresh: bool = Fals
             {"id": "cluster_cf", "status": "active" if active_clusters else "learning", "last_updated": cluster_doc.get("generated_at")},
             {"id": "regime_mult", "status": "active", "last_updated": regime_doc.get("generated_at")},
             {"id": "global_cf", "status": "active", "last_updated": _today_iso()},
-            {"id": "eis_super", "status": "active" if eis_super.get("n_events_scored") else "collecting", "last_updated": eis_super.get("generated_at")},
-            {
-                "id": "polygon_match",
-                "status": "active" if cd_pattern_polygon.get("n_events") else "collecting",
-                "last_updated": cd_pattern_polygon.get("generated_at"),
-            },
             {
                 "id": "validation_feedback",
                 "status": "active" if fb_summary.get("n_tickers") else "collecting",

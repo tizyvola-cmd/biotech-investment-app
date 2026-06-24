@@ -176,6 +176,16 @@ def run_post_refresh_steps(
     except Exception as exc:
         log.warning("learning_lab outcome sync failed (non-fatal): %s", exc)
 
+    # Persist the weekly 3-channel learning-loop impact snapshot (every refresh).
+    # Feeds the redesigned Model Recalibration tab (prediction/recommendation/trading).
+    try:
+        from prediction.learning_loop_channels import persist_weekly_channel_snapshot
+
+        snap = persist_weekly_channel_snapshot()
+        log.info("learning_loop_channels: weekly snapshot persisted (%d week(s))", len(snap.get("weeks") or {}))
+    except Exception as exc:
+        log.warning("learning_loop_channels snapshot failed (non-fatal): %s", exc)
+
     # Weekly learning cycle — cluster CF + regime multipliers (Sundays, after outcomes)
     import datetime as _dt
 

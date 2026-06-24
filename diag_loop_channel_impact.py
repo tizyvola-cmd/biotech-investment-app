@@ -336,11 +336,10 @@ def main() -> None:
     channel_prediction(outcomes)
     channel_recommendation(positions)
     channel_trading(positions)
-    print("\nNOTE: weekly per-LOOP attribution (pp gained each week by each loop) needs a")
-    print("weekly snapshot we do not store yet. This run gives the cross-sectional per-loop")
-    print("effect + the weekly per-CHANNEL trend, which is enough to decide which loops")
-    print("belong on the redesigned Model Recalibration tab. If the numbers confirm it, the")
-    print("next step is to persist data/learning_loop_weekly_impact.json on each rebuild.")
+    print("\nNOTE: the per-channel weekly trend is now also persisted on every refresh to")
+    print("data/learning_loop_weekly_impact.json (prediction.learning_loop_channels) and")
+    print("surfaced on the redesigned Model Calibration tab (3-channel panels). This script")
+    print("stays as the read-only cross-check of those same numbers.")
 
 
 if __name__ == "__main__":

@@ -786,6 +786,23 @@ def _enrich_history_for_ui(
     return out
 
 
+def _safe_channel_impact() -> dict[str, Any]:
+    """Live 3-channel impact (prediction/recommendation/trading) + persisted weekly
+    history. Best-effort: never breaks the overview if data is missing."""
+    try:
+        from prediction.learning_loop_channels import (
+            compute_channel_impact,
+            load_weekly_channel_history,
+        )
+
+        impact = compute_channel_impact()
+        impact["weekly_history"] = load_weekly_channel_history()
+        return impact
+    except Exception as exc:  # pragma: no cover - best-effort
+        logger.warning("channel_impact build failed (non-fatal): %s", exc)
+        return {"error": str(exc)}
+
+
 def build_overview_payload(*, use_mock: bool = False, force_refresh: bool = False) -> dict[str, Any]:
     """Build Learning Lab overview. Never seeds fake data unless use_mock=True (dev only)."""
     global _OVERVIEW_CACHE, _OVERVIEW_CACHE_MONO
@@ -930,6 +947,7 @@ def build_overview_payload(*, use_mock: bool = False, force_refresh: bool = Fals
             },
             {"id": "prediction", "status": "active", "last_updated": _today_iso()},
         ],
+        "channel_impact": _safe_channel_impact(),
     }
     if not use_mock:
         _OVERVIEW_CACHE = payload

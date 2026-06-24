@@ -27,6 +27,7 @@ import { fetchLearningPipelineOverview, fetchLearningAuditLog, type LearningAudi
 import { LearningLabAuditLogPanel } from "./LearningLabAuditLogPanel";
 import { LearningLabUnifiedView } from "./LearningLabUnifiedView";
 import { LearningEffectivenessStrip } from "./LearningEffectivenessStrip";
+import { ChannelImpactPanels } from "./ChannelImpactPanels";
 import { ValidationFeedbackSection } from "./ValidationFeedbackSection";
 import { SignalCalibrationLearningSection } from "./SignalCalibrationLearningSection";
 import { CurveImpactLearningSection } from "./CurveImpactLearningSection";
@@ -1005,11 +1006,21 @@ export function LearningLabView({
           <div className="space-y-4">
             <LearningDataMissingBanner data={data} it={it} />
             <LearningLivePoolBanner data={data} it={it} />
-            <LearningEffectivenessStrip rows={data.effectiveness ?? []} />
-            <EffectivenessCharts weeks={weeks} it={it} demoHistory={data.demo_history} />
-            <ClusterSection data={data} weeks={weeks} it={it} />
-            <RegimeSection data={data} weeks={weeks} it={it} />
+            <ChannelImpactPanels data={data.channel_impact} it={it} />
             <ExpectedMoveSection data={data.expected_move} it={it} />
+            <details className="rounded-xl border border-[rgb(var(--border))]/40 bg-surface/10">
+              <summary className="cursor-pointer select-none px-3 py-2 text-[11px] font-medium text-ink-muted hover:text-ink">
+                {it
+                  ? "Loop di magnitudo (guardrail · impatto ≈0) — dettaglio cluster/regime"
+                  : "Magnitude loops (guardrail · ≈0 impact) — cluster/regime detail"}
+              </summary>
+              <div className="space-y-4 p-3 pt-1">
+                <LearningEffectivenessStrip rows={data.effectiveness ?? []} />
+                <EffectivenessCharts weeks={weeks} it={it} demoHistory={data.demo_history} />
+                <ClusterSection data={data} weeks={weeks} it={it} />
+                <RegimeSection data={data} weeks={weeks} it={it} />
+              </div>
+            </details>
             <LearningPipelinePanel pipeline={pipeline} it={it} />
             <GlobalCalFactorReadOnly value={globalCfFromPipeline} updatedAt={globalCfUpdatedAt} it={it} />
           </div>

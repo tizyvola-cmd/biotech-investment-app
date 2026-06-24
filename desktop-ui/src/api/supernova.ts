@@ -1525,6 +1525,83 @@ export type LearningEffectivenessRow = {
   min_n: number;
 };
 
+export type ChannelLoopEffect = {
+  loop: string;
+  label: string;
+  factor?: number | null;
+  abs_bias_after_pp?: number | null;
+  d_bias_pp?: number | null;
+  mae_after_pp?: number | null;
+  d_mae_pp?: number | null;
+  d_dir_hit_pp?: number | null;
+  is_lever?: boolean;
+  verdict: string;
+  note?: string;
+};
+
+export type PredictionWeek = {
+  week: string;
+  n: number;
+  direction_hit_pct: number | null;
+  bias_pp: number | null;
+  mae_pp: number | null;
+};
+
+export type RecommendationWeek = {
+  week: string;
+  n: number;
+  buy_n: number;
+  buy_win_pct: number | null;
+  buy_mean_pnl_pct: number | null;
+};
+
+export type TradingWeek = {
+  week: string;
+  n: number;
+  win_pct: number | null;
+  mean_pnl_pct: number | null;
+  total_eur: number | null;
+};
+
+export type RecommendationAction = {
+  action: string;
+  n: number;
+  win_pct: number | null;
+  mean_pnl_pct: number | null;
+  lift_vs_book_pp: number | null;
+};
+
+export type ChannelImpact = {
+  generated_at?: string;
+  error?: string;
+  prediction?: {
+    n: number;
+    direction_hit_pct: number | null;
+    calibration_bias_pp: number | null;
+    abs_bias_pp: number | null;
+    mae_pp: number | null;
+    loops: ChannelLoopEffect[];
+    weekly: PredictionWeek[];
+  };
+  recommendation?: {
+    available: boolean;
+    n: number;
+    book_win_pct: number | null;
+    actions: RecommendationAction[];
+    weekly: RecommendationWeek[];
+    note?: string;
+  };
+  trading?: {
+    n: number;
+    win_pct: number | null;
+    mean_pnl_pct: number | null;
+    median_pnl_pct: number | null;
+    total_eur: number | null;
+    weekly: TradingWeek[];
+  };
+  weekly_history?: Record<string, unknown>[];
+};
+
 export type LearningLabOverview = {
   generated_at: string;
   use_mock?: boolean;
@@ -1572,6 +1649,7 @@ export type LearningLabOverview = {
     enrichment_summary?: Record<string, number | null | undefined>;
   };
   expected_move?: ExpectedMoveCalibration;
+  channel_impact?: ChannelImpact;
 };
 
 export type ExpectedMoveBucket = {

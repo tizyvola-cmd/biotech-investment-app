@@ -266,41 +266,42 @@ export function ChannelImpactPanels({
               {pred.reliability_by_cd && pred.reliability_by_cd.length > 0 ? (
                 <div className="pt-1 space-y-0.5">
                   <div className="flex items-center justify-between gap-2">
-                    <span className="text-[9px] text-ink-muted">
+                    <span className="text-[11px] text-ink-muted">
                       {it ? "affidabilità per distanza-CD (T-60→T-1)" : "reliability by distance-to-CD"}
                     </span>
                     <Sparkline values={pred.reliability_by_cd.map((r) => r.sign_hit_pct)} positiveIsGood />
                   </div>
                   {pred.reliability_window ? (
                     <>
-                      <div className="flex items-center justify-between gap-2 text-[9px] tabular-nums">
+                      <div className="flex items-center justify-between gap-2 text-[12px] tabular-nums pt-0.5">
                         <span className="text-ink-muted">{it ? "finestra affidabile" : "reliable window"}</span>
-                        <span className="text-emerald-600 dark:text-emerald-400">
+                        <span className="font-semibold text-emerald-600 dark:text-emerald-400">
                           T{pred.reliability_window.lo_offset}→T{pred.reliability_window.hi_offset}
                         </span>
                       </div>
                       {pred.reliability_bands && pred.reliability_bands.length > 0 ? (
-                        <div className="space-y-0.5 pt-0.5">
-                          <span className="block text-[9px] text-ink-muted">
+                        <div className="space-y-0.5 pt-1">
+                          <span className="block text-[11px] font-medium text-ink">
                             {it ? "affidabilità media per periodo" : "average reliability by period"}
                           </span>
                           {pred.reliability_bands.map((b) => (
-                            <div key={b.key} className="flex items-center justify-between gap-2 text-[9px] tabular-nums">
-                              <span className="text-ink-muted">{it ? b.label_it : b.label_en}</span>
+                            <div key={b.key} className="flex items-center justify-between gap-2 text-[13px] tabular-nums py-0.5">
+                              <span className="text-ink">{it ? b.label_it : b.label_en}</span>
                               {b.mean_pct == null ? (
-                                <span className="text-ink-muted/60">
+                                <span className="text-[11px] text-ink-muted/60">
                                   {it ? "n/d · curva da CD−60g" : "n/a · curve from CD−60d"}
                                 </span>
                               ) : (
                                 <span className="text-emerald-600 dark:text-emerald-400">
-                                  {fmtPct(b.mean_pct)} <span className="text-ink-muted">· n={b.n}</span>
+                                  <span className="font-semibold">{fmtPct(b.mean_pct)}</span>{" "}
+                                  <span className="text-[11px] text-ink-muted">· n={b.n}</span>
                                 </span>
                               )}
                             </div>
                           ))}
                         </div>
                       ) : null}
-                      <div className="flex flex-wrap items-center gap-x-2 gap-y-0.5 text-[9px] tabular-nums">
+                      <div className="flex flex-wrap items-center gap-x-2 gap-y-0.5 text-[12px] tabular-nums pt-0.5">
                         <span className="text-ink-muted">{it ? "stelle per nodo" : "stars by node"}</span>
                         {pred.reliability_by_cd
                           .filter((r) => r.reliable && r.stars != null)
@@ -312,7 +313,7 @@ export function ChannelImpactPanels({
                             </span>
                           ))}
                       </div>
-                      <span className="block text-[8px] text-ink-muted/80 leading-snug">
+                      <span className="block text-[10px] text-ink-muted/80 leading-snug">
                         {it
                           ? "5★ entro 2pp dal picco · fuori finestra: non affidabile (nessuna stima)"
                           : "5★ within 2pp of peak · outside window: not reliable (no estimate)"}

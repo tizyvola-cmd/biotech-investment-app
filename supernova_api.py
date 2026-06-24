@@ -516,6 +516,19 @@ def build_app(cfg: SupernovaConfig | None = None) -> FastAPI:
                 sched_stop = start_web_scheduler(c)
             except Exception as exc:
                 logger.warning("web scheduler skipped: %s", exc)
+
+        def _warm_learning_lab_cache() -> None:
+            try:
+                from prediction.learning_lab import build_overview_payload
+
+                build_overview_payload(use_mock=False)
+                logger.info("learning-lab overview cache warmed")
+            except Exception as exc:
+                logger.warning("learning-lab cache warm skipped: %s", exc)
+
+        threading.Thread(
+            target=_warm_learning_lab_cache, name="ll-cache-warm", daemon=True
+        ).start()
         yield
         if sched_stop is not None:
             sched_stop.set()

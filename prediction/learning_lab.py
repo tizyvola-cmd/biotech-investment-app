@@ -40,7 +40,7 @@ VERDICT_MAE_NOISE_PP = 0.5  # |MAE lift| below this (pp) is treated as noise -> 
 VERDICT_DIR_NOISE_PP = 2.0  # |dir/corr/hit change| below this (pp) is treated as noise -> neutral
 _OVERVIEW_CACHE: dict[str, Any] | None = None
 _OVERVIEW_CACHE_MONO = 0.0
-_OVERVIEW_CACHE_TTL_S = 90.0
+_OVERVIEW_CACHE_TTL_S = 300.0
 
 
 def invalidate_overview_cache() -> None:

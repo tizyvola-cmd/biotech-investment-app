@@ -323,7 +323,7 @@ def _weekly_series(
 
 
 def _recommendation_week(rs: list[dict[str, Any]]) -> dict[str, Any]:
-    buy = [r for r in rs if _recommended_action(r).startswith("BUY")]
+    buy = list(rs)  # every opened position is an executed BUY
     rate, graded_n = _buy_up_rate(buy)
     return {
         "buy_n": len(buy),
@@ -430,6 +430,27 @@ def _prediction_loops(outcomes: list[dict[str, Any]]) -> list[dict[str, Any]]:
     return loops
 
 
+def _pre_cd_reliability_curve(cohort: dict[str, Any]) -> list[dict[str, Any]]:
+    """Per-distance-to-CD sign-hit (the reliability curve) for the pre-CD nodes,
+    ordered from farthest (T-60) to closest (T-1). This is P(direction correct |
+    distance to CD), the index used to weight the live prediction."""
+    out: list[dict[str, Any]] = []
+    for row in cohort.get("by_offset") or []:
+        if not isinstance(row, dict):
+            continue
+        off = row.get("offset")
+        if off is None or int(off) >= 0:
+            continue
+        out.append({
+            "offset": int(off),
+            "label": f"T{int(off)}",
+            "sign_hit_pct": _num(row.get("sign_hit_pct")),
+            "n": row.get("n") or 0,
+        })
+    out.sort(key=lambda r: r["offset"])
+    return out
+
+
 def _prediction_channel(outcomes: list[dict[str, Any]], sign_curve: dict[str, Any]) -> dict[str, Any]:
     """Pre-CD curve quality (sign-hit + price accuracy) of the Simulation cohort vs
     the historical cohort, with a weekly-improvement signal.
@@ -444,6 +465,10 @@ def _prediction_channel(outcomes: list[dict[str, Any]], sign_curve: dict[str, An
     sign_hit = _num(sim.get("overall_sign_hit_pre_cd_pct"))
     delta, significant = _weekly_improvement(weekly)
     available = sign_hit is not None
+    reliability = _pre_cd_reliability_curve(sim)
+    graded = [r for r in reliability if r["sign_hit_pct"] is not None]
+    best = max(graded, key=lambda r: r["sign_hit_pct"]) if graded else None
+    worst = min(graded, key=lambda r: r["sign_hit_pct"]) if graded else None
     return {
         "available": available,
         "n_events": sim.get("n_events"),
@@ -452,6 +477,9 @@ def _prediction_channel(outcomes: list[dict[str, Any]], sign_curve: dict[str, An
         "pre_cd_price_accuracy_pct": _num(sim.get("overall_price_accuracy_pre_cd_pct")),
         "benchmark_sign_hit_pct": _num(retro.get("overall_sign_hit_pre_cd_pct")),
         "benchmark_price_accuracy_pct": _num(retro.get("overall_price_accuracy_pre_cd_pct")),
+        "best_node": best,
+        "worst_node": worst,
+        "reliability_by_cd": reliability,
         "weekly_delta_pp": delta,
         "weekly_significant": significant,
         "weekly": weekly,
@@ -470,7 +498,12 @@ def _recommendation_channel(rows: list[dict[str, Any]]) -> dict[str, Any]:
     HOLD -> rescue-score vs actual rebound: computed in the UI sheet (the rescue
             score lives there); the backend only reports the HOLD count here.
     """
-    buy_rows = [r for r in rows if _recommended_action(r).startswith("BUY")]
+    # Every opened sim position is an executed BUY (the engine only allocates
+    # capital when it recommends a buy), so the realized move of each position
+    # is the BUY follow-through. We do NOT re-derive the action from sds_score:
+    # historical positions whose CD has passed are absent from the live SDS
+    # snapshot, so that lookup is None and would drop them entirely (BUY n=0).
+    buy_rows = list(rows)
     hold_rows = [r for r in rows if _recommended_action(r) == "HOLD"]
     sell_rows = [r for r in rows if r.get("exit_reason") in _SELL_REASONS]
 

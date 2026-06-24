@@ -21,6 +21,11 @@ def _sign_curve(
                 "n_sessions_pre_cd": 500,
                 "overall_sign_hit_pre_cd_pct": sim_sign,
                 "overall_price_accuracy_pre_cd_pct": 88.0,
+                "by_offset": [
+                    {"offset": -60, "sign_hit_pct": 44.0, "n": 50},
+                    {"offset": -5, "sign_hit_pct": 78.0, "n": 60},
+                    {"offset": 3, "sign_hit_pct": 90.0, "n": 20},
+                ],
                 "weekly_pre_cd": weekly if weekly is not None else [
                     {"week": "2026-W22", "n": 30, "sign_hit_pct": 55.0, "price_accuracy_pct": 86.0},
                     {"week": "2026-W23", "n": 30, "sign_hit_pct": 60.0, "price_accuracy_pct": 88.0},
@@ -73,6 +78,18 @@ def test_prediction_channel_pre_cd_and_weekly(monkeypatch):
     assert {"regime_multiplier", "daily_curve_recalib"} <= loop_ids
 
 
+def test_prediction_channel_reports_max_min_nodes(monkeypatch):
+    monkeypatch.setattr(llc, "_load_outcomes", lambda: [_outcome(5.0, 4.0, "2026-06-01")])
+    monkeypatch.setattr(llc, "_load_positions", lambda: [])
+    monkeypatch.setattr(llc, "_load_sign_curve", _sign_curve)
+    pred = llc.compute_channel_impact()["prediction"]
+    # max/min computed over PRE-CD nodes only (the +3 post-CD node is excluded)
+    assert pred["best_node"]["label"] == "T-5" and pred["best_node"]["sign_hit_pct"] == 78.0
+    assert pred["worst_node"]["label"] == "T-60" and pred["worst_node"]["sign_hit_pct"] == 44.0
+    offsets = [r["offset"] for r in pred["reliability_by_cd"]]
+    assert offsets == [-60, -5]  # ordered far -> near, post-CD dropped
+
+
 def test_prediction_channel_unavailable_without_sign_curve(monkeypatch):
     monkeypatch.setattr(llc, "_load_outcomes", lambda: [])
     monkeypatch.setattr(llc, "_load_positions", lambda: [])
@@ -115,16 +132,30 @@ def test_sign_curve_weekly_pre_cd_series_excludes_post_cd():
     assert wk["price_accuracy_pct"] == 85.0
 
 
-def test_recommendation_channel_unavailable_without_action(monkeypatch):
-    # no SDS -> UNKNOWN action, no exit reason -> nothing graded
+def test_recommendation_channel_unavailable_without_positions(monkeypatch):
+    # no opened positions at all -> nothing to grade
     monkeypatch.setattr(llc, "_load_outcomes", lambda: [])
     monkeypatch.setattr(llc, "_load_sign_curve", lambda: {})
-    monkeypatch.setattr(llc, "_load_positions", lambda: [_pos(None, 5.0)])
+    monkeypatch.setattr(llc, "_load_positions", lambda: [])
     rec = llc.compute_channel_impact()["recommendation"]
     assert rec["available"] is False
     assert rec["buy"]["n"] == 0
     assert rec["sell"]["n"] == 0
     assert rec["note"]
+
+
+def test_recommendation_buy_counts_positions_without_sds(monkeypatch):
+    # an opened position IS an executed BUY even when sds_score is absent
+    # (historical tickers drop out of the live SDS snapshot). Regression for
+    # the BUY n=0 bug.
+    monkeypatch.setattr(llc, "_load_outcomes", lambda: [])
+    monkeypatch.setattr(llc, "_load_sign_curve", lambda: {})
+    monkeypatch.setattr(llc, "_load_positions", lambda: [_pos(None, 5.0), _pos(None, -3.0)])
+    rec = llc.compute_channel_impact()["recommendation"]
+    assert rec["available"] is True
+    assert rec["buy"]["n"] == 2
+    assert rec["buy"]["graded_n"] == 2
+    assert rec["buy"]["up_hit_pct"] == 50.0  # 1 of 2 rose
 
 
 def test_recommendation_buy_directional(monkeypatch):
@@ -139,9 +170,9 @@ def test_recommendation_buy_directional(monkeypatch):
     monkeypatch.setattr(llc, "_load_positions", lambda: positions)
     rec = llc.compute_channel_impact()["recommendation"]
     assert rec["available"] is True
-    assert rec["buy"]["n"] == 3
-    assert rec["buy"]["graded_n"] == 3
-    assert rec["buy"]["up_hit_pct"] == 66.7  # 2 of 3 rose
+    assert rec["buy"]["n"] == 4  # every opened position is an executed BUY
+    assert rec["buy"]["graded_n"] == 3  # the flat (-1.0) move is excluded from grading
+    assert rec["buy"]["up_hit_pct"] == 66.7  # 2 of 3 graded rose
     assert rec["hold"]["n"] == 1
 
 
@@ -168,14 +199,16 @@ def test_recommendation_sell_directional_by_reason(monkeypatch):
     assert by_reason["sds_below_40"]["graded_n"] == 0
 
 
-def test_regime_gate_forces_hold(monkeypatch):
+def test_opened_position_counts_as_buy_regardless_of_regime(monkeypatch):
+    # A logged position was actually opened (capital allocated), so it is an
+    # executed BUY even if its regime label would have gated a *new* entry.
     positions = [_pos(90.0, 4.0, regime="CRISIS")]
     monkeypatch.setattr(llc, "_load_outcomes", lambda: [])
     monkeypatch.setattr(llc, "_load_sign_curve", lambda: {})
     monkeypatch.setattr(llc, "_load_positions", lambda: positions)
     rec = llc.compute_channel_impact()["recommendation"]
-    assert rec["hold"]["n"] == 1
-    assert rec["buy"]["n"] == 0
+    assert rec["buy"]["n"] == 1
+    assert rec["buy"]["up_hit_pct"] == 100.0
 
 
 def test_trading_channel_aggregates(monkeypatch):

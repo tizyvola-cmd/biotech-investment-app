@@ -663,3 +663,60 @@ def save_sign_curve_daily_json(
         flush=True,
     )
     return doc
+
+
+_SNAPSHOT_CACHE: dict[str, Any] = {}
+
+
+def _load_sign_curve_snapshot() -> dict[str, Any] | None:
+    """Load the persisted pre-CD sign-curve snapshot, cached by file mtime."""
+    path = MODEL_SIGN_CURVE_DAILY_JSON
+    try:
+        mtime = os.path.getmtime(path)
+    except OSError:
+        return None
+    if _SNAPSHOT_CACHE.get("mtime") == mtime:
+        return _SNAPSHOT_CACHE.get("doc")
+    try:
+        with open(path, encoding="utf-8") as f:
+            doc = json.load(f)
+    except (OSError, ValueError):
+        return None
+    _SNAPSHOT_CACHE["mtime"] = mtime
+    _SNAPSHOT_CACHE["doc"] = doc
+    return doc
+
+
+def reliability_index_for_days_to_cd(
+    days_to_cd: int | None,
+    *,
+    cohort: str = "simulation",
+    snapshot: dict[str, Any] | None = None,
+) -> float | None:
+    """Historical pre-CD sign-hit at the time-bin matching ``days_to_cd``, i.e.
+    P(direction correct | distance to CD). Used to weight the live prediction by
+    how trustworthy it has been at that distance. Returns ``None`` when there is
+    no snapshot/bin for that distance (caller treats None as "no penalty")."""
+    if days_to_cd is None:
+        return None
+    try:
+        d = int(days_to_cd)
+    except (TypeError, ValueError):
+        return None
+    if d <= 0:
+        return None  # only the pre-CD window carries a reliability curve
+    snap = snapshot if snapshot is not None else _load_sign_curve_snapshot()
+    if not isinstance(snap, dict):
+        return None
+    coh = (snap.get("cohorts") or {}).get(cohort) or {}
+    target = _bin_for_cal_offset(-d)
+    if target is None:
+        return None
+    for row in coh.get("by_offset") or []:
+        if isinstance(row, dict) and int(row.get("offset", 9999)) == target:
+            v = row.get("sign_hit_pct")
+            try:
+                return float(v) if v is not None else None
+            except (TypeError, ValueError):
+                return None
+    return None

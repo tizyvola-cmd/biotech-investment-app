@@ -33,6 +33,7 @@ from pathlib import Path
 from typing import Any, Callable
 
 from orchestrator_io_paths import DATA_DIR, MODEL_SIGN_CURVE_DAILY_JSON
+from prediction.sign_curve_daily import reliability_stars, reliability_window
 
 LEARNING_LOOP_WEEKLY_IMPACT_JSON = Path(DATA_DIR) / "learning_loop_weekly_impact.json"
 
@@ -469,6 +470,16 @@ def _prediction_channel(outcomes: list[dict[str, Any]], sign_curve: dict[str, An
     graded = [r for r in reliability if r["sign_hit_pct"] is not None]
     best = max(graded, key=lambda r: r["sign_hit_pct"]) if graded else None
     worst = min(graded, key=lambda r: r["sign_hit_pct"]) if graded else None
+    window = reliability_window(cohort="simulation", snapshot=sign_curve)
+    peak_pct = window["peak_pct"] if window else None
+    threshold_pct = window["threshold_pct"] if window else None
+    for node in reliability:
+        r = node["sign_hit_pct"]
+        in_win = (
+            window is not None and r is not None and r >= threshold_pct
+        )
+        node["reliable"] = in_win
+        node["stars"] = reliability_stars(r, peak_pct) if in_win else None
     return {
         "available": available,
         "n_events": sim.get("n_events"),
@@ -480,6 +491,7 @@ def _prediction_channel(outcomes: list[dict[str, Any]], sign_curve: dict[str, An
         "best_node": best,
         "worst_node": worst,
         "reliability_by_cd": reliability,
+        "reliability_window": window,
         "weekly_delta_pp": delta,
         "weekly_significant": significant,
         "weekly": weekly,

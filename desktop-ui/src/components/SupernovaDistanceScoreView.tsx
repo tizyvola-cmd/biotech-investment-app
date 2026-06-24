@@ -353,6 +353,21 @@ function DetailPanel({ row, onClose }: { row: SdsRow; onClose: () => void }) {
           <span className="text-ink-muted">{t("decisionLab.sds.size")}: </span>
           {inv?.position_size ?? "—"}
         </p>
+        {inv?.pred_reliable === false ? (
+          <p className="text-amber-700 dark:text-amber-400">
+            <span className="text-ink-muted">{t("decisionLab.sds.reliability")}: </span>
+            {t("decisionLab.sds.notReliable")}
+          </p>
+        ) : inv?.pred_stars != null ? (
+          <p>
+            <span className="text-ink-muted">{t("decisionLab.sds.reliability")}: </span>
+            <span className="text-amber-500">{"★".repeat(Math.max(0, Math.min(5, inv.pred_stars)))}</span>
+            <span className="text-ink-muted/30">{"★".repeat(5 - Math.max(0, Math.min(5, inv.pred_stars)))}</span>
+            {inv.pred_reliability_pct != null ? (
+              <span className="text-ink-muted tabular-nums"> · {inv.pred_reliability_pct.toFixed(0)}%</span>
+            ) : null}
+          </p>
+        ) : null}
         <p className="text-ink-muted">{inv?.rationale}</p>
         {inv?.exit_target ? (
           <p className="text-[10px] text-ink-muted pt-1">↗ {inv.exit_target}</p>

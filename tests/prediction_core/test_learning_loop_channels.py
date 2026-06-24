@@ -88,6 +88,14 @@ def test_prediction_channel_reports_max_min_nodes(monkeypatch):
     assert pred["worst_node"]["label"] == "T-60" and pred["worst_node"]["sign_hit_pct"] == 44.0
     offsets = [r["offset"] for r in pred["reliability_by_cd"]]
     assert offsets == [-60, -5]  # ordered far -> near, post-CD dropped
+    # reliable window is relative to the peak (78% @ T-5): threshold 68%, so only
+    # T-5 is in-window (5 stars) while T-60 (44%) is flagged not reliable.
+    win = pred["reliability_window"]
+    assert win["peak_pct"] == 78.0 and win["peak_offset"] == -5
+    assert win["threshold_pct"] == 68.0
+    by = {r["offset"]: r for r in pred["reliability_by_cd"]}
+    assert by[-5]["reliable"] is True and by[-5]["stars"] == 5
+    assert by[-60]["reliable"] is False and by[-60]["stars"] is None
 
 
 def test_prediction_channel_unavailable_without_sign_curve(monkeypatch):

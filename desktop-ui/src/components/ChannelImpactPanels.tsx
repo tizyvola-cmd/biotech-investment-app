@@ -156,6 +156,18 @@ function Metric({ label, value, hint }: { label: string; value: string; hint?: s
   );
 }
 
+/** 1..5 reliability stars relative to the curve's peak (null -> not reliable). */
+function Stars({ n }: { n: number | null | undefined }) {
+  if (n == null) return <span className="text-ink-muted/60">{"☆☆☆☆☆"}</span>;
+  const full = Math.max(0, Math.min(5, Math.round(n)));
+  return (
+    <span className="tabular-nums" title={`${full}/5`}>
+      <span className="text-amber-500">{"★".repeat(full)}</span>
+      <span className="text-ink-muted/30">{"★".repeat(5 - full)}</span>
+    </span>
+  );
+}
+
 function LoopRow({ loop, it }: { loop: ChannelLoopEffect; it: boolean }) {
   const tone = VERDICT_TONE[loop.verdict] ?? VERDICT_TONE.neutral;
   return (
@@ -251,18 +263,38 @@ export function ChannelImpactPanels({
                 </span>
               </div>
               {pred.reliability_by_cd && pred.reliability_by_cd.length > 0 ? (
-                <div className="pt-1">
+                <div className="pt-1 space-y-0.5">
                   <div className="flex items-center justify-between gap-2">
                     <span className="text-[9px] text-ink-muted">
                       {it ? "affidabilità per distanza-CD (T-60→T-1)" : "reliability by distance-to-CD"}
                     </span>
                     <Sparkline values={pred.reliability_by_cd.map((r) => r.sign_hit_pct)} positiveIsGood />
                   </div>
-                  <span className="text-[8px] text-ink-muted/80 leading-snug">
-                    {it
-                      ? "la predizione è pesata per affidabilità: w = max(0, (R−50)/50)"
-                      : "prediction weighted by reliability: w = max(0, (R−50)/50)"}
-                  </span>
+                  {pred.reliability_window ? (
+                    <>
+                      <div className="flex items-center justify-between gap-2 text-[9px] tabular-nums">
+                        <span className="text-ink-muted">{it ? "finestra affidabile" : "reliable window"}</span>
+                        <span className="text-emerald-600 dark:text-emerald-400">
+                          T{pred.reliability_window.lo_offset}→T{pred.reliability_window.hi_offset} · {it ? "picco" : "peak"}{" "}
+                          {fmtPct(pred.reliability_window.peak_pct)} @ T{pred.reliability_window.peak_offset}
+                        </span>
+                      </div>
+                      <div className="flex items-center justify-between gap-2 text-[8px] text-ink-muted/80">
+                        <span className="leading-snug">
+                          {it
+                            ? "5★ entro 2pp dal picco · fuori finestra: non affidabile (nessuna stima)"
+                            : "5★ within 2pp of peak · outside window: not reliable (no estimate)"}
+                        </span>
+                        <Stars n={pred.best_node?.stars ?? null} />
+                      </div>
+                    </>
+                  ) : (
+                    <span className="text-[8px] text-ink-muted/80 leading-snug">
+                      {it
+                        ? "finestra affidabile non ancora calcolabile (curva in raccolta)"
+                        : "reliable window not computable yet (curve collecting)"}
+                    </span>
+                  )}
                 </div>
               ) : null}
               <div className="flex items-center justify-between gap-2 pt-1">

@@ -83,3 +83,41 @@ def test_low_reliability_window_discounts_prediction_to_hold():
     assert out["action"] == "HOLD"
     assert out["label"] == "PRED ALIGNMENT"
     assert out["pred_effective"] == 1.2
+
+
+def test_outside_reliable_window_suppresses_estimate(monkeypatch):
+    inp, sds = _entry_setup()
+    monkeypatch.setattr(
+        "prediction.sds_investment_decision._resolve_pred_rating",
+        lambda d: {
+            "reliable": False,
+            "reliability_pct": 58.0,
+            "stars": None,
+            "peak_pct": 80.0,
+            "threshold_pct": 70.0,
+        },
+    )
+    out = investment_decision(inp, sds)
+    assert out["action"] == "HOLD"
+    assert out["label"] == "NON AFFIDABILE"
+    assert out["pred_reliable"] is False
+    assert out["pred_effective"] is None  # no estimate outside the window
+
+
+def test_inside_reliable_window_attaches_stars(monkeypatch):
+    inp, sds = _entry_setup()
+    monkeypatch.setattr(
+        "prediction.sds_investment_decision._resolve_pred_rating",
+        lambda d: {
+            "reliable": True,
+            "reliability_pct": 78.0,
+            "stars": 4,
+            "peak_pct": 80.0,
+            "threshold_pct": 70.0,
+        },
+    )
+    out = investment_decision(inp, sds)
+    assert out["action"] == "ENTRY"
+    assert out["pred_reliable"] is True
+    assert out["pred_stars"] == 4
+    assert out["pred_reliability_pct"] == 78.0  # rating drives the weight

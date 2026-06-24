@@ -3192,6 +3192,14 @@ const DICT = {
     en: "Size",
     it: "Size",
   },
+  "decisionLab.sds.reliability": {
+    en: "Reliability",
+    it: "Affidabilità",
+  },
+  "decisionLab.sds.notReliable": {
+    en: "not reliable — outside the window, no estimate",
+    it: "non affidabile — fuori finestra, nessuna stima",
+  },
   "decisionLab.sds.missingData": {
     en: "Missing data estimate: {pct}%",
     it: "Dati mancanti stimati: {pct}%",

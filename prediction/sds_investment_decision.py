@@ -76,6 +76,17 @@ def _resolve_pred_reliability(days_to_cd: int | None) -> float | None:
         return None
 
 
+def _resolve_pred_rating(days_to_cd: int | None) -> dict[str, Any] | None:
+    """Full reliability classification (reliable-window membership + stars) for a
+    prediction at ``days_to_cd``. ``None`` only on import/runtime failure."""
+    try:
+        from prediction.sign_curve_daily import reliability_rating_for_days_to_cd
+
+        return reliability_rating_for_days_to_cd(days_to_cd)
+    except Exception:
+        return None
+
+
 def investment_decision(
     inp: SdsTickerInput,
     sds: SdsResult,
@@ -86,8 +97,15 @@ def investment_decision(
     days_cd = inp.days_to_cd
     pred = inp.pred5_live
     conf = inp.confidence_score
+    rating = _resolve_pred_rating(days_cd)
     if reliability_pct is None:
-        reliability_pct = _resolve_pred_reliability(days_cd)
+        reliability_pct = (rating or {}).get("reliability_pct")
+        if reliability_pct is None:
+            reliability_pct = _resolve_pred_reliability(days_cd)
+    reliable = (rating or {}).get("reliable")
+    stars = (rating or {}).get("stars")
+    peak_pct = (rating or {}).get("peak_pct")
+    threshold_pct = (rating or {}).get("threshold_pct")
     weight = pred_reliability_weight(reliability_pct)
     pred_eff = round(pred * weight, 2) if pred is not None else None
 
@@ -118,6 +136,24 @@ def investment_decision(
             "sds_zone": sds.zone_label,
         }
 
+    if reliable is False:
+        return {
+            "action": "HOLD",
+            "label": "NON AFFIDABILE",
+            "position_size": "0%",
+            "rationale": (
+                f"HOLD — fuori finestra affidabile a T-{days_cd}: "
+                f"R {reliability_pct:.0f}% < picco−10 ({threshold_pct:.0f}%) → nessuna stima"
+            ),
+            "sds_score": sds.sds,
+            "sds_zone": sds.zone_label,
+            "pred_reliability_pct": reliability_pct,
+            "pred_reliable": False,
+            "pred_stars": None,
+            "pred_peak_pct": peak_pct,
+            "pred_effective": None,
+        }
+
     if pred_eff is not None and conf is not None and (pred_eff < 3.0 or conf < 0.75):
         return {
             "action": "HOLD",
@@ -130,6 +166,9 @@ def investment_decision(
             "sds_score": sds.sds,
             "sds_zone": sds.zone_label,
             "pred_reliability_pct": reliability_pct,
+            "pred_reliable": reliable,
+            "pred_stars": stars,
+            "pred_peak_pct": peak_pct,
             "pred_effective": pred_eff,
         }
 
@@ -166,5 +205,8 @@ def investment_decision(
         "sds_score": sds.sds,
         "sds_zone": sds.zone_label,
         "pred_reliability_pct": reliability_pct,
+        "pred_reliable": reliable,
+        "pred_stars": stars,
+        "pred_peak_pct": peak_pct,
         "pred_effective": pred_eff,
     }

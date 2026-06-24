@@ -82,6 +82,47 @@ def test_trading_channel_aggregates(monkeypatch):
     assert trd["mean_pnl_pct"] == 3.0
 
 
+def test_trading_channel_regime_breakdown(monkeypatch):
+    positions = [
+        _pos(80.0, 10.0, regime="RISK_ON"),  # win
+        _pos(80.0, 6.0, regime="RISK_ON"),  # win
+        _pos(80.0, -4.0, regime="NEUTRAL"),  # loss
+        _pos(80.0, 2.0, regime=""),  # unknown regime
+    ]
+    monkeypatch.setattr(llc, "_load_outcomes", lambda: [])
+    monkeypatch.setattr(llc, "_load_positions", lambda: positions)
+    trd = llc.compute_channel_impact()["trading"]
+    assert trd["regime_available"] is True
+    assert trd["regime_n"] == 3  # the empty-regime row is excluded
+    regimes = {r["regime"]: r for r in trd["regimes"]}
+    assert regimes["RISK_ON"]["n"] == 2
+    assert regimes["RISK_ON"]["win_pct"] == 100.0
+    assert regimes["NEUTRAL"]["n"] == 1
+    assert regimes["NEUTRAL"]["win_pct"] == 0.0
+    assert "UNKNOWN" not in regimes  # unknown buckets are not surfaced
+    # lift is vs the whole-book win-rate (3/4 = 75%)
+    assert regimes["RISK_ON"]["lift_vs_book_pp"] == 25.0
+    assert regimes["NEUTRAL"]["lift_vs_book_pp"] == -75.0
+
+
+def test_trading_regime_label_normalizes_variants():
+    assert llc._regime_label({"entry_regime": "risk-on"}) == "RISK_ON"
+    assert llc._regime_label({"entry_regime": "Risk Off"}) == "RISK_OFF"
+    assert llc._regime_label({"market_regime": "CRISIS_MODE"}) == "CRISIS"
+    assert llc._regime_label({"entry_regime": ""}) == "UNKNOWN"
+    assert llc._regime_label({}) == "UNKNOWN"
+
+
+def test_trading_regime_unavailable_without_regime(monkeypatch):
+    positions = [_pos(80.0, 5.0, regime=""), _pos(70.0, -1.0, regime="")]
+    monkeypatch.setattr(llc, "_load_outcomes", lambda: [])
+    monkeypatch.setattr(llc, "_load_positions", lambda: positions)
+    trd = llc.compute_channel_impact()["trading"]
+    assert trd["regime_available"] is False
+    assert trd["regime_n"] == 0
+    assert trd["regimes"] == []
+
+
 def test_weekly_snapshot_roundtrip(tmp_path, monkeypatch):
     monkeypatch.setattr(llc, "_load_outcomes", lambda: [])
     monkeypatch.setattr(llc, "_load_positions", lambda: [_pos(80.0, 5.0)])

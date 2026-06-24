@@ -197,6 +197,57 @@ def _sum_eur(rows: list[dict[str, Any]]) -> float | None:
     return sum(eurs) if eurs else None
 
 
+# ────────────────────────── regime attribution (trading) ──────────────────────────
+_REGIME_ORDER = ("RISK_ON", "NEUTRAL", "RISK_OFF", "CRISIS")
+
+
+def _regime_label(r: dict[str, Any]) -> str:
+    """Normalize the regime state recorded at entry into a fixed bucket."""
+    norm = str(r.get("entry_regime") or r.get("market_regime") or "").upper().replace("-", "_").replace(" ", "_")
+    if not norm:
+        return "UNKNOWN"
+    if "CRISIS" in norm:
+        return "CRISIS"
+    if "RISK_OFF" in norm:
+        return "RISK_OFF"
+    if "RISK_ON" in norm:
+        return "RISK_ON"
+    if "NEUTRAL" in norm:
+        return "NEUTRAL"
+    return "UNKNOWN"
+
+
+def _regime_breakdown(rows: list[dict[str, Any]], book_wr: float | None) -> tuple[list[dict[str, Any]], int]:
+    """Split closed trades by the regime state at entry, with win-rate lift vs the whole book.
+
+    This is observational attribution (P&L grouped by the regime that was active at entry),
+    NOT a counterfactual of the regime multiplier. It only fills in for trades that actually
+    carry an entry regime, so it populates as new cycles close after the logging change.
+    """
+    buckets: dict[str, list[dict[str, Any]]] = {}
+    for r in rows:
+        buckets.setdefault(_regime_label(r), []).append(r)
+    out: list[dict[str, Any]] = []
+    for reg in _REGIME_ORDER:
+        rs = buckets.get(reg)
+        if not rs:
+            continue
+        wr = _winrate(rs)
+        lift = (wr - book_wr) if (wr is not None and book_wr is not None) else None
+        out.append(
+            {
+                "regime": reg,
+                "n": len(rs),
+                "win_pct": _round_pct(wr),
+                "mean_pnl_pct": _round(_mean_pnl(rs)),
+                "total_eur": _round(_sum_eur(rs)),
+                "lift_vs_book_pp": _round_pct(lift),
+            }
+        )
+    known_n = sum(len(v) for k, v in buckets.items() if k != "UNKNOWN")
+    return out, known_n
+
+
 # ────────────────────────── weekly series ──────────────────────────
 def _weekly_series(
     rows: list[dict[str, Any]],
@@ -305,7 +356,7 @@ def _prediction_channel(outcomes: list[dict[str, Any]]) -> dict[str, Any]:
             "d_dir_hit_pp": 0.0,
             "is_lever": False,
             "verdict": "not_measurable",
-            "note": "regime non loggato sulle righe storiche di valutazione; misurato sul canale Trading",
+            "note": "moltiplicatore di regime non isolabile qui (regime non loggato sulle righe storiche di previsione); l'effetto del regime e' mostrato come ripartizione del P&L per stato di regime nel canale Trading",
         }
     )
     loops.append(
@@ -375,13 +426,18 @@ def _recommendation_channel(rows: list[dict[str, Any]]) -> dict[str, Any]:
 
 def _trading_channel(rows: list[dict[str, Any]]) -> dict[str, Any]:
     pnls = [p for r in rows if (p := _num(r.get("pnl_pct"))) is not None]
+    book_wr = _winrate(rows)
+    regimes, regime_known_n = _regime_breakdown(rows, book_wr)
     return {
         "n": len(rows),
-        "win_pct": _round_pct(_winrate(rows)),
+        "win_pct": _round_pct(book_wr),
         "mean_pnl_pct": _round(_mean_pnl(rows)),
         "median_pnl_pct": _round(statistics.median(pnls)) if pnls else None,
         "total_eur": _round(_sum_eur(rows)),
         "weekly": _weekly_series(rows, ("entry_ts", "entry_date", "exit_ts"), _trading_week),
+        "regimes": regimes,
+        "regime_available": regime_known_n > 0,
+        "regime_n": regime_known_n,
     }
 
 

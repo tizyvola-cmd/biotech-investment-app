@@ -1571,6 +1571,15 @@ export type RecommendationAction = {
   lift_vs_book_pp: number | null;
 };
 
+export type TradingRegimeBucket = {
+  regime: string;
+  n: number;
+  win_pct: number | null;
+  mean_pnl_pct: number | null;
+  total_eur: number | null;
+  lift_vs_book_pp: number | null;
+};
+
 export type ChannelImpact = {
   generated_at?: string;
   error?: string;
@@ -1598,6 +1607,9 @@ export type ChannelImpact = {
     median_pnl_pct: number | null;
     total_eur: number | null;
     weekly: TradingWeek[];
+    regimes?: TradingRegimeBucket[];
+    regime_available?: boolean;
+    regime_n?: number;
   };
   weekly_history?: Record<string, unknown>[];
 };

@@ -474,16 +474,17 @@ def collect_resolved_outcomes_from_sources() -> list[dict[str, Any]]:
         condition = rec.get("indication") or rec.get("condition") or ""
         cd_date = str(rec.get("completion_date", ""))[:10]
         ticker_data = {"phase": str(phase), "condition": str(condition)}
-        for node, pred_keys, actual_k in (
-            ("T-10", ("model_dm10_pct", "model_d10_pct"), "d10_pct"),
-            ("T-5", ("model_dm5_pct", "model_d5_pct"), "d5_pct"),
-            ("T-3", ("model_dm3_pct", "model_d3_pct"), "d3_pct"),
+        # ``d{N}_pct`` are the realized post-catalyst outcomes; the forecast for
+        # the same horizon is ``model_d{N}_pct`` (post-CD). Pairing each
+        # prediction with the actual at the *same* horizon is what makes the
+        # comparison meaningful — the pre-CD forecast ``model_dm{N}_pct`` is for a
+        # different horizon and must not be matched against a post-CD actual.
+        for node, pred_k, actual_k in (
+            ("T+10", "model_d10_pct", "d10_pct"),
+            ("T+5", "model_d5_pct", "d5_pct"),
+            ("T+3", "model_d3_pct", "d3_pct"),
         ):
-            pair: tuple[float, float] | None = None
-            for pred_k in pred_keys:
-                pair = _pair(rec, pred_k, actual_k)
-                if pair is not None:
-                    break
+            pair = _pair(rec, pred_k, actual_k)
             if pair is None:
                 continue
             outcomes.append(

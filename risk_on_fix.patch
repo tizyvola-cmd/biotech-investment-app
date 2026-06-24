@@ -311,7 +311,7 @@
          regime,
 --- a/prediction/cluster_cal_factor.py
 +++ b/prediction/cluster_cal_factor.py
-@@ -16,8 +16,10 @@
+@@ -16,14 +16,19 @@
  from orchestrator_io_paths import (
      CLUSTER_CAL_FACTORS_JSON,
      DATA_DIR,
@@ -322,7 +322,54 @@
  
  logger = logging.getLogger(__name__)
  
-@@ -259,6 +261,37 @@
+ CLUSTER_MIN_SAMPLES = 5
+ CLUSTER_CF_FLOOR = 0.7
+ CLUSTER_CF_CEILING = 1.3
++# Below this in-sample direction accuracy a cohort carries no directional signal,
++# so scaling its predictions only amplifies noise -> hold the cal_factor at 1.0.
++CLUSTER_MIN_DIRECTION_ACC = 0.5
+ CLUSTER_GLOBAL_BLEND = 0.6  # 60% cluster, 40% global — raise to 0.8 only when n >= 15
+ 
+ Direction = Literal["too_optimistic", "too_pessimistic", "calibrated"]
+@@ -251,6 +256,37 @@
+     return round(pred_pct * blended, 4)
+ 
+ 
++def _pairs_mae(pairs: list[tuple[float, float]], factor: float) -> float:
++    return sum(abs(factor * p - a) for p, a in pairs) / len(pairs)
++
++
++def _solve_cluster_cal_factor(
++    pairs: list[tuple[float, float]],
++    mae_baseline: float,
++    dir_acc: float,
++) -> tuple[float, str]:
++    """Magnitude-scaling cal_factor minimising in-sample error, with guards.
++
++    Replaces the compounding ``current_cal * (1 - bias/10)`` (an additive bias fed
++    into a multiplicative factor, accumulated each cycle until it pins to a clip).
++    The optimal scalar minimising ``sum((m*pred - actual)^2)`` is
++    ``sum(pred*actual)/sum(pred^2)``, recomputed from scratch each cycle. Two
++    guards keep it from amplifying a broken cohort:
++      * direction accuracy < threshold -> directionally unreliable, hold at 1.0;
++      * the clipped solution is applied only if it reduces in-sample MAE.
++    """
++    if dir_acc < CLUSTER_MIN_DIRECTION_ACC:
++        return 1.0, "direction_unreliable"
++    den = sum(p * p for p, _ in pairs)
++    if den <= 1e-9:
++        return 1.0, "no_improvement"
++    m = sum(p * a for p, a in pairs) / den
++    m = max(CLUSTER_CF_FLOOR, min(CLUSTER_CF_CEILING, m))
++    if _pairs_mae(pairs, m) >= mae_baseline - 1e-9:
++        return 1.0, "no_improvement"
++    return m, "active"
++
++
+ def _direction_from_bias(bias: float) -> Direction:
+     if bias > 0.5:
+         return "too_optimistic"
+@@ -259,6 +295,37 @@
      return "calibrated"
  
  
@@ -360,21 +407,43 @@
  def compute_cluster_cal_factors(
      resolved_outcomes: list[dict[str, Any]],
      *,
-@@ -309,13 +342,20 @@
-         mae = sum(abs(p - a) for p, a in pairs) / len(pairs)
-         new_cal = max(CLUSTER_CF_FLOOR, min(CLUSTER_CF_CEILING, current_cal * (1.0 - bias / 10.0)))
+@@ -279,8 +346,6 @@
+     for cluster_name in list(TICKER_CLUSTERS.keys()) + ["other"]:
+         errors = cluster_errors.get(cluster_name, [])
+         prev = existing.get(cluster_name) if isinstance(existing, dict) else {}
+-        prev_cf = prev.get("cal_factor") if isinstance(prev, dict) else None
+-        current_cal = float(prev_cf) if prev_cf is not None else 1.0
  
-+        status = "active"
+         if len(errors) < CLUSTER_MIN_SAMPLES:
+             cluster_cal_factors[cluster_name] = {
+@@ -295,8 +360,6 @@
+             }
+             continue
+ 
+-        preds = [float(e["pred"]) for e in errors if e.get("pred") is not None]
+-        actuals = [float(e["actual"]) for e in errors if e.get("actual") is not None]
+         pairs = [
+             (float(e["pred"]), float(e["actual"]))
+             for e in errors
+@@ -307,15 +370,23 @@
+ 
+         bias = sum(p - a for p, a in pairs) / len(pairs)
+         mae = sum(abs(p - a) for p, a in pairs) / len(pairs)
+-        new_cal = max(CLUSTER_CF_FLOOR, min(CLUSTER_CF_CEILING, current_cal * (1.0 - bias / 10.0)))
++        dir_acc = sum(1 for p, a in pairs if (p > 0) == (a > 0)) / len(pairs)
++        new_cal, status = _solve_cluster_cal_factor(pairs, mae, dir_acc)
++
 +        cb = _circuit_breaker_for_cluster(cluster_name, new_cal)
 +        if cb.triggered:
 +            new_cal = cb.value
 +            status = "frozen_circuit_breaker"
-+
+ 
          cluster_cal_factors[cluster_name] = {
              "cal_factor": round(new_cal, 3),
              "bias_pp": round(bias, 2),
              "mae": round(mae, 2),
              "n_samples": len(errors),
++            "direction_acc": round(dir_acc, 3),
              "direction": _direction_from_bias(bias),
 -            "status": "active",
 +            "status": status,
@@ -1063,3 +1132,37 @@
 +    cb = cc._circuit_breaker_for_cluster("phase2_oncology", 1.2)
 +    assert cb.triggered is False
 +    assert cb.value == 1.2
+--- /dev/null	2026-06-24 05:28:06.226363935 +0000
++++ b/tests/test_cluster_solver.py
+@@ -0,0 +1,31 @@
++"""Cluster cal_factor solver must not amplify directionless / overshooting cohorts."""
++from __future__ import annotations
++
++from prediction.cluster_cal_factor import _pairs_mae, _solve_cluster_cal_factor
++
++
++def test_holds_when_direction_unreliable():
++    # predictions anti-correlated with actuals (dir < 0.5) -> never scale
++    pairs = [(2.0, -3.0), (-2.0, 3.0), (1.5, -2.0), (-1.5, 2.0)]
++    dir_acc = sum(1 for p, a in pairs if (p > 0) == (a > 0)) / len(pairs)
++    factor, status = _solve_cluster_cal_factor(pairs, _pairs_mae(pairs, 1.0), dir_acc)
++    assert factor == 1.0
++    assert status == "direction_unreliable"
++
++
++def test_shrinks_overshooting_cohort_instead_of_compounding_up():
++    # model overshoots magnitude with correct direction -> optimal m < 1 (shrink)
++    pairs = [(10.0, 5.0), (8.0, 4.0), (-10.0, -5.0), (-6.0, -3.0)]
++    dir_acc = sum(1 for p, a in pairs if (p > 0) == (a > 0)) / len(pairs)
++    factor, status = _solve_cluster_cal_factor(pairs, _pairs_mae(pairs, 1.0), dir_acc)
++    assert status == "active"
++    assert factor < 1.0
++    assert _pairs_mae(pairs, factor) < _pairs_mae(pairs, 1.0)
++
++
++def test_no_correction_when_already_calibrated():
++    pairs = [(3.0, 3.0), (-2.0, -2.0), (4.0, 4.0), (-1.0, -1.0)]
++    dir_acc = 1.0
++    factor, status = _solve_cluster_cal_factor(pairs, _pairs_mae(pairs, 1.0), dir_acc)
++    assert factor == 1.0
++    assert status == "no_improvement"

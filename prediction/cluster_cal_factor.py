@@ -16,18 +16,29 @@ from typing import Any, Literal
 from orchestrator_io_paths import (
     CLUSTER_CAL_FACTORS_JSON,
     DATA_DIR,
+    LEARNING_HISTORY_JSON,
     PAST_CATALYST_PREDICTIONS_JSON,
 )
+from prediction.calibration_circuit_breaker import evaluate_circuit_breaker
 
 logger = logging.getLogger(__name__)
 
 CLUSTER_MIN_SAMPLES = 5
 CLUSTER_CF_FLOOR = 0.7
 CLUSTER_CF_CEILING = 1.3
+# Below this in-sample direction accuracy a cohort carries no directional signal,
+# so scaling its predictions only amplifies noise -> hold the cal_factor at 1.0.
+CLUSTER_MIN_DIRECTION_ACC = 0.5
+# The magnitude correction is scaled by how much predictions explain the
+# outcomes (variance explained; see _solve_cluster_cal_factor), so a cohort with
+# no real signal stays at 1.0 instead of being scaled by noise.
+# Require at least this fractional in-sample MAE reduction before moving off 1.0.
+CLUSTER_MIN_REL_IMPROVEMENT = 0.01
 CLUSTER_GLOBAL_BLEND = 0.6  # 60% cluster, 40% global — raise to 0.8 only when n >= 15
+# Apply-side robustness (on top of the compute-time solver + circuit breaker):
 CLUSTER_MIN_APPLY_SAMPLES = 12  # require more evidence before a correction is applied
 CLUSTER_SHRINK_K = 20.0  # shrinkage strength: cluster factor pulled toward 1.0 when n is small
-CLUSTER_BIAS_DEADBAND_PP = 1.0  # circuit-breaker: don't correct bias within measurement noise
+CLUSTER_BIAS_DEADBAND_PP = 1.0  # don't apply a correction when measured bias is within noise
 
 Direction = Literal["too_optimistic", "too_pessimistic", "calibrated"]
 Status = Literal["active", "insufficient_data", "collecting_data"]
@@ -219,7 +230,10 @@ def get_global_cal_factor() -> float:
 
 
 def blended_cluster_cal_factor(cluster: str, global_cal: float | None = None) -> float:
-    """Robust cluster/global blend: shrink to 1.0 by sample size, skip noise-level bias, clamp."""
+    """Robust cluster/global blend: require evidence, shrink to 1.0 by sample size,
+    skip noise-level bias, clamp. Layers apply-side guards on top of the compute-time
+    solver + circuit breaker.
+    """
     factors = load_cluster_cal_factors()
     entry = factors.get(cluster) if isinstance(factors, dict) else None
     if not isinstance(entry, dict) or entry.get("cal_factor") is None:
@@ -229,7 +243,7 @@ def blended_cluster_cal_factor(cluster: str, global_cal: float | None = None) ->
     n = int(entry.get("n_samples") or 0)
     if n < CLUSTER_MIN_APPLY_SAMPLES:
         return 1.0
-    # Circuit-breaker: don't apply a correction when the measured bias is within noise.
+    # Don't apply a correction when the measured bias is within measurement noise.
     bias_pp = entry.get("bias_pp")
     if bias_pp is not None:
         try:
@@ -267,12 +281,87 @@ def apply_cluster_cal_factor(pred_pct: float, ticker_data: dict[str, Any] | None
     return round(pred_pct * blended, 4)
 
 
+def _pairs_mae(pairs: list[tuple[float, float]], factor: float) -> float:
+    return sum(abs(factor * p - a) for p, a in pairs) / len(pairs)
+
+
+def _solve_cluster_cal_factor(
+    pairs: list[tuple[float, float]],
+    mae_baseline: float,
+    dir_acc: float,
+) -> tuple[float, str]:
+    """Confidence-weighted magnitude cal_factor.
+
+    The raw least-squares scalar ``sum(pred*actual)/sum(pred^2)`` overfits: when
+    predictions barely track actuals (the biotech norm here — direction ~50%,
+    near-zero magnitude correlation) it collapses toward 0 and pins the cohort to
+    a rail, "correcting" pure noise. Instead the correction is scaled by how much
+    the predictions actually explain the outcomes::
+
+        rho2 = (sum(p*a))^2 / (sum(p^2) * sum(a^2))   # variance explained, 0..1
+        cal  = 1.0 + rho2 * (clip(m_ols) - 1.0)
+
+    No explanatory signal (rho2 ~ 0) -> cal stays at 1.0 (predictions untouched);
+    a strong proportional fit (rho2 -> 1) -> cal approaches the least-squares
+    optimum. Nothing is forced. Guards: anti-correlated cohorts (dir < floor)
+    hold at 1.0, and the result is applied only if it cuts in-sample MAE by a
+    material margin.
+    """
+    if dir_acc < CLUSTER_MIN_DIRECTION_ACC:
+        return 1.0, "direction_unreliable"
+    sp2 = sum(p * p for p, _ in pairs)
+    sa2 = sum(a * a for _, a in pairs)
+    if sp2 <= 1e-9 or sa2 <= 1e-9:
+        return 1.0, "no_improvement"
+    spa = sum(p * a for p, a in pairs)
+    rho2 = (spa * spa) / (sp2 * sa2)
+    m_clipped = max(CLUSTER_CF_FLOOR, min(CLUSTER_CF_CEILING, spa / sp2))
+    m = 1.0 + rho2 * (m_clipped - 1.0)
+    m = max(CLUSTER_CF_FLOOR, min(CLUSTER_CF_CEILING, m))
+    if abs(m - 1.0) < 1e-3:
+        return 1.0, "no_improvement"
+    if _pairs_mae(pairs, m) > mae_baseline * (1.0 - CLUSTER_MIN_REL_IMPROVEMENT) - 1e-9:
+        return 1.0, "no_improvement"
+    return m, "active"
+
+
 def _direction_from_bias(bias: float) -> Direction:
     if bias > 0.5:
         return "too_optimistic"
     if bias < -0.5:
         return "too_pessimistic"
     return "calibrated"
+
+
+def _circuit_breaker_for_cluster(cluster: str, proposed: float):
+    """Guard a cluster cal_factor update with the same general breaker as regimes.
+
+    The per-cluster value trail and the cluster layer's after/baseline MAE come
+    from the weekly learning history.
+    """
+    doc = _load_json(Path(LEARNING_HISTORY_JSON), {})
+    weeks = doc.get("weeks") if isinstance(doc, dict) else None
+    weeks = weeks if isinstance(weeks, list) else []
+    prev_values: list[float] = []
+    mae_after: list[float | None] = []
+    mae_baseline: list[float | None] = []
+    for w in weeks:
+        cc = w.get("cluster_cal_factors") if isinstance(w, dict) else None
+        if not isinstance(cc, dict) or cluster not in cc:
+            continue
+        try:
+            prev_values.append(float(cc[cluster]))
+        except (TypeError, ValueError):
+            continue
+        mae_after.append(w.get("mae_after_cluster"))
+        mae_baseline.append(w.get("mae_baseline"))
+    return evaluate_circuit_breaker(
+        key=f"cluster:{cluster}",
+        proposed_value=proposed,
+        prev_values=prev_values,
+        mae_after=mae_after,
+        mae_baseline=mae_baseline,
+    )
 
 
 def compute_cluster_cal_factors(
@@ -295,8 +384,6 @@ def compute_cluster_cal_factors(
     for cluster_name in list(TICKER_CLUSTERS.keys()) + ["other"]:
         errors = cluster_errors.get(cluster_name, [])
         prev = existing.get(cluster_name) if isinstance(existing, dict) else {}
-        prev_cf = prev.get("cal_factor") if isinstance(prev, dict) else None
-        current_cal = float(prev_cf) if prev_cf is not None else 1.0
 
         if len(errors) < CLUSTER_MIN_SAMPLES:
             cluster_cal_factors[cluster_name] = {
@@ -311,8 +398,6 @@ def compute_cluster_cal_factors(
             }
             continue
 
-        preds = [float(e["pred"]) for e in errors if e.get("pred") is not None]
-        actuals = [float(e["actual"]) for e in errors if e.get("actual") is not None]
         pairs = [
             (float(e["pred"]), float(e["actual"]))
             for e in errors
@@ -323,15 +408,23 @@ def compute_cluster_cal_factors(
 
         bias = sum(p - a for p, a in pairs) / len(pairs)
         mae = sum(abs(p - a) for p, a in pairs) / len(pairs)
-        new_cal = max(CLUSTER_CF_FLOOR, min(CLUSTER_CF_CEILING, current_cal * (1.0 - bias / 10.0)))
+        dir_acc = sum(1 for p, a in pairs if (p > 0) == (a > 0)) / len(pairs)
+        new_cal, status = _solve_cluster_cal_factor(pairs, mae, dir_acc)
+
+        cb = _circuit_breaker_for_cluster(cluster_name, new_cal)
+        if cb.triggered:
+            new_cal = cb.value
+            status = "frozen_circuit_breaker"
 
         cluster_cal_factors[cluster_name] = {
             "cal_factor": round(new_cal, 3),
             "bias_pp": round(bias, 2),
             "mae": round(mae, 2),
             "n_samples": len(errors),
+            "direction_acc": round(dir_acc, 3),
             "direction": _direction_from_bias(bias),
-            "status": "active",
+            "status": status,
+            **({"circuit_breaker": cb.detail} if cb.triggered else {}),
             "last_updated": _today_iso(),
             "recent_outcomes": [
                 {
@@ -401,16 +494,17 @@ def collect_resolved_outcomes_from_sources() -> list[dict[str, Any]]:
         condition = rec.get("indication") or rec.get("condition") or ""
         cd_date = str(rec.get("completion_date", ""))[:10]
         ticker_data = {"phase": str(phase), "condition": str(condition)}
-        for node, pred_keys, actual_k in (
-            ("T-10", ("model_dm10_pct", "model_d10_pct"), "d10_pct"),
-            ("T-5", ("model_dm5_pct", "model_d5_pct"), "d5_pct"),
-            ("T-3", ("model_dm3_pct", "model_d3_pct"), "d3_pct"),
+        # ``d{N}_pct`` are the realized post-catalyst outcomes; the forecast for
+        # the same horizon is ``model_d{N}_pct`` (post-CD). Pairing each
+        # prediction with the actual at the *same* horizon is what makes the
+        # comparison meaningful — the pre-CD forecast ``model_dm{N}_pct`` is for a
+        # different horizon and must not be matched against a post-CD actual.
+        for node, pred_k, actual_k in (
+            ("T+10", "model_d10_pct", "d10_pct"),
+            ("T+5", "model_d5_pct", "d5_pct"),
+            ("T+3", "model_d3_pct", "d3_pct"),
         ):
-            pair: tuple[float, float] | None = None
-            for pred_k in pred_keys:
-                pair = _pair(rec, pred_k, actual_k)
-                if pair is not None:
-                    break
+            pair = _pair(rec, pred_k, actual_k)
             if pair is None:
                 continue
             outcomes.append(

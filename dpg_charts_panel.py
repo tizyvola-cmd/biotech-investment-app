@@ -1,6 +1,10 @@
 """Pannello grafici Dear PyGui (curve Simulation / Ristretta)."""
 from __future__ import annotations
 
+import threading
+from collections.abc import Callable
+from typing import Any
+
 import dearpygui.dearpygui as dpg
 
 from dpg_lab_data import build_ristretta_dpg_bundle, build_simulation_lab_bundle
@@ -104,8 +108,16 @@ def _sanitize_dpg_tag(s: str) -> str:
 
 
 class ChartsPanel:
-    def __init__(self, *, status_tag: str = "charts_status") -> None:
+    def __init__(
+        self,
+        *,
+        status_tag: str = "charts_status",
+        ui_post: Callable[[Callable[[], None]], None] | None = None,
+    ) -> None:
         self.status_tag = status_tag
+        self._ui_post = ui_post
+        self._load_lock = threading.Lock()
+        self._load_thread: threading.Thread | None = None
         self.bundle: dict | None = None
         # Solo serie «control» (μ di riferimento): checkbox nella sidebar.
         self.visible: dict[str, bool] = {}
@@ -767,18 +779,25 @@ class ChartsPanel:
             color=_MUTED,
         )
 
-    def load_mode(self, mode: str) -> None:
-        self._set_status("Caricamento…")
-        try:
-            self.bundle = (
-                build_ristretta_dpg_bundle()
-                if mode == "ristretta"
-                else build_simulation_lab_bundle()
-            )
-        except Exception as exc:
+    def _fetch_mode_bundle(self, mode: str) -> dict[str, Any]:
+        return (
+            build_ristretta_dpg_bundle()
+            if mode == "ristretta"
+            else build_simulation_lab_bundle()
+        )
+
+    def _apply_mode_bundle(
+        self,
+        mode: str,
+        bundle: dict[str, Any] | None,
+        *,
+        error: str | None = None,
+    ) -> None:
+        if error or bundle is None:
             self.bundle = None
-            self._set_status(f"Errore: {exc}")
+            self._set_status(f"Errore: {error or 'dati assenti'}")
             return
+        self.bundle = bundle
         note = str(self.bundle.get("note") or "").strip()
         self.visible = {}
         _series = self.bundle.get("series") or {}
@@ -800,6 +819,46 @@ class ChartsPanel:
         self._rebuild_sidebar()
         self._refresh_all_plots()
         self._refresh_table()
+
+    def load_mode(self, mode: str) -> None:
+        if self._ui_post is not None:
+            self.load_mode_async(mode)
+            return
+        self._set_status("Caricamento…")
+        try:
+            bundle = self._fetch_mode_bundle(mode)
+        except Exception as exc:
+            self._apply_mode_bundle(mode, None, error=str(exc))
+            return
+        self._apply_mode_bundle(mode, bundle)
+
+    def load_mode_async(self, mode: str) -> None:
+        with self._load_lock:
+            if self._load_thread and self._load_thread.is_alive():
+                self._set_status("Caricamento grafici già in corso…")
+                return
+        self._set_status(
+            f"Caricamento {mode}… (Excel + curve, può richiedere ~1 min)"
+        )
+
+        def worker() -> None:
+            try:
+                bundle = self._fetch_mode_bundle(mode)
+                err: str | None = None
+            except Exception as exc:
+                bundle = None
+                err = str(exc)
+
+            def apply() -> None:
+                self._apply_mode_bundle(mode, bundle, error=err)
+
+            if self._ui_post is not None:
+                self._ui_post(apply)
+
+        thread = threading.Thread(target=worker, daemon=True)
+        with self._load_lock:
+            self._load_thread = thread
+        thread.start()
 
     def _select_all(self, on: bool) -> None:
         if not self.bundle:

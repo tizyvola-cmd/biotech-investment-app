@@ -87,7 +87,7 @@ class SuperNovaDPG:
         self._last_json_mt: float | None = None
         self._last_xlsx_mt: float | None = None
         self._next_auto_at: float | None = None
-        self._charts = ChartsPanel(status_tag="charts_status")
+        self._charts = ChartsPanel(status_tag="charts_status", ui_post=self._post)
         self._wb_sheets: list[str] = []
         self._wb_rows: list[list[str]] = []
 

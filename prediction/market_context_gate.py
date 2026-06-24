@@ -262,6 +262,12 @@ def run(
         "history_7d": history,
     }
     out_path = save_market_context(doc, path)
+    try:
+        from prediction.regime_calibration import record_daily_regime
+
+        record_daily_regime(_now_iso()[:10], regime)
+    except Exception as exc:  # noqa: BLE001 - history recording is best-effort
+        logger.warning("[MarketContext] regime history record failed: %s", exc)
     logger.info(
         "[MarketContext] regime=%s xbi_5d=%s vix=%s → %s",
         regime,

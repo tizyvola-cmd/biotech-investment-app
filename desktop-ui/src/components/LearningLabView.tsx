@@ -28,9 +28,6 @@ import { LearningLabAuditLogPanel } from "./LearningLabAuditLogPanel";
 import { LearningLabUnifiedView } from "./LearningLabUnifiedView";
 import { LearningEffectivenessStrip } from "./LearningEffectivenessStrip";
 import { ChannelImpactPanels } from "./ChannelImpactPanels";
-import { ValidationFeedbackSection } from "./ValidationFeedbackSection";
-import { SignalCalibrationLearningSection } from "./SignalCalibrationLearningSection";
-import { CurveImpactLearningSection } from "./CurveImpactLearningSection";
 import { ExpectedMoveSection } from "./ExpectedMoveSection";
 import { GlobalCalFactorReadOnly, LearningPipelinePanel } from "./LearningPipelinePanel";
 import { LearningLabPortfolioTab } from "./LearningLabPortfolioTab";
@@ -75,7 +72,7 @@ function formatLearningLabLoadError(raw: string, it: boolean): string {
   return raw;
 }
 
-type LabTopTab = "model" | "signals" | "portfolio" | "monitor";
+type LabTopTab = "model" | "portfolio" | "monitor";
 type WeekRow = Record<string, unknown>;
 
 const MIN_LEARNING_WEEK_N = 15;
@@ -1054,7 +1051,6 @@ export function LearningLabView({
 
         <div className="flex gap-1 flex-wrap shrink-0">
           {topTabBtn("model", it ? "Calibrazione modello" : "Model calibration")}
-          {topTabBtn("signals", it ? "Segnali e pattern" : "Signals & patterns")}
           {topTabBtn("portfolio", it ? "Portfolio e advice" : "Portfolio & advice")}
           {topTabBtn("monitor", it ? "Monitor loop" : "Loop monitor")}
         </div>
@@ -1087,22 +1083,6 @@ export function LearningLabView({
             </details>
             <LearningPipelinePanel pipeline={pipeline} it={it} />
             <GlobalCalFactorReadOnly value={globalCfFromPipeline} updatedAt={globalCfUpdatedAt} it={it} />
-          </div>
-        ) : null}
-
-        {data && topTab === "signals" ? (
-          <div className="space-y-4">
-            <ValidationFeedbackSection
-              data={data.validation_feedback}
-              active={topTab === "signals"}
-              onReload={load}
-            />
-            <SignalCalibrationLearningSection
-              data={data.signal_calibration}
-              active={topTab === "signals"}
-              onReload={load}
-            />
-            <CurveImpactLearningSection data={data.curve_impact} />
           </div>
         ) : null}
 

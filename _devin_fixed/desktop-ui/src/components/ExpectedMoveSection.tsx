@@ -58,12 +58,19 @@ export function ExpectedMoveSection({
             ? `Calibrato su n=${(data?.n_samples ?? 0).toLocaleString()} catalyst risolti · corr ${corr != null ? corr.toFixed(2) : "—"}${lift != null ? ` · lift Q1→Q5 ~${lift.toFixed(1)}×` : ""}`
             : `Calibrated on n=${(data?.n_samples ?? 0).toLocaleString()} resolved catalysts · corr ${corr != null ? corr.toFixed(2) : "—"}${lift != null ? ` · Q1→Q5 lift ~${lift.toFixed(1)}×` : ""}`}
         </p>
+        <p className="text-[10px] text-ink-muted/90 leading-snug mt-0.5">
+          {it
+            ? "Q1–Q5 = quintili del movimento atteso: i catalyst storici ordinati per ampiezza prevista e divisi in 5 gruppi da ~20%. Q1 = movimento più piccolo, Q5 = più grande (candidato straddle)."
+            : "Q1–Q5 = expected-move quintiles: resolved catalysts ranked by predicted size and split into 5 groups of ~20%. Q1 = smallest move, Q5 = largest (straddle candidate)."}
+        </p>
       </div>
       <div className="overflow-x-auto">
         <table className="w-full text-[11px] tabular-nums">
           <thead>
             <tr className="text-ink-muted text-left">
-              <th className="font-medium py-1 pr-2">{it ? "Bucket" : "Bucket"}</th>
+              <th className="font-medium py-1 pr-2">
+                {it ? "Gruppo (Q1→Q5)" : "Group (Q1→Q5)"}
+              </th>
               <th className="font-medium py-1 px-2 text-right">n</th>
               <th className="font-medium py-1 px-2 text-right">
                 {it ? "Mov. mediano" : "Median move"}

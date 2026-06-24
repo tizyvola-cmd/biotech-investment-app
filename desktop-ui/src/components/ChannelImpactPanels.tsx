@@ -300,24 +300,33 @@ function SellTimingBlock({
               value={fmtPct(sellTiming.pDownPct)}
               hint={`n=${sellTiming.gradedN}${sellTiming.pendingN ? ` · ${sellTiming.pendingN} ${it ? "in attesa" : "pending"}` : ""}`}
             />
-            <Metric
-              label={it ? "vs reattivo" : "vs reactive"}
-              value={reactivePct == null ? "—" : fmtPct(reactivePct)}
-              hint={
-                beatsReactive == null
-                  ? undefined
-                  : `${beatsReactive >= 0 ? "+" : "−"}${Math.abs(beatsReactive).toFixed(1)} pp`
-              }
-            />
-            <Metric
-              label={it ? "anticipo mediano" : "median lead"}
-              value={sellTiming.medianLeadDays == null ? "—" : `${sellTiming.medianLeadDays}${it ? "gg" : "d"}`}
-            />
+            <span className="text-[9px] tabular-nums text-ink-muted text-right leading-tight">
+              {beatsReactive != null ? (
+                <span className={beatsReactive >= 0 ? "text-emerald-600 dark:text-emerald-400" : "text-rose-600 dark:text-rose-400"}>
+                  {beatsReactive >= 0 ? "+" : "−"}{Math.abs(beatsReactive).toFixed(1)} pp{" "}
+                  {it ? "vs SELL reattivo" : "vs reactive SELL"} ({reactivePct == null ? "—" : fmtPct(reactivePct)})
+                </span>
+              ) : null}
+              {sellTiming.medianLeadDays != null ? (
+                <span className="block">
+                  {it ? "anticipo " : "lead "}
+                  {sellTiming.medianLeadDays}
+                  {it ? "gg prima dell'uscita" : "d before exit"}
+                </span>
+              ) : null}
+            </span>
           </div>
+          {sellTiming.gradedN < 5 ? (
+            <p className="text-[8.5px] text-amber-600 dark:text-amber-400 leading-snug pt-1">
+              {it
+                ? `campione minimo (n=${sellTiming.gradedN}): valore indicativo, si stabilizza coi cicli`
+                : `tiny sample (n=${sellTiming.gradedN}): indicative only, stabilizes as cycles run`}
+            </p>
+          ) : null}
           <p className="text-[8.5px] text-ink-muted/90 leading-snug pt-1">
             {it
-              ? `sell-score = ${wPct(p.wMomentum)} MII↓ + ${wPct(p.wEis)} EIS≤0 + ${wPct(p.wRescue)} rescue basso · soglia ${(p.threshold * 100).toFixed(0)}%. Conta come "giusta" la vendita seguita da un calo entro l'orizzonte. MII↓ = pendenza prezzo (proxy: lo storico non ha il volume).`
-              : `sell-score = ${wPct(p.wMomentum)} MII↓ + ${wPct(p.wEis)} EIS≤0 + ${wPct(p.wRescue)} low rescue · threshold ${(p.threshold * 100).toFixed(0)}%. A sell counts "right" when a drop follows within the horizon. MII↓ = price slope (proxy: history has no volume).`}
+              ? `Diverso dal SELL → P(ribasso) qui sopra: quello è REATTIVO (giudica le uscite già fatte, dopo il calo); questo è PREDITTIVO (vende PRIMA del calo). sell-score = ${wPct(p.wMomentum)} MII↓ + ${wPct(p.wEis)} EIS≤0 + ${wPct(p.wRescue)} rescue basso · soglia ${(p.threshold * 100).toFixed(0)}%. MII↓ = pendenza prezzo (proxy: lo storico non ha il volume).`
+              : `Different from SELL → P(down) above: that one is REACTIVE (grades exits already made, after the drop); this is PREDICTIVE (sells BEFORE the drop). sell-score = ${wPct(p.wMomentum)} MII↓ + ${wPct(p.wEis)} EIS≤0 + ${wPct(p.wRescue)} low rescue · threshold ${(p.threshold * 100).toFixed(0)}%. MII↓ = price slope (proxy: history has no volume).`}
           </p>
         </>
       ) : (

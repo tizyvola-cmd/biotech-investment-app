@@ -736,8 +736,8 @@ def _downsample(series: list[dict[str, Any]], max_pts: int) -> list[dict[str, An
 def _accumulate_series(events: list[dict[str, Any]], *, prefix: str = "") -> list[dict[str, Any]]:
     cum_n = 0
     n_daily = n_k8 = n_eis = 0
-    sums = {"base": 0.0, "daily": 0.0, "k8": 0.0, "eis": 0.0}
-    hits = {"base": 0, "daily": 0, "k8": 0, "eis": 0}
+    sums = {"base": 0.0, "daily": 0.0, "k8": 0.0, "eis": 0.0, "base_d": 0.0}
+    hits = {"base": 0, "daily": 0, "k8": 0, "eis": 0, "base_d": 0}
     out: list[dict[str, Any]] = []
 
     for ev in events:
@@ -749,8 +749,13 @@ def _accumulate_series(events: list[dict[str, Any]], *, prefix: str = "") -> lis
         if ev.get("has_daily_path"):
             n_daily += 1
             sums["daily"] += ev["path_rmse_daily"]
+            # Same-event base error, so daily-vs-base is compared on the identical
+            # subset (avoids mixing the full-set base mean with the daily subset).
+            sums["base_d"] += ev["path_rmse_base"]
             if ev.get("hit_daily"):
                 hits["daily"] += 1
+            if ev.get("hit_base"):
+                hits["base_d"] += 1
         if ev.get("has_k8_path"):
             n_k8 += 1
             sums["k8"] += ev["path_rmse_k8"]
@@ -775,6 +780,7 @@ def _accumulate_series(events: list[dict[str, Any]], *, prefix: str = "") -> lis
             "cum_mae_k8": _avg(sums["k8"], n_k8),
             "cum_mae_eis": _avg(sums["eis"], n_eis),
             "cum_mae_recalib": _avg(sums["daily"], n_daily),
+            "cum_mae_base_on_daily": _avg(sums["base_d"], n_daily),
             "n_with_daily": n_daily,
             "n_with_k8": n_k8,
             "n_with_eis": n_eis,
@@ -783,6 +789,7 @@ def _accumulate_series(events: list[dict[str, Any]], *, prefix: str = "") -> lis
             "cum_hit_k8_pct": round(100.0 * hits["k8"] / n_k8, 2) if n_k8 else None,
             "cum_hit_eis_pct": round(100.0 * hits["eis"] / n_eis, 2) if n_eis else None,
             "cum_hit_recalib_pct": round(100.0 * hits["daily"] / n_daily, 2) if n_daily else None,
+            "cum_hit_base_on_daily_pct": round(100.0 * hits["base_d"] / n_daily, 2) if n_daily else None,
             "cum_mae_realized": 0.0,
             "cum_hit_realized_pct": 100.0,
         }
@@ -993,7 +1000,10 @@ def build_curve_impact_cumulative(
             "mae_k8_pp": last.get("cum_mae_k8"),
             "mae_eis_pp": last.get("cum_mae_eis"),
             "mae_recalib_pp": last.get("cum_mae_daily"),
+            "mae_base_on_daily_pp": last.get("cum_mae_base_on_daily"),
+            "n_daily": last.get("n_with_daily"),
             "hit_base_pct": last.get("cum_hit_base_pct"),
+            "hit_base_on_daily_pct": last.get("cum_hit_base_on_daily_pct"),
             "hit_daily_pct": last.get("cum_hit_daily_pct"),
             "hit_k8_pct": last.get("cum_hit_k8_pct"),
             "hit_eis_pct": last.get("cum_hit_eis_pct"),
@@ -1018,6 +1028,13 @@ def build_curve_impact_cumulative(
             "delta_mae_recalib_vs_base_pp": (
                 round(last["cum_mae_daily"] - last["cum_mae_base"], 3)
                 if last.get("cum_mae_daily") is not None and last.get("cum_mae_base") is not None
+                else None
+            ),
+            # Honest daily-vs-base lift: both means over the same daily subset.
+            "delta_mae_daily_vs_base_matched_pp": (
+                round(last["cum_mae_daily"] - last["cum_mae_base_on_daily"], 3)
+                if last.get("cum_mae_daily") is not None
+                and last.get("cum_mae_base_on_daily") is not None
                 else None
             ),
             "delta_mae_eis_vs_recalib_pp": (

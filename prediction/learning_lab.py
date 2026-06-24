@@ -511,15 +511,27 @@ def build_effectiveness_delta(
         {
             "mechanism": "daily_recalib",
             "label": "Daily curve recalib",
-            "mae_before": curve_sum.get("mae_base_pp"),
+            # Compare daily vs base on the SAME daily subset (matched base);
+            # fall back to the full-set base only if the matched key is absent.
+            "mae_before": (
+                curve_sum.get("mae_base_on_daily_pp")
+                if curve_sum.get("mae_base_on_daily_pp") is not None
+                else curve_sum.get("mae_base_pp")
+            ),
             "mae_after": curve_sum.get("mae_daily_pp"),
             "dir_before": (
-                float(curve_sum["hit_base_pct"]) / 100.0 if curve_sum.get("hit_base_pct") is not None else None
+                float(curve_sum["hit_base_on_daily_pct"]) / 100.0
+                if curve_sum.get("hit_base_on_daily_pct") is not None
+                else (
+                    float(curve_sum["hit_base_pct"]) / 100.0
+                    if curve_sum.get("hit_base_pct") is not None
+                    else None
+                )
             ),
             "dir_after": (
                 float(curve_sum["hit_daily_pct"]) / 100.0 if curve_sum.get("hit_daily_pct") is not None else None
             ),
-            "n": curve.get("n_events") or 0,
+            "n": curve_sum.get("n_daily") or curve.get("n_events") or 0,
             "min_n": 15,
         }
     )

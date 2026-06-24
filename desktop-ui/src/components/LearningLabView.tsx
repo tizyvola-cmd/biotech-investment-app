@@ -38,6 +38,7 @@ import { seedCdPatternPolygonOverviewFromLab } from "../sheet/useCdPatternPolygo
 import { loadInvestSimHistory, loadInvestSimInputs } from "../sheet/investSimStorage";
 import { computeEisFeedWindowScore } from "../sheet/lossRescueEngine";
 import { analyzeRescueRebound, type RescueReboundAnalysis } from "../sheet/recommendationRescue";
+import { analyzeSellTiming, type SellTimingAnalysis } from "../sheet/recommendationSellTiming";
 
 const REFRESH_MS = 5 * 60_000;
 const OVERVIEW_SESSION_KEY = "learningLab.overview.v1";
@@ -855,6 +856,23 @@ export function LearningLabView({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [reloadToken, lang]);
 
+  // Predictive SELL timing (MII↓ + EIS≤0 + low rescue) — walk-forward graded on
+  // the daily PnL path, same UI-sheet data as the rescue analysis.
+  const sellTiming = useMemo<SellTimingAnalysis | null>(() => {
+    if (typeof window === "undefined") return null;
+    try {
+      const history = loadInvestSimHistory();
+      return analyzeSellTiming({
+        history,
+        inputs: loadInvestSimInputs(),
+        eisScoreForKey: (ticker) => computeEisFeedWindowScore(ticker, lang, null, history),
+      });
+    } catch {
+      return null;
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [reloadToken, lang]);
+
   const globalCfFromPipeline = useMemo(() => {
     const step = pipeline?.steps?.find((s) => s.id === "global_cal_factor");
     const v = step?.summary?.value;
@@ -1049,6 +1067,7 @@ export function LearningLabView({
               data={data.channel_impact}
               it={it}
               rescue={rescueRebound}
+              sellTiming={sellTiming}
               onReestimate={handleReestimateChannels}
               reestimating={reestimating}
             />

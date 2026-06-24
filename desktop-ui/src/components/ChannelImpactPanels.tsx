@@ -14,6 +14,7 @@
 import { useMemo, useState } from "react";
 import type { ChannelImpact, ChannelLoopEffect } from "../api/supernova";
 import type { RescueReboundAnalysis } from "../sheet/recommendationRescue";
+import type { SellTimingAnalysis } from "../sheet/recommendationSellTiming";
 
 // Snapshot of the channel scores taken when "re-estimate" is pressed, so the new
 // values can be diffed against the ones shown before the recompute (arrows +
@@ -264,6 +265,73 @@ function Metric({
   );
 }
 
+/** Predictive SELL timing: MII↓ + EIS≤0 + low rescue, graded walk-forward. */
+function SellTimingBlock({
+  sellTiming,
+  reactivePct,
+  it,
+}: {
+  sellTiming?: SellTimingAnalysis | null;
+  reactivePct: number | null;
+  it: boolean;
+}) {
+  if (!sellTiming) return null;
+  const p = sellTiming.params;
+  const wPct = (w: number) => `${Math.round((w / (p.wMomentum + p.wEis + p.wRescue || 1)) * 100)}%`;
+  const beatsReactive =
+    sellTiming.pDownPct != null && reactivePct != null ? sellTiming.pDownPct - reactivePct : null;
+  return (
+    <div className="pt-1 border-t border-[rgb(var(--border))]/30">
+      <div className="flex items-end justify-between gap-2">
+        <span className="text-[10px] font-medium text-ink">
+          {it ? "SELL precoce · MII↓ + EIS + rescue" : "Early SELL · MII↓ + EIS + rescue"}
+        </span>
+        <span className="text-[9px] text-ink-muted">
+          {it ? "forward ≤" : "forward ≤"}
+          {p.forwardHorizonDays}
+          {it ? "gg" : "d"}
+        </span>
+      </div>
+      {sellTiming.available ? (
+        <>
+          <div className="flex items-end justify-between gap-2 pt-1">
+            <Metric
+              label={it ? "P(ribasso) precoce" : "early P(down)"}
+              value={fmtPct(sellTiming.pDownPct)}
+              hint={`n=${sellTiming.gradedN}${sellTiming.pendingN ? ` · ${sellTiming.pendingN} ${it ? "in attesa" : "pending"}` : ""}`}
+            />
+            <Metric
+              label={it ? "vs reattivo" : "vs reactive"}
+              value={reactivePct == null ? "—" : fmtPct(reactivePct)}
+              hint={
+                beatsReactive == null
+                  ? undefined
+                  : `${beatsReactive >= 0 ? "+" : "−"}${Math.abs(beatsReactive).toFixed(1)} pp`
+              }
+            />
+            <Metric
+              label={it ? "anticipo mediano" : "median lead"}
+              value={sellTiming.medianLeadDays == null ? "—" : `${sellTiming.medianLeadDays}${it ? "gg" : "d"}`}
+            />
+          </div>
+          <p className="text-[8.5px] text-ink-muted/90 leading-snug pt-1">
+            {it
+              ? `sell-score = ${wPct(p.wMomentum)} MII↓ + ${wPct(p.wEis)} EIS≤0 + ${wPct(p.wRescue)} rescue basso · soglia ${(p.threshold * 100).toFixed(0)}%. Conta come "giusta" la vendita seguita da un calo entro l'orizzonte. MII↓ = pendenza prezzo (proxy: lo storico non ha il volume).`
+              : `sell-score = ${wPct(p.wMomentum)} MII↓ + ${wPct(p.wEis)} EIS≤0 + ${wPct(p.wRescue)} low rescue · threshold ${(p.threshold * 100).toFixed(0)}%. A sell counts "right" when a drop follows within the horizon. MII↓ = price slope (proxy: history has no volume).`}
+          </p>
+        </>
+      ) : (
+        <p className="text-[9px] text-ink-muted leading-snug pt-1">
+          {sellTiming.note ??
+            (it
+              ? "Segnale di vendita precoce non ancora valutabile — si popola coi cicli."
+              : "Early-sell signal not gradable yet — populates as cycles run.")}
+        </p>
+      )}
+    </div>
+  );
+}
+
 /** 1..5 reliability stars relative to the curve's peak (null -> not reliable). */
 function Stars({ n }: { n: number | null | undefined }) {
   if (n == null) return <span className="text-ink-muted/60">{"☆☆☆☆☆"}</span>;
@@ -304,12 +372,14 @@ export function ChannelImpactPanels({
   data,
   it,
   rescue,
+  sellTiming,
   onReestimate,
   reestimating,
 }: {
   data?: ChannelImpact;
   it: boolean;
   rescue?: RescueReboundAnalysis | null;
+  sellTiming?: SellTimingAnalysis | null;
   onReestimate?: () => void | Promise<void>;
   reestimating?: boolean;
 }) {
@@ -601,6 +671,9 @@ export function ChannelImpactPanels({
                   })}
                 </div>
               ) : null}
+
+              {/* Predictive SELL timing: MII↓ + EIS≤0 + low rescue, walk-forward graded */}
+              <SellTimingBlock sellTiming={sellTiming} reactivePct={rec.sell.down_hit_pct} it={it} />
 
               {/* HOLD -> rescue score vs actual rebound (computed in the UI sheet) */}
               <div className="pt-1 border-t border-[rgb(var(--border))]/30">

@@ -323,7 +323,7 @@ def _weekly_series(
 
 
 def _recommendation_week(rs: list[dict[str, Any]]) -> dict[str, Any]:
-    buy = [r for r in rs if _recommended_action(r).startswith("BUY")]
+    buy = list(rs)  # every opened position is an executed BUY
     rate, graded_n = _buy_up_rate(buy)
     return {
         "buy_n": len(buy),
@@ -498,7 +498,12 @@ def _recommendation_channel(rows: list[dict[str, Any]]) -> dict[str, Any]:
     HOLD -> rescue-score vs actual rebound: computed in the UI sheet (the rescue
             score lives there); the backend only reports the HOLD count here.
     """
-    buy_rows = [r for r in rows if _recommended_action(r).startswith("BUY")]
+    # Every opened sim position is an executed BUY (the engine only allocates
+    # capital when it recommends a buy), so the realized move of each position
+    # is the BUY follow-through. We do NOT re-derive the action from sds_score:
+    # historical positions whose CD has passed are absent from the live SDS
+    # snapshot, so that lookup is None and would drop them entirely (BUY n=0).
+    buy_rows = list(rows)
     hold_rows = [r for r in rows if _recommended_action(r) == "HOLD"]
     sell_rows = [r for r in rows if r.get("exit_reason") in _SELL_REASONS]
 

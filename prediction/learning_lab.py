@@ -24,6 +24,7 @@ from prediction.cluster_cal_factor import (
     collect_resolved_outcomes_from_sources,
     compute_cluster_cal_factors,
     get_global_cal_factor,
+    robust_global_cal_factor,
 )
 from prediction.regime_calibration import (
     compute_regime_multipliers,
@@ -191,7 +192,9 @@ def compute_counterfactual_layer_metrics(
         return pairs
 
     ro = _regime_tagged_outcomes(outcomes, regime_outcomes)
-    gcf = get_global_cal_factor()
+    # Apply-side robust global factor (deadband near 1.0 + circuit breaker when the
+    # global layer keeps drifting while degrading MAE vs the pre-global baseline).
+    gcf = robust_global_cal_factor()
     cluster_blend = build_cluster_blend_map(gcf)
     from prediction.regime_calibration import build_regime_multiplier_map
 

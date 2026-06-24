@@ -39,6 +39,11 @@ CLUSTER_GLOBAL_BLEND = 0.6  # 60% cluster, 40% global — raise to 0.8 only when
 CLUSTER_MIN_APPLY_SAMPLES = 12  # require more evidence before a correction is applied
 CLUSTER_SHRINK_K = 20.0  # shrinkage strength: cluster factor pulled toward 1.0 when n is small
 CLUSTER_BIAS_DEADBAND_PP = 1.0  # don't apply a correction when measured bias is within noise
+# Global cal_factor apply-side robustness (the global layer has a large sample,
+# so no shrinkage; guard only the negligible-scaling and degrading-drift cases).
+GLOBAL_CF_FLOOR = 0.7
+GLOBAL_CF_CEILING = 1.3
+GLOBAL_CF_DEADBAND = 0.02  # a global scaling within 2% of neutral is negligible -> 1.0
 
 Direction = Literal["too_optimistic", "too_pessimistic", "calibrated"]
 Status = Literal["active", "insufficient_data", "collecting_data"]
@@ -229,6 +234,49 @@ def get_global_cal_factor() -> float:
     return val
 
 
+def _circuit_breaker_for_global(proposed: float):
+    """Guard the global cal_factor with the same general breaker as clusters/regimes.
+
+    The global value trail and the global layer's after/baseline MAE come from
+    the weekly learning history.
+    """
+    doc = _load_json(Path(LEARNING_HISTORY_JSON), {})
+    weeks = doc.get("weeks") if isinstance(doc, dict) else None
+    weeks = weeks if isinstance(weeks, list) else []
+    prev_values: list[float] = []
+    mae_after: list[float | None] = []
+    mae_baseline: list[float | None] = []
+    for w in weeks:
+        if not isinstance(w, dict) or w.get("global_cal_factor") is None:
+            continue
+        try:
+            prev_values.append(float(w["global_cal_factor"]))
+        except (TypeError, ValueError):
+            continue
+        mae_after.append(w.get("mae_with_all"))
+        mae_baseline.append(w.get("mae_global_before"))
+    return evaluate_circuit_breaker(
+        key="global",
+        proposed_value=proposed,
+        prev_values=prev_values,
+        mae_after=mae_after,
+        mae_baseline=mae_baseline,
+    )
+
+
+def robust_global_cal_factor() -> float:
+    """Apply-side robust global cal_factor: ignore negligible scaling near 1.0,
+    freeze a value that keeps drifting from neutral while the global layer
+    degrades MAE vs the pre-global baseline (circuit breaker), then clamp.
+    """
+    raw = get_global_cal_factor()
+    if abs(raw - 1.0) < GLOBAL_CF_DEADBAND:
+        return 1.0
+    cb = _circuit_breaker_for_global(raw)
+    val = cb.value if cb.triggered else raw
+    return round(max(GLOBAL_CF_FLOOR, min(GLOBAL_CF_CEILING, val)), 4)
+
+
 def blended_cluster_cal_factor(cluster: str, global_cal: float | None = None) -> float:
     """Robust cluster/global blend: require evidence, shrink to 1.0 by sample size,
     skip noise-level bias, clamp. Layers apply-side guards on top of the compute-time
@@ -255,7 +303,7 @@ def blended_cluster_cal_factor(cluster: str, global_cal: float | None = None) ->
     # Shrink the cluster factor toward 1.0 by sample size (few obs -> near-neutral).
     shrink_w = n / (n + CLUSTER_SHRINK_K)
     cluster_cf = 1.0 + (cluster_cf - 1.0) * shrink_w
-    g = global_cal if global_cal is not None else get_global_cal_factor()
+    g = global_cal if global_cal is not None else robust_global_cal_factor()
     blend = CLUSTER_GLOBAL_BLEND
     if n >= 15:
         blend = min(0.8, blend + 0.2 * ((n - 15) / 35))
@@ -266,7 +314,7 @@ def blended_cluster_cal_factor(cluster: str, global_cal: float | None = None) ->
 
 def build_cluster_blend_map(global_cal: float | None = None) -> dict[str, float]:
     """Precompute blended cluster cal_factor per cohort (batch metrics)."""
-    g = global_cal if global_cal is not None else get_global_cal_factor()
+    g = global_cal if global_cal is not None else robust_global_cal_factor()
     names = list(TICKER_CLUSTERS.keys()) + ["other"]
     return {name: blended_cluster_cal_factor(name, g) for name in names}
 

@@ -1,0 +1,1065 @@
+--- a/orchestrator_io_paths.py
++++ b/orchestrator_io_paths.py
+@@ -51,6 +51,7 @@
+ CLUSTER_CAL_FACTORS_JSON = os.path.join(DATA_DIR, "cluster_cal_factors.json")
+ REGIME_MULTIPLIERS_JSON = os.path.join(DATA_DIR, "regime_multipliers.json")
+ OUTCOMES_WITH_REGIME_JSON = os.path.join(DATA_DIR, "outcomes_with_regime.json")
++REGIME_HISTORY_JSON = os.path.join(DATA_DIR, "regime_history.json")
+ LEARNING_HISTORY_JSON = os.path.join(DATA_DIR, "learning_history.json")
+ LEARNING_LOG_JSON = os.path.join(DATA_DIR, "learning_log.json")
+ TICKER_PERFORMANCE_JSON = os.path.join(DATA_DIR, "ticker_performance.json")
+@@ -109,6 +110,7 @@
+     "CLUSTER_CAL_FACTORS_JSON",
+     "REGIME_MULTIPLIERS_JSON",
+     "OUTCOMES_WITH_REGIME_JSON",
++    "REGIME_HISTORY_JSON",
+     "LEARNING_HISTORY_JSON",
+     "LEARNING_LOG_JSON",
+     "TICKER_PERFORMANCE_JSON",
+--- a/prediction/regime_calibration.py
++++ b/prediction/regime_calibration.py
+@@ -2,24 +2,40 @@
+ Regime multiplier — correct systematic over/undershoot by market regime.
+ 
+ Uses ``market_context_gate`` for RISK_ON / NEUTRAL / RISK_OFF / CRISIS.
+-Minimum 8 outcomes per regime before activating.
++Minimum REGIME_MIN_SAMPLES outcomes per regime before activating.
+ """
+ from __future__ import annotations
+ 
+ import json
+ import logging
++import os
+ from datetime import date, datetime, timezone
+ from pathlib import Path
+ from typing import Any, Literal
+ 
+-from orchestrator_io_paths import OUTCOMES_WITH_REGIME_JSON, REGIME_MULTIPLIERS_JSON
++from orchestrator_io_paths import (
++    LEARNING_HISTORY_JSON,
++    OUTCOMES_WITH_REGIME_JSON,
++    REGIME_HISTORY_JSON,
++    REGIME_MULTIPLIERS_JSON,
++)
++from prediction.calibration_circuit_breaker import evaluate_circuit_breaker
+ 
+ logger = logging.getLogger(__name__)
+ 
+-REGIME_MIN_SAMPLES = 8
++# Minimum resolved outcomes per regime before a multiplier may move off 1.0.
++# A small sample is dominated by noise (a 34-row regime sub-pool showed 41%
++# direction accuracy while the full pool sits at ~51%), so the threshold is set
++# high enough to require a representative sample. Override via env for tuning.
++REGIME_MIN_SAMPLES = int(os.getenv("REGIME_MIN_SAMPLES", "30"))
+ REGIME_MULT_FLOOR = 0.7
+ REGIME_MULT_CEILING = 1.3
++# Below this in-sample direction accuracy the regime sample is directionally
++# unreliable: scaling magnitude would amplify wrong-signed predictions, so the
++# multiplier is held at 1.0 instead of "correcting" a broken sample.
++REGIME_MIN_DIRECTION_ACC = 0.5
+ ACTIVE_REGIMES = ("RISK_ON", "NEUTRAL", "RISK_OFF")
++UNKNOWN_REGIME = "UNKNOWN"
+ 
+ MarketRegime = Literal["RISK_ON", "NEUTRAL", "RISK_OFF", "CRISIS"]
+ 
+@@ -103,10 +119,62 @@
+     return "NEUTRAL"
+ 
+ 
+-def get_regime_at_date(iso_date: str) -> MarketRegime:
+-    """Best-effort: use current regime if historical series unavailable."""
+-    _ = iso_date
+-    return get_current_regime()
++def load_regime_history() -> dict[str, str]:
++    """Daily ``date -> regime`` map, seeded from market_context history when empty.
++
++    The dedicated ``regime_history.json`` accumulates one regime per day going
++    forward (see :func:`record_daily_regime`). Until it is populated we seed from
++    the rolling ``market_context.history_7d`` window (last write per day wins).
++    """
++    doc = _load_json(Path(REGIME_HISTORY_JSON), {})
++    by_date = doc.get("by_date") if isinstance(doc, dict) else None
++    out: dict[str, str] = {}
++    if isinstance(by_date, dict):
++        for d, r in by_date.items():
++            rr = str(r or "").upper()
++            if rr in ("RISK_ON", "NEUTRAL", "RISK_OFF", "CRISIS"):
++                out[str(d)[:10]] = rr
++    if out:
++        return out
++    from prediction.market_context_gate import load_market_context
++
++    for e in load_market_context().get("history_7d") or []:
++        d = str(e.get("ts") or "")[:10]
++        rr = str(e.get("regime") or "").upper()
++        if d and rr in ("RISK_ON", "NEUTRAL", "RISK_OFF", "CRISIS"):
++            out[d] = rr
++    return out
++
++
++def record_daily_regime(iso_date: str, regime: str) -> None:
++    """Persist the classified regime for a day so historical outcomes can be
++    attributed to the regime that was actually in force at prediction time."""
++    d = str(iso_date or "")[:10]
++    rr = str(regime or "").upper()
++    if not d or rr not in ("RISK_ON", "NEUTRAL", "RISK_OFF", "CRISIS"):
++        return
++    path = Path(REGIME_HISTORY_JSON)
++    doc = _load_json(path, {"schema_version": 1, "by_date": {}})
++    by_date = doc.get("by_date") if isinstance(doc, dict) else None
++    if not isinstance(by_date, dict):
++        by_date = {}
++    by_date[d] = rr
++    _save_json(path, {"schema_version": 1, "updated_at": _now_iso(), "by_date": by_date})
++
++
++def get_regime_at_date(iso_date: str) -> str:
++    """Regime in force at ``iso_date``.
++
++    Today/empty resolve to the live regime; past dates are looked up in the
++    persisted regime history. Crucially this never stamps the *current* regime
++    onto old outcomes — doing so funnelled the entire pool into one regime and
++    starved the others below the activation threshold. Unknown past dates return
++    ``UNKNOWN`` and are excluded from per-regime calibration.
++    """
++    d = str(iso_date or "")[:10]
++    if not d or d >= _today_iso():
++        return get_current_regime()
++    return load_regime_history().get(d, UNKNOWN_REGIME)
+ 
+ 
+ def load_outcomes_with_regime() -> list[dict[str, Any]]:
+@@ -117,29 +185,47 @@
+ 
+ 
+ def enrich_outcomes_with_regime(outcomes: list[dict[str, Any]]) -> list[dict[str, Any]]:
+-    """Tag main PastCatalyst outcomes with best-effort regime when the regime store is sparse."""
++    """Tag PastCatalyst outcomes with the regime in force at their prediction date.
++
++    Dates without a recorded regime are tagged ``UNKNOWN`` and excluded from
++    per-regime calibration (rather than misattributed to the current regime).
++    """
+     tagged: list[dict[str, Any]] = []
+     for o in outcomes:
+         row = dict(o)
+         if not row.get("regime"):
+             pred_date = str(row.get("date") or "")[:10]
+-            row["regime"] = get_regime_at_date(pred_date) if pred_date else get_current_regime()
++            row["regime"] = get_regime_at_date(pred_date) if pred_date else UNKNOWN_REGIME
+         tagged.append(row)
+     return tagged
+ 
+ 
++def _outcome_key(o: dict[str, Any]) -> str:
++    return f"{o.get('ticker')}|{str(o.get('date') or '')[:10]}|{o.get('node')}"
++
++
+ def resolve_regime_outcomes_for_learning(
+     fallback_outcomes: list[dict[str, Any]] | None = None,
+ ) -> list[dict[str, Any]]:
+-    """Prefer persisted regime store; backfill from PastCatalyst pool when too small."""
++    """Merge persisted regime store with regime-tagged PastCatalyst outcomes.
++
++    The previous logic *switched* sources once the store crossed the minimum
++    sample size, which discontinuously collapsed the evaluation population from
++    the full pool to a tiny, biased subset. We instead always union both sources
++    (deduped); outcomes whose regime cannot be determined stay ``UNKNOWN`` and
++    drop out of per-regime calibration on their own.
++    """
+     stored = load_outcomes_with_regime()
+-    if len(stored) >= REGIME_MIN_SAMPLES:
+-        return stored
+     if fallback_outcomes is None:
+         from prediction.cluster_cal_factor import collect_resolved_outcomes_from_sources
+ 
+         fallback_outcomes = collect_resolved_outcomes_from_sources()
+-    return enrich_outcomes_with_regime(fallback_outcomes)
++    merged: dict[str, dict[str, Any]] = {}
++    for o in enrich_outcomes_with_regime(fallback_outcomes):
++        merged[_outcome_key(o)] = o
++    for o in stored:
++        merged[_outcome_key(o)] = o  # persisted (genuine) tags win
++    return list(merged.values())
+ 
+ 
+ def append_outcome_with_regime(
+@@ -162,7 +248,7 @@
+         "pred": round(float(pred), 4),
+         "actual": round(float(actual), 4),
+         "node": node,
+-        "regime": regime or get_regime_at_date(pred_date),
++        "regime": regime or get_regime_at_date(pred_date) or UNKNOWN_REGIME,
+         "date": pred_date,
+         "recorded_at": _now_iso(),
+     }
+@@ -202,6 +288,74 @@
+     return added
+ 
+ 
++def _pairs_mae(pairs: list[tuple[float, float]], m: float) -> float:
++    return sum(abs(p * m - a) for p, a in pairs) / len(pairs)
++
++
++def _solve_regime_multiplier(
++    pairs: list[tuple[float, float]],
++    mae_baseline: float,
++    dir_acc: float,
++) -> tuple[float, str]:
++    """Magnitude-scaling factor that minimises in-sample error, with guards.
++
++    Replaces the dimensionally-incoherent ``1 - bias/12`` (an additive bias fed
++    into a multiplicative factor). The optimal scalar ``m`` minimising
++    ``sum((m*pred - actual)^2)`` is ``sum(pred*actual)/sum(pred^2)``. Two guards
++    keep it from amplifying a broken sample:
++      * if direction accuracy < threshold the sample is directionally unreliable
++        (scaling would amplify wrong-signed predictions) -> hold at 1.0;
++      * the clipped solution is only applied if it actually reduces in-sample MAE
++        vs no correction; otherwise hold at 1.0.
++    """
++    if dir_acc < REGIME_MIN_DIRECTION_ACC:
++        return 1.0, "direction_unreliable"
++    den = sum(p * p for p, _ in pairs)
++    if den <= 1e-9:
++        return 1.0, "no_improvement"
++    m = sum(p * a for p, a in pairs) / den
++    m = max(REGIME_MULT_FLOOR, min(REGIME_MULT_CEILING, m))
++    if _pairs_mae(pairs, m) >= mae_baseline - 1e-9:
++        return 1.0, "no_improvement"
++    return m, "active"
++
++
++def _load_learning_weeks() -> list[dict[str, Any]]:
++    doc = _load_json(Path(LEARNING_HISTORY_JSON), {})
++    weeks = doc.get("weeks") if isinstance(doc, dict) else None
++    return weeks if isinstance(weeks, list) else []
++
++
++def _circuit_breaker_for_regime(regime: str, proposed: float):
++    """Guard a regime multiplier update against sustained divergence-while-degrading.
++
++    Uses the same general breaker applied to every calibration layer; the
++    per-regime value trail and the regime layer's after/baseline MAE come from
++    the weekly learning history.
++    """
++    weeks = _load_learning_weeks()
++    prev_values: list[float] = []
++    mae_after: list[float | None] = []
++    mae_baseline: list[float | None] = []
++    for w in weeks:
++        rm = w.get("regime_multipliers") if isinstance(w, dict) else None
++        if not isinstance(rm, dict) or regime not in rm:
++            continue
++        try:
++            prev_values.append(float(rm[regime]))
++        except (TypeError, ValueError):
++            continue
++        mae_after.append(w.get("mae_after_regime"))
++        mae_baseline.append(w.get("mae_baseline"))
++    return evaluate_circuit_breaker(
++        key=f"regime:{regime}",
++        proposed_value=proposed,
++        prev_values=prev_values,
++        mae_after=mae_after,
++        mae_baseline=mae_baseline,
++    )
++
++
+ def compute_regime_multipliers(
+     outcomes: list[dict[str, Any]] | None = None,
+     *,
+@@ -232,17 +386,23 @@
+         bias = sum(p - a for p, a in pairs) / len(pairs)
+         mae = sum(abs(p - a) for p, a in pairs) / len(pairs)
+         dir_acc = sum(1 for p, a in pairs if (p > 0) == (a > 0)) / len(pairs)
+-        multiplier = max(REGIME_MULT_FLOOR, min(REGIME_MULT_CEILING, 1.0 - bias / 12.0))
+ 
+-        multipliers[regime] = {
++        multiplier, status = _solve_regime_multiplier(pairs, mae, dir_acc)
++        entry = {
+             "multiplier": round(multiplier, 3),
+             "bias_pp": round(bias, 2),
+             "mae": round(mae, 2),
+             "direction_acc": round(dir_acc, 3),
+             "n": len(regime_outcomes),
+-            "status": "active",
++            "status": status,
+             "last_updated": _today_iso(),
+         }
++        cb = _circuit_breaker_for_regime(regime, multiplier)
++        if cb.triggered:
++            entry["multiplier"] = round(cb.value, 3)
++            entry["status"] = "frozen_circuit_breaker"
++            entry["circuit_breaker"] = cb.detail
++        multipliers[regime] = entry
+ 
+     doc = {
+         "schema_version": 1,
+--- a/prediction/market_context_gate.py
++++ b/prediction/market_context_gate.py
+@@ -262,6 +262,12 @@
+         "history_7d": history,
+     }
+     out_path = save_market_context(doc, path)
++    try:
++        from prediction.regime_calibration import record_daily_regime
++
++        record_daily_regime(_now_iso()[:10], regime)
++    except Exception as exc:  # noqa: BLE001 - history recording is best-effort
++        logger.warning("[MarketContext] regime history record failed: %s", exc)
+     logger.info(
+         "[MarketContext] regime=%s xbi_5d=%s vix=%s → %s",
+         regime,
+--- a/prediction/cluster_cal_factor.py
++++ b/prediction/cluster_cal_factor.py
+@@ -16,8 +16,10 @@
+ from orchestrator_io_paths import (
+     CLUSTER_CAL_FACTORS_JSON,
+     DATA_DIR,
++    LEARNING_HISTORY_JSON,
+     PAST_CATALYST_PREDICTIONS_JSON,
+ )
++from prediction.calibration_circuit_breaker import evaluate_circuit_breaker
+ 
+ logger = logging.getLogger(__name__)
+ 
+@@ -259,6 +261,37 @@
+     return "calibrated"
+ 
+ 
++def _circuit_breaker_for_cluster(cluster: str, proposed: float):
++    """Guard a cluster cal_factor update with the same general breaker as regimes.
++
++    The per-cluster value trail and the cluster layer's after/baseline MAE come
++    from the weekly learning history.
++    """
++    doc = _load_json(Path(LEARNING_HISTORY_JSON), {})
++    weeks = doc.get("weeks") if isinstance(doc, dict) else None
++    weeks = weeks if isinstance(weeks, list) else []
++    prev_values: list[float] = []
++    mae_after: list[float | None] = []
++    mae_baseline: list[float | None] = []
++    for w in weeks:
++        cc = w.get("cluster_cal_factors") if isinstance(w, dict) else None
++        if not isinstance(cc, dict) or cluster not in cc:
++            continue
++        try:
++            prev_values.append(float(cc[cluster]))
++        except (TypeError, ValueError):
++            continue
++        mae_after.append(w.get("mae_after_cluster"))
++        mae_baseline.append(w.get("mae_baseline"))
++    return evaluate_circuit_breaker(
++        key=f"cluster:{cluster}",
++        proposed_value=proposed,
++        prev_values=prev_values,
++        mae_after=mae_after,
++        mae_baseline=mae_baseline,
++    )
++
++
+ def compute_cluster_cal_factors(
+     resolved_outcomes: list[dict[str, Any]],
+     *,
+@@ -309,13 +342,20 @@
+         mae = sum(abs(p - a) for p, a in pairs) / len(pairs)
+         new_cal = max(CLUSTER_CF_FLOOR, min(CLUSTER_CF_CEILING, current_cal * (1.0 - bias / 10.0)))
+ 
++        status = "active"
++        cb = _circuit_breaker_for_cluster(cluster_name, new_cal)
++        if cb.triggered:
++            new_cal = cb.value
++            status = "frozen_circuit_breaker"
++
+         cluster_cal_factors[cluster_name] = {
+             "cal_factor": round(new_cal, 3),
+             "bias_pp": round(bias, 2),
+             "mae": round(mae, 2),
+             "n_samples": len(errors),
+             "direction": _direction_from_bias(bias),
+-            "status": "active",
++            "status": status,
++            **({"circuit_breaker": cb.detail} if cb.triggered else {}),
+             "last_updated": _today_iso(),
+             "recent_outcomes": [
+                 {
+--- /dev/null	2026-06-24 05:28:06.226363935 +0000
++++ b/prediction/calibration_circuit_breaker.py
+@@ -0,0 +1,130 @@
++"""
++General circuit breaker for calibration multipliers / cal_factors.
++
++Freezes an updated calibration value when it keeps moving in the same direction
++for several consecutive weekly updates *while* the mechanism's validation metric
++degrades over the same window. Applies uniformly to any calibration layer
++(regime multipliers, cluster cal_factors, ...), not a RISK_ON-specific patch.
++
++The breaker is intentionally conservative: it never moves a value on its own, it
++only *blocks* a further divergent update and surfaces a visible flag so the
++condition is auditable (mirrors the explicit-flag discipline used elsewhere,
++e.g. ``historyCloseSeriesLooksContaminated``).
++"""
++from __future__ import annotations
++
++import os
++from dataclasses import dataclass, field
++from typing import Any
++
++# --- Configuration (override via env) -------------------------------------
++# Number of consecutive same-direction updates (incl. the proposed one) that
++# count as a sustained drift away from the neutral value.
++CB_CONSECUTIVE_MOVES = int(os.getenv("CB_CONSECUTIVE_MOVES", "3"))
++# How many recent updates must show degraded validation metrics.
++CB_DEGRADE_WINDOW = int(os.getenv("CB_DEGRADE_WINDOW", "2"))
++# A mechanism update is "degraded" when its after-correction MAE exceeds the
++# no-correction baseline MAE by more than this many percentage points.
++CB_MAE_DEGRADE_PP = float(os.getenv("CB_MAE_DEGRADE_PP", "0.0"))
++# Neutral value a calibration factor collapses to when it has no effect.
++NEUTRAL_VALUE = 1.0
++
++
++@dataclass
++class CircuitBreakerResult:
++    triggered: bool
++    value: float
++    frozen_to: float | None = None
++    reason: str | None = None
++    detail: dict[str, Any] = field(default_factory=dict)
++
++
++def _moves_same_direction_away_from_neutral(values: list[float], moves: int) -> bool:
++    """True when the last ``moves`` deltas share one sign and push away from 1.0."""
++    if moves < 1 or len(values) < moves + 1:
++        return False
++    tail = values[-(moves + 1):]
++    deltas = [b - a for a, b in zip(tail, tail[1:])]
++    if any(abs(d) < 1e-9 for d in deltas):
++        return False
++    if not (all(d > 0 for d in deltas) or all(d < 0 for d in deltas)):
++        return False
++    distances = [abs(v - NEUTRAL_VALUE) for v in tail]
++    return all(b > a for a, b in zip(distances, distances[1:]))
++
++
++def _degraded_flags(
++    mae_after: list[float | None],
++    mae_baseline: list[float | None],
++    tol_pp: float,
++) -> list[bool]:
++    flags: list[bool] = []
++    for after, base in zip(mae_after, mae_baseline):
++        if after is None or base is None:
++            flags.append(False)
++        else:
++            flags.append(float(after) > float(base) + tol_pp)
++    return flags
++
++
++def evaluate_circuit_breaker(
++    *,
++    key: str,
++    proposed_value: float,
++    prev_values: list[float],
++    mae_after: list[float | None],
++    mae_baseline: list[float | None],
++    consecutive_moves: int = CB_CONSECUTIVE_MOVES,
++    degrade_window: int = CB_DEGRADE_WINDOW,
++    mae_degrade_pp: float = CB_MAE_DEGRADE_PP,
++) -> CircuitBreakerResult:
++    """Decide whether ``proposed_value`` may be applied for calibration ``key``.
++
++    ``prev_values`` and the metric lists are chronological (oldest first); the
++    metric lists describe the *already applied* historical updates that produced
++    ``prev_values``. Trigger requires both:
++      * the value drifts the same direction away from 1.0 for ``consecutive_moves``
++        consecutive updates (history + proposed), and
++      * the mechanism degraded (after-MAE > baseline-MAE + tol) on each of the
++        last ``degrade_window`` updates.
++    On trigger the value is frozen to the most recent non-degraded historical
++    value (else the neutral value).
++    """
++    values = [float(v) for v in prev_values] + [float(proposed_value)]
++    drift = _moves_same_direction_away_from_neutral(values, consecutive_moves)
++
++    degraded = _degraded_flags(mae_after, mae_baseline, mae_degrade_pp)
++    recent = degraded[-degrade_window:] if degrade_window > 0 else []
++    metrics_degrading = len(recent) >= degrade_window and degrade_window > 0 and all(recent)
++
++    if not (drift and metrics_degrading):
++        return CircuitBreakerResult(
++            triggered=False,
++            value=float(proposed_value),
++            detail={
++                "key": key,
++                "drift": drift,
++                "metrics_degrading": metrics_degrading,
++            },
++        )
++
++    frozen_to = NEUTRAL_VALUE
++    for value, is_degraded in zip(reversed(prev_values), reversed(degraded)):
++        if not is_degraded:
++            frozen_to = float(value)
++            break
++
++    return CircuitBreakerResult(
++        triggered=True,
++        value=frozen_to,
++        frozen_to=frozen_to,
++        reason="diverging_while_degrading",
++        detail={
++            "key": key,
++            "proposed_value": float(proposed_value),
++            "consecutive_moves": consecutive_moves,
++            "degrade_window": degrade_window,
++            "mae_degrade_pp": mae_degrade_pp,
++            "recent_degraded": recent,
++        },
++    )
+--- /dev/null	2026-06-24 05:28:06.226363935 +0000
++++ b/prediction/backfill_regime_history.py
+@@ -0,0 +1,142 @@
++"""Reconstruct ``regime_history.json`` from historical XBI / TLT / VIX prices.
++
++The regime multiplier needs to know which market regime was in force on each past
++prediction date. Going forward ``market_context_gate.run`` records this daily, but
++historical outcomes predate that. This builder replays the *same* deterministic
++classifier (``market_context_gate.classify_regime`` with the same thresholds) over
++historical price series to fill the gap.
++
++It never overwrites an already-recorded day unless ``overwrite=True`` — recorded
++days reflect the live classification at the time and take precedence.
++
++CLI::
++
++    python -m prediction.backfill_regime_history            # fill missing days
++    python -m prediction.backfill_regime_history --overwrite  # rebuild all
++"""
++from __future__ import annotations
++
++import logging
++from typing import Any
++
++from prediction.market_context_gate import classify_regime
++
++logger = logging.getLogger(__name__)
++
++
++def _pct_return(closes: list[float], end_idx: int, days: int) -> float | None:
++    """Percent return over ``days`` sessions ending at ``end_idx`` (inclusive)."""
++    start = end_idx - days
++    if start < 0:
++        return None
++    old = closes[start]
++    new = closes[end_idx]
++    if old <= 0:
++        return None
++    return round((new - old) / old * 100.0, 4)
++
++
++def build_history_from_series(
++    dates: list[str],
++    xbi_closes: list[float],
++    tlt_closes: list[float],
++    vix_levels: list[float | None],
++) -> dict[str, str]:
++    """Classify the regime for each date from aligned daily series.
++
++    All four lists must be aligned by trading day and share the same length.
++    Days without enough trailing history for the 20-day window are skipped (the
++    classifier cannot be reproduced faithfully without its inputs).
++    """
++    n = len(dates)
++    if not (len(xbi_closes) == len(tlt_closes) == len(vix_levels) == n):
++        raise ValueError("dates, xbi, tlt and vix series must be aligned and equal length")
++
++    out: dict[str, str] = {}
++    for i in range(n):
++        x5 = _pct_return(xbi_closes, i, 5)
++        x20 = _pct_return(xbi_closes, i, 20)
++        t5 = _pct_return(tlt_closes, i, 5)
++        if x5 is None or x20 is None:
++            continue  # insufficient trailing history to reproduce the gate
++        signals: dict[str, Any] = {
++            "xbi_5d_return": x5,
++            "xbi_20d_return": x20,
++            "tlt_5d_return": t5,
++            "vix_level": vix_levels[i],
++        }
++        out[str(dates[i])[:10]] = classify_regime(signals)
++    return out
++
++
++def _fetch_aligned_series(period: str = "1y") -> tuple[list[str], list[float], list[float], list[float | None]]:
++    """Fetch XBI / TLT / VIX daily closes aligned on XBI's trading calendar."""
++    import yfinance as yf
++
++    def closes(symbol: str) -> dict[str, float]:
++        hist = yf.Ticker(symbol).history(period=period, auto_adjust=True)
++        if hist is None or hist.empty:
++            return {}
++        return {str(idx.date()): float(v) for idx, v in hist["Close"].dropna().items()}
++
++    xbi = closes("XBI")
++    tlt = closes("TLT")
++    vix = closes("^VIX")
++    dates = sorted(xbi)
++    xbi_s = [xbi[d] for d in dates]
++    tlt_s = [tlt.get(d, tlt[max(k for k in tlt if k <= d)] if any(k <= d for k in tlt) else 0.0) for d in dates]
++    vix_s: list[float | None] = [vix.get(d) for d in dates]
++    return dates, xbi_s, tlt_s, vix_s
++
++
++def backfill(*, overwrite: bool = False, period: str = "1y") -> dict[str, Any]:
++    """Fetch prices, classify each day, merge into ``regime_history.json``.
++
++    Returns a summary dict with counts. Existing days are preserved unless
++    ``overwrite`` is set.
++    """
++    from prediction.regime_calibration import load_regime_history, record_daily_regime
++
++    dates, xbi_s, tlt_s, vix_s = _fetch_aligned_series(period=period)
++    reconstructed = build_history_from_series(dates, xbi_s, tlt_s, vix_s)
++
++    existing = load_regime_history()
++    added = 0
++    updated = 0
++    for d, regime in sorted(reconstructed.items()):
++        if d in existing and not overwrite:
++            continue
++        if d in existing:
++            updated += 1
++        else:
++            added += 1
++        record_daily_regime(d, regime)
++
++    summary = {
++        "reconstructed_days": len(reconstructed),
++        "added": added,
++        "updated": updated,
++        "kept_existing": len(existing) if not overwrite else 0,
++    }
++    logger.info("[BackfillRegime] %s", summary)
++    return summary
++
++
++def main(argv: list[str] | None = None) -> int:
++    import argparse
++
++    parser = argparse.ArgumentParser(description="Backfill regime_history.json from XBI/TLT/VIX prices")
++    parser.add_argument("--overwrite", action="store_true", help="rebuild already-recorded days too")
++    parser.add_argument("--period", default="1y", help="yfinance history window (default 1y)")
++    args = parser.parse_args(argv)
++
++    logging.basicConfig(level=logging.INFO)
++    summary = backfill(overwrite=args.overwrite, period=args.period)
++    print(summary)
++    return 0
++
++
++if __name__ == "__main__":
++    import sys
++
++    sys.exit(main())
+--- /dev/null	2026-06-24 05:28:06.226363935 +0000
++++ b/recalc_calibration.py
+@@ -0,0 +1,123 @@
++"""Recompute regime multipliers + cluster cal_factors and show before/after.
++
++End-to-end helper for applying the RISK_ON fix on real data:
++
++  1. backfill ``regime_history.json`` from XBI/TLT/VIX prices (so historical
++     outcomes get the regime that was actually in force, not today's);
++  2. recompute regime multipliers and cluster cal_factors from the resolved
++     outcome pool, using the fixed (guarded, least-squares) logic;
++  3. print a before/after table.
++
++By default it is a DRY RUN (nothing is written). Pass ``--apply`` to persist the
++new ``regime_multipliers.json`` and ``cluster_cal_factors.json``.
++
++Usage::
++
++    python recalc_calibration.py              # dry-run: backfill + show before/after
++    python recalc_calibration.py --apply      # also persist the recomputed values
++    python recalc_calibration.py --no-backfill # skip the price backfill step
++"""
++from __future__ import annotations
++
++import argparse
++import json
++from pathlib import Path
++
++from orchestrator_io_paths import CLUSTER_CAL_FACTORS_JSON, REGIME_MULTIPLIERS_JSON
++from prediction.cluster_cal_factor import (
++    collect_resolved_outcomes_from_sources,
++    compute_cluster_cal_factors,
++)
++from prediction.regime_calibration import (
++    compute_regime_multipliers,
++    resolve_regime_outcomes_for_learning,
++)
++
++
++def _load(path: str) -> dict:
++    p = Path(path)
++    if not p.is_file():
++        return {}
++    try:
++        return json.loads(p.read_text(encoding="utf-8"))
++    except (OSError, json.JSONDecodeError):
++        return {}
++
++
++def _regime_table(before: dict, after: dict) -> str:
++    b = (before.get("regimes") or {}) if isinstance(before, dict) else {}
++    a = (after.get("regimes") or {}) if isinstance(after, dict) else {}
++    rows = ["  regime      before   ->  after    status                 n     dir"]
++    for r in ("RISK_ON", "NEUTRAL", "RISK_OFF"):
++        bm = (b.get(r) or {}).get("multiplier")
++        ae = a.get(r) or {}
++        rows.append(
++            f"  {r:<10}  {str(bm):>6}   ->  {str(ae.get('multiplier')):>6}    "
++            f"{str(ae.get('status')):<22} {str(ae.get('n')):>4}  {str(ae.get('direction_acc'))}"
++        )
++    return "\n".join(rows)
++
++
++def _cluster_table(before: dict, after: dict) -> str:
++    b = (before.get("clusters") or {}) if isinstance(before, dict) else {}
++    a = (after.get("clusters") or {}) if isinstance(after, dict) else {}
++    rows = ["  cluster              before   ->  after    status                 n"]
++    for name in sorted(a):
++        ae = a.get(name) or {}
++        if ae.get("cal_factor") is None:
++            continue
++        bm = (b.get(name) or {}).get("cal_factor")
++        rows.append(
++            f"  {name:<20} {str(bm):>6}   ->  {str(ae.get('cal_factor')):>6}    "
++            f"{str(ae.get('status')):<22} {str(ae.get('n_samples')):>4}"
++        )
++    return "\n".join(rows)
++
++
++def main(argv: list[str] | None = None) -> int:
++    parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
++    parser.add_argument("--apply", action="store_true", help="persist recomputed values (default: dry-run)")
++    parser.add_argument("--no-backfill", action="store_true", help="skip XBI/TLT/VIX regime backfill")
++    parser.add_argument("--backfill-overwrite", action="store_true", help="rebuild already-recorded regime days")
++    args = parser.parse_args(argv)
++
++    if not args.no_backfill:
++        print("== Step 1: backfill regime_history.json from prices ==")
++        try:
++            from prediction.backfill_regime_history import backfill
++
++            summary = backfill(overwrite=args.backfill_overwrite)
++            print(f"   {summary}")
++        except Exception as exc:  # noqa: BLE001 - keep going if prices unavailable
++            print(f"   SKIPPED (price fetch failed: {exc}). Recompute will use existing regime_history.json.")
++
++    print("\n== Step 2: recompute (dry-run) ==")
++    before_regime = _load(REGIME_MULTIPLIERS_JSON)
++    before_cluster = _load(CLUSTER_CAL_FACTORS_JSON)
++
++    outcomes = collect_resolved_outcomes_from_sources()
++    regime_outcomes = resolve_regime_outcomes_for_learning(outcomes)
++    after_regime = compute_regime_multipliers(regime_outcomes, dry_run=True)
++    after_cluster = compute_cluster_cal_factors(outcomes, dry_run=True)
++
++    print(f"   outcomes pool: {len(outcomes)} | regime-tagged pool: {len(regime_outcomes)}")
++    print("\n-- Regime multipliers --")
++    print(_regime_table(before_regime, after_regime))
++    print("\n-- Cluster cal_factors --")
++    print(_cluster_table(before_cluster, after_cluster))
++
++    if args.apply:
++        print("\n== Step 3: APPLY (persisting) ==")
++        compute_regime_multipliers(regime_outcomes, dry_run=False)
++        compute_cluster_cal_factors(outcomes, dry_run=False)
++        print(f"   wrote {REGIME_MULTIPLIERS_JSON}")
++        print(f"   wrote {CLUSTER_CAL_FACTORS_JSON}")
++    else:
++        print("\n(dry-run — nothing written. Re-run with --apply to persist.)")
++    return 0
++
++
++if __name__ == "__main__":
++    import sys
++
++    sys.exit(main())
+--- /dev/null	2026-06-24 05:28:06.226363935 +0000
++++ b/tests/test_calibration_circuit_breaker.py
+@@ -0,0 +1,77 @@
++"""Tests for the general calibration circuit breaker."""
++from __future__ import annotations
++
++from prediction.calibration_circuit_breaker import evaluate_circuit_breaker
++
++
++def _call(prev_values, mae_after, mae_baseline, proposed, **kw):
++    return evaluate_circuit_breaker(
++        key="regime:RISK_ON",
++        proposed_value=proposed,
++        prev_values=prev_values,
++        mae_after=mae_after,
++        mae_baseline=mae_baseline,
++        **kw,
++    )
++
++
++def test_no_trigger_when_metrics_not_degrading():
++    # Value drifts up consistently, but the mechanism keeps beating baseline.
++    res = _call(
++        prev_values=[1.0, 1.1, 1.2],
++        mae_after=[7.0, 6.9, 6.8],
++        mae_baseline=[7.2, 7.2, 7.2],
++        proposed=1.3,
++    )
++    assert res.triggered is False
++    assert res.value == 1.3
++
++
++def test_no_trigger_when_value_not_diverging():
++    # Metrics degrade, but the value oscillates rather than drifting one way.
++    res = _call(
++        prev_values=[1.0, 1.2, 0.95],
++        mae_after=[7.5, 7.6, 7.7],
++        mae_baseline=[7.2, 7.2, 7.2],
++        proposed=1.1,
++    )
++    assert res.triggered is False
++
++
++def test_trigger_freezes_to_last_good_value():
++    # Monotonic drift away from 1.0 while after-MAE > baseline for the window.
++    res = _call(
++        prev_values=[1.0, 1.1, 1.2],
++        mae_after=[7.1, 7.5, 7.9],
++        mae_baseline=[7.2, 7.2, 7.2],
++        proposed=1.3,
++    )
++    assert res.triggered is True
++    assert res.reason == "diverging_while_degrading"
++    # last non-degraded historical value was 1.0 (first week, after<baseline)
++    assert res.frozen_to == 1.0
++    assert res.value == 1.0
++
++
++def test_trigger_on_downward_drift():
++    res = _call(
++        prev_values=[1.0, 0.9, 0.8],
++        mae_after=[7.9, 8.0, 8.1],
++        mae_baseline=[7.2, 7.2, 7.2],
++        proposed=0.7,
++    )
++    assert res.triggered is True
++    # no historical week was non-degraded -> falls back to neutral
++    assert res.frozen_to == 1.0
++
++
++def test_degrade_window_is_configurable():
++    # With a 3-week degrade window, two degraded weeks are not enough.
++    res = _call(
++        prev_values=[1.0, 1.1, 1.2],
++        mae_after=[7.0, 7.5, 7.9],
++        mae_baseline=[7.2, 7.2, 7.2],
++        proposed=1.3,
++        degrade_window=3,
++    )
++    assert res.triggered is False
+--- /dev/null	2026-06-24 05:28:06.226363935 +0000
++++ b/tests/test_regime_calibration_fix.py
+@@ -0,0 +1,92 @@
++"""Tests for the RISK_ON regime-multiplier fix.
++
++Covers the three root causes:
++  * the date funnel (current regime stamped onto historical outcomes),
++  * the dimensionally-incoherent ``1 - bias/12`` formula, and
++  * the absence of a self-validation guard.
++"""
++from __future__ import annotations
++
++from prediction import regime_calibration as rc
++
++
++def test_get_regime_at_date_does_not_funnel(monkeypatch):
++    """Past dates must not inherit the *current* regime."""
++    monkeypatch.setattr(rc, "load_regime_history", lambda: {})
++    monkeypatch.setattr(rc, "get_current_regime", lambda: "RISK_ON")
++
++    # Unknown past date -> UNKNOWN (excluded), never the live regime.
++    assert rc.get_regime_at_date("2026-01-01") == rc.UNKNOWN_REGIME
++    # A recorded historical regime is honoured.
++    monkeypatch.setattr(rc, "load_regime_history", lambda: {"2026-01-02": "RISK_OFF"})
++    assert rc.get_regime_at_date("2026-01-02") == "RISK_OFF"
++    # Today resolves to the live regime.
++    assert rc.get_regime_at_date(rc._today_iso()) == "RISK_ON"
++
++
++def test_enrich_tags_unknown_not_current(monkeypatch):
++    monkeypatch.setattr(rc, "load_regime_history", lambda: {})
++    monkeypatch.setattr(rc, "get_current_regime", lambda: "RISK_ON")
++    tagged = rc.enrich_outcomes_with_regime([{"ticker": "AAA", "date": "2026-01-01", "pred": 3, "actual": 8}])
++    assert tagged[0]["regime"] == rc.UNKNOWN_REGIME
++
++
++def test_solver_holds_when_direction_unreliable():
++    # Wrong sign on most pairs -> direction accuracy < 0.5 -> no magnitude scaling.
++    pairs = [(3.0, -8.0)] * 7 + [(3.0, 8.0)] * 3
++    mae = sum(abs(p - a) for p, a in pairs) / len(pairs)
++    dir_acc = sum(1 for p, a in pairs if (p > 0) == (a > 0)) / len(pairs)
++    m, status = rc._solve_regime_multiplier(pairs, mae, dir_acc)
++    assert status == "direction_unreliable"
++    assert m == 1.0
++
++
++def test_solver_scales_and_reduces_error_on_healthy_sample():
++    # Correct sign, systematic under-magnitude (pred half of actual).
++    pairs = [(4.0, 8.0), (5.0, 10.0), (3.0, 6.0), (6.0, 12.0), (2.0, 4.0),
++             (4.5, 9.0), (3.5, 7.0), (5.5, 11.0)]
++    mae = sum(abs(p - a) for p, a in pairs) / len(pairs)
++    dir_acc = sum(1 for p, a in pairs if (p > 0) == (a > 0)) / len(pairs)
++    m, status = rc._solve_regime_multiplier(pairs, mae, dir_acc)
++    assert status == "active"
++    assert m > 1.0  # scales magnitude up toward the actuals
++    assert rc._pairs_mae(pairs, m) < mae  # genuinely reduces error
++
++
++def test_solver_no_improvement_when_already_calibrated():
++    pairs = [(5.0, 5.0)] * 8
++    m, status = rc._solve_regime_multiplier(pairs, 0.0, 1.0)
++    assert status == "no_improvement"
++    assert m == 1.0
++
++
++def test_compute_neutralizes_broken_risk_on_sample(monkeypatch, tmp_path):
++    monkeypatch.setattr(rc, "REGIME_MULTIPLIERS_JSON", str(tmp_path / "rm.json"))
++    monkeypatch.setattr(rc, "LEARNING_HISTORY_JSON", str(tmp_path / "lh.json"))
++    monkeypatch.setattr(rc, "get_current_regime", lambda: "RISK_ON")
++    # 33 RISK_ON outcomes, mostly wrong-signed (direction ~0.39).
++    outcomes = [{"pred": 3.0, "actual": -8.0, "regime": "RISK_ON"} for _ in range(20)]
++    outcomes += [{"pred": 3.0, "actual": 8.0, "regime": "RISK_ON"} for _ in range(13)]
++    doc = rc.compute_regime_multipliers(outcomes, dry_run=True)
++    risk_on = doc["regimes"]["RISK_ON"]
++    assert risk_on["multiplier"] == 1.0
++    assert risk_on["status"] == "direction_unreliable"
++
++
++def test_compute_circuit_breaker_freezes_divergence(monkeypatch, tmp_path):
++    import json
++
++    # History: RISK_ON multiplier drifting up while regime layer worsens.
++    weeks = {
++        "weeks": [
++            {"regime_multipliers": {"RISK_ON": 1.0}, "mae_after_regime": 7.1, "mae_baseline": 7.2},
++            {"regime_multipliers": {"RISK_ON": 1.1}, "mae_after_regime": 7.6, "mae_baseline": 7.2},
++            {"regime_multipliers": {"RISK_ON": 1.2}, "mae_after_regime": 7.9, "mae_baseline": 7.2},
++        ]
++    }
++    lh = tmp_path / "lh.json"
++    lh.write_text(json.dumps(weeks), encoding="utf-8")
++    monkeypatch.setattr(rc, "LEARNING_HISTORY_JSON", str(lh))
++    cb = rc._circuit_breaker_for_regime("RISK_ON", 1.3)
++    assert cb.triggered is True
++    assert cb.value == 1.0
+--- /dev/null	2026-06-24 05:28:06.226363935 +0000
++++ b/tests/test_backfill_regime_history.py
+@@ -0,0 +1,55 @@
++"""Tests for the historical regime backfill builder."""
++from __future__ import annotations
++
++import pytest
++
++from prediction.backfill_regime_history import build_history_from_series
++
++
++def _series(n: int, start: float, step: float) -> list[float]:
++    return [start + step * i for i in range(n)]
++
++
++def test_skips_days_without_enough_trailing_history():
++    dates = [f"2026-01-{d:02d}" for d in range(1, 11)]  # only 10 days
++    xbi = _series(10, 100.0, 1.0)
++    tlt = _series(10, 50.0, 0.0)
++    vix = [15.0] * 10
++    out = build_history_from_series(dates, xbi, tlt, vix)
++    assert out == {}  # 20-day window never satisfied
++
++
++def test_classifies_risk_on_when_xbi_rallies():
++    n = 30
++    dates = [f"2026-03-{i+1:02d}" for i in range(n)]
++    xbi = _series(n, 100.0, 1.0)  # steady up -> 5d and 20d returns positive
++    tlt = _series(n, 50.0, 0.0)
++    vix = [15.0] * n
++    out = build_history_from_series(dates, xbi, tlt, vix)
++    assert out[dates[-1]] == "RISK_ON"
++
++
++def test_classifies_crisis_on_vix_spike():
++    n = 30
++    dates = [f"2026-03-{i+1:02d}" for i in range(n)]
++    xbi = _series(n, 100.0, 1.0)
++    tlt = _series(n, 50.0, 0.0)
++    vix = [15.0] * (n - 1) + [40.0]  # spike on last day
++    out = build_history_from_series(dates, xbi, tlt, vix)
++    assert out[dates[-1]] == "CRISIS"
++
++
++def test_classifies_risk_off_on_sector_drop():
++    n = 30
++    dates = [f"2026-03-{i+1:02d}" for i in range(n)]
++    xbi = _series(n, 100.0, 0.0)
++    xbi[-1] = xbi[-6] * 0.95  # -5% over 5d -> RISK_OFF
++    tlt = _series(n, 50.0, 0.0)
++    vix = [15.0] * n
++    out = build_history_from_series(dates, xbi, tlt, vix)
++    assert out[dates[-1]] == "RISK_OFF"
++
++
++def test_rejects_misaligned_series():
++    with pytest.raises(ValueError):
++        build_history_from_series(["2026-01-01"], [1.0, 2.0], [1.0], [1.0])
+--- /dev/null	2026-06-24 05:28:06.226363935 +0000
++++ b/tests/test_cluster_circuit_breaker.py
+@@ -0,0 +1,41 @@
++"""The general circuit breaker must also guard cluster cal_factors."""
++from __future__ import annotations
++
++import json
++
++from prediction import cluster_cal_factor as cc
++
++
++def test_cluster_breaker_freezes_diverging_factor(monkeypatch, tmp_path):
++    weeks = {
++        "weeks": [
++            {"cluster_cal_factors": {"phase1_2_early": 0.95}, "mae_after_cluster": 7.1, "mae_baseline": 7.2},
++            {"cluster_cal_factors": {"phase1_2_early": 0.85}, "mae_after_cluster": 7.6, "mae_baseline": 7.2},
++            {"cluster_cal_factors": {"phase1_2_early": 0.75}, "mae_after_cluster": 7.9, "mae_baseline": 7.2},
++        ]
++    }
++    lh = tmp_path / "lh.json"
++    lh.write_text(json.dumps(weeks), encoding="utf-8")
++    monkeypatch.setattr(cc, "LEARNING_HISTORY_JSON", str(lh))
++
++    cb = cc._circuit_breaker_for_cluster("phase1_2_early", 0.71)
++    assert cb.triggered is True
++    # last non-degraded historical value was 0.95 (first week beat baseline)
++    assert cb.value == 0.95
++
++
++def test_cluster_breaker_passes_when_helping(monkeypatch, tmp_path):
++    weeks = {
++        "weeks": [
++            {"cluster_cal_factors": {"phase2_oncology": 1.05}, "mae_after_cluster": 7.0, "mae_baseline": 7.2},
++            {"cluster_cal_factors": {"phase2_oncology": 1.10}, "mae_after_cluster": 6.9, "mae_baseline": 7.2},
++            {"cluster_cal_factors": {"phase2_oncology": 1.15}, "mae_after_cluster": 6.8, "mae_baseline": 7.2},
++        ]
++    }
++    lh = tmp_path / "lh.json"
++    lh.write_text(json.dumps(weeks), encoding="utf-8")
++    monkeypatch.setattr(cc, "LEARNING_HISTORY_JSON", str(lh))
++
++    cb = cc._circuit_breaker_for_cluster("phase2_oncology", 1.2)
++    assert cb.triggered is False
++    assert cb.value == 1.2

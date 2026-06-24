@@ -1,0 +1,545 @@
+diff --git a/post_refresh_steps.py b/post_refresh_steps.py
+index c9f8aef..614e09a 100644
+--- a/post_refresh_steps.py
++++ b/post_refresh_steps.py
+@@ -207,7 +207,9 @@ def run_post_refresh_steps(
+                 len(fb.get("cal_factor_changes") or []),
+             )
+         except Exception as exc:
+-            log.warning("validation_feedback_loop failed (non-fatal): %s", exc)
++            # Surface as an error (was a swallowed warning): a silent failure here
++            # left the dashboard stuck on "Collecting data" indefinitely.
++            log.error("validation_feedback_loop failed: %s", exc, exc_info=True)
+             failures.append(f"validation_feedback_loop ({exc})")
+ 
+     return failures
+diff --git a/prediction/eis_super_score_learning.py b/prediction/eis_super_score_learning.py
+index 21c9bbb..a0f6a6e 100644
+--- a/prediction/eis_super_score_learning.py
++++ b/prediction/eis_super_score_learning.py
+@@ -223,10 +223,20 @@ def build_correlation_timeline(
+             ys = [p[1] for p in pairs]
+             return _pearson(xs, ys)
+ 
++        def _mag_mae(pairs: list[tuple[float, float]]) -> float | None:
++            # Magnitude-calibration error: |score| vs |ΔP|. Unlike Pearson ρ this is
++            # sensitive to the per-bin scalar cal_factor (super = raw * K), so a
++            # well-sized cal_factor actually shows up as a lift here.
++            if len(pairs) < 3:
++                return None
++            return round(sum(abs(abs(s) - abs(d)) for s, d in pairs) / len(pairs), 4)
++
+         raw_r1 = _rho(raw_1d)
+         sup_r1 = _rho(sup_1d)
+         raw_r7 = _rho(raw_7d)
+         sup_r7 = _rho(sup_7d)
++        mae_raw_7 = _mag_mae(raw_7d)
++        mae_sup_7 = _mag_mae(sup_7d)
+ 
+         out.append(
+             {
+@@ -243,6 +253,11 @@ def build_correlation_timeline(
+                 "corr_super_7d": sup_r7,
+                 "lift_1d": round(sup_r1 - raw_r1, 4) if sup_r1 is not None and raw_r1 is not None else None,
+                 "lift_7d": round(sup_r7 - raw_r7, 4) if sup_r7 is not None and raw_r7 is not None else None,
++                "mae_raw_7d": mae_raw_7,
++                "mae_super_7d": mae_sup_7,
++                "mae_lift_7d": (
++                    round(mae_raw_7 - mae_sup_7, 4) if mae_raw_7 is not None and mae_sup_7 is not None else None
++                ),
+                 "cal_factor": (st.get("windows") or {}).get(label, {}).get("cal_factor"),
+             }
+         )
+@@ -315,6 +330,9 @@ def run_eis_super_score_learning_cycle(*, dry_run: bool = True) -> dict[str, Any
+         "mean_corr_raw_7d": _mean_rho("corr_raw_7d"),
+         "mean_corr_super_7d": _mean_rho("corr_super_7d"),
+         "mean_lift_7d": _mean_rho("lift_7d"),
++        "mean_mae_raw_7d": _mean_rho("mae_raw_7d"),
++        "mean_mae_super_7d": _mean_rho("mae_super_7d"),
++        "mean_mae_lift_7d": _mean_rho("mae_lift_7d"),
+         "bins_with_data_7d": sum(1 for r in timeline if r.get("corr_super_7d") is not None),
+     }
+ 
+@@ -328,14 +346,22 @@ def run_eis_super_score_learning_cycle(*, dry_run: bool = True) -> dict[str, Any
+     }
+ 
+     if not dry_run:
++        today = _today_iso()
+         history = list(prev.get("history") or [])
++        # Replace any snapshot already taken today instead of appending a duplicate
++        # (re-running the cycle the same day otherwise produced identical adjacent
++        # points and collapsed every week-over-week delta to 0.0).
++        history = [h for h in history if not (isinstance(h, dict) and h.get("date") == today)]
+         history.append(
+             {
+-                "week": _today_iso()[:7],
+-                "date": _today_iso(),
++                "week": today[:7],
++                "date": today,
+                 "mean_corr_raw_7d": effectiveness.get("mean_corr_raw_7d"),
+                 "mean_corr_super_7d": effectiveness.get("mean_corr_super_7d"),
+                 "mean_lift_7d": effectiveness.get("mean_lift_7d"),
++                "mean_mae_raw_7d": effectiveness.get("mean_mae_raw_7d"),
++                "mean_mae_super_7d": effectiveness.get("mean_mae_super_7d"),
++                "mean_mae_lift_7d": effectiveness.get("mean_mae_lift_7d"),
+                 "changes": changes,
+             }
+         )
+diff --git a/prediction/learning_lab.py b/prediction/learning_lab.py
+index d19ca5e..02967a5 100644
+--- a/prediction/learning_lab.py
++++ b/prediction/learning_lab.py
+@@ -295,6 +295,42 @@ def _verdict_corr(delta_pp: float | None, n: int, min_n: int) -> str:
+     return "neutral"
+ 
+ 
++def _week_over_week_baseline(
++    hist: list[dict[str, Any]], *, min_days: int = 7
++) -> dict[str, Any]:
++    """Most recent snapshot at least ``min_days`` before the latest one.
++
++    These histories are snapshotted *daily* (the ``week`` field is actually the
++    day), so ``hist[-2]`` is usually yesterday and the metric barely moves,
++    pinning the verdict at ~0.0pp / neutral forever. Stepping back a full week
++    surfaces real drift.
++    """
++    if len(hist) < 2:
++        return {}
++    latest = hist[-1]
++    if not isinstance(latest, dict):
++        return {}
++
++    def _parse(entry: dict[str, Any]) -> date | None:
++        raw = entry.get("date") or entry.get("week")
++        try:
++            return date.fromisoformat(str(raw)[:10])
++        except (TypeError, ValueError):
++            return None
++
++    ld = _parse(latest)
++    if ld is None:
++        prev = hist[-2]
++        return prev if isinstance(prev, dict) else {}
++    for h in reversed(hist[:-1]):
++        if not isinstance(h, dict):
++            continue
++        hd = _parse(h)
++        if hd is not None and (ld - hd).days >= min_days:
++            return h
++    return {}
++
++
+ def _reliable_learning_weeks(weeks: list[dict[str, Any]] | None) -> list[dict[str, Any]]:
+     """Drop weekly snapshots with too few resolved outcomes (misleading MAE / dir charts)."""
+     if not weeks:
+@@ -392,7 +428,7 @@ def build_effectiveness_delta(
+     poly_hist = poly.get("learning_history") if isinstance(poly.get("learning_history"), list) else []
+     poly_eff = poly.get("effectiveness") if isinstance(poly.get("effectiveness"), dict) else {}
+     poly_latest = poly_hist[-1] if poly_hist else poly_eff
+-    poly_prev = poly_hist[-2] if len(poly_hist) >= 2 else {}
++    poly_prev = _week_over_week_baseline(poly_hist)
+     poly_dir_before = poly_prev.get("mean_corr_match_stock") if isinstance(poly_prev, dict) else None
+     poly_dir_after = (
+         poly_latest.get("mean_corr_match_stock")
+@@ -417,22 +453,23 @@ def build_effectiveness_delta(
+     eis = eis_overview if eis_overview is not None else build_eis_super_score_overview()
+     eis_hist = eis.get("learning_history") if isinstance(eis.get("learning_history"), list) else []
+     eis_eff = eis.get("effectiveness") if isinstance(eis.get("effectiveness"), dict) else {}
+-    eis_prev = eis_hist[-2] if len(eis_hist) >= 2 else {}
+-    eis_latest = eis_hist[-1] if eis_hist else eis_eff
+-    eis_dir_before = eis_prev.get("mean_corr_super_7d") if isinstance(eis_prev, dict) else None
+-    eis_dir_after = (
+-        eis_latest.get("mean_corr_super_7d")
+-        if isinstance(eis_latest, dict)
+-        else eis_eff.get("mean_corr_super_7d")
+-    )
++    eis_latest = eis_hist[-1] if eis_hist and isinstance(eis_hist[-1], dict) else eis_eff
++
++    def _eis_get(key: str) -> float | None:
++        return eis_latest.get(key) if isinstance(eis_latest, dict) else eis_eff.get(key)
++
++    # Super score = raw * positive per-bin scalar, so Pearson ρ(super, ΔP) ≡ ρ(raw, ΔP)
++    # (correlation is scale-invariant) and the old corr-based lift was structurally 0.
++    # Judge the magnitude calibration the cal_factor actually changes: MAE of |score|
++    # vs |ΔP|, raw vs super within the SAME snapshot (isolated effect).
+     rows.append(
+         {
+             "mechanism": "eis_super",
+             "label": "EIS Super Score",
+-            "mae_before": None,
+-            "mae_after": None,
+-            "dir_before": eis_dir_before,
+-            "dir_after": eis_dir_after,
++            "mae_before": _eis_get("mean_mae_raw_7d"),
++            "mae_after": _eis_get("mean_mae_super_7d"),
++            "dir_before": _eis_get("mean_corr_raw_7d"),
++            "dir_after": _eis_get("mean_corr_super_7d"),
+             "n": eis.get("n_events_scored") or 0,
+             "min_n": 20,
+         }
+@@ -506,7 +543,7 @@ def build_effectiveness_delta(
+         dir_b, dir_a = r.get("dir_before"), r.get("dir_after")
+         r["mae_delta_pp"] = round(mae_a - mae_b, 2) if mae_a is not None and mae_b is not None else None
+         r["dir_delta_pp"] = round((dir_a - dir_b) * 100, 1) if dir_a is not None and dir_b is not None else None
+-        if r.get("mechanism") in ("polygon_match", "eis_super", "signal_calibration"):
++        if r.get("mechanism") in ("polygon_match", "signal_calibration"):
+             r["verdict"] = _verdict_corr(r["dir_delta_pp"], r["n"], r["min_n"])
+         else:
+             dir_delta = r["dir_delta_pp"] / 100 if r["dir_delta_pp"] is not None else None
+@@ -587,11 +624,30 @@ def run_learning_cycle(*, dry_run: bool = True) -> dict[str, Any]:
+     polygon_doc = persist_cd_pattern_polygon_accuracy(dry_run=dry_run)
+     polygon_changes = polygon_mean_corr_changes(prev_polygon, polygon_doc)
+ 
++    # Run the per-ticker validation feedback loop as part of the cycle so its
++    # summary/history files are kept fresh and the dashboard row populates. It
++    # used to run ONLY from a Sunday-gated refresh step whose failures were
++    # swallowed as "non-fatal", so it silently never produced output.
++    feedback_changes: list[dict[str, Any]] = []
++    try:
++        from prediction.validation_feedback_loop import run_now as _run_validation_feedback
++
++        feedback_changes = _run_validation_feedback(dry_run=dry_run).get("cal_factor_changes") or []
++    except Exception as exc:
++        logger.warning("validation_feedback_loop failed in learning cycle: %s", exc)
++        if not dry_run:
++            append_learning_log(
++                f"validation feedback loop failed: {exc}",
++                kind="error",
++                meta={"error": str(exc)},
++            )
++
+     diff: dict[str, list] = {
+         "cluster_changes": [],
+         "regime_changes": [],
+         "eis_super_changes": eis_diff.get("changes") or [],
+         "polygon_changes": polygon_changes,
++        "validation_feedback_changes": feedback_changes,
+     }
+     for name, new_entry in (cluster_doc.get("clusters") or {}).items():
+         old = (prev_cluster.get("clusters") or {}).get(name) or {}
+@@ -646,6 +702,12 @@ def run_learning_cycle(*, dry_run: bool = True) -> dict[str, Any]:
+                 kind="polygon_match",
+                 meta=ch,
+             )
++        if feedback_changes:
++            append_learning_log(
++                f"Validation feedback: {len(feedback_changes)} ticker cal_factor change(s)",
++                kind="validation_feedback",
++                meta={"n": len(feedback_changes)},
++            )
+         snapshot_weekly_history(outcomes, cluster_doc, regime_doc)
+         invalidate_overview_cache()
+ 
+diff --git a/prediction/validation_feedback_loop.py b/prediction/validation_feedback_loop.py
+index aa078c7..b295f10 100644
+--- a/prediction/validation_feedback_loop.py
++++ b/prediction/validation_feedback_loop.py
+@@ -20,7 +20,6 @@ from pathlib import Path
+ from typing import Any, Literal
+ 
+ from orchestrator_io_paths import (
+-    DATA_DIR,
+     FEEDBACK_HISTORY_JSON,
+     FEEDBACK_SUMMARY_JSON,
+     PAST_CATALYST_PREDICTIONS_JSON,
+@@ -28,7 +27,6 @@ from orchestrator_io_paths import (
+ )
+ from past_pred_io import load_past_pred_map
+ from prediction.evaluationFramework import (
+-    DECISION_CLOSE_KEY,
+     NODE_CHECKPOINTS,
+     actual_pct_at_node,
+     pred_base_at_node,
+@@ -60,8 +58,30 @@ THRESHOLDS: dict[str, float] = {
+     "bias_consecutive_nodes": 3,
+     "direction_suspend_acc": 0.35,
+     "direction_suspend_min_nodes": 5,
++    # Above this absolute MAE (pp) a ticker is treated as corrupt/outlier data:
++    # excluded from the portfolio average and never used to drive a cal_factor
++    # change (one freak penny-stock move once inflated the avg to ~1668%).
++    "mae_outlier_cap_pp": 300.0,
+ }
+ 
++
++def _portfolio_center_mae(perf: dict[str, dict[str, Any]]) -> float | None:
++    """Mean per-ticker MAE with corrupt/outlier tickers excluded.
++
++    A single absurd value (e.g. MAE 1668%) otherwise dominates the average and
++    distorts every relative threshold (under/over-performer bars).
++    """
++    cap = THRESHOLDS["mae_outlier_cap_pp"]
++    maes = [
++        p["persistent_mae"]
++        for p in perf.values()
++        if p.get("persistent_mae") is not None
++        and p.get("flag") not in ("insufficient_data",)
++        and p["persistent_mae"] <= cap
++    ]
++    return round(statistics.mean(maes), 3) if maes else None
++
++
+ FEEDBACK_NODES = ("T-10", "T-5", "T-3")
+ 
+ 
+@@ -229,17 +249,13 @@ def _propose_cal_changes(
+     seq_doc: dict,
+ ) -> tuple[list[dict[str, Any]], dict[str, list[str]]]:
+     """Return cal_factor change proposals + flag lists."""
+-    maes = [
+-        p["persistent_mae"]
+-        for p in perf.values()
+-        if p.get("persistent_mae") is not None and p.get("flag") not in ("insufficient_data",)
+-    ]
+-    portfolio_avg_mae = statistics.mean(maes) if maes else None
++    portfolio_avg_mae = _portfolio_center_mae(perf)
+ 
+     underperformers: list[str] = []
+     strong: list[str] = []
+     bias_flags: list[str] = []
+     direction_suspended: list[str] = []
++    data_outliers: list[str] = []
+     changes: list[dict[str, Any]] = []
+ 
+     for tk, p in sorted(perf.items()):
+@@ -254,6 +270,12 @@ def _propose_cal_changes(
+         if flag == "insufficient_data":
+             continue
+ 
++        if mae is not None and mae > THRESHOLDS["mae_outlier_cap_pp"]:
++            p["flag"] = "data_outlier"
++            p["cal_factor"] = round(old_cal, 4)
++            data_outliers.append(tk)
++            continue
++
+         if (
+             portfolio_avg_mae is not None
+             and mae is not None
+@@ -313,6 +335,7 @@ def _propose_cal_changes(
+         "strong_performers": strong,
+         "bias_flags": bias_flags,
+         "direction_suspended": direction_suspended,
++        "data_outliers": data_outliers,
+     }
+     return changes, summary_flags
+ 
+@@ -339,17 +362,17 @@ def build_portfolio_summary(
+     changes: list[dict[str, Any]],
+     summary_flags: dict[str, list[str]],
+ ) -> dict[str, Any]:
+-    maes = [p["persistent_mae"] for p in perf.values() if p.get("persistent_mae") is not None]
+     dirs = [p["direction_acc"] for p in perf.values() if p.get("direction_acc") is not None]
+     return {
+         "version": 1,
+         "updated_at": _now_iso(),
+-        "portfolio_avg_mae": round(statistics.mean(maes), 3) if maes else None,
++        "portfolio_avg_mae": _portfolio_center_mae(perf),
+         "portfolio_direction_acc": round(statistics.mean(dirs), 3) if dirs else None,
+         "underperformers": summary_flags.get("underperformers") or [],
+         "strong_performers": summary_flags.get("strong_performers") or [],
+         "bias_flags": summary_flags.get("bias_flags") or [],
+         "direction_suspended": summary_flags.get("direction_suspended") or [],
++        "data_outliers": summary_flags.get("data_outliers") or [],
+         "cal_factor_changes": changes,
+         "n_tickers": len(perf),
+     }
+diff --git a/tests/test_effectiveness_delta.py b/tests/test_effectiveness_delta.py
+index 5e85f86..f25c23c 100644
+--- a/tests/test_effectiveness_delta.py
++++ b/tests/test_effectiveness_delta.py
+@@ -29,14 +29,14 @@ LIVE = {
+ }
+ 
+ 
+-def _rows(monkeypatch, tmp_path):
++def _rows(monkeypatch, tmp_path, *, eis_overview=None, polygon_doc=None):
+     hist = tmp_path / "learning_history.json"
+     hist.write_text(json.dumps({"weeks": []}), encoding="utf-8")
+     monkeypatch.setattr(ll, "LEARNING_HISTORY_JSON", str(hist))
+     rows = ll.build_effectiveness_delta(
+         live_metrics=LIVE,
+-        eis_overview={"learning_history": [], "effectiveness": {}, "n_events_scored": 0},
+-        polygon_doc={"learning_history": [], "n_samples": 0},
++        eis_overview=eis_overview or {"learning_history": [], "effectiveness": {}, "n_events_scored": 0},
++        polygon_doc=polygon_doc or {"learning_history": [], "n_samples": 0},
+     )
+     return {r["mechanism"]: r for r in rows}
+ 
+@@ -54,3 +54,62 @@ def test_history_absent_does_not_fabricate_before(monkeypatch, tmp_path):
+     rows = _rows(monkeypatch, tmp_path)
+     assert rows["regime_mult"]["mae_delta_pp"] is not None
+     assert rows["regime_mult"]["dir_delta_pp"] == 2.0
++
++
++def test_eis_row_judged_on_magnitude_mae_not_correlation(monkeypatch, tmp_path):
++    # Super score = raw * positive scalar, so corr_super == corr_raw (lift 0 by
++    # construction). The row must instead reflect the magnitude MAE the cal_factor
++    # actually moves: raw vs super within the same snapshot.
++    eis = {
++        "learning_history": [
++            {
++                "date": "2026-06-24",
++                "mean_corr_raw_7d": 0.65,
++                "mean_corr_super_7d": 0.65,  # identical -> corr-based delta is 0
++                "mean_mae_raw_7d": 8.0,
++                "mean_mae_super_7d": 7.0,
++            }
++        ],
++        "effectiveness": {},
++        "n_events_scored": 500,
++    }
++    rows = _rows(monkeypatch, tmp_path, eis_overview=eis)
++    r = rows["eis_super"]
++    assert r["mae_before"] == 8.0 and r["mae_after"] == 7.0
++    assert r["mae_delta_pp"] == -1.0
++    # corr is flat (0.0) but the MAE-based verdict now shows the layer is working
++    assert r["dir_delta_pp"] == 0.0
++    assert r["verdict"] == "learning"
++
++
++def test_polygon_baseline_is_week_over_week_not_yesterday(monkeypatch, tmp_path):
++    # Daily snapshots: yesterday barely moves (pins verdict at 0.0). The baseline
++    # must step back >=7 days so real drift is visible.
++    poly = {
++        "learning_history": [
++            {"date": "2026-06-10", "mean_corr_match_stock": 0.10},
++            {"date": "2026-06-17", "mean_corr_match_stock": 0.15},
++            {"date": "2026-06-23", "mean_corr_match_stock": 0.175},
++            {"date": "2026-06-24", "mean_corr_match_stock": 0.175},
++        ],
++        "n_samples": 500,
++    }
++    rows = _rows(monkeypatch, tmp_path, polygon_doc=poly)
++    r = rows["polygon_match"]
++    # baseline is 06-17 (>=7d before 06-24), NOT 06-23 (yesterday)
++    assert r["dir_before"] == 0.15
++    assert r["dir_delta_pp"] == 2.5
++
++
++def test_polygon_baseline_collecting_without_week_of_history(monkeypatch, tmp_path):
++    # Only same-week daily points -> no >=7d baseline -> honest "collecting".
++    poly = {
++        "learning_history": [
++            {"date": "2026-06-23", "mean_corr_match_stock": 0.175},
++            {"date": "2026-06-24", "mean_corr_match_stock": 0.175},
++        ],
++        "n_samples": 500,
++    }
++    rows = _rows(monkeypatch, tmp_path, polygon_doc=poly)
++    assert rows["polygon_match"]["dir_before"] is None
++    assert rows["polygon_match"]["dir_delta_pp"] is None
+diff --git a/tests/test_eis_super_mae.py b/tests/test_eis_super_mae.py
+new file mode 100644
+index 0000000..4d738fb
+--- /dev/null
++++ b/tests/test_eis_super_mae.py
+@@ -0,0 +1,63 @@
++"""EIS super-score effectiveness must use a magnitude-sensitive metric.
++
++The super score is ``raw * K`` with ``K`` a positive per-bin scalar, so Pearson
++ρ(super, ΔP) ≡ ρ(raw, ΔP) (correlation is scale-invariant). The old ``lift``
++(corr_super − corr_raw) was therefore structurally 0.0 forever. The MAE of
++|score| vs |ΔP| does move with the cal_factor and is the correct yardstick.
++"""
++from __future__ import annotations
++
++from prediction import eis_super_score_learning as e
++
++
++def _rows(dbc: int, n: int = 12, *, scale: float = 3.0) -> list[dict]:
++    factor = e.cd_distance_factor(dbc)
++    rows = []
++    for i in range(n):
++        eis = (i - n / 2) * 3.0
++        if abs(eis) < 1.0:
++            eis = 5.0
++        raw = eis * factor
++        rows.append(
++            {
++                "eis_score": eis,
++                "days_before_cd": dbc,
++                "delta_p_7d": scale * raw,  # |ΔP| = scale * |raw|
++                "delta_p_1d": raw,
++            }
++        )
++    return rows
++
++
++def test_correlation_is_blind_to_scaling_but_mae_is_not():
++    dbc = 150
++    label = e.resolve_cd_bin(dbc)[2]
++    blend = 0.6
++    # super = raw * (blend*cal + (1-blend)); pick cal so K == scale (3.0) -> super ≈ |ΔP|
++    cal = (3.0 - (1.0 - blend)) / blend
++    state = {"windows": {label: {"cal_factor": cal}}, "global_score_blend": blend}
++
++    timeline = e.build_correlation_timeline(_rows(dbc, scale=3.0), state=state)
++    row = next(r for r in timeline if r["window"] == label)
++
++    # Pearson lift is structurally zero (the bug): scaling can't change correlation.
++    assert row["lift_7d"] == 0.0
++    # The magnitude MAE captures the calibration improvement (the fix).
++    assert row["mae_raw_7d"] is not None and row["mae_super_7d"] is not None
++    assert row["mae_super_7d"] < row["mae_raw_7d"]
++    assert row["mae_lift_7d"] is not None and row["mae_lift_7d"] > 0
++
++
++def test_history_dedup_replaces_same_day_snapshot(monkeypatch, tmp_path):
++    # Re-running the cycle the same day must replace, not append, to avoid
++    # identical adjacent points collapsing the week-over-week delta to 0.0.
++    state_path = tmp_path / "eis_super_score_learning.json"
++    monkeypatch.setattr(e, "_EIS_SUPER_SCORE_JSON", state_path)
++    monkeypatch.setattr(e, "_load_clinical_records", lambda: [])
++
++    e.run_eis_super_score_learning_cycle(dry_run=False)
++    e.run_eis_super_score_learning_cycle(dry_run=False)
++
++    doc = e.load_eis_super_score_state()
++    dates = [h.get("date") for h in doc.get("history") or []]
++    assert dates.count(e._today_iso()) == 1
+diff --git a/tests/test_feedback_outlier_guard.py b/tests/test_feedback_outlier_guard.py
+new file mode 100644
+index 0000000..9fda0b0
+--- /dev/null
++++ b/tests/test_feedback_outlier_guard.py
+@@ -0,0 +1,41 @@
++"""Validation feedback loop must not let a corrupt MAE outlier distort the pool.
++
++A single absurd value (e.g. MAE 1668%) otherwise dominates ``portfolio_avg_mae``
++and skews every relative under/over-performer threshold, and would also drive a
++cal_factor change off garbage data.
++"""
++from __future__ import annotations
++
++from prediction import validation_feedback_loop as v
++
++
++def _perf() -> dict[str, dict]:
++    return {
++        "GOOD": {"persistent_mae": 4.0, "direction_acc": 0.8, "bias": 0.5, "n_nodes": 6, "flag": "ok"},
++        "OKAY": {"persistent_mae": 12.0, "direction_acc": 0.55, "bias": 1.0, "n_nodes": 6, "flag": "ok"},
++        "KALA": {"persistent_mae": 1668.6, "direction_acc": 0.5, "bias": 10.0, "n_nodes": 6, "flag": "ok"},
++    }
++
++
++def test_portfolio_center_excludes_outlier():
++    center = v._portfolio_center_mae(_perf())
++    # mean of the two sane tickers (4, 12) == 8.0, NOT dragged up by 1668.
++    assert center == 8.0
++
++
++def test_outlier_is_flagged_and_never_drives_a_cal_change():
++    perf = _perf()
++    changes, flags = v._propose_cal_changes(perf, {"events": {}})
++
++    assert perf["KALA"]["flag"] == "data_outlier"
++    assert "KALA" in flags["data_outliers"]
++    assert perf["KALA"]["cal_factor"] == 1.0  # unchanged
++    assert all(ch["ticker"] != "KALA" for ch in changes)
++
++
++def test_summary_reports_robust_avg_and_outliers():
++    perf = _perf()
++    changes, flags = v._propose_cal_changes(perf, {"events": {}})
++    summary = v.build_portfolio_summary(perf, changes, flags)
++    assert summary["portfolio_avg_mae"] == 8.0
++    assert summary["data_outliers"] == ["KALA"]

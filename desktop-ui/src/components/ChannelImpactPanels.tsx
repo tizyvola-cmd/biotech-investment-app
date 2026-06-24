@@ -13,12 +13,12 @@
  */
 import type { ChannelImpact, ChannelLoopEffect } from "../api/supernova";
 import type { RescueReboundAnalysis } from "../sheet/recommendationRescue";
-import type { SellDirectionalAnalysis } from "../sheet/recommendationSell";
 
 const SELL_REASON_LABEL: Record<string, { it: string; en: string }> = {
   stop_loss: { it: "stop-loss", en: "stop-loss" },
   sds_below_40: { it: "SDS < 40", en: "SDS < 40" },
   pre_cd_exit: { it: "pre-CD", en: "pre-CD" },
+  capital_removed: { it: "uscita (CD/chiusura)", en: "exit (CD/close)" },
 };
 
 const VERDICT_TONE: Record<string, string> = {
@@ -197,12 +197,10 @@ export function ChannelImpactPanels({
   data,
   it,
   rescue,
-  sellDirectional,
 }: {
   data?: ChannelImpact;
   it: boolean;
   rescue?: RescueReboundAnalysis | null;
-  sellDirectional?: SellDirectionalAnalysis | null;
 }) {
   if (!data || data.error) {
     return (
@@ -374,12 +372,12 @@ export function ChannelImpactPanels({
             it ? "follow-through direzionale per azione" : "directional follow-through by action"
           }
           badge={
-            rec && !rec.available && !rescue?.available && !sellDirectional?.available
+            rec && !rec.available && !rescue?.available
               ? { text: it ? "in raccolta" : "collecting", tone: VERDICT_TONE.collecting_data }
               : undefined
           }
         >
-          {rec && (rec.available || rescue?.available || sellDirectional?.available) ? (
+          {rec && (rec.available || rescue?.available) ? (
             <>
               {/* BUY -> P(price up) · SELL -> P(price down) */}
               <div className="flex items-end justify-between gap-2">
@@ -390,39 +388,23 @@ export function ChannelImpactPanels({
                 />
                 <Metric
                   label={it ? "SELL → P(ribasso)" : "SELL → P(down)"}
-                  value={fmtPct(
-                    sellDirectional?.available ? sellDirectional.downHitPct : rec.sell.down_hit_pct,
-                  )}
+                  value={fmtPct(rec.sell.down_hit_pct)}
                   hint={
-                    sellDirectional?.available
-                      ? `n=${sellDirectional.n} · stop-loss${
-                          sellDirectional.pendingN > 0
-                            ? ` · ${sellDirectional.pendingN} ${it ? "in attesa" : "pending"}`
-                            : ""
-                        }`
-                      : rec.sell.graded_n === 0
-                        ? rec.sell.pending_n > 0
-                          ? `${it ? "in raccolta" : "collecting"} · ${rec.sell.pending_n} ${it ? "in attesa" : "pending"}`
-                          : it ? "in raccolta · 0 SELL chiusi" : "collecting · 0 closed SELLs"
-                        : rec.sell.pending_n > 0
-                          ? `n=${rec.sell.graded_n} · ${rec.sell.pending_n} ${it ? "in attesa" : "pending"}`
-                          : `n=${rec.sell.graded_n}`
+                    rec.sell.graded_n === 0
+                      ? rec.sell.pending_n > 0
+                        ? `${it ? "in raccolta" : "collecting"} · ${rec.sell.pending_n} ${it ? "in attesa" : "pending"}`
+                        : it ? "in raccolta · 0 vendite" : "collecting · 0 sales"
+                      : rec.sell.pending_n > 0
+                        ? `n=${rec.sell.graded_n}/${rec.sell.n} · ${rec.sell.pending_n} ${it ? "in attesa" : "pending"}`
+                        : `n=${rec.sell.graded_n}`
                   }
                 />
               </div>
-              {sellDirectional?.available ? (
-                <p className="text-[8px] text-ink-muted/80 leading-snug">
-                  {it
-                    ? "SELL → P(ribasso) = % di stop-loss dopo cui il prezzo è sceso ancora (vendita corretta), valutato sullo storico. SDS<40 e uscita pre-CD restano forward-only."
-                    : "SELL → P(down) = share of stop-loss exits after which the price kept dropping (sell was right), graded on history. SDS<40 and pre-CD exit stay forward-only."}
-                </p>
-              ) : rec.sell.graded_n === 0 ? (
-                <p className="text-[8px] text-ink-muted/80 leading-snug">
-                  {it
-                    ? "SELL → P(ribasso) = % di SELL dopo cui il prezzo è sceso (probabilità che la vendita sia corretta). Si popola in avanti: lo storico non ha exit_reason né prezzo post-uscita."
-                    : "SELL → P(down) = share of SELLs followed by a price drop (probability the sell was right). Forward-only: history has no exit_reason or post-exit price."}
-                </p>
-              ) : null}
+              <p className="text-[8px] text-ink-muted/80 leading-snug">
+                {it
+                  ? "SELL → P(ribasso) = quota di vendite dopo cui il prezzo è sceso (prezzo di uscita → prezzo attuale): probabilità che la vendita sia corretta. Conta ogni uscita; dettaglio per motivo sotto."
+                  : "SELL → P(down) = share of sales after which the price fell (exit price → latest price): probability the sell was right. Counts every exit; breakdown by reason below."}
+              </p>
 
               {rec.sell.by_reason.length > 0 ? (
                 <div className="pt-1">
@@ -477,8 +459,11 @@ export function ChannelImpactPanels({
                         value={fmt(rescue.corrScoreSize)}
                       />
                     </div>
-                    <div className="pt-1">
-                      <div className="flex justify-between text-[9px] text-ink-muted px-0.5">
+                    <div className="pt-1.5">
+                      <div className="text-[10px] font-medium text-ink px-0.5 pb-0.5">
+                        {it ? "efficienza rescue score per tier" : "rescue-score efficiency by tier"}
+                      </div>
+                      <div className="flex justify-between text-[10px] text-ink-muted px-0.5">
                         <span>{it ? "tier score" : "score tier"}</span>
                         <span>{it ? "n · hit · gg · taglia" : "n · hit · days · size"}</span>
                       </div>
@@ -487,11 +472,11 @@ export function ChannelImpactPanels({
                         .map((t) => (
                           <div
                             key={t.tier}
-                            className="flex items-center justify-between gap-2 py-1 border-b border-[rgb(var(--border))]/20 last:border-0"
+                            className="flex items-center justify-between gap-2 py-1.5 border-b border-[rgb(var(--border))]/20 last:border-0"
                           >
-                            <span className="text-[10.5px] text-ink">{t.band}</span>
-                            <span className="text-[10px] tabular-nums text-ink-muted">
-                              {t.n} · {fmtPct(t.hitRatePct)} ·{" "}
+                            <span className="text-[13px] font-medium text-ink">{t.band}</span>
+                            <span className="text-[12px] tabular-nums text-ink">
+                              {t.n} · <span className="font-semibold">{fmtPct(t.hitRatePct)}</span> ·{" "}
                               {t.medianDaysToRebound == null ? "—" : `${fmt(t.medianDaysToRebound, 0)}${it ? "gg" : "d"}`}{" "}
                               · {fmt(t.meanReboundSizePct, 1)}%
                             </span>

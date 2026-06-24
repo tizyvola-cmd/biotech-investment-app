@@ -38,7 +38,6 @@ import { seedCdPatternPolygonOverviewFromLab } from "../sheet/useCdPatternPolygo
 import { loadInvestSimHistory, loadInvestSimInputs } from "../sheet/investSimStorage";
 import { computeEisFeedWindowScore } from "../sheet/lossRescueEngine";
 import { analyzeRescueRebound, type RescueReboundAnalysis } from "../sheet/recommendationRescue";
-import { analyzeSellDirectional, type SellDirectionalAnalysis } from "../sheet/recommendationSell";
 
 const REFRESH_MS = 5 * 60_000;
 const OVERVIEW_SESSION_KEY = "learningLab.overview.v1";
@@ -837,21 +836,6 @@ export function LearningLabView({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [reloadToken, lang]);
 
-  // SELL stop-loss directional follow-through — gradable on history because the
-  // sim held positions past the -15% stop (same daily PnL path as the rescue).
-  const sellDirectional = useMemo<SellDirectionalAnalysis | null>(() => {
-    if (typeof window === "undefined") return null;
-    try {
-      return analyzeSellDirectional({
-        history: loadInvestSimHistory(),
-        inputs: loadInvestSimInputs(),
-      });
-    } catch {
-      return null;
-    }
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [reloadToken]);
-
   const globalCfFromPipeline = useMemo(() => {
     const step = pipeline?.steps?.find((s) => s.id === "global_cal_factor");
     const v = step?.summary?.value;
@@ -1042,7 +1026,7 @@ export function LearningLabView({
           <div className="space-y-4">
             <LearningDataMissingBanner data={data} it={it} />
             <LearningLivePoolBanner data={data} it={it} />
-            <ChannelImpactPanels data={data.channel_impact} it={it} rescue={rescueRebound} sellDirectional={sellDirectional} />
+            <ChannelImpactPanels data={data.channel_impact} it={it} rescue={rescueRebound} />
             <ExpectedMoveSection data={data.expected_move} it={it} />
             <details className="rounded-xl border border-[rgb(var(--border))]/40 bg-surface/10">
               <summary className="cursor-pointer select-none px-3 py-2 text-[11px] font-medium text-ink-muted hover:text-ink">

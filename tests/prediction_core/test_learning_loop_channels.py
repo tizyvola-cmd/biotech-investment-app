@@ -221,6 +221,29 @@ def test_recommendation_sell_directional_by_reason(monkeypatch):
     assert by_reason["sds_below_40"]["graded_n"] == 0
 
 
+def test_recommendation_sell_counts_every_exit_not_only_rule_reasons(monkeypatch):
+    # Every closed position is a sale: exits without a rule reason (exit_reason
+    # None -> "capital_removed") still count toward SELL -> P(down). Only rows
+    # never exited (not_applicable) are excluded. Regression for SELL n=0.
+    positions = [
+        _pos(80.0, -20.0, exit_reason="stop_loss", sell_signal_result="success"),
+        _pos(70.0, 12.0, exit_reason=None, sell_signal_result="success"),  # CD exit, price fell after
+        _pos(60.0, 8.0, exit_reason=None, sell_signal_result="failure"),   # CD exit, price rose after
+        _pos(90.0, 3.0, exit_reason=None, sell_signal_result="not_applicable"),  # still open -> not a sale
+    ]
+    monkeypatch.setattr(llc, "_load_outcomes", lambda: [])
+    monkeypatch.setattr(llc, "_load_sign_curve", lambda: {})
+    monkeypatch.setattr(llc, "_load_positions", lambda: positions)
+    sell = llc.compute_channel_impact()["recommendation"]["sell"]
+    assert sell["n"] == 3  # the not_applicable row is excluded
+    assert sell["graded_n"] == 3
+    assert sell["down_hit_pct"] == 66.7  # 2 of 3 fell after the sale
+    by_reason = {b["reason"]: b for b in sell["by_reason"]}
+    assert by_reason["stop_loss"]["n"] == 1
+    assert by_reason["capital_removed"]["n"] == 2
+    assert by_reason["capital_removed"]["down_hit_pct"] == 50.0
+
+
 def test_opened_position_counts_as_buy_regardless_of_regime(monkeypatch):
     # A logged position was actually opened (capital allocated), so it is an
     # executed BUY even if its regime label would have gated a *new* entry.

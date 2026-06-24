@@ -53,7 +53,12 @@ _PRED_SIGNIFICANT_PP = 3.0
 # direction), matching the sim's PNL_FLAT_PCT. SELL exits classified by these
 # reasons count as rule-driven SELL recommendations (see sds_investment_decision).
 _REC_FLAT_PCT = 1.0
+# Rule-driven SELL reasons (see sds_investment_decision). Exits that did not fire
+# a rule are bucketed under _GENERIC_EXIT_REASON: they are still sales (the
+# position was closed), so they count toward SELL -> P(down).
 _SELL_REASONS = ("stop_loss", "sds_below_40", "pre_cd_exit")
+_GENERIC_EXIT_REASON = "capital_removed"
+_SELL_REASON_ORDER = (*_SELL_REASONS, _GENERIC_EXIT_REASON)
 
 
 # ────────────────────────── numeric helpers ──────────────────────────
@@ -228,15 +233,27 @@ def _buy_up_rate(rows: list[dict[str, Any]]) -> tuple[float | None, int]:
 
 
 def _sell_down_hit(r: dict[str, Any]) -> bool | None:
-    """Whether a rule-driven SELL was followed by a price drop, from the
-    post-exit move already scored in the sim (``sell_signal_result``).
-    None when still pending/flat (excluded from the hit-rate)."""
+    """Whether a SELL was followed by a price drop, from the post-exit move
+    already scored in the sim (``sell_signal_result``: exit price -> latest
+    market price). None when still pending/flat (excluded from the hit-rate)."""
     res = r.get("sell_signal_result")
     if res == "success":
         return True
     if res == "failure":
         return False
     return None
+
+
+def _is_sell(r: dict[str, Any]) -> bool:
+    """Every closed/exited position is a SELL (the position was sold). The sim
+    scores the post-exit move for all of them via ``sell_signal_result``; only
+    rows never exited (``not_applicable``/missing) are excluded."""
+    return r.get("sell_signal_result") not in (None, "not_applicable")
+
+
+def _sell_reason_bucket(r: dict[str, Any]) -> str:
+    reason = r.get("exit_reason")
+    return reason if reason in _SELL_REASONS else _GENERIC_EXIT_REASON
 
 
 def _sell_down_rate(rows: list[dict[str, Any]]) -> tuple[float | None, int]:
@@ -509,9 +526,9 @@ def _recommendation_channel(rows: list[dict[str, Any]]) -> dict[str, Any]:
     """Directional follow-through of the recommendation, by action.
 
     BUY  -> P(price up | BUY): share of BUY positions whose realized move rose.
-    SELL -> P(price down | SELL): share of rule-driven exits (stop_loss /
-            sds_below_40 / pre_cd_exit) followed by a price drop, from the
-            post-exit move scored in the sim. Populates forward.
+    SELL -> P(price down | SELL): share of *all* exited positions (every sale)
+            followed by a price drop, from the post-exit move scored in the sim
+            (exit price -> latest market price), broken down by exit reason.
     HOLD -> rescue-score vs actual rebound: computed in the UI sheet (the rescue
             score lives there); the backend only reports the HOLD count here.
     """
@@ -522,15 +539,15 @@ def _recommendation_channel(rows: list[dict[str, Any]]) -> dict[str, Any]:
     # snapshot, so that lookup is None and would drop them entirely (BUY n=0).
     buy_rows = list(rows)
     hold_rows = [r for r in rows if _recommended_action(r) == "HOLD"]
-    sell_rows = [r for r in rows if r.get("exit_reason") in _SELL_REASONS]
+    sell_rows = [r for r in rows if _is_sell(r)]
 
     buy_rate, buy_graded = _buy_up_rate(buy_rows)
     sell_rate, sell_graded = _sell_down_rate(sell_rows)
     sell_pending = sum(1 for r in sell_rows if _sell_down_hit(r) is None)
 
     by_reason: list[dict[str, Any]] = []
-    for reason in _SELL_REASONS:
-        rs = [r for r in sell_rows if r.get("exit_reason") == reason]
+    for reason in _SELL_REASON_ORDER:
+        rs = [r for r in sell_rows if _sell_reason_bucket(r) == reason]
         if not rs:
             continue
         rate, graded = _sell_down_rate(rs)

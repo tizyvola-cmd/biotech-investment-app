@@ -11,7 +11,12 @@ the rails. Nothing is written.
 """
 from __future__ import annotations
 
-from prediction.cluster_cal_factor import (
+import os
+import sys
+
+sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+
+from prediction.cluster_cal_factor import (  # noqa: E402
     CLUSTER_CF_CEILING,
     CLUSTER_CF_FLOOR,
     CLUSTER_MIN_SAMPLES,

@@ -903,6 +903,12 @@ def build_overview_payload(*, use_mock: bool = False, force_refresh: bool = Fals
     validation_feedback = load_validation_feedback_snippet()
     signal_calibration = load_signal_calibration_snippet()
     curve_impact = load_curve_impact_snippet()
+    try:
+        from prediction.expected_move_score import load_expected_move_calibration
+
+        expected_move = load_expected_move_calibration()
+    except Exception:
+        expected_move = {}
 
     fb_summary = validation_feedback.get("summary") if isinstance(validation_feedback.get("summary"), dict) else {}
     fb_updated = fb_summary.get("updated_at")
@@ -938,6 +944,7 @@ def build_overview_payload(*, use_mock: bool = False, force_refresh: bool = Fals
         "validation_feedback": validation_feedback,
         "signal_calibration": signal_calibration,
         "curve_impact": curve_impact,
+        "expected_move": expected_move,
         "pipeline": [
             {"id": "outcomes", "status": "active" if outcomes else "collecting", "last_updated": last_outcome_date or None},
             {"id": "kpi", "status": "active", "last_updated": _today_iso()},

@@ -51,6 +51,7 @@ MARKET_CONTEXT_JSON = os.path.join(DATA_DIR, "market_context.json")
 CLUSTER_CAL_FACTORS_JSON = os.path.join(DATA_DIR, "cluster_cal_factors.json")
 REGIME_MULTIPLIERS_JSON = os.path.join(DATA_DIR, "regime_multipliers.json")
 OUTCOMES_WITH_REGIME_JSON = os.path.join(DATA_DIR, "outcomes_with_regime.json")
+REGIME_HISTORY_JSON = os.path.join(DATA_DIR, "regime_history.json")
 LEARNING_HISTORY_JSON = os.path.join(DATA_DIR, "learning_history.json")
 LEARNING_LOG_JSON = os.path.join(DATA_DIR, "learning_log.json")
 TICKER_PERFORMANCE_JSON = os.path.join(DATA_DIR, "ticker_performance.json")
@@ -109,6 +110,7 @@ __all__ = (
     "CLUSTER_CAL_FACTORS_JSON",
     "REGIME_MULTIPLIERS_JSON",
     "OUTCOMES_WITH_REGIME_JSON",
+    "REGIME_HISTORY_JSON",
     "LEARNING_HISTORY_JSON",
     "LEARNING_LOG_JSON",
     "TICKER_PERFORMANCE_JSON",

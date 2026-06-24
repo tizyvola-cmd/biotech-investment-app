@@ -5,8 +5,8 @@ touch trading. The levers that actually move trades are:
   1. trade-calib slope_20d thresholds (BUY if slope>=+0.10, SELL if <=-0.30)
   2. the pred-magnitude gates (pred>=5% boosts timing, pred<3% -> HOLD)
   3. the affidabilita/confidence gate (conf>=75%)
-(SDS tier and entry regime are NOT stored in the sim/decision-log, so they cannot
-be measured here without adding logging — flagged at the end.)
+  4. the SDS score tier (the real action/sizing arbiter) — now logged at entry
+  5. the entry market regime (RISK_OFF/CRISIS -> HOLD gate) — now logged at entry
 
 This script ONLY reads. It loads the persisted sim outcomes (falls back to an
 in-memory build that does not persist) and reports, per lever bucket:
@@ -140,6 +140,41 @@ def main() -> None:
         base,
     )
 
+    # ── Lever 4: SDS score tier (the real action/sizing arbiter) ────────────
+    # Now measurable: entry_sds_score is logged in the decision log (and current
+    # SDS is attached to live positions). FULL size at SDS>=75, else HALF.
+    sds_rows = [r for r in rows if bget(r, "entry_sds_score", "sds_score") is not None]
+    if sds_rows:
+        d_lo, d_mid, d_hi = [], [], []
+        for r in sds_rows:
+            v = bget(r, "entry_sds_score", "sds_score") or 0.0
+            (d_hi if v >= 75 else d_mid if v >= 50 else d_lo).append(r)
+        _print_lever(
+            "LEVER 4 — SDS score tier (entry; FULL size >=75)",
+            [("SDS < 50", d_lo), ("50 <= SDS < 75 (HALF)", d_mid),
+             ("SDS >= 75 (FULL)", d_hi)],
+            base,
+        )
+    else:
+        print("\nLEVER 4 — SDS score tier: no positions carry entry_sds_score yet.")
+        print("  (will populate on the next sim rebuild after this logging change)")
+
+    # ── Lever 5: entry market regime (RISK_OFF/CRISIS -> HOLD gate) ──────────
+    reg_rows = [r for r in rows if (r.get("entry_regime") or r.get("market_regime"))]
+    if reg_rows:
+        by_reg: dict[str, list[dict[str, Any]]] = {}
+        for r in reg_rows:
+            reg = str(r.get("entry_regime") or r.get("market_regime"))
+            by_reg.setdefault(reg, []).append(r)
+        _print_lever(
+            "LEVER 5 — entry market regime",
+            sorted(by_reg.items(), key=lambda kv: -len(kv[1])),
+            base,
+        )
+    else:
+        print("\nLEVER 5 — entry market regime: no positions carry entry_regime yet.")
+        print("  (will populate on the next sim rebuild after this logging change)")
+
     # ── Signal QA already computed by the sim (BUY/SELL result tallies) ──────
     print("\n" + "=" * 84)
     print("BUY/SELL signal QA (as computed by the sim's trade-calib thresholds)")
@@ -152,10 +187,6 @@ def main() -> None:
                 tally[res] = tally.get(res, 0) + 1
         total = sum(tally.values())
         print(f"  {side.upper()}: {dict(sorted(tally.items()))}  (n_applicable={total})")
-
-    print("\nNOTE: SDS tier and entry regime are NOT stored on sim positions, so their")
-    print("per-lever trading effect cannot be measured here. To measure them we must log")
-    print("entry sds_score + entry regime in investment_decision_log (small, safe add).")
 
 
 if __name__ == "__main__":

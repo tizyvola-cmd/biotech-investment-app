@@ -135,6 +135,12 @@ def _build_snapshot(
         "pred7_pp": _ronr(position.get("pred7_pp"), 3),
         "affidabilita_pct": _ronr(position.get("affidabilita_pct"), 2),
         "r2_fit": _ronr(position.get("r2_fit"), 4),
+        # Recommendation-engine state at the moment of the decision: the SDS
+        # score (the real action/sizing arbiter) and the market regime gate.
+        # These let us attribute trading P&L to the recommendation lever, which
+        # was previously invisible on sim positions.
+        "sds_score": _ronr(position.get("sds_score"), 1),
+        "market_regime": position.get("market_regime"),
         "pnl_pct_at_event": _ronr(position.get("pnl_pct"), 2),
         "pnl_eur_at_event": _ronr(position.get("pnl_eur"), 2),
         # Flag debug: True se al primo run dopo deploy abbiamo trovato la riga
@@ -244,6 +250,8 @@ def update_decision_log(
             "pred7_pp": None,
             "affidabilita_pct": None,
             "r2_fit": None,
+            "sds_score": last_open.get("sds_score"),
+            "market_regime": last_open.get("market_regime"),
             "pnl_pct_at_event": _ronr(last_open.get("pnl_pct_at_event"), 2),
             "pnl_eur_at_event": _ronr(last_open.get("pnl_eur_at_event"), 2),
             "exit_reason": "capital_removed",
@@ -302,6 +310,8 @@ def enrich_position_with_log(
     out["entry_pred7_pp"] = e.get("pred7_pp")
     out["entry_affidabilita_pct"] = e.get("affidabilita_pct")
     out["entry_r2_fit"] = e.get("r2_fit")
+    out["entry_sds_score"] = e.get("sds_score")
+    out["entry_regime"] = e.get("market_regime")
     out["entry_buy_price_usd"] = e.get("buy_price_usd")
     out["entry_was_existing"] = e.get("entry_was_existing", False)
     # Exit fields (None se ancora aperta)

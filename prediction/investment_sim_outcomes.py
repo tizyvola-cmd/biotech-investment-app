@@ -707,6 +707,30 @@ def build_investment_sim_outcomes(
     #   - capitale era > 0 e ora 0 (o riga sparita) → registra EXIT snapshot
     # Poi arricchisco ogni position con i campi entry_*/exit_* dal log,
     # così la UI può mostrare il vero slope/pred al momento della scelta.
+    # Attach the recommendation-engine state (SDS score + market regime) to each
+    # position so the decision log captures the real action/sizing lever at
+    # entry. Current SDS is the best available proxy for entry-time SDS (same as
+    # how slope is logged). Best-effort: never blocks the sim build.
+    try:
+        from prediction.sds_data import _market_regime, load_sds_snapshot
+
+        _sds_doc = load_sds_snapshot()
+        _sds_by_tk = {
+            str(r.get("ticker", "")).upper(): r.get("sds")
+            for r in (_sds_doc.get("rows") or [])
+            if r.get("ticker") is not None
+        }
+        _regime_now = _market_regime()
+    except Exception as _se:  # pragma: no cover - best-effort
+        print(f"[decision_log] lookup SDS/regime fallito (non bloccante): {_se}")
+        _sds_by_tk, _regime_now = {}, None
+    for _p in positions:
+        _tk = str(_p.get("ticker", "")).upper()
+        if _p.get("sds_score") is None and _sds_by_tk.get(_tk) is not None:
+            _p["sds_score"] = float(_sds_by_tk[_tk])
+        if _p.get("market_regime") is None and _regime_now:
+            _p["market_regime"] = _regime_now
+
     decision_log: dict[str, Any] | None = None
     try:
         decision_log = update_decision_log(
@@ -781,6 +805,8 @@ def build_investment_sim_outcomes(
                         "entry_pred7_pp": _num(e.get("pred7_pp")),
                         "entry_affidabilita_pct": _num(e.get("affidabilita_pct")),
                         "entry_r2_fit": _num(e.get("r2_fit")),
+                        "entry_sds_score": _num(e.get("sds_score")),
+                        "entry_regime": e.get("market_regime"),
                         "entry_buy_price_usd": _num(e.get("buy_price_usd")),
                         "entry_was_existing": bool(e.get("entry_was_existing", False)),
                         "exit_ts": x.get("ts"),

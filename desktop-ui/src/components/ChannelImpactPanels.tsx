@@ -278,10 +278,30 @@ export function ChannelImpactPanels({
                       <div className="flex items-center justify-between gap-2 text-[9px] tabular-nums">
                         <span className="text-ink-muted">{it ? "finestra affidabile" : "reliable window"}</span>
                         <span className="text-emerald-600 dark:text-emerald-400">
-                          T{pred.reliability_window.lo_offset}→T{pred.reliability_window.hi_offset} · {it ? "picco" : "peak"}{" "}
-                          {fmtPct(pred.reliability_window.peak_pct)} @ T{pred.reliability_window.peak_offset}
+                          T{pred.reliability_window.lo_offset}→T{pred.reliability_window.hi_offset}
                         </span>
                       </div>
+                      {pred.reliability_bands && pred.reliability_bands.length > 0 ? (
+                        <div className="space-y-0.5 pt-0.5">
+                          <span className="block text-[9px] text-ink-muted">
+                            {it ? "affidabilità media per periodo" : "average reliability by period"}
+                          </span>
+                          {pred.reliability_bands.map((b) => (
+                            <div key={b.key} className="flex items-center justify-between gap-2 text-[9px] tabular-nums">
+                              <span className="text-ink-muted">{it ? b.label_it : b.label_en}</span>
+                              {b.mean_pct == null ? (
+                                <span className="text-ink-muted/60">
+                                  {it ? "n/d · curva da CD−60g" : "n/a · curve from CD−60d"}
+                                </span>
+                              ) : (
+                                <span className="text-emerald-600 dark:text-emerald-400">
+                                  {fmtPct(b.mean_pct)} <span className="text-ink-muted">· n={b.n}</span>
+                                </span>
+                              )}
+                            </div>
+                          ))}
+                        </div>
+                      ) : null}
                       <div className="flex flex-wrap items-center gap-x-2 gap-y-0.5 text-[9px] tabular-nums">
                         <span className="text-ink-muted">{it ? "stelle per nodo" : "stars by node"}</span>
                         {pred.reliability_by_cd

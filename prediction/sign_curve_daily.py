@@ -822,3 +822,72 @@ def reliability_rating_for_days_to_cd(
         "threshold_pct": win["threshold_pct"],
         "window": win,
     }
+
+
+# Average-reliability bands relative to the CD, in calendar-day offsets. The pre-CD
+# curve only spans CD-60d -> CD+7d (see PRE_CD_CALENDAR_DAYS), so the CD-4m -> -2m
+# band has no nodes and reports mean=None until the model window is widened.
+RELIABILITY_BANDS: tuple[dict[str, Any], ...] = (
+    {"key": "cd_m4_m2", "label_it": "CD−4m→−2m", "label_en": "CD−4m→−2m", "lo": -120, "hi": -61},
+    {"key": "cd_m2_d10", "label_it": "CD−2m→−10g", "label_en": "CD−2m→−10d", "lo": -60, "hi": -11},
+    {"key": "cd_d10_d0", "label_it": "CD−10g→0", "label_en": "CD−10d→0", "lo": -10, "hi": -1},
+    {"key": "cd_d0_p7", "label_it": "CD0→+7g", "label_en": "CD0→+7d", "lo": 1, "hi": 7},
+)
+
+
+def _all_sign_hits_with_n(
+    snapshot: dict[str, Any], cohort: str
+) -> list[tuple[int, float, int]]:
+    """``(offset, sign_hit_pct, n)`` for every graded node (pre and post CD)."""
+    coh = (snapshot.get("cohorts") or {}).get(cohort) or {}
+    out: list[tuple[int, float, int]] = []
+    for row in coh.get("by_offset") or []:
+        if not isinstance(row, dict):
+            continue
+        off = row.get("offset")
+        v = row.get("sign_hit_pct")
+        if off is None or v is None:
+            continue
+        try:
+            out.append((int(off), float(v), int(row.get("n") or 0)))
+        except (TypeError, ValueError):
+            continue
+    return out
+
+
+def reliability_bands(
+    *,
+    cohort: str = "simulation",
+    snapshot: dict[str, Any] | None = None,
+) -> list[dict[str, Any]] | None:
+    """Average reliability (sign-hit, n-weighted) over fixed CD-relative bands
+    (``RELIABILITY_BANDS``), instead of a single peak. Bands with no graded node
+    report ``mean_pct=None``. Returns ``None`` when there is no curve at all."""
+    snap = snapshot if snapshot is not None else _load_sign_curve_snapshot()
+    if not isinstance(snap, dict):
+        return None
+    nodes = _all_sign_hits_with_n(snap, cohort)
+    if not nodes:
+        return None
+    bands: list[dict[str, Any]] = []
+    for spec in RELIABILITY_BANDS:
+        lo, hi = spec["lo"], spec["hi"]
+        pts = [(v, n) for off, v, n in nodes if lo <= off <= hi]
+        tot_n = sum(n for _, n in pts)
+        if pts and tot_n > 0:
+            mean_pct = round(sum(v * n for v, n in pts) / tot_n, 2)
+        elif pts:  # nodes present but no per-node sample size -> simple mean
+            mean_pct = round(sum(v for v, _ in pts) / len(pts), 2)
+        else:
+            mean_pct = None
+        bands.append({
+            "key": spec["key"],
+            "label_it": spec["label_it"],
+            "label_en": spec["label_en"],
+            "lo_offset": lo,
+            "hi_offset": hi,
+            "mean_pct": mean_pct,
+            "n": tot_n,
+            "n_nodes": len(pts),
+        })
+    return bands

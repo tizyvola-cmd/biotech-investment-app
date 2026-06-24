@@ -98,6 +98,20 @@ def test_prediction_channel_reports_max_min_nodes(monkeypatch):
     assert by[-60]["reliable"] is False and by[-60]["stars"] is None
 
 
+def test_prediction_channel_reports_reliability_bands(monkeypatch):
+    monkeypatch.setattr(llc, "_load_outcomes", lambda: [_outcome(5.0, 4.0, "2026-06-01")])
+    monkeypatch.setattr(llc, "_load_positions", lambda: [])
+    monkeypatch.setattr(llc, "_load_sign_curve", _sign_curve)
+    pred = llc.compute_channel_impact()["prediction"]
+    bands = {b["key"]: b for b in pred["reliability_bands"]}
+    # CD-4m -> -2m has no node (curve starts at CD-60d) -> no estimate
+    assert bands["cd_m4_m2"]["mean_pct"] is None and bands["cd_m4_m2"]["n"] == 0
+    # the other bands carry the n-weighted mean of the nodes inside them
+    assert bands["cd_m2_d10"]["mean_pct"] == 44.0 and bands["cd_m2_d10"]["n"] == 50
+    assert bands["cd_d10_d0"]["mean_pct"] == 78.0 and bands["cd_d10_d0"]["n"] == 60
+    assert bands["cd_d0_p7"]["mean_pct"] == 90.0 and bands["cd_d0_p7"]["n"] == 20
+
+
 def test_prediction_channel_unavailable_without_sign_curve(monkeypatch):
     monkeypatch.setattr(llc, "_load_outcomes", lambda: [])
     monkeypatch.setattr(llc, "_load_positions", lambda: [])

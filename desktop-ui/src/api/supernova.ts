@@ -1570,6 +1570,17 @@ export type ReliabilityWindow = {
   offsets: number[];
 };
 
+export type ReliabilityBand = {
+  key: string;
+  label_it: string;
+  label_en: string;
+  lo_offset: number;
+  hi_offset: number;
+  mean_pct: number | null;
+  n: number;
+  n_nodes: number;
+};
+
 export type RecommendationWeek = {
   week: string;
   n: number;
@@ -1617,6 +1628,7 @@ export type ChannelImpact = {
     worst_node?: PredictionReliabilityNode | null;
     reliability_by_cd?: PredictionReliabilityNode[];
     reliability_window?: ReliabilityWindow | null;
+    reliability_bands?: ReliabilityBand[] | null;
     weekly_delta_pp: number | null;
     weekly_significant?: boolean;
     loops: ChannelLoopEffect[];

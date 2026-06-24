@@ -33,7 +33,11 @@ from pathlib import Path
 from typing import Any, Callable
 
 from orchestrator_io_paths import DATA_DIR, MODEL_SIGN_CURVE_DAILY_JSON
-from prediction.sign_curve_daily import reliability_stars, reliability_window
+from prediction.sign_curve_daily import (
+    reliability_bands,
+    reliability_stars,
+    reliability_window,
+)
 
 LEARNING_LOOP_WEEKLY_IMPACT_JSON = Path(DATA_DIR) / "learning_loop_weekly_impact.json"
 
@@ -492,6 +496,7 @@ def _prediction_channel(outcomes: list[dict[str, Any]], sign_curve: dict[str, An
         "worst_node": worst,
         "reliability_by_cd": reliability,
         "reliability_window": window,
+        "reliability_bands": reliability_bands(cohort="simulation", snapshot=sign_curve),
         "weekly_delta_pp": delta,
         "weekly_significant": significant,
         "weekly": weekly,

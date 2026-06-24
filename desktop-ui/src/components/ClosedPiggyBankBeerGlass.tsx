@@ -1,7 +1,7 @@
 import { useId } from "react";
 import { useT } from "../shared/i18n";
 import type { ClosedPiggyBankDisplay } from "../sheet/closedPiggyBank";
-import { closedPiggyResetConfirmVars } from "../sheet/closedPiggyBank";
+import { closedPiggyHasBaseline, closedPiggyResetConfirmVars } from "../sheet/closedPiggyBank";
 import { portfolioPnlAccentClass } from "../sheet/portfolioGainLossStyle";
 
 function fmtUsd(v: number): string {
@@ -299,6 +299,12 @@ export function ClosedPiggyBankCompact({
   if (display.positionCount === 0) return null;
   const isLoss = display.pnlEur < -0.01;
   const pnlColor = portfolioPnlAccentClass(display.pnlEur).trim() || "text-ink";
+  const compactTip = closedPiggyHasBaseline(display)
+    ? t("closedPiggy.compactTipSinceReset", {
+        sinceReset: display.pnlEur.toFixed(0),
+        allTime: display.rawPnlEur.toFixed(0),
+      })
+    : t("closedPiggy.compactTipAllTime", { allTime: display.rawPnlEur.toFixed(0) });
 
   return (
     <div className="closed-piggy-bank-compact shrink-0 flex flex-col items-center gap-0.5 min-w-[4.25rem]">
@@ -306,7 +312,7 @@ export function ClosedPiggyBankCompact({
         type="button"
         onClick={onOpenDetail}
         className="flex flex-col items-center gap-0.5 rounded-lg px-1 py-0.5 hover:bg-[rgb(var(--surface-2))]/50 transition-colors"
-        title={t("closedPiggy.openLedger")}
+        title={compactTip}
       >
         <BeerGlassIcon fillPct={display.fillPct} isLoss={isLoss} size={44} />
         <span className={`text-[10px] font-bold tabular-nums leading-none ${pnlColor}`}>

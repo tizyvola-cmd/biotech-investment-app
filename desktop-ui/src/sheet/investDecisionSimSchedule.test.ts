@@ -1,8 +1,10 @@
 import { describe, expect, it } from "vitest";
 import {
   decisionSimMarketHourKey,
+  decisionSimDailyEvaluationKey,
   getRomeClockParts,
   isDecisionSimMarketWindow,
+  isDecisionSimDailyEvaluationWindow,
 } from "./investDecisionSimSchedule";
 
 /** Build a UTC instant that maps to the given Rome wall clock (DST-aware). */
@@ -37,5 +39,12 @@ describe("investDecisionSimSchedule", () => {
     const at = romeWallToUtc("2026-06-10", 17, 30);
     expect(decisionSimMarketHourKey(at)).toBe("2026-06-10T17");
     expect(decisionSimMarketHourKey(romeWallToUtc("2026-06-10", 23))).toBeNull();
+  });
+
+  it("allows daily evaluation Mon–Fri at 18 Rome only", () => {
+    expect(isDecisionSimDailyEvaluationWindow(romeWallToUtc("2026-06-10", 18))).toBe(true);
+    expect(isDecisionSimDailyEvaluationWindow(romeWallToUtc("2026-06-10", 17))).toBe(false);
+    expect(isDecisionSimDailyEvaluationWindow(romeWallToUtc("2026-06-13", 18))).toBe(false);
+    expect(decisionSimDailyEvaluationKey(romeWallToUtc("2026-06-10", 18, 0))).toBe("2026-06-10");
   });
 });

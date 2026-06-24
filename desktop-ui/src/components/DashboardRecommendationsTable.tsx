@@ -68,6 +68,20 @@ import {
 } from "./RiskBenefitScaleIcon";
 import { useSimLoopSynthAllocation } from "../hooks/useSimLoopSynthAllocation";
 import { loadUiPrefsLocal } from "../sheet/uiPrefs";
+import {
+  closedSimOutcomeRowsFromDoc,
+  loadInvestmentSimOutcomes,
+  type SimOutcomesDoc,
+} from "../data/investmentSimOutcomesData";
+import { buildSuggestionMonitorRows } from "../sheet/suggestionMonitor";
+import { buildAdviceCalibrationFromLiveRows } from "../sheet/investDecisionSimAdviceCalibration";
+import {
+  attachDaysToCdOnAdvicePoints,
+  buildAuditPeakItemsFromClosedRows,
+  buildCombinedAdviceOutcomeSummary,
+  readDaysToCdFromSimRow,
+} from "../sheet/accuracyPeakCdOffset";
+import { dailyChangePctFromRow } from "../sheet/simulationPosition";
 
 function fmtUsd(v: number | null | undefined): string {
   if (v == null || !Number.isFinite(v)) return "—";
@@ -220,6 +234,61 @@ export function DashboardRecommendationsTable({
     enabled: Boolean(simTable?.rows?.length) && topCapital > 0,
   });
 
+  const [outcomesDoc, setOutcomesDoc] = useState<SimOutcomesDoc | null>(null);
+  useEffect(() => {
+    let cancelled = false;
+    void loadInvestmentSimOutcomes().then(({ doc }) => {
+      if (!cancelled) setOutcomesDoc(doc ?? null);
+    });
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
+  const adviceOutcomeBins = useMemo(() => {
+    if (!simTable?.rows?.length) return null;
+    const lang = it ? "it" : "en";
+    const monitorRows = buildSuggestionMonitorRows({
+      simTable,
+      inputs,
+      pointsBySeriesKey,
+      lang,
+      probOptions,
+      paperPortfolio: [],
+      synthAlloc,
+    });
+    const resolveDaysToCd = (key: string): number | null =>
+      readDaysToCdFromSimRow(simRowByKey.get(key));
+    const liveCalibRows = monitorRows.map((row) => {
+      const simRow = simRowByKey.get(row.key);
+      const dailyVar = simRow ? dailyChangePctFromRow(simRow) : null;
+      const pnlPct24h =
+        row.pnlPct24h != null && Number.isFinite(row.pnlPct24h) ? row.pnlPct24h : dailyVar;
+      return {
+        key: row.key,
+        ticker: row.ticker,
+        suggestedAction: row.suggestedAction,
+        inPaperPortfolio: row.inPaperPortfolio,
+        hasPosition: row.hasPosition,
+        exitDecision: row.exitDecision,
+        probPct: row.probPct,
+        probPctAtAdvice: row.probPct,
+        planReturnPct: row.planReturnPct,
+        miiAngleDeg: row.miiAngleDeg,
+        pnlPct: row.pnlPct,
+        pnlPct24h,
+        daysToCdAtAdvice: resolveDaysToCd(row.key),
+      };
+    });
+    const monitorPoints = attachDaysToCdOnAdvicePoints(
+      buildAdviceCalibrationFromLiveRows(liveCalibRows, lang),
+      resolveDaysToCd,
+    );
+    const closedRows = outcomesDoc ? closedSimOutcomeRowsFromDoc(outcomesDoc) : [];
+    const auditItems = buildAuditPeakItemsFromClosedRows(closedRows, simRowByKey, lang);
+    return buildCombinedAdviceOutcomeSummary(monitorPoints, auditItems);
+  }, [simTable, inputs, pointsBySeriesKey, it, probOptions, synthAlloc, simRowByKey, outcomesDoc]);
+
   const rows = useMemo(
     () =>
       buildDashboardRecommendationRows({
@@ -234,6 +303,7 @@ export function DashboardRecommendationsTable({
         cdFilter,
         sortMode,
         synthAlloc,
+        adviceOutcomeBins,
       }),
     [
       simTable,
@@ -250,6 +320,7 @@ export function DashboardRecommendationsTable({
       dismissTick,
       priceReadingRevision,
       synthAlloc,
+      adviceOutcomeBins,
     ],
   );
 
@@ -266,6 +337,7 @@ export function DashboardRecommendationsTable({
       cdFilter,
       sortMode: "score",
       synthAlloc,
+      adviceOutcomeBins,
     });
     return {
       all: all.length,
@@ -286,6 +358,7 @@ export function DashboardRecommendationsTable({
     dismissTick,
     priceReadingRevision,
     synthAlloc,
+    adviceOutcomeBins,
   ]);
 
   useEffect(() => {
@@ -302,6 +375,7 @@ export function DashboardRecommendationsTable({
       cdFilter: "all",
       sortMode: "score",
       synthAlloc,
+      adviceOutcomeBins,
     });
     onStatsChange({
       total: allRows.length,
@@ -321,6 +395,7 @@ export function DashboardRecommendationsTable({
     dismissTick,
     priceReadingRevision,
     synthAlloc,
+    adviceOutcomeBins,
   ]);
 
   const handleModalClose = useCallback(() => {
@@ -467,6 +542,18 @@ export function DashboardRecommendationsTable({
                 )}`}
               >
                 {Math.round(row.recommendationScorePct)}%
+              </span>
+            ) : null}
+            {row.expectedAdviceAccuracyHint ? (
+              <span
+                className="text-[9px] text-ink-muted tabular-nums leading-tight text-center max-w-[7rem]"
+                title={
+                  it
+                    ? "Accuratezza storica consigli nello stesso bin T rispetto al CD"
+                    : "Historical advice success in the same T bin vs CD"
+                }
+              >
+                {row.expectedAdviceAccuracyHint}
               </span>
             ) : null}
             <RecommendationGainIdeaCell

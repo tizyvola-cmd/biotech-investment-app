@@ -68,7 +68,58 @@ describe("buildSimLoopEqualSynthReconcile", () => {
         {
           ...tick("2026-06-17T10:00:00.000Z", positions),
           portfolioBefore: [paperPos(loserKey, "LOSE"), ...positions],
-          evaluations: [],
+          evaluations: [
+            {
+              key: loserKey,
+              ticker: "LOSE",
+              hasPosition: true,
+              inPaperPortfolio: true,
+              daysToCd: 30,
+              readings: {},
+              misalignments: [],
+              misalignmentLabels: [],
+              exitDecision: "sell",
+              investVerdict: null,
+              entryVerdict: null,
+              exitVerdict: null,
+              probPct: 60,
+              suggestedAction: "sell",
+              planReturnPct: 10,
+              pnlPct24h: null,
+              pnlPct: -10,
+              precatVerdictAgree: true,
+              exitReason: null,
+              compositeScore: null,
+              scoringZone: null,
+              scoreBreakdown: null,
+              compositeDampened: false,
+            },
+            {
+              key: winnerKey,
+              ticker: "WIN",
+              hasPosition: true,
+              inPaperPortfolio: true,
+              daysToCd: 30,
+              readings: {},
+              misalignments: [],
+              misalignmentLabels: [],
+              exitDecision: "hold",
+              investVerdict: null,
+              entryVerdict: null,
+              exitVerdict: null,
+              probPct: 60,
+              suggestedAction: "hold",
+              planReturnPct: 10,
+              pnlPct24h: null,
+              pnlPct: 10,
+              precatVerdictAgree: true,
+              exitReason: null,
+              compositeScore: null,
+              scoringZone: null,
+              scoreBreakdown: null,
+              compositeDampened: false,
+            },
+          ],
           trades: [
             {
               at: "2026-06-17T10:00:00.000Z",
@@ -94,6 +145,7 @@ describe("buildSimLoopEqualSynthReconcile", () => {
       shareByRowKey: { [loserKey]: 0.02, [winnerKey]: 0.25 },
       totalCapitalEur: 10_000,
       capitalPerTrade: 5000,
+      sizingMode: "causal_rebalance" as const,
     };
 
     const report = buildSimLoopEqualSynthReconcile({ state, simTable, sizing });
@@ -104,7 +156,9 @@ describe("buildSimLoopEqualSynthReconcile", () => {
     expect(loser?.equalPnlClosedEur).toBeCloseTo(-500, 0);
     expect(winner?.status).toBe("open");
     expect(winner?.equalPnlOpenEur).toBeCloseTo(500, 0);
-    expect(winner?.synthPnlOpenEur).toBeCloseTo(250, 0);
+    // Causal rebalance after marks — not hindsight global 25% on winner.
+    expect(winner?.synthPnlOpenEur).toBeGreaterThan(500);
+    expect(loser?.synthPnlClosedEur).toBeGreaterThan(-500);
     expect(report.totals.equalTotalPnlEur).toBeCloseTo(0, 0);
     expect(report.totals.synthTotalPnlEur).toBeGreaterThan(0);
   });
@@ -118,7 +172,58 @@ describe("buildSimLoopEqualSynthReconcile", () => {
         {
           ...tick("2026-06-17T10:00:00.000Z", positions),
           portfolioBefore: [paperPos(loserKey, "LOSE"), ...positions],
-          evaluations: [],
+          evaluations: [
+            {
+              key: loserKey,
+              ticker: "LOSE",
+              hasPosition: true,
+              inPaperPortfolio: true,
+              daysToCd: 30,
+              readings: {},
+              misalignments: [],
+              misalignmentLabels: [],
+              exitDecision: "sell",
+              investVerdict: null,
+              entryVerdict: null,
+              exitVerdict: null,
+              probPct: 60,
+              suggestedAction: "sell",
+              planReturnPct: 10,
+              pnlPct24h: null,
+              pnlPct: -20,
+              precatVerdictAgree: true,
+              exitReason: null,
+              compositeScore: null,
+              scoringZone: null,
+              scoreBreakdown: null,
+              compositeDampened: false,
+            },
+            {
+              key: winnerKey,
+              ticker: "WIN",
+              hasPosition: true,
+              inPaperPortfolio: true,
+              daysToCd: 30,
+              readings: {},
+              misalignments: [],
+              misalignmentLabels: [],
+              exitDecision: "hold",
+              investVerdict: null,
+              entryVerdict: null,
+              exitVerdict: null,
+              probPct: 60,
+              suggestedAction: "hold",
+              planReturnPct: 10,
+              pnlPct24h: null,
+              pnlPct: 5,
+              precatVerdictAgree: true,
+              exitReason: null,
+              compositeScore: null,
+              scoringZone: null,
+              scoreBreakdown: null,
+              compositeDampened: false,
+            },
+          ],
           trades: [
             {
               at: "2026-06-17T10:00:00.000Z",
@@ -147,11 +252,12 @@ describe("buildSimLoopEqualSynthReconcile", () => {
         shareByRowKey: { [loserKey]: 0.02, [winnerKey]: 0.35 },
         totalCapitalEur: 10_000,
         capitalPerTrade: 5000,
+        sizingMode: "causal_rebalance",
       },
     });
 
     expect(report.totals.equalTotalPnlEur).toBeCloseTo(-750, 0);
-    expect(report.totals.synthTotalPnlEur).toBeGreaterThan(0);
+    expect(report.totals.synthTotalPnlEur).toBeGreaterThan(report.totals.equalTotalPnlEur);
     expect(report.signMismatch).toBe(true);
   });
 });

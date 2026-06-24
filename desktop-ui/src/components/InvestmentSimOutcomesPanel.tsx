@@ -47,6 +47,7 @@ import {
   resolvePnlTabCardTone,
 } from "../sheet/portfolioGainLossStyle";
 import { detectPortfolioLossAlerts } from "../sheet/portfolioLossUrgent";
+import { summarizeRealPortfolioSignalAccuracy } from "../sheet/realPortfolioAccuracy";
 import { resolveExpectedGainPlan } from "../sheet/simulationPlanGain";
 import {
   buildSlopeAwareTargetStop,
@@ -1018,8 +1019,6 @@ export function InvestmentSimOutcomesPanel({
     let pnlClosed = 0;
     const nOpen = activePortfolio.length;
     let nClosed = 0;
-    let buyEvalN = 0, buySuccessN = 0;
-    let sellEvalN = 0, sellSuccessN = 0;
     for (const pos of activePortfolio) {
       capitalOpen += pos.capital;
     }
@@ -1028,16 +1027,11 @@ export function InvestmentSimOutcomesPanel({
       if (eur != null) pnlClosed += eur;
       nClosed++;
     }
-    for (const r of rows) {
-      if (r.buy_signal_result === "success" || r.buy_signal_result === "failure" || r.buy_signal_result === "flat") {
-        buyEvalN++;
-        if (r.buy_signal_result === "success") buySuccessN++;
-      }
-      if (r.sell_signal_result === "success" || r.sell_signal_result === "failure" || r.sell_signal_result === "flat") {
-        sellEvalN++;
-        if (r.sell_signal_result === "success") sellSuccessN++;
-      }
-    }
+    const signalAcc = summarizeRealPortfolioSignalAccuracy(rows);
+    const buyEvalN = signalAcc.buy.n;
+    const buySuccessN = signalAcc.buy.good ?? 0;
+    const sellEvalN = signalAcc.sell.n;
+    const sellSuccessN = signalAcc.sell.good ?? 0;
     return {
       capitalOpen,
       pnlClosed,
@@ -1046,13 +1040,17 @@ export function InvestmentSimOutcomesPanel({
       nTotal: rows.length,
       buyEvalN,
       buySuccessN,
-      buyAccuracyPct: buyEvalN ? (100 * buySuccessN) / buyEvalN : null,
+      buyAccuracyPct: signalAcc.buy.valuePct,
       sellEvalN,
       sellSuccessN,
-      sellAccuracyPct: sellEvalN ? (100 * sellSuccessN) / sellEvalN : null,
+      sellAccuracyPct: signalAcc.sell.valuePct,
+      sellFlatCount: signalAcc.unverifiedSellEvitaCount,
       overallEvalN: buyEvalN + sellEvalN,
       overallSuccessN: buySuccessN + sellSuccessN,
-      overallAccuracyPct: (buyEvalN + sellEvalN) ? (100 * (buySuccessN + sellSuccessN)) / (buyEvalN + sellEvalN) : null,
+      overallAccuracyPct:
+        buyEvalN + sellEvalN > 0
+          ? Math.round((100 * (buySuccessN + sellSuccessN)) / (buyEvalN + sellEvalN) * 10) / 10
+          : null,
     };
   }, [rows, closedRows, activePortfolio]);
 

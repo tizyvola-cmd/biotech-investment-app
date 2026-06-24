@@ -8,6 +8,7 @@ import { useLang, useT } from "../shared/i18n";
 import { ViewErrorBoundary } from "./ViewErrorBoundary";
 import { MissedOpportunityPanel } from "./MissedOpportunityPanel";
 import { AdviceLearningTimelinePanel } from "./AdviceLearningTimelinePanel";
+import { ModelSizeErrorPanel } from "./ModelSizeErrorPanel";
 
 export type QcTodayDashboardProps = {
   reloadToken?: number;
@@ -100,6 +101,14 @@ export function QcTodayDashboard({
         <div className="rounded-xl border border-[rgb(var(--border))]/50 bg-white/95 p-4 shrink-0">
           <ViewErrorBoundary label="Model stretch">
             <ModelStretchPanel view={view.modelStretch} />
+          </ViewErrorBoundary>
+        </div>
+      ) : null}
+
+      {view?.modelSizeError ? (
+        <div className="rounded-xl border border-[rgb(var(--border))]/50 bg-white/95 p-4 shrink-0">
+          <ViewErrorBoundary label="Model size error">
+            <ModelSizeErrorPanel view={view.modelSizeError} />
           </ViewErrorBoundary>
         </div>
       ) : null}

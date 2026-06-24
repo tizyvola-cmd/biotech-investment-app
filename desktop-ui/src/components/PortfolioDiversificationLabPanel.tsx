@@ -16,12 +16,10 @@ import type { ChartPoint, SheetTable } from "../types";
 import type { SdsRow } from "../api/supernova";
 import type { InvestSimInputs } from "../sheet/investSimStorage";
 import { hydrateUiPrefsFromDisk, loadUiPrefsLocal, saveUiPrefs } from "../sheet/uiPrefs";
-import { CapDivStep1GainView } from "./CapDivStep1GainView";
 import { CapDivStep2RiskView } from "./CapDivStep2RiskView";
 import { CapDivStep3BreakevenView } from "./CapDivStep3BreakevenView";
 import { CapDivStep3BreakevenWidget } from "./CapDivStep3BreakevenWidget";
 import { ThreePortfolioCompareView } from "./ThreePortfolioCompareView";
-import type { ManualAllocationSynthesizerBundle } from "../sheet/manualAllocationPatternSynthesizer";
 import { useLang } from "../shared/i18n";
 
 export function PortfolioDiversificationLabPanel({
@@ -48,9 +46,6 @@ export function PortfolioDiversificationLabPanel({
   // Bumped whenever the approved pattern changes — so Step 3 re-reads it.
   const [patternVersion, setPatternVersion] = useState(0);
   const onPatternChanged = () => setPatternVersion((v) => v + 1);
-
-  const [manualAllocationBundle, setManualAllocationBundle] =
-    useState<ManualAllocationSynthesizerBundle>({ portfolio: null, simLoop: null });
 
   const [frozenWeightsTick, setFrozenWeightsTick] = useState(0);
   useEffect(() => {
@@ -167,56 +162,33 @@ export function PortfolioDiversificationLabPanel({
       {/* Top-level narrative banner */}
       <div className="rounded-2xl border border-[rgb(var(--border))]/40 bg-gradient-to-r from-emerald-50/30 via-rose-50/30 to-teal-50/30 dark:from-emerald-950/15 dark:via-rose-950/15 dark:to-teal-950/15 px-4 py-3">
         <p className="text-[11px] font-semibold text-ink uppercase tracking-wider">
-          {it ? "Capital & diversification — narrazione in 3 step" : "Capital & diversification — 3-step narrative"}
+          {it ? "Capital & diversification — narrazione in 2 step" : "Capital & diversification — 2-step narrative"}
         </p>
         <p className="text-[11px] text-ink-muted leading-relaxed max-w-4xl mt-1">
           {it ? (
             <>
-              <span className="text-emerald-700 dark:text-emerald-300 font-semibold">1) Cosa promette</span> il sistema per fascia SDS (ROI atteso e ROI realizzato) →{" "}
-              <span className="text-rose-700 dark:text-rose-300 font-semibold">2) Come si perde valore</span> (Phase A: feature più associate alla perdita, Phase B: pattern AND con proposed→approved + holdout rolling) →{" "}
-              <span className="text-teal-700 dark:text-teal-300 font-semibold">3) Quanto capitale serve</span> per chiudere sempre in positivo, con opzione di applicare il filtro pattern dello Step 2.
+              <span className="text-rose-700 dark:text-rose-300 font-semibold">1) Come si perde valore</span> (Phase A: feature più associate alla perdita, Phase B: pattern AND con proposed→approved + holdout rolling) →{" "}
+              <span className="text-teal-700 dark:text-teal-300 font-semibold">2) Quanto capitale serve</span> per chiudere sempre in positivo, con opzione di applicare il filtro pattern dello Step 1.
             </>
           ) : (
             <>
-              <span className="text-emerald-700 dark:text-emerald-300 font-semibold">1) What the system promises</span> per SDS bucket (expected ROI vs delivered) →{" "}
-              <span className="text-rose-700 dark:text-rose-300 font-semibold">2) How value is lost</span> (Phase A: features most associated with loss, Phase B: AND pattern with proposed→approved + rolling holdout) →{" "}
-              <span className="text-teal-700 dark:text-teal-300 font-semibold">3) How much capital</span> is needed to always close positive, with optional Step 2 pattern filter.
+              <span className="text-rose-700 dark:text-rose-300 font-semibold">1) How value is lost</span> (Phase A: features most associated with loss, Phase B: AND pattern with proposed→approved + rolling holdout) →{" "}
+              <span className="text-teal-700 dark:text-teal-300 font-semibold">2) How much capital</span> is needed to always close positive, with optional Step 1 pattern filter.
             </>
           )}
         </p>
       </div>
 
-      {/* STEP 1 — Gain potential (collapsible) */}
-      <details className="rounded-2xl border border-emerald-200/40 dark:border-emerald-800/30 bg-white/40 dark:bg-surface/40">
-        <summary className="px-4 py-2.5 cursor-pointer text-[12px] font-semibold text-ink hover:bg-emerald-50/30 dark:hover:bg-emerald-950/20 transition flex items-center gap-2">
-          <span className="inline-flex items-center justify-center w-5 h-5 rounded-full bg-emerald-100 dark:bg-emerald-900/40 text-emerald-700 dark:text-emerald-300 text-[10px] font-bold">
+      {/* STEP 1 — Loss risk pattern (main, collapsible) */}
+      <details className="rounded-2xl border border-rose-200/40 dark:border-rose-800/30 bg-white/40 dark:bg-surface/40">
+        <summary className="px-4 py-2.5 cursor-pointer text-[12px] font-semibold text-ink hover:bg-rose-50/30 dark:hover:bg-rose-950/20 transition flex items-center gap-2">
+          <span className="inline-flex items-center justify-center w-5 h-5 rounded-full bg-rose-100 dark:bg-rose-900/40 text-rose-700 dark:text-rose-300 text-[10px] font-bold">
             1
           </span>
           <span>
             {it
-              ? "▸ Step 1 — Gain potential (SDS × tempo)"
-              : "▸ Step 1 — Gain potential (SDS × time)"}
-          </span>
-        </summary>
-        <div className="px-3 pb-3 pt-1">
-          <CapDivStep1GainView
-            closedRows={closedRows}
-            simTable={simTable}
-            sdsRows={sdsRows}
-          />
-        </div>
-      </details>
-
-      {/* STEP 2 — Loss risk pattern (main, collapsible) */}
-      <details className="rounded-2xl border border-rose-200/40 dark:border-rose-800/30 bg-white/40 dark:bg-surface/40">
-        <summary className="px-4 py-2.5 cursor-pointer text-[12px] font-semibold text-ink hover:bg-rose-50/30 dark:hover:bg-rose-950/20 transition flex items-center gap-2">
-          <span className="inline-flex items-center justify-center w-5 h-5 rounded-full bg-rose-100 dark:bg-rose-900/40 text-rose-700 dark:text-rose-300 text-[10px] font-bold">
-            2
-          </span>
-          <span>
-            {it
-              ? "▸ Step 2 — Loss risk pattern (Phase A screening + Phase B builder)"
-              : "▸ Step 2 — Loss risk pattern (Phase A screening + Phase B builder)"}
+              ? "▸ Step 1 — Loss risk pattern (Phase A screening + Phase B builder)"
+              : "▸ Step 1 — Loss risk pattern (Phase A screening + Phase B builder)"}
           </span>
         </summary>
         <div className="px-3 pb-3 pt-1">
@@ -225,12 +197,11 @@ export function PortfolioDiversificationLabPanel({
             simTable={simTable}
             sdsRows={sdsRows}
             onPatternChanged={onPatternChanged}
-            manualAllocationBundle={manualAllocationBundle}
           />
         </div>
       </details>
 
-      {/* STEP 3 — Break-even sizing */}
+      {/* STEP 2 — Break-even sizing */}
       <CapDivStep3BreakevenView
         closedRows={closedRows}
         simTable={simTable}
@@ -239,7 +210,6 @@ export function PortfolioDiversificationLabPanel({
         pointsBySeriesKey={pointsBySeriesKey}
         topCapital={topCapital}
         patternStoreVersion={patternVersion}
-        onManualAllocationChange={setManualAllocationBundle}
         onPatternChanged={onPatternChanged}
         frozenWeightsTick={frozenWeightsTick}
       />

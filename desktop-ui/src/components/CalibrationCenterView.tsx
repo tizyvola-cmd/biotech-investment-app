@@ -7,11 +7,27 @@
  *
  * Nothing happens to frozen weights until the user explicitly clicks Approve.
  */
-import { useCallback, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type { SimOutcomeRow } from "../data/investmentSimOutcomesData";
 import type { SheetTable } from "../types";
 import type { SdsRow } from "../api/supernova";
 import { useLang } from "../shared/i18n";
+import { PatternSearchMonitorPanel } from "./PatternSearchMonitorPanel";
+import {
+  type PcseRunResult,
+  type CombinationResult,
+  PCSE_SEARCH_REQUESTED_EVENT,
+  runPatternCombinationSearch,
+} from "../sheet/patternCombinationSearch";
+import { listSnapshots, appendPcseSnapshot } from "../sheet/patternSearchHistory";
+import { loadSchedulerState, markRunCompleted } from "../sheet/patternSearchScheduler";
+import { loadDecisionSimState } from "../sheet/investDecisionSimStorage";
+import { proposeFromPCSE, listProposals as listPatternProposals } from "../riskPattern/patternProposalStore";
+import {
+  approvePatternProposal,
+  rejectPatternProposal,
+} from "../riskPattern/patternProposalEngine";
+import type { PatternProposal } from "../riskPattern/riskPatternTypes";
 import {
   generateProposalFromOutcomes,
   approveProposal,
@@ -259,7 +275,7 @@ function ProposalCard({
   );
 }
 
-type Tab = "queue" | "history" | "frozen";
+type Tab = "queue" | "history" | "frozen" | "patterns";
 
 export function CalibrationCenterView({
   outcomes,
@@ -277,6 +293,108 @@ export function CalibrationCenterView({
   const [proposals, setProposals] = useState<CalibrationProposal[]>(() =>
     listProposals(),
   );
+  const [patternProposals, setPatternProposals] = useState<PatternProposal[]>(() =>
+    listPatternProposals(),
+  );
+  const [promoteFeedback, setPromoteFeedback] = useState<{
+    kind: "success" | "duplicate";
+    label: string;
+  } | null>(null);
+
+  // ── PCSE state ────────────────────────────────────────────────────────────
+  const [pcseRun, setPcseRun] = useState<PcseRunResult | null>(() => {
+    const snaps = listSnapshots();
+    if (!snaps.length) return null;
+    const last = snaps[snaps.length - 1]!;
+    return { computedAt: last.ts, totalHistoricalN: last.totalClosedN, globalLossRate: last.globalLossRate, results: last.topCandidates };
+  });
+
+  const outcomesRef = useRef(outcomes);
+  outcomesRef.current = outcomes;
+  const simTableRef = useRef(simTable);
+  simTableRef.current = simTable;
+  const sdsRowsRef = useRef(sdsRows);
+  sdsRowsRef.current = sdsRows;
+
+  useEffect(() => {
+    function executePcseRun() {
+      const { paperPortfolio, closedTradeCount } = loadDecisionSimState();
+      const openDeals = paperPortfolio.map((p) => ({ rowKey: p.key, ticker: p.ticker, cells: {} as Record<string, string> }));
+      const schedState = loadSchedulerState();
+      const result = runPatternCombinationSearch({
+        closedRows: outcomesRef.current,
+        openDeals,
+        resolvedLiveRows: [],
+        previousLiveMatchKeys: schedState.liveMatchKeysAtLastRun,
+        simTable: simTableRef.current,
+        sdsRows: sdsRowsRef.current,
+      });
+      // Diagnostic — apri DevTools Console e clicca "Run now" per vedere questi log
+      if (import.meta.env.DEV) {
+        import("../riskPattern/lossRiskScreening").then(({ extractAllRowFeatures }) => {
+          const fm = extractAllRowFeatures(outcomesRef.current, { simTable: simTableRef.current, sdsRows: sdsRowsRef.current });
+          const dims = ["sdsBucket","clinicalPhase","clinicalIndication","pplanBucket","daysToCdBucket","precdSlopeSign"] as const;
+          const counts: Record<string, number> = {};
+          for (const feats of fm.values()) {
+            for (const d of dims) {
+              if ((feats as Record<string, unknown>)[d] != null) counts[d] = (counts[d] ?? 0) + 1;
+            }
+          }
+          console.log("[PCSE diagnostic] chiusi:", fm.size, "| simTable rows:", simTableRef.current?.rows?.length ?? 0, "| sdsRows:", sdsRowsRef.current?.length ?? 0);
+          console.log("[PCSE diagnostic] feature coverage:", counts);
+          console.log("[PCSE diagnostic] risultati:", result.results.length, "| promotionReady:", result.results.filter(r => r.promotionReady).length);
+        });
+      }
+      appendPcseSnapshot(result, openDeals.length);
+      markRunCompleted(closedTradeCount, openDeals.map((d) => d.rowKey));
+      setPcseRun(result);
+    }
+    window.addEventListener(PCSE_SEARCH_REQUESTED_EVENT, executePcseRun);
+    return () => window.removeEventListener(PCSE_SEARCH_REQUESTED_EVENT, executePcseRun);
+  }, []);
+
+  function onPromotePcse(result: CombinationResult) {
+    const created = proposeFromPCSE({
+      label: result.label,
+      dimensions: result.candidate.dimensions,
+      cells: result.candidate.cells,
+      historicalLift: result.historicalLift,
+      historicalN: result.historicalN,
+      historicalLossPct: result.historicalLossPct,
+      liveMatchCount: result.liveMatchCount,
+      stabilityScore: result.stabilityScore,
+    });
+    setPatternProposals(listPatternProposals());
+    if (created) {
+      setPromoteFeedback({
+        kind: "success",
+        label: result.label,
+      });
+    } else {
+      setPromoteFeedback({
+        kind: "duplicate",
+        label: result.label,
+      });
+    }
+  }
+
+  useEffect(() => {
+    if (!promoteFeedback) return;
+    const id = window.setTimeout(() => setPromoteFeedback(null), 8000);
+    return () => window.clearTimeout(id);
+  }, [promoteFeedback]);
+
+  const handleApprovePattern = useCallback((id: string) => {
+    approvePatternProposal(id);
+    setPatternProposals(listPatternProposals());
+  }, []);
+
+  const handleRejectPattern = useCallback((id: string) => {
+    rejectPatternProposal(id);
+    setPatternProposals(listPatternProposals());
+  }, []);
+
+  const pendingPatternProposals = patternProposals.filter((p) => p.status === "pending");
 
   const frozen = useMemo(() => loadFrozenWeights(), [proposals]);
 
@@ -350,10 +468,10 @@ export function CalibrationCenterView({
           [
             { id: "queue", label: it ? `Coda (${pending.length})` : `Queue (${pending.length})` },
             { id: "frozen", label: it ? "Pesi approvati" : "Approved weights" },
-            {
-              id: "history",
-              label: it ? `Storico (${history.length})` : `History (${history.length})`,
-            },
+            { id: "history", label: it ? `Storico (${history.length})` : `History (${history.length})` },
+            { id: "patterns", label: it
+              ? `Combinazioni${pcseRun ? ` · ${pcseRun.results.filter(r => r.promotionReady).length} pronti` : ""}`
+              : `Combinations${pcseRun ? ` · ${pcseRun.results.filter(r => r.promotionReady).length} ready` : ""}` },
           ] as const
         ).map((t) => (
           <button
@@ -477,6 +595,88 @@ export function CalibrationCenterView({
             ))}
           </div>
         )
+      ) : null}
+
+      {tab === "patterns" ? (
+        <div className="space-y-3">
+          {promoteFeedback ? (
+            <div
+              className={`rounded-lg border px-3 py-2 text-[11px] leading-snug ${
+                promoteFeedback.kind === "success"
+                  ? "border-emerald-300/70 bg-emerald-50/80 text-emerald-900 dark:bg-emerald-950/30 dark:text-emerald-100"
+                  : "border-amber-300/70 bg-amber-50/80 text-amber-900 dark:bg-amber-950/30 dark:text-amber-100"
+              }`}
+            >
+              {promoteFeedback.kind === "success"
+                ? it
+                  ? `«${promoteFeedback.label}» aggiunto alla coda pattern sotto — approva per attivarlo nel risk screening (≠ pesi Bayesiani in Coda).`
+                  : `«${promoteFeedback.label}» added to the pattern queue below — approve to activate in risk screening (≠ Bayesian weights in Queue tab).`
+                : it
+                  ? `«${promoteFeedback.label}» è già in coda pattern (in attesa di approvazione).`
+                  : `«${promoteFeedback.label}» is already in the pattern queue (pending approval).`}
+            </div>
+          ) : null}
+          {pendingPatternProposals.length > 0 ? (
+            <div className="rounded-xl border border-indigo-200/60 bg-indigo-50/40 dark:bg-indigo-950/15">
+              <header className="px-3 py-2 border-b border-indigo-200/40">
+                <h4 className="text-[11px] font-semibold text-indigo-900 dark:text-indigo-100">
+                  {it
+                    ? `Coda pattern (${pendingPatternProposals.length}) — da PCSE / loss screening`
+                    : `Pattern queue (${pendingPatternProposals.length}) — from PCSE / loss screening`}
+                </h4>
+                <p className="text-[9px] text-indigo-800/80 dark:text-indigo-200/80 mt-0.5">
+                  {it
+                    ? "Promuovi crea una proposta qui. Approva per usarla nel risk pattern attivo — non modifica i pesi in «Coda»."
+                    : "Promote creates a proposal here. Approve to use it as the active risk pattern — does not change weights in «Queue»."}
+                </p>
+              </header>
+              <ul className="p-3 space-y-2">
+                {pendingPatternProposals.map((p) => (
+                  <li
+                    key={p.id}
+                    className="rounded-md border border-indigo-200/50 bg-white/60 dark:bg-surface/50 px-3 py-2"
+                  >
+                    <p className="text-[11px] font-semibold text-ink mb-0.5">
+                      {p.proposedPattern?.pattern.name ?? p.id}
+                    </p>
+                    <p className="text-[10px] text-ink-muted leading-relaxed">{p.rationale}</p>
+                    <div className="flex gap-2 mt-2">
+                      <button
+                        type="button"
+                        className="px-3 py-1 rounded text-[10px] font-bold bg-emerald-600 hover:bg-emerald-700 text-white"
+                        onClick={() => handleApprovePattern(p.id)}
+                      >
+                        {it ? "✓ Approva pattern" : "✓ Approve pattern"}
+                      </button>
+                      <button
+                        type="button"
+                        className="px-3 py-1 rounded text-[10px] font-bold bg-rose-600 hover:bg-rose-700 text-white"
+                        onClick={() => handleRejectPattern(p.id)}
+                      >
+                        {it ? "✕ Rifiuta" : "✕ Reject"}
+                      </button>
+                    </div>
+                  </li>
+                ))}
+              </ul>
+            </div>
+          ) : null}
+          <div className="flex items-center justify-between gap-2">
+            <p className="text-[11px] text-ink-muted leading-relaxed">
+              {it
+                ? "Combinazioni AND di 1-3 dimensioni valutate su tutti i trade chiusi. Il lift misura quanto quella combinazione aumenta il tasso di perdita rispetto alla base. La stability score penalizza il degrado su nuovi casi live."
+                : "AND combinations of 1-3 dimensions evaluated on all closed trades. Lift measures how much that combination raises the loss rate vs baseline. Stability score penalises degradation on new live cases."}
+            </p>
+            <button
+              type="button"
+              className="shrink-0 text-[10px] font-semibold px-3 py-1 rounded-full border border-indigo-300 dark:border-indigo-700 text-indigo-700 dark:text-indigo-300 hover:bg-indigo-50 dark:hover:bg-indigo-900/30 transition-colors whitespace-nowrap"
+              onClick={() => window.dispatchEvent(new CustomEvent(PCSE_SEARCH_REQUESTED_EVENT))}
+            >
+              {it ? "Esegui ora" : "Run now"}
+            </button>
+          </div>
+          <PatternSearchMonitorPanel runResult={pcseRun} onPromote={onPromotePcse} />
+        </div>
       ) : null}
     </div>
   );

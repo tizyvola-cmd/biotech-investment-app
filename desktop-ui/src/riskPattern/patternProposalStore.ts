@@ -22,10 +22,34 @@
  *   supernova.riskPattern.flagged.v1     → Record<rowKey, FlaggedTag>
  */
 import type {
+  PatternApprovalSource,
   PatternProposal,
   PatternProposalStatus,
   RiskPattern,
 } from "./riskPatternTypes";
+
+export type { PatternApprovalSource };
+
+export function patternApprovalSourceLabel(
+  source: PatternApprovalSource | null | undefined,
+  lang: "it" | "en",
+): string {
+  const it = lang === "it";
+  switch (source) {
+    case "pcse":
+      return it ? "PCSE (Combinazioni)" : "PCSE (Combinations)";
+    case "engine":
+      return it ? "Engine (coda proposte)" : "Engine (proposal queue)";
+    case "manual":
+      return it ? "Manuale (sintetizzatore)" : "Manual (synthesizer)";
+    case "auto_apply":
+      return it ? "Empirico (Step 2, 1 click)" : "Empirical (Step 2, one-click)";
+    default:
+      return it
+        ? "Sconosciuta (approvato prima del tracciamento)"
+        : "Unknown (approved before tracking)";
+  }
+}
 
 const PROPOSAL_KEY = "supernova.riskPattern.proposals.v1";
 const APPROVED_KEY = "supernova.riskPattern.approved.v1";
@@ -146,6 +170,10 @@ export type ApprovedPatternRecord = {
   updatedAt: string;
   /** Currently active pattern (the one used by Step 3 filter). */
   current: RiskPattern | null;
+  /** How `current` was last approved (PCSE, engine queue, manual, etc.). */
+  currentSource?: PatternApprovalSource | null;
+  /** Proposal id that led to the current approval, when applicable. */
+  currentSourceProposalId?: string | null;
   /** Patterns previously approved, in chronological order (oldest first). */
   supersededHistory: RiskPattern[];
 };
@@ -154,6 +182,8 @@ function emptyApprovedRecord(): ApprovedPatternRecord {
   return {
     updatedAt: new Date().toISOString(),
     current: null,
+    currentSource: null,
+    currentSourceProposalId: null,
     supersededHistory: [],
   };
 }
@@ -184,11 +214,19 @@ function saveApprovedPattern(r: ApprovedPatternRecord): void {
  * Promote a pattern to "approved". The previous current (if any) is moved
  * into supersededHistory. Returns the updated record.
  */
-export function promotePatternToApproved(p: RiskPattern): ApprovedPatternRecord {
+export function promotePatternToApproved(
+  p: RiskPattern,
+  meta?: {
+    source?: PatternApprovalSource;
+    proposalId?: string;
+  },
+): ApprovedPatternRecord {
   const r = loadApprovedPattern();
   const newRecord: ApprovedPatternRecord = {
     updatedAt: new Date().toISOString(),
     current: { ...p, approvedAt: new Date().toISOString() },
+    currentSource: meta?.source ?? "unknown",
+    currentSourceProposalId: meta?.proposalId ?? null,
     supersededHistory: r.current
       ? [...r.supersededHistory, r.current]
       : r.supersededHistory,
@@ -207,6 +245,8 @@ export function clearApprovedPattern(): ApprovedPatternRecord {
   const newRecord: ApprovedPatternRecord = {
     updatedAt: new Date().toISOString(),
     current: null,
+    currentSource: null,
+    currentSourceProposalId: null,
     supersededHistory: r.current
       ? [...r.supersededHistory, r.current]
       : r.supersededHistory,
@@ -336,6 +376,83 @@ export function tagAsFlaggedButTaken(
 
 export function listFlaggedTags(): FlaggedTag[] {
   return Object.values(loadFlaggedTags());
+}
+
+// ── PCSE promotion ────────────────────────────────────────────────────────
+//
+// Maps a PCSE CombinationResult to a PatternProposal and persists it.
+// Import is lazy-typed to avoid a circular dependency: patternProposalStore
+// must not import from riskPattern/* (which imports from here).
+
+export type PcsePromotionInput = {
+  label: string;
+  dimensions: string[];
+  cells: string[];
+  historicalLift: number;
+  historicalN: number;
+  historicalLossPct: number;
+  liveMatchCount: number;
+  stabilityScore: number;
+};
+
+/**
+ * Convert a PCSE combination result into a pending PatternProposal and
+ * persist it. The pattern is built as an AND of single-value conditions,
+ * one per dimension/cell pair.
+ *
+ * Returns null if a pending proposal with the same label already exists
+ * (idempotent — avoids duplicating proposals between runs).
+ */
+export function proposeFromPCSE(input: PcsePromotionInput): PatternProposal | null {
+  const existing = loadProposals().find(
+    (p) =>
+      p.status === "pending" &&
+      p.proposedPattern?.pattern.name === input.label,
+  );
+  if (existing) return null;
+
+  const conditions = input.dimensions.map((dim, i) => ({
+    dimension: dim as import("./riskPatternTypes").RiskFeatureDimension,
+    operator: "in" as const,
+    values: [input.cells[i]!],
+    label: `${dim} = ${input.cells[i]}`,
+  }));
+
+  const pattern: RiskPattern = {
+    id: `pcse-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`,
+    createdAt: new Date().toISOString(),
+    name: input.label,
+    conditions,
+    inSampleStats: {
+      n: input.historicalN,
+      firedN: input.historicalN,
+      firedLosses: Math.round((input.historicalLossPct / 100) * input.historicalN),
+      notFiredN: 0,
+      notFiredLosses: 0,
+      precision: input.historicalLossPct / 100,
+      recall: 1,
+      fBeta: input.historicalLossPct / 100,
+      lift: input.historicalLift,
+      baseLossRate: 0,
+      confidence: input.stabilityScore >= 75 ? "high" : input.stabilityScore >= 50 ? "medium" : "low",
+      computedAt: new Date().toISOString(),
+    },
+  };
+
+  const proposal: PatternProposal = {
+    id: `pcse-prop-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`,
+    createdAt: new Date().toISOString(),
+    triggeredByTradeId: null,
+    reason: "betterPatternFound",
+    currentPattern: null,
+    proposedPattern: { pattern, inSampleStats: pattern.inSampleStats },
+    rationale: `PCSE auto-proposal: lift ${input.historicalLift.toFixed(2)}× on n=${input.historicalN}, stability ${input.stabilityScore}/100, ${input.liveMatchCount} live matches.`,
+    drivenByTradeIds: [],
+    status: "pending",
+  };
+
+  persistProposal(proposal);
+  return proposal;
 }
 
 // ── Reset for tests ───────────────────────────────────────────────────────

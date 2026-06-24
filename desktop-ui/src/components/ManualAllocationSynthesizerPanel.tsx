@@ -1,13 +1,20 @@
 import type { ConfidenceLevel } from "../calibration/calibrationTypes";
+import type { SimOutcomeRow } from "../data/investmentSimOutcomesData";
+import type { SheetTable } from "../types";
+import type { SdsRow } from "../api/supernova";
 import { conditionLabel } from "../riskPattern/lossRiskPattern";
+import { loadTradeLeadTimes } from "../riskPattern/patternMatchTracker";
 import { dimensionLabel } from "../riskPattern/lossRiskScreening";
 import { applyManualAllocationPattern } from "../riskPattern/manualAllocationPatternApply";
+import { PatternValidationChart } from "./PatternValidationChart";
 import type {
   ManualAllocationPatternResult,
   ManualAllocationSynthesizerBundle,
   ManualAllocationSynthesizerBundleResult,
   ManualAllocationSynthesizerInput,
 } from "../sheet/manualAllocationPatternSynthesizer";
+
+const MIN_LEAD_TIME_SAMPLES = 5;
 
 function fmtPct01(v: number | null | undefined, d = 1): string {
   if (v == null || !Number.isFinite(v)) return "—";
@@ -39,11 +46,17 @@ function UniverseSynthesizerBlock({
   result,
   it,
   onApply,
+  closedRows,
+  simTable,
+  sdsRows,
 }: {
   input: ManualAllocationSynthesizerInput;
   result: ManualAllocationPatternResult | null;
   it: boolean;
   onApply: (result: ManualAllocationPatternResult) => void;
+  closedRows?: SimOutcomeRow[];
+  simTable?: SheetTable | null;
+  sdsRows?: SdsRow[] | null;
 }) {
   const universeLabel =
     input.universe === "portfolio"
@@ -81,10 +94,23 @@ function UniverseSynthesizerBlock({
             {universeLabel}
           </p>
           {result.estimatedErrorPct != null ? (
-            <p className="text-[18px] font-bold tabular-nums text-rose-700 dark:text-rose-300 mt-0.5">
+            <p className="text-[18px] font-bold tabular-nums mt-0.5"
+              style={{ color: result.estimatedErrorPct < 25 ? '#059669' : result.estimatedErrorPct < 40 ? '#d97706' : '#dc2626' }}
+            >
               {result.estimatedErrorPct.toFixed(1)}%
-              <span className="text-[11px] font-normal text-ink-muted ml-1.5">
-                {it ? "errore stimato (chiusi)" : "estimated error (closed)"}
+              <span
+                className="text-[11px] font-normal text-ink-muted ml-1.5 cursor-help"
+                title={it
+                  ? `Tasso di perdita storico sui trade chiusi che matchano il pattern. ` +
+                    `${result.estimatedErrorPct.toFixed(1)}% significa che ${result.estimatedErrorPct.toFixed(0)}% di questi deal sono finiti in perdita — ` +
+                    `ovvero circa ${(100 - result.estimatedErrorPct).toFixed(0)}% sono stati win. ` +
+                    `Valori sotto il 25% sono buoni. Non indica un errore del sistema.`
+                  : `Historical loss rate on closed trades matching this pattern. ` +
+                    `${result.estimatedErrorPct.toFixed(1)}% means ${result.estimatedErrorPct.toFixed(0)}% of these deals ended in a loss — ` +
+                    `i.e. about ${(100 - result.estimatedErrorPct).toFixed(0)}% were wins. ` +
+                    `Values below 25% are good. This does NOT indicate a system error.`}
+              >
+                {it ? "tasso perdita storico (chiusi) ⓘ" : "historical loss rate (closed) ⓘ"}
               </span>
             </p>
           ) : (
@@ -248,6 +274,22 @@ function UniverseSynthesizerBlock({
           </table>
         </div>
       ) : null}
+
+      {result && closedRows && closedRows.length > 0 ? (
+        <PatternValidationChart
+          pattern={result.pattern}
+          closedRows={closedRows.filter((r) => {
+            const u = (r as SimOutcomeRow & { universe?: string }).universe;
+            if (input.universe === "portfolio") {
+              return !u || u === "real";
+            }
+            return !u || u === "simloop";
+          })}
+          simTable={simTable}
+          sdsRows={sdsRows}
+          it={it}
+        />
+      ) : null}
     </div>
   );
 }
@@ -257,16 +299,25 @@ export function ManualAllocationSynthesizerPanel({
   outcomes,
   it,
   onPatternApproved,
+  closedRows,
+  simTable,
+  sdsRows,
 }: {
   bundle: ManualAllocationSynthesizerBundle;
   outcomes: ManualAllocationSynthesizerBundleResult;
   it: boolean;
   onPatternApproved?: () => void;
+  closedRows?: SimOutcomeRow[];
+  simTable?: SheetTable | null;
+  sdsRows?: SdsRow[] | null;
 }) {
   const portfolioInput = bundle.portfolio?.enabled ? bundle.portfolio : null;
   const simLoopInput = bundle.simLoop?.enabled ? bundle.simLoop : null;
 
   if (!portfolioInput && !simLoopInput) return null;
+
+  const leadTimeCount = loadTradeLeadTimes().length;
+  const leadTimeReady = leadTimeCount >= MIN_LEAD_TIME_SAMPLES;
 
   function handleApply(result: ManualAllocationPatternResult) {
     const ok = applyManualAllocationPattern(
@@ -282,13 +333,32 @@ export function ManualAllocationSynthesizerPanel({
       <div>
         <p className="text-[12px] font-semibold text-teal-900 dark:text-teal-100">
           {it
-            ? "Sintetizzatore — pesi → indici → % errore"
-            : "Synthesizer — weights → indices → error %"}
+            ? "Sintetizzatore — pattern dai pesi manuali"
+            : "Synthesizer — pattern from manual weights"}
         </p>
-        <p className="text-[10px] text-teal-800/80 dark:text-teal-200/70 mt-0.5 max-w-3xl">
+        <p className="text-[10px] text-teal-800/80 dark:text-teal-200/70 mt-0.5 max-w-3xl leading-relaxed">
           {it
-            ? "Legge le posizioni aperte che hai sotto-pesato con gli slider, inferisce un pattern AND (come Step 2) e incrocia ogni bucket con la % di loss storica sui trade chiusi (Phase A). La % errore in evidenza è la precision del pattern sui chiusi quando n è sufficiente."
-            : "Reads open positions you down-weighted via sliders, infers an AND pattern (like Step 2) and cross-references each bucket with historical closed-trade loss % (Phase A). The headline error % is pattern precision on closed trades when n is sufficient."}
+            ? "Guarda quali deal hai sotto-pesato con gli slider e costruisce un pattern AND. " +
+              "Il numero grande è il tasso di perdita sui trade chiusi che matchano il pattern (non è un errore di sistema — 0% = nessuna perdita storica in quel bucket). " +
+              "Precision/recall sulle aperte misura solo il fit con gli slider. La validazione vera è nel grafico sotto."
+            : "Looks at down-weighted deals and builds an AND pattern. " +
+              "The headline number is the loss rate on closed trades matching the pattern (not a system error — 0% = no historical losses in that bucket). " +
+              "Open precision/recall only measures slider fit. Real validation is in the chart below."}
+        </p>
+        <p
+          className={`text-[10px] mt-1.5 ${
+            leadTimeReady
+              ? "text-emerald-700 dark:text-emerald-300 font-semibold"
+              : "text-ink-muted"
+          }`}
+        >
+          {leadTimeReady
+            ? it
+              ? `Dati lead-time: ${leadTimeCount} raccolti — pronto per il grafico`
+              : `Lead-time data: ${leadTimeCount} collected — ready for chart`
+            : it
+              ? `Dati lead-time: ${leadTimeCount} / ${MIN_LEAD_TIME_SAMPLES} raccolti`
+              : `Lead-time data: ${leadTimeCount} / ${MIN_LEAD_TIME_SAMPLES} collected`}
         </p>
       </div>
 
@@ -303,6 +373,9 @@ export function ManualAllocationSynthesizerPanel({
             result={outcomes.portfolio}
             it={it}
             onApply={handleApply}
+            closedRows={closedRows}
+            simTable={simTable}
+            sdsRows={sdsRows}
           />
         ) : null}
         {simLoopInput ? (
@@ -311,6 +384,9 @@ export function ManualAllocationSynthesizerPanel({
             result={outcomes.simLoop}
             it={it}
             onApply={handleApply}
+            closedRows={closedRows}
+            simTable={simTable}
+            sdsRows={sdsRows}
           />
         ) : null}
       </div>

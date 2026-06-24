@@ -1,57 +1,24 @@
 /**
  * Sim loop · synth counterfactual curves for Decision Sim dashboard charts.
  *
- * Applies Weight Sim Exp shares (same pipeline as Three-Portfolio / Step 3) to
- * paper-sim ticks: each deal's P&L is scaled by synthCap / equalCap.
+ * Causal Weight Sim Exp: rebalance after each tick's marks, never with global
+ * lookahead weights from future closed outcomes.
  */
 import { sanitizePaperMovePct, type ExperimentPiggyBank } from "./investDecisionSimExperiment";
 import type { DecisionSimTick, PaperPosition, TickerSimEvaluation } from "./investDecisionSimLoop";
 import { formatDecisionSimChartTime } from "./investDecisionSimCharts";
 import { sanitizeDecisionSimTimeSeries } from "./decisionSimPnlResolve";
 import type { PortfolioPoint } from "../types/trades";
+import {
+  buildCausalSimLoopShareWalk,
+  causalShareForSell,
+  rebalanceCausalSimLoopShares,
+  shareToSynthCap,
+  type SimLoopCausalSynthOpts,
+} from "./simLoopCausalSynth";
 
 function roundEur(n: number): number {
   return Math.round(n * 100) / 100;
-}
-
-function synthCapForOpenPosition(
-  rowKey: string,
-  equalCap: number,
-  totalCapitalEur: number,
-  entryShares: Record<string, number>,
-): number {
-  const entry = entryShares[rowKey];
-  if (typeof entry === "number" && Number.isFinite(entry) && entry >= 0 && totalCapitalEur > 0) {
-    return Math.round(entry * totalCapitalEur * 100) / 100;
-  }
-  return equalCap;
-}
-
-function synthCapForClosed(
-  rowKey: string,
-  equalCap: number,
-  shareByRowKey: Record<string, number>,
-  totalCapitalEur: number,
-  entryShares: Record<string, number>,
-): number {
-  const entry = entryShares[rowKey];
-  if (typeof entry === "number" && Number.isFinite(entry) && entry >= 0 && totalCapitalEur > 0) {
-    return Math.round(entry * totalCapitalEur * 100) / 100;
-  }
-  return synthCapForKey(rowKey, equalCap, shareByRowKey, totalCapitalEur);
-}
-
-function synthCapForKey(
-  rowKey: string,
-  equalCap: number,
-  shareByRowKey: Record<string, number>,
-  totalCapitalEur: number,
-): number {
-  const share = shareByRowKey[rowKey];
-  if (typeof share === "number" && Number.isFinite(share) && share >= 0 && totalCapitalEur > 0) {
-    return share * totalCapitalEur;
-  }
-  return equalCap;
 }
 
 function scalePnl(pnlEur: number, equalCap: number, synthCap: number): number {
@@ -59,27 +26,28 @@ function scalePnl(pnlEur: number, equalCap: number, synthCap: number): number {
   return roundEur(pnlEur * (synthCap / equalCap));
 }
 
+function synthCapForOpenPosition(
+  rowKey: string,
+  equalCap: number,
+  totalCapitalEur: number,
+  activeShares: Record<string, number>,
+): number {
+  return shareToSynthCap(activeShares[rowKey], totalCapitalEur, equalCap);
+}
+
 function openSynthMtmForTick(
   portfolio: PaperPosition[],
   evaluations: TickerSimEvaluation[],
-  shareByRowKey: Record<string, number>,
   totalCapitalEur: number,
   capitalPerTrade: number,
-  includePendingBuys: boolean,
-  entryShares: Record<string, number> = {},
+  activeShares: Record<string, number>,
 ): number {
   const evByKey = new Map(evaluations.map((e) => [e.key, e]));
-  const inBook = new Set(portfolio.map((p) => p.key));
   let openSynth = 0;
 
   for (const pos of portfolio) {
     const equalCap = pos.capital ?? capitalPerTrade;
-    const synthCap = synthCapForOpenPosition(
-      pos.key,
-      equalCap,
-      totalCapitalEur,
-      entryShares,
-    );
+    const synthCap = synthCapForOpenPosition(pos.key, equalCap, totalCapitalEur, activeShares);
     const ev = evByKey.get(pos.key);
     const pct =
       sanitizePaperMovePct(ev?.pnlPct) ??
@@ -91,18 +59,6 @@ function openSynthMtmForTick(
     }
   }
 
-  if (includePendingBuys) {
-    for (const ev of evaluations) {
-      if (ev.suggestedAction !== "buy") continue;
-      if (inBook.has(ev.key)) continue;
-      const synthCap = synthCapForKey(ev.key, capitalPerTrade, shareByRowKey, totalCapitalEur);
-      const pct = sanitizePaperMovePct(ev.pnlPct) ?? sanitizePaperMovePct(ev.pnlPct24h) ?? null;
-      if (pct != null) {
-        openSynth += (synthCap * pct) / 100;
-      }
-    }
-  }
-
   return roundEur(openSynth);
 }
 
@@ -111,7 +67,7 @@ function openSynthFromPiggy(
   portfolio: PaperPosition[],
   totalCapitalEur: number,
   capitalPerTrade: number,
-  entryShares: Record<string, number> = {},
+  activeShares: Record<string, number>,
 ): number | null {
   if (!Number.isFinite(piggy.openMtmPnlEur) || portfolio.length === 0) return null;
   let equalOpenCap = 0;
@@ -120,12 +76,7 @@ function openSynthFromPiggy(
     const equalCap = pos.capital ?? capitalPerTrade;
     if (equalCap <= 0) continue;
     equalOpenCap += equalCap;
-    synthOpenCap += synthCapForOpenPosition(
-      pos.key,
-      equalCap,
-      totalCapitalEur,
-      entryShares,
-    );
+    synthOpenCap += synthCapForOpenPosition(pos.key, equalCap, totalCapitalEur, activeShares);
   }
   if (equalOpenCap <= 0 || synthOpenCap <= 0) return null;
   return roundEur((piggy.openMtmPnlEur ?? 0) * (synthOpenCap / equalOpenCap));
@@ -133,20 +84,16 @@ function openSynthFromPiggy(
 
 function resolveOpenSynthForTick(
   tk: DecisionSimTick,
-  shareByRowKey: Record<string, number>,
   totalCapitalEur: number,
   capitalPerTrade: number,
-  includePendingBuys: boolean,
-  entryShares: Record<string, number> = {},
+  activeShares: Record<string, number>,
 ): number {
   const fromEvals = openSynthMtmForTick(
     tk.portfolioAfter,
     tk.evaluations,
-    shareByRowKey,
     totalCapitalEur,
     capitalPerTrade,
-    includePendingBuys,
-    entryShares,
+    activeShares,
   );
   const piggy = tk.summary.piggyBank;
   if (tk.evaluations.length === 0 && piggy && tk.portfolioAfter.length > 0) {
@@ -155,7 +102,7 @@ function resolveOpenSynthForTick(
       tk.portfolioAfter,
       totalCapitalEur,
       capitalPerTrade,
-      entryShares,
+      activeShares,
     );
     if (fromPiggy != null) return fromPiggy;
   }
@@ -207,51 +154,62 @@ export function sanitizeSimLoopSynthMaturationSeries(
   });
 }
 
+export type BuildSimLoopSynthMaturationOpts = {
+  totalCapitalEur: number;
+  capitalPerTrade: number;
+  targetGainEur?: number;
+  /** @deprecated Global share map — only used for static_approved mode. */
+  shareByRowKey?: Record<string, number>;
+  /** @deprecated Replaced by causal walk; kept for static_approved compatibility. */
+  entryShareByRowKey?: Record<string, number>;
+  sizingMode?: "causal_rebalance" | "static_approved";
+  live?: {
+    paperPortfolio: PaperPosition[];
+    evaluations: TickerSimEvaluation[];
+    piggyBank: ExperimentPiggyBank;
+  } | null;
+};
+
+function causalOptsFromBuildOpts(opts: BuildSimLoopSynthMaturationOpts): SimLoopCausalSynthOpts {
+  return {
+    totalCapitalEur: opts.totalCapitalEur,
+    capitalPerTrade: opts.capitalPerTrade,
+    targetGainEur: opts.targetGainEur,
+    sizingMode: opts.sizingMode ?? "causal_rebalance",
+    staticSharesByKey: opts.shareByRowKey,
+  };
+}
+
 /** One point per decision-sim tick (+ optional live tail). */
 export function buildSimLoopSynthMaturationSeries(
   ticks: DecisionSimTick[],
-  opts: {
-    shareByRowKey: Record<string, number>;
-    totalCapitalEur: number;
-    capitalPerTrade: number;
-    /** Weight snapshot at entry — open MTM uses this until a new BUY. */
-    entryShareByRowKey?: Record<string, number>;
-    live?: {
-      paperPortfolio: PaperPosition[];
-      evaluations: TickerSimEvaluation[];
-      piggyBank: ExperimentPiggyBank;
-    } | null;
-  },
+  opts: BuildSimLoopSynthMaturationOpts,
 ): SimLoopSynthMaturationPoint[] {
   const sorted = [...ticks].sort((a, b) => a.at.localeCompare(b.at));
-  const entryShares = opts.entryShareByRowKey ?? {};
+  const causalOpts = causalOptsFromBuildOpts(opts);
+  const walk = buildCausalSimLoopShareWalk(sorted, causalOpts);
   let cumClosedSynth = 0;
   const points: SimLoopSynthMaturationPoint[] = [];
 
-  for (const tk of sorted) {
+  for (let i = 0; i < sorted.length; i += 1) {
+    const tk = sorted[i]!;
     for (const tr of tk.trades) {
       if (tr.side !== "sell") continue;
       const entryPos = tk.portfolioBefore.find((p) => p.key === tr.key);
       const equalCap = tr.capital ?? entryPos?.capital ?? opts.capitalPerTrade;
-      const synthCap = synthCapForClosed(
-        tr.key,
-        equalCap,
-        opts.shareByRowKey,
-        opts.totalCapitalEur,
-        entryShares,
-      );
+      const share = causalShareForSell(walk, tk, tr);
+      const synthCap = shareToSynthCap(share, opts.totalCapitalEur, equalCap);
       cumClosedSynth = roundEur(
         cumClosedSynth + scalePnl(tr.pnlEurSimulated ?? 0, equalCap, synthCap),
       );
     }
 
+    const openShares = walk.openSharesPerTick[i] ?? {};
     const openSynth = resolveOpenSynthForTick(
       tk,
-      opts.shareByRowKey,
       opts.totalCapitalEur,
       opts.capitalPerTrade,
-      false,
-      entryShares,
+      openShares,
     );
 
     const closedPnl = roundEur(cumClosedSynth);
@@ -271,26 +229,40 @@ export function buildSimLoopSynthMaturationSeries(
         if (tr.side !== "sell") continue;
         const entryPos = tk.portfolioBefore.find((p) => p.key === tr.key);
         const equalCap = tr.capital ?? entryPos?.capital ?? opts.capitalPerTrade;
-        const synthCap = synthCapForClosed(
-          tr.key,
-          equalCap,
-          opts.shareByRowKey,
-          opts.totalCapitalEur,
-          entryShares,
-        );
+        const share = causalShareForSell(walk, tk, tr);
+        const synthCap = shareToSynthCap(share, opts.totalCapitalEur, equalCap);
         liveClosed = roundEur(
           liveClosed + scalePnl(tr.pnlEurSimulated ?? 0, equalCap, synthCap),
         );
       }
     }
+    const liveOpenShares =
+      causalOpts.sizingMode === "static_approved"
+        ? (() => {
+            const out: Record<string, number> = {};
+            for (const pos of opts.live!.paperPortfolio) {
+              const frozen = walk.frozenEntryShares[pos.key];
+              const staticShare = opts.shareByRowKey?.[pos.key];
+              out[pos.key] =
+                typeof frozen === "number" && Number.isFinite(frozen)
+                  ? frozen
+                  : typeof staticShare === "number" && Number.isFinite(staticShare)
+                    ? staticShare
+                    : opts.capitalPerTrade / opts.totalCapitalEur;
+            }
+            return out;
+          })()
+        : rebalanceCausalSimLoopShares(
+            opts.live.paperPortfolio,
+            opts.live.evaluations,
+            causalOpts,
+          );
     const liveOpen = openSynthMtmForTick(
       opts.live.paperPortfolio,
       opts.live.evaluations,
-      opts.shareByRowKey,
       opts.totalCapitalEur,
       opts.capitalPerTrade,
-      false,
-      entryShares,
+      liveOpenShares,
     );
     const closedPnl = roundEur(liveClosed);
     const openMtm = roundEur(liveOpen);

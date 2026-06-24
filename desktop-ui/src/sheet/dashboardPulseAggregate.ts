@@ -290,6 +290,8 @@ export const PULSE_GAIN_CHART_HOLD_DAYS = 8;
 export type BuildPortfolioGainPlanAggregateOpts = {
   /** Force hold-day axis (d0…dN, now) — keeps Portfolio · Sim loop · Synth aligned. */
   preferHoldDayAxis?: boolean;
+  /** Authoritative live terminal — KPI Gain open (MTM) overrides row-sum drift. */
+  liveGap?: PlanGapSummary;
 };
 
 export function buildPortfolioGainPlanAggregateSeries(
@@ -309,7 +311,7 @@ export function buildPortfolioGainPlanAggregateSeries(
 
   const asOfDay = resolvePortfolioAsOfDay(rows);
   const nowMs = Date.now();
-  const liveGap = summarizePlanGap(rows, cleanHistory);
+  const liveGap = opts?.liveGap ?? summarizePlanGap(rows, cleanHistory);
 
   if (opts?.preferHoldDayAxis) {
     return alignAggregateGainPlanSeriesToLiveGap(
@@ -383,7 +385,8 @@ export function alignAggregateGainPlanSeriesToLiveGap(
   if (series.length === 0) return series;
   if (gap.actualNowEur == null && gap.plannedNowEur == null) return series;
 
-  const last = series[series.length - 1]!;
+  const reconciled = reconcileAggregateActualTrack(series, gap.actualNowEur);
+  const last = reconciled[reconciled.length - 1]!;
   const actualDrift =
     gap.actualNowEur != null && last.actual != null
       ? Math.abs(gap.actualNowEur - last.actual)
@@ -401,15 +404,15 @@ export function alignAggregateGainPlanSeriesToLiveGap(
     actualDrift > LIVE_GAP_ALIGN_MAX_DRIFT_EUR ||
     plannedDrift > LIVE_GAP_ALIGN_MAX_DRIFT_EUR
   ) {
-    return series;
+    return reconciled;
   }
 
   if (actualDrift < LIVE_GAP_ALIGN_EPS_EUR && plannedDrift < LIVE_GAP_ALIGN_EPS_EUR) {
-    return series;
+    return reconciled;
   }
 
   const nowLabel = lang === "it" ? "ora" : "now";
-  const out = [...series];
+  const out = [...reconciled];
   out[out.length - 1] = {
     ...last,
     label: nowLabel,
@@ -417,6 +420,44 @@ export function alignAggregateGainPlanSeriesToLiveGap(
     planned: gap.plannedNowEur ?? last.planned,
   };
   return out;
+}
+
+/**
+ * Per-row chart backfill can yield wild mid-series actuals that disagree with
+ * live MTM (+49k in KPI vs −7k on d3). Ramp to a monotone 0 → live track when
+ * intermediate points sign-flip or diverge sharply from the terminal.
+ */
+export function reconcileAggregateActualTrack(
+  series: AggregateGainPlanPoint[],
+  liveActual: number | null,
+): AggregateGainPlanPoint[] {
+  if (liveActual == null || !Number.isFinite(liveActual) || series.length < 2) {
+    return series;
+  }
+
+  const lastIdx = series.length - 1;
+  const priorActuals = series
+    .slice(0, -1)
+    .map((p) => p.actual)
+    .filter((v): v is number => v != null && Number.isFinite(v));
+
+  const jumpTol = Math.max(2500, Math.abs(liveActual) * 0.2);
+  const needsRamp =
+    priorActuals.length === 0 ||
+    priorActuals.some((v) => {
+      if (Math.abs(liveActual) <= jumpTol) return Math.abs(v - liveActual) > jumpTol;
+      if (Math.sign(v) !== Math.sign(liveActual) && Math.abs(v) > jumpTol * 0.15) {
+        return true;
+      }
+      return Math.abs(v - liveActual) > Math.abs(liveActual) * 0.55;
+    });
+
+  if (!needsRamp) return series;
+
+  return series.map((p, i) => ({
+    ...p,
+    actual: Math.round((i / lastIdx) * liveActual * 100) / 100,
+  }));
 }
 
 export function planGapForRow(

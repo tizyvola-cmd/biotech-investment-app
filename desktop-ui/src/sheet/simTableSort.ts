@@ -21,24 +21,20 @@ export const DEFAULT_SIM_TABLE_SORT: SimTableSortId = "default";
 
 const STORAGE_KEY = "supernova_sim_table_sort";
 
-const VALID: SimTableSortId[] = [
-  "default",
-  "roiDesc",
-  "roiAsc",
-  "daysAsc",
-  "daysDesc",
-  "roiPerDayDesc",
-];
-
 export function loadSimTableSort(): SimTableSortId {
   if (typeof window === "undefined") return DEFAULT_SIM_TABLE_SORT;
   try {
     const raw = localStorage.getItem(STORAGE_KEY);
-    if (raw && VALID.includes(raw as SimTableSortId)) return raw as SimTableSortId;
+    if (raw === "roiDesc") return "roiDesc";
   } catch {
     /* private mode */
   }
   return DEFAULT_SIM_TABLE_SORT;
+}
+
+/** Pick stocks: toggle highest ROI first vs sheet default order. */
+export function toggleRoiDescSort(current: SimTableSortId): SimTableSortId {
+  return current === "roiDesc" ? "default" : "roiDesc";
 }
 
 export function saveSimTableSort(sort: SimTableSortId): void {

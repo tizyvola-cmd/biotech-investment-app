@@ -680,11 +680,20 @@ export function runManualAllocationSynthesizerBundle(
   },
   config?: SynthesizerConfig,
 ): ManualAllocationSynthesizerBundleResult {
-  const runOne = (input: ManualAllocationSynthesizerInput | null) =>
-    runManualAllocationSynthesizer(input, ctx, config);
+  const allClosed = ctx.closedRows ?? [];
+
+  // Filter closed rows by universe so each view sees only its own historical trades.
+  // Rows without a universe tag (legacy data before tagging) are included in both
+  // views to preserve backward compatibility.
+  const portfolioClosed = allClosed.filter(
+    (r) => !(r as SimOutcomeRow & { universe?: string }).universe || (r as SimOutcomeRow & { universe?: string }).universe === "real",
+  );
+  const simLoopClosed = allClosed.filter(
+    (r) => !(r as SimOutcomeRow & { universe?: string }).universe || (r as SimOutcomeRow & { universe?: string }).universe === "simloop",
+  );
 
   return {
-    portfolio: runOne(bundle?.portfolio ?? null),
-    simLoop: runOne(bundle?.simLoop ?? null),
+    portfolio: runManualAllocationSynthesizer(bundle?.portfolio ?? null, { ...ctx, closedRows: portfolioClosed }, config),
+    simLoop: runManualAllocationSynthesizer(bundle?.simLoop ?? null, { ...ctx, closedRows: simLoopClosed }, config),
   };
 }

@@ -7,7 +7,7 @@ import {
 } from "./simulationPosition";
 
 describe("P&L tab breakdown", () => {
-  it("without prior closes: total equals today from sheet Var%", () => {
+  it("without prior closes: total is since-entry MTM; today from Var%", () => {
     const pos = {
       key: "BNTX|2026-07-13",
       valueNow: 5066.53,
@@ -16,6 +16,7 @@ describe("P&L tab breakdown", () => {
       pnlUnavailable: false,
       buyPrice: 90.93,
       capital: 5000,
+      currPrice: 92.14,
     };
     const row = {
       Ticker: "BNTX",
@@ -30,9 +31,9 @@ describe("P&L tab breakdown", () => {
       [],
     );
     expect(b.totalSource).toBe("daily_close_sum");
-    expect(b.priorLegEur).toBe(0);
     expect(b.pnlEurToday).toBeCloseTo(206.2, 0);
-    expect(b.totalEur).toBeCloseTo(b.pnlEurToday ?? 0, 0);
+    expect(b.totalEur).toBeCloseTo(66.53, 0);
+    expect(b.priorLegEur).toBeCloseTo(b.totalEur - (b.pnlEurToday ?? 0), 0);
   });
 
   it("with prior close: total = prior legs + today (no fictitious entry lump)", () => {

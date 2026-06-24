@@ -46,6 +46,7 @@ describe("buildSimLoopSynthMaturationSeries", () => {
       shareByRowKey: { "AAA|cd": 0.2 },
       totalCapitalEur: 10_000,
       capitalPerTrade: 5000,
+      sizingMode: "static_approved",
     });
     expect(series).toHaveLength(1);
     // synth cap 2000 vs equal 5000 → P&L 500 * 0.4 = 200
@@ -93,6 +94,7 @@ describe("buildSimLoopSynthMaturationSeries", () => {
       shareByRowKey: { "BBB|cd": 0.5 },
       totalCapitalEur: 10_000,
       capitalPerTrade: 5000,
+      sizingMode: "static_approved",
     });
     // synth cap 5000, 10% → 500
     expect(series[0]!.simLoopSynthClosedPnlEur).toBe(0);
@@ -120,6 +122,7 @@ describe("buildSimLoopSynthMaturationSeries", () => {
       shareByRowKey: { "BBB|cd": 0.5 },
       totalCapitalEur: 10_000,
       capitalPerTrade: 5000,
+      sizingMode: "static_approved",
     });
     // synth cap 5000 * 10% = 500
     expect(series[0]!.simLoopSynthOpenMtmEur).toBe(500);
@@ -215,6 +218,7 @@ describe("buildSimLoopSynthMaturationSeries", () => {
         shareByRowKey: { "BBB|cd": 0.5 },
         totalCapitalEur: 10_000,
         capitalPerTrade: 5000,
+        sizingMode: "static_approved",
         live: {
           paperPortfolio: positions,
           evaluations: [],

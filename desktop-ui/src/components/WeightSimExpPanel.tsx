@@ -88,12 +88,16 @@ export function WeightSimExpPanel({
     <section className="rounded-xl border border-rose-300/50 bg-rose-50/25 dark:bg-rose-950/15 px-3 py-3 space-y-3">
       <div>
         <p className="text-[12px] font-semibold text-rose-900 dark:text-rose-100">
-          {it ? "Weight Sim Exp — obiettivo dalla curva" : "Weight Sim Exp — goal from chart"}
+          {it ? "Weight Sim Exp — mix ottimale di sizing" : "Weight Sim Exp — optimal sizing mix"}
         </p>
-        <p className="text-[10px] text-rose-800/80 dark:text-rose-200/70 mt-0.5 max-w-3xl">
+        <p className="text-[10px] text-rose-800/80 dark:text-rose-200/70 mt-0.5 max-w-3xl leading-relaxed">
           {it
-            ? `Target +${Math.round(targetEur).toLocaleString("it-IT")} € — mix ottimale sui ritorni 24h reali partendo dai pesi approvati (Learning Lab / sizingRules). Le curve rosa/fucsia alimentano Mine (synth) e Sim loop (synth) nel confronto tre portafogli.`
-            : `Target +€${Math.round(targetEur).toLocaleString("it-IT")} — optimal mix on real 24h returns from Learning Lab approved weights (sizingRules). Rose/fuchsia curves feed Mine (synth) and Sim loop (synth) on the three-portfolio comparison.`}
+            ? `Calcola la distribuzione ottimale del capitale tra i deal aperti per raggiungere il target di guadagno (+${Math.round(targetEur).toLocaleString("it-IT")} € in 24h). ` +
+              `Parte dai pesi approvati nel Learning Lab e li ottimizza sul rendimento reale recente di ogni deal. ` +
+              `Le curve rosa/fucsia nel grafico “Tre portafogli” mostrano come performerebbe il portafoglio usando questa mix ottimizzata.`
+            : `Calculates the optimal capital distribution across open deals to hit the gain target (+€${Math.round(targetEur).toLocaleString("it-IT")} in 24h). ` +
+              `Starts from Learning Lab approved weights and refines them on each deal's recent real returns. ` +
+              `The rose/fuchsia curves in the \"Three portfolios\" chart show how the portfolio would perform using this optimized mix.`}
         </p>
         {weightedGateOk ? (
           <div className="mt-2 flex flex-col gap-1 text-[10px] tabular-nums">
@@ -211,8 +215,8 @@ export function WeightSimExpPanel({
         ) : (
           <p className="mt-1.5 text-[10px] text-amber-800 dark:text-amber-200">
             {it
-              ? "Curva sim loop pesata disabilitata — calibrazione insufficiente. Resta visibile solo Weight Sim Exp."
-              : "Sim loop weighted curve disabled — insufficient calibration. Only Weight Sim Exp remains."}
+              ? "Curva sim loop pesata disabilitata: non ci sono ancora abbastanza trade chiusi per calibrare i pesi (Learning Lab insufficiente). Il grafico mostra solo la curva Weight Sim Exp."
+              : "Sim loop weighted curve disabled: not enough closed trades yet to calibrate weights (Learning Lab insufficient). The chart shows only the Weight Sim Exp curve."}
           </p>
         )}
       </div>
@@ -311,6 +315,9 @@ function WeightSimExpUniverseCard({
             <button
               type="button"
               className="btn-secondary text-[10px] shrink-0"
+              title={it
+                ? "Copia questa distribuzione ottimale negli slider di Step 3 — puoi poi modificarla manualmente prima di confermare"
+                : "Copy this optimal distribution to the Step 3 sliders — you can then adjust it manually before confirming"}
               onClick={(e) => {
                 e.preventDefault();
                 onApply();

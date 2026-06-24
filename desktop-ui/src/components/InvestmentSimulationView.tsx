@@ -69,6 +69,10 @@ import { buildSignAccuracyCurveView, type SignAccuracyCurveView } from "../sheet
 import { SignalScoreBar } from "./SignalScoreBar";
 import { ScoreAnalysisDrawer } from "./ScoreAnalysisDrawer";
 import { PortfolioDailyPnlDrawer, DailyLedgerIcon } from "./PortfolioDailyPnlDrawer";
+import {
+  buildPortfolioGainAuditExport,
+  downloadPortfolioGainAuditExcel,
+} from "../sheet/portfolioGainAuditExport";
 import { ClosedPiggyBankBeerGlass } from "./ClosedPiggyBankBeerGlass";
 import { useClosedPiggyBank } from "../hooks/useClosedPiggyBank";
 import type { ScoreDetailSignal } from "./SignalScoreDetailPanel";
@@ -194,11 +198,10 @@ import {
   type SimCdHorizonScope,
 } from "../sheet/simCdHorizonScope";
 import {
-  cycleRoiColumnSort,
   loadSimTableSort,
   saveSimTableSort,
-  sortIndicator,
   sortSimPositionsBySortId,
+  toggleRoiDescSort,
   type SimTableSortId,
 } from "../sheet/simTableSort";
 import {
@@ -249,6 +252,7 @@ import { detectPortfolioPositionAlerts } from "../sheet/portfolioLossUrgent";
 import { detectOpportunityAnalysisAlerts, buildLossAnalysisItems } from "../sheet/portfolioLossAnalysis";
 import { PortfolioLossAnalysisView } from "./PortfolioLossAnalysisView";
 import { buildSimBuyGateByKey, evaluateSimBuyGate } from "../sheet/investDecisionSimLoop";
+import { evaluateSimLoopPolicy, loadSimLoopPolicy } from "../sheet/simLoopAcceptancePolicy";
 import { loadEisSuperScoreState } from "../api/eisSuperScore";
 import { useCdPatternPolygonOverview } from "../sheet/useCdPatternPolygonOverview";
 
@@ -706,22 +710,37 @@ function isActiveSimPosition(p: Position): boolean {
   return p.capital > 0;
 }
 
-function portfolioSnapshot(positions: Position[]) {
+function portfolioSnapshot(
+  positions: Position[],
+  rowByKey: Map<string, Record<string, unknown>>,
+  inputs: InvestSimInputs,
+  history: InvestSimHistoryPoint[],
+) {
   const withCapital = positions.filter((p) => p.capital > 0);
-  const priced = withCapital.filter((p) => p.buyPrice > 0 && !p.pnlUnavailable);
-  const cap = withCapital.reduce((a, p) => a + p.capital, 0);
-  const val = priced.reduce((a, p) => a + p.valueNow, 0);
-  const capPriced = priced.reduce((a, p) => a + p.capital, 0);
-  const pnl = val - capPriced;
-  const pct = capPriced > 0 ? (pnl / capPriced) * 100 : 0;
+  let cap = 0;
+  let val = 0;
+  let capPriced = 0;
+  let pnlSum = 0;
   const byTicker: InvestSimHistoryPoint["byTicker"] = {};
-  for (const p of priced) {
+  for (const p of withCapital) {
+    cap += p.capital;
+    if (p.buyPrice <= 0 || p.pnlUnavailable) continue;
+    const row = rowByKey.get(p.key);
+    const m = row ? positionPnlForOpenRow(row, inputs, history) : null;
+    const pnlEur = m?.pnlEur ?? p.pnlEur;
+    const pnlPct = m?.pnlPct ?? p.pnlPct;
+    const value = p.capital + (Number.isFinite(pnlEur) ? pnlEur : 0);
+    capPriced += p.capital;
+    val += value;
+    pnlSum += Number.isFinite(pnlEur) ? pnlEur : 0;
     byTicker[p.key] = {
-      value: p.valueNow,
-      pnl: p.pnlEur,
-      pnlPct: p.pnlPct,
+      value,
+      pnl: pnlEur,
+      pnlPct: pnlPct ?? 0,
     };
   }
+  const pnl = pnlSum;
+  const pct = capPriced > 0 ? (pnl / capPriced) * 100 : 0;
   return { cap, val, pnl, pct, n: withCapital.length, byTicker };
 }
 
@@ -1506,18 +1525,6 @@ export function InvestmentSimulationView({
       simTable?.columns,
   ]);
 
-  const simTableSortDefs = useMemo(
-    (): { id: SimTableSortId; label: string; tip: string }[] => [
-      { id: "default", label: t("sim.workspace.sort.auto"), tip: t("sim.workspace.sort.autoTip") },
-      { id: "roiDesc", label: t("sim.workspace.sort.roiDesc"), tip: t("sim.workspace.sort.roiDescTip") },
-      { id: "roiAsc", label: t("sim.workspace.sort.roiAsc"), tip: t("sim.workspace.sort.roiAscTip") },
-      { id: "daysAsc", label: t("sim.workspace.sort.daysAsc"), tip: t("sim.workspace.sort.daysAscTip") },
-      { id: "daysDesc", label: t("sim.workspace.sort.daysDesc"), tip: t("sim.workspace.sort.daysDescTip") },
-      { id: "roiPerDayDesc", label: t("sim.workspace.sort.roiPerDayDesc"), tip: t("sim.workspace.sort.roiPerDayDescTip") },
-    ],
-    [t],
-  );
-
   const scoreDetailSignals = useMemo((): ScoreDetailSignal[] => {
     const cols = simTable?.columns;
     if (!cols?.length) return [];
@@ -1603,7 +1610,10 @@ export function InvestmentSimulationView({
     return t("sim.workspace.filter.empty");
   }, [positions.length, positionsInCdHorizon.length, simCdHorizonScope, t]);
 
-  const portfolio = useMemo(() => portfolioSnapshot(positions), [positions]);
+  const portfolio = useMemo(
+    () => portfolioSnapshot(positions, simRowByKey, inputs, history),
+    [positions, simRowByKey, inputs, history],
+  );
 
   const recordSnapshot = useCallback(
     (mode: boolean | "hourly" = true) => {
@@ -1735,7 +1745,7 @@ export function InvestmentSimulationView({
           seriesKey,
           topOpps,
         );
-        const pnlBreakdown = resolvePositionPnlBreakdown(p, simRow, investedAt, history);
+        const pnlBreakdown = resolvePositionPnlBreakdown(p, simRow, investedAt, history, inputs);
         const pnlEurToday = pnlBreakdown.pnlEurToday;
         const pnlPctToday = pnlBreakdown.pnlPctToday;
         const hasToday = pnlBreakdown.hasToday;
@@ -1844,6 +1854,20 @@ export function InvestmentSimulationView({
     () => buildPortfolioDailyPnlLedger(simTable, inputs, history),
     [simTable, inputs, history],
   );
+
+  const downloadGainAudit = useCallback(() => {
+    const exp = buildPortfolioGainAuditExport({
+      simTable,
+      inputs,
+      history,
+      portfolioOnly: simTableFilter === "portfolio",
+    });
+    if (exp.rows.length === 0) {
+      window.alert(t("sim.audit.export.empty"));
+      return;
+    }
+    downloadPortfolioGainAuditExcel(exp, lang === "it" ? "it" : "en");
+  }, [simTable, inputs, history, simTableFilter, lang, t]);
 
   const { display: closedPiggyDisplay, reset: resetClosedPiggy } =
     useClosedPiggyBank(dailyPnlLedger);
@@ -2098,6 +2122,33 @@ export function InvestmentSimulationView({
         );
         return;
       }
+      // ── Sim Loop Acceptance Policy check ────────────────────────────────
+      const policy = loadSimLoopPolicy();
+      if (policy.minSds > 0 || policy.minPplanPct > 0 || policy.rejectOnLossPattern) {
+        const sdsVal: number | null = (() => {
+          const raw = row["SDS"] ?? row["sds"];
+          if (raw != null && Number.isFinite(Number(raw))) return Number(raw);
+          return null;
+        })();
+        const pplanVal: number | null = (() => {
+          const raw = row["Plan_Prob_Pct"] ?? row["Affidabilità\ncalib %"] ?? row["Affidabilità\n%"];
+          if (raw == null) return null;
+          const n = Number(String(raw).replace("%", "").replace(",", "."));
+          if (!Number.isFinite(n)) return null;
+          return Math.abs(n) <= 1.5 ? n * 100 : n;
+        })();
+        const suggestedAction = String(row["suggestedAction"] ?? row["Suggested Action"] ?? "buy");
+        const policyResult = evaluateSimLoopPolicy(sdsVal, pplanVal, false, suggestedAction, policy);
+        if (!policyResult.accepted) {
+          window.alert(
+            lang === "it"
+              ? `Sim Loop Policy: BUY rifiutato — ${policyResult.reason}\n\nModifica le soglie in Step 1 > Sim Loop Policy.`
+              : `Sim Loop Policy: BUY rejected — ${policyResult.reason}\n\nAdjust thresholds in Step 1 > Sim Loop Policy.`,
+          );
+          return;
+        }
+      }
+      // ────────────────────────────────────────────────────────────────────
       const curr = currentPriceFromRow(row);
       if (curr == null || curr <= 0) {
         window.alert(
@@ -2121,6 +2172,7 @@ export function InvestmentSimulationView({
             capital: capitalEur > 0 ? capitalEur : DEFAULT_SIM_BUY_CAPITAL_EUR,
             ignoreSheet: false,
             investedAt: cur.investedAt ?? new Date().toISOString(),
+            universe: "simloop" as const,
             ...(cur.purchaseDate ? { purchaseDate: cur.purchaseDate } : {}),
           },
         };
@@ -2864,11 +2916,18 @@ export function InvestmentSimulationView({
                 snapshotTotals.todayCovered > 0 &&
                 Math.abs(portfolioPriorLegEur) > 0.01 ? (
                   <p className="text-[11px] text-ink-muted/90 mt-2 tabular-nums leading-snug border-t border-[rgb(var(--border))]/35 pt-2">
-                    {t("sim.pnl.hero.breakdown", {
-                      prior: fmtSignedEurPnl(portfolioPriorLegEur),
-                      today: fmtSignedEurPnl(snapshotTotals.pnlEurToday ?? 0),
-                      todayPct: fmtPct(snapshotTotals.pnlPctToday),
-                    })}
+                    {t(
+                      snapshotTotals.anyHistoryUncertainContamination
+                        ? "sim.pnl.hero.breakdownUncertain"
+                        : snapshotTotals.priorLegIsImplicitEstimate
+                          ? "sim.pnl.hero.breakdownImplicit"
+                          : "sim.pnl.hero.breakdown",
+                      {
+                        prior: fmtSignedEurPnl(portfolioPriorLegEur),
+                        today: fmtSignedEurPnl(snapshotTotals.pnlEurToday ?? 0),
+                        todayPct: fmtPct(snapshotTotals.pnlPctToday),
+                      },
+                    )}
                   </p>
                 ) : snapshotTotals.todayCovered > 0 ? (
                   <p className="text-[11px] text-ink-muted/90 mt-2 tabular-nums leading-snug border-t border-[rgb(var(--border))]/35 pt-2">
@@ -3464,38 +3523,6 @@ export function InvestmentSimulationView({
                   />
                   <span className="text-[10px] text-ink-muted/80">€</span>
                 </div>
-                {synthCapitalSync.revertableLogRowCount > 0 ? (
-                  <button
-                    type="button"
-                    className="w-full rounded border border-amber-500/40 bg-amber-500/10 px-1.5 py-0.5 text-[10px] font-semibold text-amber-900 dark:text-amber-100 hover:bg-amber-500/18 transition tabular-nums"
-                    title={
-                      lang === "it"
-                        ? "Annulla l’ultimo allineamento synth e ripristina il capitale € precedente"
-                        : "Undo the last synth alignment and restore previous € capital"
-                    }
-                    onClick={() => {
-                      const n = synthCapitalSync.revertableLogRowCount;
-                      const ok = window.confirm(
-                        lang === "it"
-                          ? `Ripristinare il capitale investito com’era prima dell’ultimo sync synth (${n} posizione${n === 1 ? "" : "i"})?`
-                          : `Restore invested capital to before the last synth sync (${n} position${n === 1 ? "" : "s"})?`,
-                      );
-                      if (!ok) return;
-                      const restored = synthCapitalSync.revertAllSynthCapital();
-                      if (restored === 0) {
-                        window.alert(
-                          lang === "it"
-                            ? "Nessun allineamento synth da annullare (log vuoto o capitale già ripristinato)."
-                            : "Nothing to revert (empty log or capital already restored).",
-                        );
-                      }
-                    }}
-                  >
-                    {lang === "it"
-                      ? `↩ Annulla synth (${synthCapitalSync.revertableLogRowCount})`
-                      : `↩ Synth revert (${synthCapitalSync.revertableLogRowCount})`}
-                  </button>
-                ) : null}
               </div>
               {synthCapitalSync.portfolioDriftCount > 0 ? (
                 <button
@@ -3522,6 +3549,14 @@ export function InvestmentSimulationView({
                     : `Sync → Synth (${synthCapitalSync.portfolioDriftCount})`}
                 </button>
               ) : null}
+              <button
+                type="button"
+                className="rounded-lg border border-[rgb(var(--border))]/55 bg-white/80 px-2.5 py-1 text-[11px] font-semibold text-ink hover:bg-[rgb(var(--surface-2))]/80 transition tabular-nums"
+                title={t("sim.audit.export.title")}
+                onClick={downloadGainAudit}
+              >
+                {t("sim.audit.export.label")}
+              </button>
               <button
                 type="button"
                 className="rounded-lg border border-[rgb(var(--accent))]/35 bg-[rgb(var(--accent))]/10 px-2.5 py-1 text-[11px] font-semibold text-[rgb(var(--accent))] hover:bg-[rgb(var(--accent))]/18 transition"
@@ -3582,20 +3617,18 @@ export function InvestmentSimulationView({
                 {t("sim.workspace.sort.label")}
               </span>
               <SelectionChipGroup>
-                {simTableSortDefs.map(({ id, label, tip }) => (
-                  <SelectionChip
-                    key={id}
-                    active={simTableSort === id}
-                    title={tip}
-                    onClick={() => {
-                      setSimTableSort(id);
-                      saveSimTableSort(id);
-                    }}
-                    className="text-[10px] tabular-nums"
-                  >
-                    {label}
-                  </SelectionChip>
-                ))}
+                <SelectionChip
+                  active={simTableSort === "roiDesc"}
+                  title={t("sim.workspace.sort.roiDescTip")}
+                  onClick={() => {
+                    const next = toggleRoiDescSort(simTableSort);
+                    setSimTableSort(next);
+                    saveSimTableSort(next);
+                  }}
+                  className="text-[10px] tabular-nums"
+                >
+                  {t("sim.workspace.sort.roiDesc")}
+                </SelectionChip>
               </SelectionChipGroup>
               </div>
             </div>
@@ -3786,8 +3819,8 @@ export function InvestmentSimulationView({
                 },
                 {
                   k: "target_roi",
-                  label: `${t("sim.col.targetRoi")}${sortIndicator(simTableSort, "roi")}`,
-                  tip: `${t("sim.col.targetRoiTip")}${lang === "it" ? " · Clic per ordinare per ROI target" : " · Click to sort by target ROI"}`,
+                  label: t("sim.col.targetRoi"),
+                  tip: `${t("sim.col.targetRoiTip")}${lang === "it" ? " · Clic per ROI più alte in cima" : " · Click for highest ROI first"}`,
                   sortable: "roi" as const,
                 },
                 { k: "buy",      label: "Buy €",     tip: undefined },
@@ -3820,8 +3853,7 @@ export function InvestmentSimulationView({
                       ? "cursor-pointer select-none hover:text-[rgb(var(--accent))] transition"
                       : ""
                   } ${
-                    h.k === "target_roi" &&
-                    (simTableSort === "roiDesc" || simTableSort === "roiAsc")
+                    h.k === "target_roi" && simTableSort === "roiDesc"
                       ? "text-[rgb(var(--accent))]"
                       : ""
                   }`}
@@ -3829,7 +3861,7 @@ export function InvestmentSimulationView({
                   onClick={
                     "sortable" in h && h.sortable === "roi"
                       ? () => {
-                          const next = cycleRoiColumnSort(simTableSort);
+                          const next = toggleRoiDescSort(simTableSort);
                           setSimTableSort(next);
                           saveSimTableSort(next);
                         }
@@ -3845,14 +3877,6 @@ export function InvestmentSimulationView({
                   ) : (
                     h.label
                   )}
-                  {h.k === "target_roi" &&
-                  (simTableSort === "daysAsc" || simTableSort === "daysDesc") ? (
-                    <span className="block text-[10px] font-normal text-[rgb(var(--accent))]/90 normal-case tracking-normal">
-                      {simTableSort === "daysAsc"
-                        ? t("sim.workspace.sort.daysAsc")
-                        : t("sim.workspace.sort.daysDesc")}
-                    </span>
-                  ) : null}
                 </th>
               ))}
             </tr>
@@ -4332,9 +4356,7 @@ export function InvestmentSimulationView({
                   </td>
                   <td className={sheetGridTdClass("cap")} data-col="cap" onClick={(e) => e.stopPropagation()}>
                     <SimTableCapitalCell
-                      inPortfolio={inPortfolio}
                       capital={inp.capital}
-                      synthCapEur={synthCapitalSync.synthCapEurForRow(p.key, inPortfolio)}
                       placeholder={
                         localEntry || inp.ignoreSheet
                           ? undefined
@@ -4342,13 +4364,8 @@ export function InvestmentSimulationView({
                             ? String(p.capital)
                             : undefined
                       }
-                      lang={lang === "it" ? "it" : "en"}
                       inputClassName="input w-full py-0.5 text-xs tabular-nums"
                       onCommit={(n) => setInput(p.key, "capital", n)}
-                      onSyncToSynth={() => synthCapitalSync.syncRowToSynth(p.key, "manual")}
-                      syncEntries={synthCapitalSync.entriesForRow(p.key)}
-                      logExpanded={synthCapitalSync.expandedLogKey === p.key}
-                      onToggleLog={() => synthCapitalSync.toggleLogExpanded(p.key)}
                     />
                   </td>
                   <td className={sheetGridTdClass("synth_cap")} data-col="synth_cap">
@@ -4448,9 +4465,7 @@ export function InvestmentSimulationView({
                   </td>
                   <td className={sheetGridTdClass("cap")} data-col="cap" onClick={(e) => e.stopPropagation()}>
                     <SimTableCapitalCell
-                      inPortfolio={inPortfolio}
                       capital={inp.capital}
-                      synthCapEur={synthCapitalSync.synthCapEurForRow(p.key, inPortfolio)}
                       placeholder={
                         localEntry || inp.ignoreSheet
                           ? undefined
@@ -4458,14 +4473,9 @@ export function InvestmentSimulationView({
                             ? String(p.capital)
                             : undefined
                       }
-                      lang={lang === "it" ? "it" : "en"}
                       inputClassName="input w-full max-w-[7.5rem] py-0.5 text-xs tabular-nums"
                       wrapperClassName="flex flex-col gap-0.5 min-w-0"
                       onCommit={(n) => setInput(p.key, "capital", n)}
-                      onSyncToSynth={() => synthCapitalSync.syncRowToSynth(p.key, "manual")}
-                      syncEntries={synthCapitalSync.entriesForRow(p.key)}
-                      logExpanded={synthCapitalSync.expandedLogKey === p.key}
-                      onToggleLog={() => synthCapitalSync.toggleLogExpanded(p.key)}
                     />
                   </td>
                   <td className={sheetGridTdClass("synth_cap")} data-col="synth_cap">

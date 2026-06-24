@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useState, type ReactNode } from "react";
 import type { ChartBundle, SheetTable } from "../types";
-import { chartPointsMapFromBundle } from "../data/simulationCharts";
+import type { AppScreen } from "../types";
+import { chartPointsMapFromBundle, simulationRowSeriesKey } from "../data/simulationCharts";
 import { useInvestSimInputs } from "../hooks/useInvestSimInputs";
 import { useInvestSimPortfolioHistory } from "../hooks/useInvestSimPortfolioHistory";
 import { useDecisionSimPairPrechartHeight } from "../hooks/useDecisionSimPairPrechartHeight";
@@ -28,14 +29,71 @@ import { useLiveExperimentPiggy } from "../hooks/useLiveExperimentPiggy";
 import { buildSuggestionMonitorRows } from "../sheet/suggestionMonitor";
 import { resolveSimLoopCapitalPot } from "../sheet/investDecisionSimCharts";
 import { buildSimLoopSynthMaturationSeries } from "../sheet/simLoopSynthMaturation";
-import { syncSimLoopEntryShares } from "../sheet/simLoopPulseView";
 import { useSimLoopSynthAllocation } from "../hooks/useSimLoopSynthAllocation";
 import { DashboardAiFeedCard, type DashboardAiFeedItem } from "./DashboardAiFeedCard";
 import { DashboardPanelUpdatedLabel } from "./DashboardPanelUpdatedLabel";
 import { DecisionSimAdviceCalibrationPanel } from "./DecisionSimAdviceCalibrationPanel";
-import { DecisionSimPnlCharts } from "./DecisionSimPnlCharts";
+import { DashboardDaily24hPnlChart } from "./DashboardDaily24hPnlChart";
 import { DecisionSimMaturationChart } from "./DecisionSimMaturationChart";
 import { latestDashboardPanelIso } from "../sheet/dashboardPanelDailyRefresh";
+import { buildSimRowByKeyMap } from "../sheet/investSimKeys";
+import { dailyChangePctFromRow } from "../sheet/simulationPosition";
+import {
+  buildAdviceCalibrationFromLiveRows,
+  buildAdviceCalibrationFromLog,
+  buildAdviceCalibrationFromPaperSells,
+  buildDealLevelCalibrationPoints,
+  countPaperSellExecutions,
+  summarizePaperSellOperativeCoverage,
+  adviceMonitorPointsExcludingPaperSells,
+  keysWithPaperSellExecution,
+  liveCalibRowsExcludingPaperSells,
+  mergeAdviceCalibrationPoints,
+  summarizeAdviceCalibration,
+} from "../sheet/investDecisionSimAdviceCalibration";
+import { computeSynthGainImpact } from "../sheet/threePortfolioCompare";
+import { summarizePaperClosedDeals } from "../sheet/paperSimMaturation";
+import { summarizeClosedPnlAdvice } from "../sheet/adviceComplementKpis";
+import {
+  countInflatedTickCalibrationEvents,
+  countPendingAdvicePoints,
+  countUnverifiedSellEvitaFromMonitor,
+  filterPaperExecutedCalibrationPoints,
+  summarizeDecisionPrecision,
+  summarizeWeightedGrowthFromImpact,
+} from "../sheet/accuracySummary";
+import { buildUnifiedAdviceSuccess } from "../sheet/unifiedAdviceSuccess";
+import {
+  closedSimOutcomeRowsFromDoc,
+  loadInvestmentSimOutcomes,
+  type SimOutcomesDoc,
+} from "../data/investmentSimOutcomesData";
+import { buildRealPortfolioAccuracySummary } from "../sheet/realPortfolioAccuracy";
+import type {
+  PortfolioSellEnrichContext,
+  RealPortfolioAccuracySummary,
+} from "../sheet/realPortfolioAccuracy";
+import { buildIntrinsicRecommendationSummary } from "../sheet/intrinsicRecommendationEfficiency";
+import type { IntrinsicRecommendationSummary } from "../sheet/intrinsicRecommendationEfficiency";
+import {
+  attachDaysToCdOnAdvicePoints,
+  buildAuditPeakItemsFromClosedRows,
+  enrichIntrinsicWithPeakCd,
+  readDaysToCdFromSimRow,
+} from "../sheet/accuracyPeakCdOffset";
+import { loadSignCurveDailyDoc } from "../data/signCurveDailyData";
+import {
+  buildModelIntrinsicForecastSummary,
+  buildSignAccuracyCurveView,
+  type SignAccuracyCurveView,
+} from "../sheet/signAccuracyCurve";
+import { aggregateOpenPortfolioPnl } from "../sheet/simulationPosition";
+import { realizedPnlEurFromOutcome } from "../sheet/outcomePnlDisplay";
+import type { OperativeColumnProps, OperativeGainSummary } from "./AccuracySummaryPanel";
+import { AccuracySummaryPanel } from "./AccuracySummaryPanel";
+import { fetchAccuracyMonitorHistory } from "../api/supernova";
+import { buildModelQualityWeeklyTrends } from "../sheet/modelQualityWeeklyTrends";
+import { loadSdsPredictionCalibrationSnapshots } from "../sheet/sdsPredictionCalibrationHistory";
 
 const DASHBOARD_SIM_CHART_CLASS = "card dashboard-middle-panel min-h-0 h-full flex flex-col";
 
@@ -68,11 +126,13 @@ export function DashboardChartsRow({
   sdsRows,
   aiFeed,
   dataUpdatedAt,
+  onNavigate,
 }: {
   simTable: SheetTable | null;
   chartBundle: ChartBundle | null;
   sdsRows: SdsRow[] | null;
   dataUpdatedAt?: string | null;
+  onNavigate?: (screen: AppScreen) => void;
   aiFeed?: {
     feed: DashboardAiFeedItem[];
     recentCount: number;
@@ -94,16 +154,60 @@ export function DashboardChartsRow({
   // Daily snapshots still persisted for downstream analytics (Model Lab missed-
   // opportunity panel) even though the dashboard no longer renders the
   // "Daily 24h P&L" card on this row.
-  const [, setMissedHistory] = useState<MissedOppDailySnapshot[]>(() =>
+  const [missedHistory, setMissedHistory] = useState<MissedOppDailySnapshot[]>(() =>
     loadMissedOppHistory(),
   );
   const [decisionSimState, setDecisionSimState] = useState<DecisionSimState>(() =>
     loadDecisionSimState(),
   );
+  const [outcomesDoc, setOutcomesDoc] = useState<SimOutcomesDoc | null>(null);
+  const [signCurveView, setSignCurveView] = useState<SignAccuracyCurveView | null>(null);
+  const [monitorDoc, setMonitorDoc] = useState<{ entries?: unknown[] } | null>(null);
 
   useEffect(() => {
     void loadEisSuperScoreState().then(setEisState);
   }, []);
+
+  useEffect(() => {
+    let cancelled = false;
+    void loadSignCurveDailyDoc().then(({ doc }) => {
+      if (cancelled) return;
+      setSignCurveView(buildSignAccuracyCurveView(null, doc));
+    });
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
+  useEffect(() => {
+    let cancelled = false;
+    void loadInvestmentSimOutcomes().then(({ doc }) => {
+      if (cancelled) return;
+      setOutcomesDoc(doc ?? null);
+    });
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
+  useEffect(() => {
+    let cancelled = false;
+    void fetchAccuracyMonitorHistory()
+      .then((doc) => {
+        if (!cancelled) setMonitorDoc(doc);
+      })
+      .catch(() => {
+        if (!cancelled) setMonitorDoc(null);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
+  const weeklyTrends = useMemo(
+    () => buildModelQualityWeeklyTrends(monitorDoc, loadSdsPredictionCalibrationSnapshots()),
+    [monitorDoc],
+  );
 
   useEffect(() => {
     const onChange = () => setDecisionSimState(loadDecisionSimState());
@@ -165,12 +269,6 @@ export function DashboardChartsRow({
     setMissedHistory(saveMissedOppSnapshot(missedSummary, pnlActualEur));
   }, [missedSummary, pnlActualEur]);
 
-  // Keep `missedHistory` updates flowing for downstream analytics, but the
-  // standalone "Daily 24h P&L" card is no longer rendered on the dashboard —
-  // it was the discrete derivative of the cumulative curves in
-  // `DecisionSimMaturationChart`, so showing both side by side just gave the
-  // user the same story twice on two different X axes / aggregations.
-
   const liveEvaluations = useMemo(() => {
     if (!simTable?.rows?.length) return [];
     return buildDecisionSimEvaluations({
@@ -227,43 +325,11 @@ export function DashboardChartsRow({
 
   const simLoopSynthMaturation = useMemo(() => {
     if (!synthAlloc) return null;
-    const entryShareByRowKey = syncSimLoopEntryShares(
-      decisionSimState.paperPortfolio.map((p) => p.key),
-      synthAlloc.shareByRowKey,
-    );
     return buildSimLoopSynthMaturationSeries(decisionSimState.ticks, {
-      shareByRowKey: synthAlloc.shareByRowKey,
       totalCapitalEur: synthAlloc.totalCapitalEur,
       capitalPerTrade: decisionSimState.config.capitalPerTrade,
-      entryShareByRowKey,
-      live: {
-        paperPortfolio: decisionSimState.paperPortfolio,
-        evaluations: liveEvaluations,
-        piggyBank: livePiggy,
-      },
-    });
-  }, [
-    synthAlloc,
-    decisionSimState.ticks,
-    decisionSimState.paperPortfolio,
-    decisionSimState.config.capitalPerTrade,
-    liveEvaluations,
-    livePiggy,
-  ]);
-
-  const simLoopWeightedMaturation = useMemo(() => {
-    if (!synthAlloc?.simLoopApprovedShareByRowKey) return null;
-    const keys = Object.keys(synthAlloc.simLoopApprovedShareByRowKey);
-    if (keys.length === 0) return null;
-    const entryShareByRowKey = syncSimLoopEntryShares(
-      decisionSimState.paperPortfolio.map((p) => p.key),
-      synthAlloc.simLoopApprovedShareByRowKey,
-    );
-    return buildSimLoopSynthMaturationSeries(decisionSimState.ticks, {
-      shareByRowKey: synthAlloc.simLoopApprovedShareByRowKey,
-      totalCapitalEur: synthAlloc.totalCapitalEur,
-      capitalPerTrade: decisionSimState.config.capitalPerTrade,
-      entryShareByRowKey,
+      targetGainEur: synthAlloc.targetGainEur,
+      sizingMode: "causal_rebalance",
       live: {
         paperPortfolio: decisionSimState.paperPortfolio,
         evaluations: liveEvaluations,
@@ -280,12 +346,410 @@ export function DashboardChartsRow({
   ]);
 
   const showDecisionSimChartPair = Boolean(simTable?.rows?.length);
-  const { preChartRef, preChartHeight } = useDecisionSimPairPrechartHeight(showDecisionSimChartPair);
+  const { preChartRef } = useDecisionSimPairPrechartHeight(showDecisionSimChartPair);
 
-  if (!simTable?.rows?.length) return null;
+  const simRowByKey = useMemo(
+    () => buildSimRowByKeyMap(simTable?.rows ?? []),
+    [simTable?.rows],
+  );
+
+  const outcomeDocRows = outcomesDoc?.rows ?? [];
+  const closedOutcomeRows = useMemo(
+    () => (outcomesDoc ? closedSimOutcomeRowsFromDoc(outcomesDoc) : []),
+    [outcomesDoc],
+  );
+
+  const portfolioSellEnrich = useMemo((): PortfolioSellEnrichContext | undefined => {
+    if (!simTable?.rows?.length) return undefined;
+    return {
+      simRowByKey,
+      pointsBySeriesKey,
+      seriesKeyForSimRow: (row) => simulationRowSeriesKey(row) ?? null,
+    };
+  }, [simTable?.rows?.length, simRowByKey, pointsBySeriesKey]);
+
+  const realPortfolioAccuracy = useMemo(
+    (): RealPortfolioAccuracySummary =>
+      buildRealPortfolioAccuracySummary(
+        outcomeDocRows,
+        closedOutcomeRows,
+        portfolioSellEnrich,
+      ),
+    [outcomeDocRows, closedOutcomeRows, portfolioSellEnrich],
+  );
+
+  const modelIntrinsic = useMemo(
+    () => buildModelIntrinsicForecastSummary(signCurveView),
+    [signCurveView],
+  );
+
+  const accuracySummary = useMemo(() => {
+    if (!simTable?.rows?.length) {
+      return {
+        decision: null,
+        growth: null,
+        unifiedAdvice: { headlinePct: null, primarySource: "none" as const },
+        closedPaperWinRatePct: null,
+        paperPointCount: 0,
+        livePointCount: 0,
+        tickEventExcludedCount: 0,
+      };
+    }
+
+    const entryProbByKey = new Map(
+      decisionSimState.paperPortfolio
+        .filter((p) => p.entryProbPct != null && Number.isFinite(p.entryProbPct))
+        .map((p) => [p.key, p.entryProbPct!]),
+    );
+
+    const lang = it ? "it" : "en";
+    const resolveDaysToCd = (key: string): number | null =>
+      readDaysToCdFromSimRow(simRowByKey.get(key));
+
+    const liveCalibRows = monitorRows.map((row) => {
+      const simRow = simRowByKey.get(row.key);
+      const dailyVar = simRow ? dailyChangePctFromRow(simRow) : null;
+      const pnlPct24h =
+        row.pnlPct24h != null && Number.isFinite(row.pnlPct24h)
+          ? row.pnlPct24h
+          : dailyVar;
+      return {
+        key: row.key,
+        ticker: row.ticker,
+        suggestedAction: row.suggestedAction,
+        inPaperPortfolio: row.inPaperPortfolio,
+        hasPosition: row.hasPosition,
+        exitDecision: row.exitDecision,
+        probPct: row.probPct,
+        probPctAtAdvice: row.inPaperPortfolio
+          ? (entryProbByKey.get(row.key) ?? row.probPct)
+          : row.probPct,
+        planReturnPct: row.planReturnPct,
+        miiAngleDeg: row.miiAngleDeg,
+        pnlPct: row.pnlPct,
+        pnlPct24h,
+        daysToCdAtAdvice: resolveDaysToCd(row.key),
+      };
+    });
+
+    const resolvePostMove24h = (key: string): number | null => {
+      const ev = liveEvaluations.find((e) => e.key === key);
+      if (ev?.pnlPct24h != null && Number.isFinite(ev.pnlPct24h)) return ev.pnlPct24h;
+      const row = simRowByKey.get(key);
+      if (row) {
+        const daily = dailyChangePctFromRow(row);
+        if (daily != null && Number.isFinite(daily)) return daily;
+      }
+      return null;
+    };
+
+    const points = mergeAdviceCalibrationPoints(
+      buildAdviceCalibrationFromLiveRows(liveCalibRows, lang),
+      buildAdviceCalibrationFromPaperSells(
+        decisionSimState.ticks,
+        resolvePostMove24h,
+        lang,
+      ),
+      buildAdviceCalibrationFromLog(
+        decisionSimState.adviceLog,
+        decisionSimState.ticks,
+        lang,
+      ),
+    );
+
+    const unverified = countUnverifiedSellEvitaFromMonitor(liveCalibRows);
+    const tickLevelPaper = filterPaperExecutedCalibrationPoints(points);
+    let dealPoints = buildDealLevelCalibrationPoints(
+      decisionSimState.ticks,
+      resolvePostMove24h,
+      lang,
+      {
+        paperPortfolio: decisionSimState.paperPortfolio,
+        liveEvaluations,
+      },
+    );
+    dealPoints = attachDaysToCdOnAdvicePoints(dealPoints, resolveDaysToCd);
+    const paperSoldKeys = keysWithPaperSellExecution(decisionSimState.ticks);
+    const liveMonitorPoints = attachDaysToCdOnAdvicePoints(
+      buildAdviceCalibrationFromLiveRows(liveCalibRows, lang),
+      resolveDaysToCd,
+    );
+    const { points: adviceMonitorPoints, excludedSellCount: paperSellExcludedCount } =
+      adviceMonitorPointsExcludingPaperSells(liveMonitorPoints, paperSoldKeys);
+    const adviceMonitorRows = liveCalibRowsExcludingPaperSells(liveCalibRows, paperSoldKeys);
+    const adviceMonitorDecision = summarizeDecisionPrecision(
+      adviceMonitorPoints,
+      countUnverifiedSellEvitaFromMonitor(adviceMonitorRows),
+    );
+    const decision = summarizeDecisionPrecision(dealPoints, unverified);
+
+    const closedPaper = summarizePaperClosedDeals(decisionSimState.ticks);
+    const closedPaperKpi = summarizeClosedPnlAdvice(closedPaper);
+    const dealGood = (decision.buy.good ?? 0) + (decision.sell.good ?? 0);
+    const dealBad = (decision.buy.bad ?? 0) + (decision.sell.bad ?? 0);
+    const unifiedAdvice = buildUnifiedAdviceSuccess({
+      live: summarizeAdviceCalibration([]),
+      paperPrecisionPct:
+        dealGood + dealBad > 0
+          ? Math.round((dealGood / (dealGood + dealBad)) * 1000) / 10
+          : null,
+      paperGood: dealGood,
+      paperBad: dealBad,
+      closed: null,
+    });
+
+    let growth = null;
+    if (simLoopSynthMaturation?.length && synthAlloc) {
+      const last = simLoopSynthMaturation[simLoopSynthMaturation.length - 1]!;
+      const cost = synthAlloc.totalCapitalEur;
+      const impact = computeSynthGainImpact(
+        livePiggy.totalPnlEur,
+        cost,
+        last.simLoopSynthTotalPnlEur,
+        cost,
+      );
+      growth = summarizeWeightedGrowthFromImpact(
+        impact,
+        "simLoop",
+        livePiggy.closedTradeCount + livePiggy.openPositionCount,
+        {
+          equalClosedEur: livePiggy.closedPnlEur,
+          equalOpenEur: livePiggy.openMtmPnlEur,
+          synthClosedEur: last.simLoopSynthClosedPnlEur,
+          synthOpenEur: last.simLoopSynthOpenMtmEur,
+        },
+      );
+    }
+
+    return {
+      decision,
+      growth,
+      unifiedAdvice,
+      closedPaperWinRatePct: closedPaperKpi.winRatePct,
+      paperPointCount: dealPoints.length,
+      paperOpenDealCount: dealPoints.filter((p) => p.kind === "deal_buy_open").length,
+      paperClosedDealCount: dealPoints.filter((p) => p.kind === "deal_buy_closed").length,
+      paperSellExecutedCount: countPaperSellExecutions(decisionSimState.ticks),
+      paperSellScoredCount: dealPoints.filter(
+        (p) => p.suggestedAction === "sell" && (p.outcome === "good" || p.outcome === "bad"),
+      ).length,
+      paperSellCoverage: summarizePaperSellOperativeCoverage(
+        decisionSimState.ticks,
+        resolvePostMove24h,
+      ),
+      livePointCount: points.length - tickLevelPaper.length,
+      tickEventExcludedCount: countInflatedTickCalibrationEvents(tickLevelPaper, dealPoints),
+      unverifiedSellCount: decision.unverifiedSellEvitaCount,
+      adviceMonitor:
+        adviceMonitorPoints.length > 0 || paperSellExcludedCount > 0
+          ? {
+              decision: adviceMonitorDecision,
+              pendingCount: countPendingAdvicePoints(adviceMonitorPoints),
+              paperSellExcludedCount,
+            }
+          : null,
+    };
+  }, [
+    simTable?.rows?.length,
+    monitorRows,
+    decisionSimState.paperPortfolio,
+    decisionSimState.ticks,
+    decisionSimState.adviceLog,
+    liveEvaluations,
+    simRowByKey,
+    it,
+    simLoopSynthMaturation,
+    synthAlloc,
+    livePiggy,
+  ]);
+
+  const intrinsicRecommendation = useMemo((): IntrinsicRecommendationSummary | null => {
+    if (!simTable?.rows?.length && closedOutcomeRows.length === 0) return null;
+    const lang = it ? "it" : "en";
+    const entryProbByKey = new Map(
+      decisionSimState.paperPortfolio
+        .filter((p) => p.entryProbPct != null && Number.isFinite(p.entryProbPct))
+        .map((p) => [p.key, p.entryProbPct!]),
+    );
+    const liveCalibRows = monitorRows.map((row) => {
+      const simRow = simRowByKey.get(row.key);
+      const dailyVar = simRow ? dailyChangePctFromRow(simRow) : null;
+      const pnlPct24h =
+        row.pnlPct24h != null && Number.isFinite(row.pnlPct24h)
+          ? row.pnlPct24h
+          : dailyVar;
+      return {
+        key: row.key,
+        ticker: row.ticker,
+        suggestedAction: row.suggestedAction,
+        inPaperPortfolio: row.inPaperPortfolio,
+        hasPosition: row.hasPosition,
+        exitDecision: row.exitDecision,
+        probPct: row.probPct,
+        probPctAtAdvice: row.inPaperPortfolio
+          ? (entryProbByKey.get(row.key) ?? row.probPct)
+          : row.probPct,
+        planReturnPct: row.planReturnPct,
+        miiAngleDeg: row.miiAngleDeg,
+        pnlPct: row.pnlPct,
+        pnlPct24h,
+        daysToCdAtAdvice: readDaysToCdFromSimRow(simRow),
+      };
+    });
+    const base = buildIntrinsicRecommendationSummary({
+      monitorRows: liveCalibRows,
+      closedRows: closedOutcomeRows,
+      simRowByKey,
+      lang,
+    });
+    if (!base) return null;
+    const resolveDaysToCd = (key: string): number | null =>
+      readDaysToCdFromSimRow(simRowByKey.get(key));
+    const monitorPoints = attachDaysToCdOnAdvicePoints(
+      buildAdviceCalibrationFromLiveRows(liveCalibRows, lang),
+      resolveDaysToCd,
+    );
+    const auditItems = buildAuditPeakItemsFromClosedRows(
+      closedOutcomeRows,
+      simRowByKey,
+      lang,
+    );
+    const enriched = enrichIntrinsicWithPeakCd(
+      base,
+      monitorPoints,
+      auditItems,
+      lang,
+      signCurveView,
+    );
+    return {
+      ...base,
+      combinedRangeLabel: enriched.combinedRangeLabel,
+      combinedAdviceBins: enriched.combinedAdviceBins,
+      combinedPeakCdLabel: enriched.combinedRangeLabel,
+      monitor: enriched.monitor,
+      closedReplay: enriched.closedReplay,
+    };
+  }, [
+    simTable?.rows?.length,
+    monitorRows,
+    decisionSimState.paperPortfolio,
+    closedOutcomeRows,
+    simRowByKey,
+    it,
+    signCurveView,
+  ]);
+
+  const portfolioOperative = useMemo((): OperativeColumnProps | null => {
+    if (!realPortfolioAccuracy.outcomeRowCount && closedOutcomeRows.length === 0) return null;
+    const closed = realPortfolioAccuracy.closed;
+    let closedPnlEur = 0;
+    for (const r of closedOutcomeRows) {
+      closedPnlEur += realizedPnlEurFromOutcome(r) ?? 0;
+    }
+    const open =
+      simTable?.rows?.length
+        ? aggregateOpenPortfolioPnl(simTable, inputs, portfolioHistory)
+        : null;
+    const openMtmEur = open?.pnlEur ?? 0;
+    return {
+      decision: realPortfolioAccuracy.decision,
+      growth: null,
+      sellCoverage: realPortfolioAccuracy.sellCoverage,
+      operativeGain: {
+        closedPnlEur,
+        openMtmEur,
+        totalPnlEur: closedPnlEur + openMtmEur,
+        winRatePct: closed?.winRatePct ?? null,
+        closedSampleN: closed?.sampleSize ?? 0,
+        lowSample: closed?.lowSample,
+      },
+    };
+  }, [
+    realPortfolioAccuracy,
+    closedOutcomeRows,
+    simTable,
+    inputs,
+    portfolioHistory,
+  ]);
+
+  const simLoopOperative = useMemo((): OperativeColumnProps | null => {
+    const closedPaper = summarizePaperClosedDeals(decisionSimState.ticks);
+    const closedPaperKpi = summarizeClosedPnlAdvice(closedPaper);
+    const closedScored = closedPaperKpi.winCount + closedPaperKpi.lossCount;
+    const operativeGain: OperativeGainSummary | null =
+      closedScored > 0
+        ? {
+            closedPnlEur: livePiggy.closedPnlEur,
+            openMtmEur: livePiggy.openMtmPnlEur,
+            totalPnlEur: livePiggy.totalPnlEur,
+            winRatePct: closedPaperKpi.winRatePct,
+            closedSampleN: closedScored,
+          }
+        : null;
+
+    if (!accuracySummary.decision && !accuracySummary.growth && !operativeGain) return null;
+    const footnotes: string[] = [];
+    if (accuracySummary.tickEventExcludedCount > 0) {
+      footnotes.push(
+        it
+          ? `${accuracySummary.tickEventExcludedCount} eventi tick duplicati esclusi.`
+          : `${accuracySummary.tickEventExcludedCount} duplicate tick events excluded.`,
+      );
+    }
+    if (accuracySummary.livePointCount > 0) {
+      footnotes.push(
+        it
+          ? `${accuracySummary.livePointCount} snapshot live esclusi dall'operativa.`
+          : `${accuracySummary.livePointCount} live snapshots excluded from operative.`,
+      );
+    }
+    const openPaper = decisionSimState.paperPortfolio.length;
+    const openScored = accuracySummary.paperOpenDealCount ?? 0;
+    const closedRoundTrips = accuracySummary.paperClosedDealCount ?? 0;
+    if (openPaper > 0) {
+      footnotes.push(
+        it
+          ? `Deal paper: ${closedRoundTrips} chiusi + ${openScored}/${openPaper} aperti valutati (flat/senza mark esclusi).`
+          : `Paper deals: ${closedRoundTrips} closed + ${openScored}/${openPaper} open scored (flat/no mark excluded).`,
+      );
+    }
+    footnotes.push(
+      it
+        ? "Auto BUY: 18:00 Roma · P≥55% · SDS≥45 · synth ∝ SDS+Var+EIS/rescue feed."
+        : "Auto BUY: 18:00 Rome · P≥55% · SDS≥45 · synth ∝ SDS+vol+EIS/rescue feed.",
+    );
+    return {
+      decision: accuracySummary.decision,
+      growth: accuracySummary.growth,
+      operativeGain,
+      sellCoverage: accuracySummary.paperSellCoverage ?? null,
+      adviceMonitor: accuracySummary.adviceMonitor ?? null,
+      footnotes: footnotes.length ? footnotes : undefined,
+    };
+  }, [
+    accuracySummary,
+    it,
+    decisionSimState.paperPortfolio.length,
+    decisionSimState.ticks,
+    livePiggy.closedPnlEur,
+    livePiggy.openMtmPnlEur,
+    livePiggy.totalPnlEur,
+  ]);
+
+  if (!simTable?.rows?.length && !realPortfolioAccuracy.outcomeRowCount) return null;
 
   return (
     <div className="flex flex-col gap-3 min-w-0">
+      <AccuracySummaryPanel
+        portfolioOperative={portfolioOperative}
+        simLoopOperative={simLoopOperative}
+        modelIntrinsic={modelIntrinsic}
+        intrinsic={intrinsicRecommendation}
+        weeklyTrends={weeklyTrends}
+        it={it}
+        onNavigate={onNavigate}
+      />
+
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-3 min-w-0 items-stretch">
         <DecisionSimAdviceCalibrationPanel
           monitorRows={monitorRows}
@@ -299,21 +763,12 @@ export function DashboardChartsRow({
           className={DASHBOARD_SIM_CHART_CLASS}
           preChartMeasureRef={preChartRef}
         />
-        <DecisionSimPnlCharts
+        <DashboardDaily24hPnlChart
+          history={missedHistory}
           ticks={decisionSimState.ticks}
-          livePiggy={livePiggy}
-          liveEvaluations={liveEvaluations}
-          paperPortfolio={decisionSimState.paperPortfolio}
-          simTable={simTable}
-          capitalPerTrade={decisionSimState.config.capitalPerTrade}
-          maxOpenPositions={decisionSimState.config.maxOpenPositions}
-          lang={it ? "it" : "en"}
-          compact
+          livePiggyTotalPnlEur={livePiggy.totalPnlEur}
+          pnlActualEur={pnlActualEur}
           className={DASHBOARD_SIM_CHART_CLASS}
-          pairPreChartHeight={preChartHeight}
-          simLoopSynthMaturation={simLoopSynthMaturation}
-          simLoopWeightedMaturation={simLoopWeightedMaturation}
-          simLoopSizedTotalCapitalEur={synthAlloc?.totalCapitalEur}
         />
       </div>
 

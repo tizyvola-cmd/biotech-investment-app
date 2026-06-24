@@ -26,6 +26,11 @@ import {
   classifyDealTemperature,
   dealEuroPerDayFromIdea,
 } from "./recommendationDealUrgency";
+import type { AdviceOutcomeBinnedSummary } from "./accuracyPeakCdOffset";
+import {
+  expectedAdviceOutcomeAtDaysToCd,
+  formatExpectedAdviceAccuracyHint,
+} from "./accuracyPeakCdOffset";
 import type { SimLoopSynthAllocation } from "../hooks/useSimLoopSynthAllocation";
 
 export type DashboardRecProfileFilter = "all" | "portfolio" | "opportunity";
@@ -44,6 +49,9 @@ export type DashboardRecommendationRow = SuggestionMonitorRow & {
   dealEuroPerDay: number;
   dealTemperature: "hot" | "cold" | null;
   dealGainEur: number;
+  /** Historical advice success % expected at this row's days-to-CD bin. */
+  expectedAdviceAccuracyPct: number | null;
+  expectedAdviceAccuracyHint: string | null;
 };
 
 const DISMISSED_KEY = "supernova_dashboard_rec_dismissed_v1";
@@ -224,6 +232,8 @@ export function buildDashboardRecommendationRows(opts: {
   cdFilter: DashboardRecCdFilter;
   sortMode: DashboardRecSortMode;
   synthAlloc?: SimLoopSynthAllocation | null;
+  adviceOutcomeBins?: AdviceOutcomeBinnedSummary | null;
+  langForHints?: "it" | "en";
 }): DashboardRecommendationRow[] {
   if (!opts.simTable?.rows?.length) return [];
 
@@ -294,6 +304,15 @@ export function buildDashboardRecommendationRows(opts: {
       targetProvisional: gainPlan.targetProvisional,
     });
 
+    const expectedAtCd = expectedAdviceOutcomeAtDaysToCd(
+      row.daysToCd,
+      opts.adviceOutcomeBins,
+    );
+    const expectedHint = formatExpectedAdviceAccuracyHint(
+      expectedAtCd,
+      opts.langForHints ?? opts.lang,
+    );
+
     enriched.push({
       ...row,
       companyName: row.company || companyFromSimRow(simRow),
@@ -308,6 +327,8 @@ export function buildDashboardRecommendationRows(opts: {
       dealEuroPerDay: dealEuroPerDayFromIdea(gainIdea),
       dealTemperature: classifyDealTemperature(gainIdea.gainEur, gainIdea.days),
       dealGainEur: gainIdea.gainEur ?? 0,
+      expectedAdviceAccuracyPct: expectedAtCd?.pct ?? null,
+      expectedAdviceAccuracyHint: expectedHint,
     });
   }
 

@@ -19,6 +19,7 @@ import { portfolioPnlDeltaLooksLikeStaleBaseline } from "./piggyBankTrend";
 import {
   holdingDaysFromInvestedAt,
   type InvestSimHistoryPoint,
+  type InvestSimInputs,
 } from "./investSimStorage";
 import type {
   DecisionSimState,
@@ -32,10 +33,18 @@ import {
   dailyChangePctFromRow,
   pnlEurFromDailyPct,
   positionCapitalPnlPct,
+  positionPnlForOpenRow,
 } from "./simulationPosition";
 import { sanitizePaperMovePct } from "./investDecisionSimExperiment";
 import { resolveTickClosedPnlEur } from "./decisionSimPnlResolve";
 import { looksLikeOpenMtmCatchUpCliff } from "./decisionSimPnlResolve";
+import {
+  buildCausalSimLoopShareWalk,
+  causalOptsFromSizing,
+  causalShareForSell,
+  rebalanceCausalSimLoopShares,
+  shareToSynthCap,
+} from "./simLoopCausalSynth";
 
 export type SimLoopPulsePortfolioRow = {
   key: string;
@@ -52,11 +61,18 @@ export type SimLoopPulsePortfolioRow = {
 };
 
 export type SimLoopPulseTotals = {
+  /** Total P&L (closed + open) — chart / visit snapshot. */
   pnlEur: number;
   pnlPct: number | null;
   pnlEurToday: number | null;
   todayCovered: number;
   capital: number;
+  /** Open positions MTM only — same basis as Portfolio pulse · Gain open. */
+  openPnlEur: number;
+  openPnlPct: number | null;
+  /** Realized P&L from paper SELL trades (same basis as Loss Rescue · Sim Loop BUY). */
+  closedPnlEur: number;
+  closedDealCount: number;
 };
 
 export type SimLoopPulseData = {
@@ -79,6 +95,9 @@ export type SimLoopPulseSizing = {
   shareByRowKey: Record<string, number>;
   totalCapitalEur: number;
   capitalPerTrade: number;
+  targetGainEur?: number;
+  /** causal_rebalance = after marks; static_approved = frozen weights at entry. */
+  sizingMode?: "causal_rebalance" | "static_approved";
 };
 
 const SIM_LOOP_VISIT_KEYS: Record<SimLoopPulseVariant, string> = {
@@ -143,6 +162,112 @@ function pnlEurFromMovePct(capital: number, movePct: number | null | undefined):
   return Math.round(((capital * movePct) / 100) * 100) / 100;
 }
 
+function roundPnlEur(n: number): number {
+  return Math.round(n * 100) / 100;
+}
+
+/** Scale € P&L between capital sizes; % stays on invested capital (unchanged). */
+function scaleOpenPnlToCap(
+  pnlEur: number | null,
+  pnlPct: number | null,
+  pnlEur24h: number | null,
+  pnlPct24h: number | null,
+  fromCap: number,
+  toCap: number,
+): {
+  pnlEur: number;
+  pnlPct: number | null;
+  pnlEur24h: number | null;
+  pnlPct24h: number | null;
+} {
+  if (toCap <= 0) {
+    return { pnlEur: 0, pnlPct, pnlEur24h: null, pnlPct24h };
+  }
+  if (fromCap <= 0) {
+    const pct = pnlPct ?? 0;
+    return {
+      pnlEur: pnlEurFromMovePct(toCap, pct),
+      pnlPct,
+      pnlEur24h: pnlPct24h != null ? pnlEurFromMovePct(toCap, pnlPct24h) : null,
+      pnlPct24h,
+    };
+  }
+  const ratio = toCap / fromCap;
+  return {
+    pnlEur: roundPnlEur((pnlEur ?? 0) * ratio),
+    pnlPct,
+    pnlEur24h: pnlEur24h != null ? roundPnlEur(pnlEur24h * ratio) : null,
+    pnlPct24h,
+  };
+}
+
+/**
+ * Sim loop open P&L — same audit-aligned engine as Portfolio pulse,
+ * scaled to equal-weight or synth effective capital.
+ */
+export function resolveSimLoopAlignedOpenPnl(
+  simRow: Record<string, unknown>,
+  key: string,
+  inputs: InvestSimInputs | undefined,
+  portfolioHistory: InvestSimHistoryPoint[] | null | undefined,
+  effectiveCap: number,
+  entryAt: string | null | undefined,
+  paperFallbackPct: number | null | undefined,
+): {
+  pnlEur: number;
+  pnlPct: number | null;
+  pnlEur24h: number | null;
+  pnlPct24h: number | null;
+} {
+  const inp = inputs?.[key];
+  const portfolioCap = inp?.capital && inp.capital > 0 ? inp.capital : 0;
+
+  if (inputs && portfolioCap > 0 && !inp?.ignoreSheet) {
+    const m = positionPnlForOpenRow(simRow, inputs, portfolioHistory);
+    if (m.pnlEur != null && m.pos && m.pos.capital > 0) {
+      return scaleOpenPnlToCap(
+        m.pnlEur,
+        m.pnlPct,
+        m.pnlEur24h,
+        m.pnlPct24h,
+        m.pos.capital,
+        effectiveCap,
+      );
+    }
+  }
+
+  if (inputs && effectiveCap > 0) {
+    const synthInputs: InvestSimInputs = {
+      ...inputs,
+      [key]: {
+        buyPrice: inp?.buyPrice ?? 0,
+        capital: effectiveCap,
+        ignoreSheet: false,
+        investedAt: entryAt ?? inp?.investedAt,
+        purchaseDate: inp?.purchaseDate,
+      },
+    };
+    const m = positionPnlForOpenRow(simRow, synthInputs, portfolioHistory);
+    if (m.pnlEur != null) {
+      return {
+        pnlEur: m.pnlEur,
+        pnlPct: m.pnlPct,
+        pnlEur24h: m.pnlEur24h,
+        pnlPct24h: m.pnlPct24h,
+      };
+    }
+  }
+
+  const sanitized = sanitizePaperMovePct(paperFallbackPct);
+  const pnlEur = sanitized != null ? pnlEurFromMovePct(effectiveCap, sanitized) : 0;
+  return {
+    pnlEur,
+    pnlPct: positionCapitalPnlPct(pnlEur, effectiveCap) ?? sanitized,
+    pnlEur24h: null,
+    pnlPct24h: null,
+  };
+}
+
 function alignRowPlanGap(
   row: PortfolioGainChartRow,
   history: InvestSimHistoryPoint[],
@@ -155,60 +280,31 @@ function alignRowPlanGap(
   };
 }
 
-function synthCapFromShare(share: number, sizing: SimLoopPulseSizing): number {
-  return Math.round(share * sizing.totalCapitalEur * 100) / 100;
-}
-
-function synthShareForClosedTrade(
-  rowKey: string,
-  sizing: SimLoopPulseSizing,
-  entryShares: Record<string, number>,
-): number | null {
-  const entry = entryShares[rowKey];
-  if (typeof entry === "number" && Number.isFinite(entry) && entry >= 0) {
-    return entry;
-  }
-  const live = sizing.shareByRowKey[rowKey];
-  if (typeof live === "number" && Number.isFinite(live) && live >= 0) {
-    return live;
-  }
-  return null;
-}
-
 function synthCapForClosedTrade(
-  rowKey: string,
   equalCap: number,
   sizing: SimLoopPulseSizing,
-  entryShares: Record<string, number>,
+  share: number | null,
 ): number {
-  const share = synthShareForClosedTrade(rowKey, sizing, entryShares);
-  if (share != null && sizing.totalCapitalEur > 0) {
-    return synthCapFromShare(share, sizing);
-  }
-  return equalCap;
+  return shareToSynthCap(share, sizing.totalCapitalEur, equalCap);
 }
 
 function synthCapForOpenPosition(
   rowKey: string,
   equalCap: number,
   sizing: SimLoopPulseSizing,
-  entryShares: Record<string, number>,
+  activeShares: Record<string, number>,
 ): number {
-  const share = entryShares[rowKey];
-  if (typeof share === "number" && Number.isFinite(share) && share >= 0 && sizing.totalCapitalEur > 0) {
-    return synthCapFromShare(share, sizing);
-  }
-  return equalCap;
+  return shareToSynthCap(activeShares[rowKey], sizing.totalCapitalEur, equalCap);
 }
 
 function resolveEffectiveCap(
   rowKey: string,
   equalCap: number,
   sizing: SimLoopPulseSizing | null | undefined,
-  entryShares: Record<string, number> = {},
+  activeShares: Record<string, number> = {},
 ): number {
   if (!sizing || equalCap <= 0) return equalCap;
-  return synthCapForOpenPosition(rowKey, equalCap, sizing, entryShares);
+  return synthCapForOpenPosition(rowKey, equalCap, sizing, activeShares);
 }
 
 export type SimLoopVisitSnapshot = {
@@ -317,19 +413,22 @@ function fmtShortDateTime(iso: string, lang: "it" | "en"): string {
 export function resolveSimLoopClosedPnlEur(
   ticks: DecisionSimTick[],
   sizing?: SimLoopPulseSizing | null,
-  entryShares: Record<string, number> = {},
 ): number {
   const sorted = [...ticks].sort((a, b) => a.at.localeCompare(b.at));
+  const walk = sizing
+    ? buildCausalSimLoopShareWalk(sorted, causalOptsFromSizing(sizing))
+    : null;
   let cumRealized = 0;
   for (const tick of sorted) {
     for (const tr of tick.trades) {
       if (tr.side !== "sell" || tr.pnlEurSimulated == null) continue;
       let pnl = tr.pnlEurSimulated;
-      if (sizing) {
+      if (sizing && walk) {
         const entryPos = tick.portfolioBefore?.find((p) => p.key === tr.key);
         const equalCap = tr.capital ?? entryPos?.capital ?? sizing.capitalPerTrade;
         if (equalCap > 0) {
-          const synthCap = synthCapForClosedTrade(tr.key, equalCap, sizing, entryShares);
+          const share = causalShareForSell(walk, tick, tr);
+          const synthCap = synthCapForClosedTrade(equalCap, sizing, share);
           pnl = Math.round(pnl * (synthCap / equalCap) * 100) / 100;
         }
       }
@@ -483,7 +582,6 @@ export function buildSimLoopPulseHourlyHistory(
   ticks: DecisionSimTick[],
   paperPortfolio: PaperPosition[],
   sizing?: SimLoopPulseSizing | null,
-  entryShares: Record<string, number> = {},
   windowHours = SIM_LOOP_PULSE_CHART_HOURS,
 ): InvestSimHistoryPoint[] {
   if (!portfolioHistory.length || !paperPortfolio.length) return [];
@@ -491,6 +589,9 @@ export function buildSimLoopPulseHourlyHistory(
   const nowMs = Date.now();
   const cutoff = nowMs - windowHours * 3600000;
   const sortedTicks = [...ticks].sort((a, b) => a.at.localeCompare(b.at));
+  const walk = sizing
+    ? buildCausalSimLoopShareWalk(sortedTicks, causalOptsFromSizing(sizing))
+    : null;
   const hourly = portfolioHistory
     .filter((h) => {
       const ts = Date.parse(h.ts);
@@ -508,28 +609,46 @@ export function buildSimLoopPulseHourlyHistory(
     if (!Number.isFinite(tsMs)) continue;
 
     const ticksBefore = sortedTicks.filter((t) => Date.parse(t.at) <= tsMs);
-    const closedPnlEur = resolveSimLoopClosedPnlEur(ticksBefore, sizing, entryShares);
+    const closedPnlEur = resolveSimLoopClosedPnlEur(ticksBefore, sizing);
     const openPositions = paperPortfolioOpenAt(paperPortfolio, tsMs);
+    const lastTickIdx = ticksBefore.length - 1;
+    const openShares =
+      walk && lastTickIdx >= 0 ? (walk.openSharesPerTick[lastTickIdx] ?? {}) : {};
 
     let openMtmTotal = 0;
     let totalCap = 0;
     const byTicker: InvestSimHistoryPoint["byTicker"] = {};
 
     for (const pos of openPositions) {
-      const cap = resolveEffectiveCap(pos.key, pos.capital, sizing, entryShares);
+      const cap = resolveEffectiveCap(pos.key, pos.capital, sizing, openShares);
       if (cap <= 0) continue;
       const snap = h.byTicker?.[pos.key];
-      let movePct = snap != null ? sanitizePaperMovePct(snap.pnlPct) : null;
-      if (movePct != null) {
-        lastPctByKey.set(pos.key, movePct);
-      } else {
-        movePct =
-          lastPctByKey.get(pos.key) ??
-          sanitizePaperMovePct(pos.lastMarkPct) ??
-          null;
+      let pnlEur: number | null = null;
+      let movePct: number | null = null;
+      if (snap != null && Number.isFinite(snap.pnl)) {
+        const entryCap = snap.value - snap.pnl;
+        pnlEur =
+          entryCap > 0
+            ? roundPnlEur(snap.pnl * (cap / entryCap))
+            : roundPnlEur(snap.pnl);
+        movePct = cap > 0 ? roundPnlEur((pnlEur / cap) * 10000) / 100 : null;
       }
-      if (movePct == null) continue;
-      const pnlEur = pnlEurFromMovePct(cap, movePct);
+      if (movePct == null) {
+        movePct = snap != null ? sanitizePaperMovePct(snap.pnlPct) : null;
+        if (movePct != null) {
+          lastPctByKey.set(pos.key, movePct);
+        } else {
+          movePct =
+            lastPctByKey.get(pos.key) ??
+            sanitizePaperMovePct(pos.lastMarkPct) ??
+            null;
+        }
+        if (movePct == null) continue;
+        pnlEur = pnlEurFromMovePct(cap, movePct);
+      } else if (movePct != null) {
+        lastPctByKey.set(pos.key, movePct);
+      }
+      if (pnlEur == null || movePct == null) continue;
       byTicker[pos.key] = { value: cap + pnlEur, pnl: pnlEur, pnlPct: movePct };
       openMtmTotal += pnlEur;
       totalCap += cap;
@@ -797,21 +916,25 @@ function buildSimLoopGainPlanRowFromPaper(
 export function buildSimLoopHistoryFromTicks(
   ticks: DecisionSimTick[],
   sizing?: SimLoopPulseSizing | null,
-  entryShares: Record<string, number> = {},
 ): InvestSimHistoryPoint[] {
   const sorted = [...ticks].sort((a, b) => a.at.localeCompare(b.at));
+  const walk = sizing
+    ? buildCausalSimLoopShareWalk(sorted, causalOptsFromSizing(sizing))
+    : null;
   let cumRealized = 0;
   const out: InvestSimHistoryPoint[] = [];
 
-  for (const tick of sorted) {
+  for (let i = 0; i < sorted.length; i += 1) {
+    const tick = sorted[i]!;
     for (const tr of tick.trades) {
       if (tr.side !== "sell" || tr.pnlEurSimulated == null) continue;
       let pnl = tr.pnlEurSimulated;
-      if (sizing) {
+      if (sizing && walk) {
         const entryPos = tick.portfolioBefore?.find((p) => p.key === tr.key);
         const equalCap = tr.capital ?? entryPos?.capital ?? sizing.capitalPerTrade;
         if (equalCap > 0) {
-          const synthCap = synthCapForClosedTrade(tr.key, equalCap, sizing, entryShares);
+          const share = causalShareForSell(walk, tick, tr);
+          const synthCap = synthCapForClosedTrade(equalCap, sizing, share);
           pnl = Math.round(pnl * (synthCap / equalCap) * 100) / 100;
         }
       }
@@ -822,6 +945,7 @@ export function buildSimLoopHistoryFromTicks(
     const positions = tick.portfolioAfter ?? [];
     const piggy = tick.summary.piggyBank;
     const evalByKey = new Map(tick.evaluations.map((e) => [e.key, e]));
+    const openShares = walk?.openSharesPerTick[i] ?? {};
     const byTicker: InvestSimHistoryPoint["byTicker"] = {};
     let totalCap = 0;
     let openMtmTotal = 0;
@@ -829,7 +953,7 @@ export function buildSimLoopHistoryFromTicks(
       const equalCap = Number.isFinite(pos.capital) ? pos.capital : 0;
       const cap =
         sizing && equalCap > 0
-          ? synthCapForOpenPosition(pos.key, equalCap, sizing, entryShares)
+          ? synthCapForOpenPosition(pos.key, equalCap, sizing, openShares)
           : equalCap;
       const ev = evalByKey.get(pos.key);
       const movePct =
@@ -858,7 +982,7 @@ export function buildSimLoopHistoryFromTicks(
         const equalCap = Number.isFinite(pos.capital) ? pos.capital : 0;
         const cap =
           sizing && equalCap > 0
-            ? synthCapForOpenPosition(pos.key, equalCap, sizing, entryShares)
+            ? synthCapForOpenPosition(pos.key, equalCap, sizing, openShares)
             : equalCap;
         if (cap <= 0 || totalCap <= 0) continue;
         const share = cap / totalCap;
@@ -892,13 +1016,13 @@ function appendLiveSimLoopHistoryPoint(
   totals: SimLoopPulseTotals,
   pnlByKey: Map<string, number>,
   sizing?: SimLoopPulseSizing | null,
-  entryShares: Record<string, number> = {},
+  activeShares: Record<string, number> = {},
 ): InvestSimHistoryPoint[] {
   if (!paperPortfolio.length) return history;
 
   const byTicker: InvestSimHistoryPoint["byTicker"] = {};
   for (const pos of paperPortfolio) {
-    const cap = resolveEffectiveCap(pos.key, pos.capital, sizing, entryShares);
+    const cap = resolveEffectiveCap(pos.key, pos.capital, sizing, activeShares);
     const pnl = finitePnl(pnlByKey.get(pos.key), 0);
     const pct = cap > 0 ? Math.round((pnl / cap) * 10000) / 100 : 0;
     byTicker[pos.key] = { value: cap + pnl, pnl, pnlPct: pct };
@@ -930,6 +1054,8 @@ export function buildSimLoopPulseData(opts: {
   sizing?: SimLoopPulseSizing | null;
   /** Hourly invest-sim snapshots — enables 24h pulse chart like portfolio view. */
   portfolioHistory?: InvestSimHistoryPoint[] | null;
+  /** Pick stocks inputs — audit-aligned P&L (same as Portfolio pulse). */
+  inputs?: InvestSimInputs;
 }): SimLoopPulseData {
   const {
     state,
@@ -939,6 +1065,7 @@ export function buildSimLoopPulseData(opts: {
     lang = "it",
     sizing = null,
     portfolioHistory = null,
+    inputs,
   } = opts;
 
   const rowByKey = buildSimRowByKeyMap(simTable?.rows ?? []);
@@ -946,13 +1073,15 @@ export function buildSimLoopPulseData(opts: {
   const evalByKey = new Map(
     (latestTick?.evaluations ?? []).map((e) => [e.key, e]),
   );
-  const entryShares = sizing
-    ? syncSimLoopEntryShares(
-        state.paperPortfolio.map((p) => p.key),
-        sizing.shareByRowKey,
-      )
-    : {};
-  const history = buildSimLoopHistoryFromTicks(state.ticks, sizing, entryShares);
+  const liveOpenShares =
+    sizing && state.paperPortfolio.length
+      ? rebalanceCausalSimLoopShares(
+          state.paperPortfolio,
+          latestTick?.evaluations ?? [],
+          causalOptsFromSizing(sizing),
+        )
+      : {};
+  const history = buildSimLoopHistoryFromTicks(state.ticks, sizing);
   const hourlyHistory =
     portfolioHistory?.length && state.paperPortfolio.length
       ? buildSimLoopPulseHourlyHistory(
@@ -960,7 +1089,6 @@ export function buildSimLoopPulseData(opts: {
           state.ticks,
           state.paperPortfolio,
           sizing,
-          entryShares,
         )
       : [];
   const pulseChartHistory = mergeSimLoopPulseChartHistory(history, hourlyHistory);
@@ -974,7 +1102,7 @@ export function buildSimLoopPulseData(opts: {
     const sk = simulationRowSeriesKey(simRow);
     const chartPts = sk ? chartPointsByKey.get(sk) : null;
     const equalCap = pos.capital;
-    const effectiveCap = resolveEffectiveCap(pos.key, equalCap, sizing, entryShares);
+    const effectiveCap = resolveEffectiveCap(pos.key, equalCap, sizing, liveOpenShares);
     const gainPlanRow = buildSimLoopGainPlanRowFromPaper(
       pos,
       simRow,
@@ -985,20 +1113,33 @@ export function buildSimLoopPulseData(opts: {
     if (!gainPlanRow) continue;
 
     const markPct = ev?.pnlPct ?? pos.lastMarkPct ?? null;
-    const sanitizedPct = sanitizePaperMovePct(markPct);
-    const pnlEur =
-      sanitizedPct != null ? pnlEurFromMovePct(effectiveCap, sanitizedPct) : 0;
-    const pnlPct = positionCapitalPnlPct(pnlEur, effectiveCap) ?? sanitizedPct;
-    const { pnlPct24h, pnlEur24h } = resolveSimLoopDailyPnl(
-      { ...pos, capital: effectiveCap },
+    const aligned = resolveSimLoopAlignedOpenPnl(
       simRow,
-      ev,
-      pnlEur,
+      pos.key,
+      inputs,
+      portfolioHistory,
+      effectiveCap,
+      pos.entryAt,
+      markPct,
     );
+    const pnlEur = aligned.pnlEur;
+    const pnlPct = aligned.pnlPct;
+    let pnlEur24h = aligned.pnlEur24h;
+    let pnlPct24h = aligned.pnlPct24h;
+    if (pnlEur24h == null && pnlPct24h == null) {
+      const daily = resolveSimLoopDailyPnl(
+        { ...pos, capital: effectiveCap },
+        simRow,
+        ev,
+        pnlEur,
+      );
+      pnlEur24h = daily.pnlEur24h;
+      pnlPct24h = daily.pnlPct24h;
+    }
     const gainPlanRowLive = {
       ...gainPlanRow,
-      pnlEur: sanitizedPct != null ? pnlEur : null,
-      pnlUnavailable: sanitizedPct == null,
+      pnlEur,
+      pnlUnavailable: pnlPct == null,
     };
 
     drafts.push({
@@ -1016,7 +1157,11 @@ export function buildSimLoopPulseData(opts: {
 
   const capital = drafts.reduce((s, r) => s + r.gainPlanRow.capital, 0);
   const openPnlEur = drafts.reduce((s, r) => s + finitePnl(r.pnlEur, 0), 0);
-  const closedPnlEur = resolveSimLoopClosedPnlEur(state.ticks, sizing, entryShares);
+  const closedPnlEur = resolveSimLoopClosedPnlEur(state.ticks, sizing);
+  const closedDealCount = state.ticks.reduce(
+    (n, tk) => n + tk.trades.filter((tr) => tr.side === "sell").length,
+    0,
+  );
   const pnlEur = Math.round((closedPnlEur + openPnlEur) * 100) / 100;
 
   let equalReferenceTotals: SimLoopPulseTotals | null = null;
@@ -1028,10 +1173,16 @@ export function buildSimLoopPulseData(opts: {
       if (!simRow) continue;
       const ev = evalByKey.get(pos.key);
       const markPct = ev?.pnlPct ?? pos.lastMarkPct ?? null;
-      const sanitizedPct = sanitizePaperMovePct(markPct);
-      if (sanitizedPct != null) {
-        equalOpenPnl += pnlEurFromMovePct(pos.capital, sanitizedPct);
-      }
+      const aligned = resolveSimLoopAlignedOpenPnl(
+        simRow,
+        pos.key,
+        inputs,
+        portfolioHistory,
+        pos.capital,
+        pos.entryAt,
+        markPct,
+      );
+      equalOpenPnl += aligned.pnlEur;
       equalCapTotal += pos.capital;
     }
     const equalClosed = resolveSimLoopClosedPnlEur(state.ticks, null);
@@ -1043,6 +1194,11 @@ export function buildSimLoopPulseData(opts: {
       pnlEurToday: null,
       todayCovered: 0,
       capital: equalCapTotal,
+      openPnlEur: Math.round(equalOpenPnl * 100) / 100,
+      openPnlPct:
+        equalCapTotal > 0 ? positionCapitalPnlPct(equalOpenPnl, equalCapTotal) : null,
+      closedPnlEur: equalClosed,
+      closedDealCount,
     };
   }
   let pnlEurToday = 0;
@@ -1061,6 +1217,10 @@ export function buildSimLoopPulseData(opts: {
     pnlEurToday: todayCovered > 0 ? Math.round(pnlEurToday * 100) / 100 : null,
     todayCovered,
     capital,
+    openPnlEur: Math.round(openPnlEur * 100) / 100,
+    openPnlPct: capital > 0 ? positionCapitalPnlPct(openPnlEur, capital) : null,
+    closedPnlEur,
+    closedDealCount,
   };
 
   const priorSnapshot = resolveEffectiveSimLoopVisitSnapshot(rawPriorSnapshot, totals);
@@ -1071,7 +1231,7 @@ export function buildSimLoopPulseData(opts: {
     totals,
     new Map(drafts.map((d) => [d.key, d.pnlEur])),
     sizing,
-    entryShares,
+    liveOpenShares,
   );
   const pulseHistoryWithLive = appendLiveSimLoopHistoryPoint(
     pulseChartHistory,
@@ -1079,7 +1239,7 @@ export function buildSimLoopPulseData(opts: {
     totals,
     new Map(drafts.map((d) => [d.key, d.pnlEur])),
     sizing,
-    entryShares,
+    liveOpenShares,
   );
   const chartHistory = rampSimLoopHistoryToLive(
     pulseHistoryWithLive,
@@ -1153,7 +1313,7 @@ export function buildSimLoopPulseData(opts: {
       chartHistory,
       priorSnapshot?.savedAt ?? null,
       lang,
-      { preferHoldDayAxis: true },
+      { preferHoldDayAxis: true, liveGap: planGap },
     ),
     planGap,
     lang,
@@ -1204,7 +1364,7 @@ export type SimLoopEqualSynthReconcile = {
     pnlDeltaEur: number;
   };
   signMismatch: boolean;
-  /** Closed row keys scaled with live share fallback (no entry snapshot). */
+  /** Closed row keys where causal share was unavailable (equal-cap fallback). */
   closedKeysWithoutEntryShare: string[];
 };
 
@@ -1213,20 +1373,37 @@ function sharePct(share: number | null | undefined): number | null {
   return Math.round(share * 10000) / 100;
 }
 
+function lastCausalSellShare(
+  walk: ReturnType<typeof buildCausalSimLoopShareWalk>,
+  ticks: DecisionSimTick[],
+  rowKey: string,
+): number | null {
+  const sorted = [...ticks].sort((a, b) => a.at.localeCompare(b.at));
+  for (let i = sorted.length - 1; i >= 0; i -= 1) {
+    const tick = sorted[i]!;
+    for (const tr of tick.trades) {
+      if (tr.side !== "sell" || tr.key !== rowKey) continue;
+      return causalShareForSell(walk, tick, tr);
+    }
+  }
+  return null;
+}
+
 function resolveSimLoopClosedPnlByKey(
   ticks: DecisionSimTick[],
   sizing: SimLoopPulseSizing,
-  entryShares: Record<string, number>,
 ): Map<string, { equal: number; synth: number }> {
   const out = new Map<string, { equal: number; synth: number }>();
   const sorted = [...ticks].sort((a, b) => a.at.localeCompare(b.at));
+  const walk = buildCausalSimLoopShareWalk(sorted, causalOptsFromSizing(sizing));
   for (const tick of sorted) {
     for (const tr of tick.trades) {
       if (tr.side !== "sell" || tr.pnlEurSimulated == null) continue;
       const entryPos = tick.portfolioBefore?.find((p) => p.key === tr.key);
       const equalCap = tr.capital ?? entryPos?.capital ?? sizing.capitalPerTrade;
       const equalPnl = tr.pnlEurSimulated;
-      const synthCap = synthCapForClosedTrade(tr.key, equalCap, sizing, entryShares);
+      const share = causalShareForSell(walk, tick, tr);
+      const synthCap = synthCapForClosedTrade(equalCap, sizing, share);
       const synthPnl =
         equalCap > 0
           ? Math.round(equalPnl * (synthCap / equalCap) * 100) / 100
@@ -1253,11 +1430,13 @@ export function buildSimLoopEqualSynthReconcile(opts: {
   const evalByKey = new Map(
     (latestTick?.evaluations ?? []).map((e) => [e.key, e]),
   );
-  const entryShares = syncSimLoopEntryShares(
-    state.paperPortfolio.map((p) => p.key),
-    sizing.shareByRowKey,
+  const walk = buildCausalSimLoopShareWalk(state.ticks, causalOptsFromSizing(sizing));
+  const liveOpenShares = rebalanceCausalSimLoopShares(
+    state.paperPortfolio,
+    latestTick?.evaluations ?? [],
+    causalOptsFromSizing(sizing),
   );
-  const closedByKey = resolveSimLoopClosedPnlByKey(state.ticks, sizing, entryShares);
+  const closedByKey = resolveSimLoopClosedPnlByKey(state.ticks, sizing);
   const openKeys = new Set(state.paperPortfolio.map((p) => p.key));
   const allKeys = new Set([...openKeys, ...closedByKey.keys()]);
 
@@ -1275,9 +1454,12 @@ export function buildSimLoopEqualSynthReconcile(opts: {
       key;
 
     const equalCap = isOpen && pos ? pos.capital : sizing.capitalPerTrade;
+    const activeShare = isOpen
+      ? liveOpenShares[key]
+      : lastCausalSellShare(walk, state.ticks, key);
     const synthCap = isOpen
-      ? synthCapForOpenPosition(key, equalCap, sizing, entryShares)
-      : synthCapForClosedTrade(key, equalCap, sizing, entryShares);
+      ? synthCapForOpenPosition(key, equalCap, sizing, liveOpenShares)
+      : shareToSynthCap(activeShare, sizing.totalCapitalEur, equalCap);
 
     const closed = closedByKey.get(key) ?? { equal: 0, synth: 0 };
     let equalPnlOpen = 0;
@@ -1292,7 +1474,7 @@ export function buildSimLoopEqualSynthReconcile(opts: {
       }
     }
 
-    if (!isOpen && entryShares[key] == null && sizing.shareByRowKey[key] != null) {
+    if (!isOpen && activeShare == null) {
       closedKeysWithoutEntryShare.push(key);
     }
 
@@ -1305,8 +1487,8 @@ export function buildSimLoopEqualSynthReconcile(opts: {
       status: isOpen ? "open" : "closed",
       equalCapEur: isOpen ? equalCap : 0,
       synthCapEur: isOpen ? synthCap : 0,
-      liveSharePct: sharePct(sizing.shareByRowKey[key]),
-      entrySharePct: sharePct(entryShares[key]),
+      liveSharePct: sharePct(liveOpenShares[key] ?? sizing.shareByRowKey[key]),
+      entrySharePct: sharePct(activeShare),
       equalPnlClosedEur: closed.equal,
       synthPnlClosedEur: closed.synth,
       equalPnlOpenEur: equalPnlOpen,

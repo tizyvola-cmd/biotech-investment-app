@@ -1,4 +1,4 @@
-import { useMemo, useState } from "react";
+import { useMemo, useState, useEffect } from "react";
 import {
   CartesianGrid,
   ComposedChart,
@@ -18,6 +18,8 @@ import {
   type PaperMaturationChartPoint,
 } from "../sheet/paperSimMaturation";
 import type { SimLoopSynthMaturationPoint } from "../sheet/simLoopSynthMaturation";
+import type { SimLoopSizingVariant } from "../sheet/simLoopSizingVariant";
+import { SimLoopSizingVariantToggle } from "./SimLoopSizingVariantToggle";
 import {
   clampMaturationChartValue,
   computeMaturationChartYDomain,
@@ -65,6 +67,8 @@ type MaturationChartPoint = PaperMaturationChartPoint & {
   actualPortfolioOpenPnlEur?: number | null;
   simLoopSynthClosedPnlEur?: number | null;
   simLoopSynthOpenMtmEur?: number | null;
+  simLoopWeightClosedPnlEur?: number | null;
+  simLoopWeightOpenMtmEur?: number | null;
 };
 
 type MaturationCurveKey =
@@ -74,11 +78,13 @@ type MaturationCurveKey =
   | "simOpen"
   | "synthClosed"
   | "synthOpen"
+  | "weightClosed"
+  | "weightOpen"
   | "baseline";
 
 type MaturationCurveDef = {
   key: MaturationCurveKey;
-  group: "portfolio" | "sim" | "synth" | "baseline";
+  group: "portfolio" | "sim" | "synth" | "weight" | "baseline";
   color: string;
   dashed: boolean;
   labelIt: string;
@@ -149,6 +155,26 @@ const MATURATION_CURVE_DEFS: MaturationCurveDef[] = [
     yValue: (p) => p.simLoopSynthOpenMtmEur,
   },
   {
+    key: "weightClosed",
+    group: "weight",
+    color: "#d97706",
+    dashed: false,
+    labelIt: "Sim weight · chiusi",
+    labelEn: "Sim weight · closed",
+    dataKey: "simLoopWeightClosedPnlEur",
+    yValue: (p) => p.simLoopWeightClosedPnlEur,
+  },
+  {
+    key: "weightOpen",
+    group: "weight",
+    color: "#f59e0b",
+    dashed: true,
+    labelIt: "Sim weight · aperti",
+    labelEn: "Sim weight · open",
+    dataKey: "simLoopWeightOpenMtmEur",
+    yValue: (p) => p.simLoopWeightOpenMtmEur,
+  },
+  {
     key: "baseline",
     group: "baseline",
     color: "#7c3aed",
@@ -165,8 +191,10 @@ const DEFAULT_VISIBLE_CURVES: Record<MaturationCurveKey, boolean> = {
   portfolioOpen: true,
   simClosed: true,
   simOpen: true,
-  synthClosed: true,
-  synthOpen: true,
+  synthClosed: false,
+  synthOpen: false,
+  weightClosed: false,
+  weightOpen: false,
   baseline: true,
 };
 
@@ -200,13 +228,14 @@ function MaturationCurveToolbar({
   curves: MaturationCurveDef[];
   visible: Record<MaturationCurveKey, boolean>;
   onToggleCurve: (key: MaturationCurveKey) => void;
-  onToggleGroup: (group: "portfolio" | "sim" | "synth") => void;
+  onToggleGroup: (group: "portfolio" | "sim" | "synth" | "weight") => void;
   onShowAll: () => void;
   it: boolean;
 }) {
   const groupDefs = [
     { id: "portfolio" as const, labelIt: "Portfolio", labelEn: "Portfolio" },
-    { id: "sim" as const, labelIt: "Sim loop", labelEn: "Sim loop" },
+    { id: "sim" as const, labelIt: "Sim equal", labelEn: "Sim equal" },
+    { id: "weight" as const, labelIt: "Sim weight", labelEn: "Sim weight" },
     { id: "synth" as const, labelIt: "Sim synth", labelEn: "Sim synth" },
   ].filter((g) => curves.some((c) => c.group === g.id));
 
@@ -428,9 +457,12 @@ export function DecisionSimMaturationChart({
   raWhatIfActive = false,
   actualPortfolioSeries,
   simLoopSynthSeries,
+  simLoopWeightedSeries,
   portfolioLedger = null,
   simTable = null,
   synthSizing = null,
+  sizingVariant = "equal",
+  onSizingVariantChange,
 }: {
   ticks: DecisionSimTick[];
   livePiggy: ExperimentPiggyBank;
@@ -449,12 +481,16 @@ export function DecisionSimMaturationChart({
   };
   /** Sim loop counterfactual with Weight Sim Exp (synth) sizing — one point per tick `at`. */
   simLoopSynthSeries?: SimLoopSynthMaturationPoint[];
+  /** Sim loop with Learning Lab / Step 2 approved weights. */
+  simLoopWeightedSeries?: SimLoopSynthMaturationPoint[];
   portfolioLedger?: PortfolioDailyPnlLedger | null;
   simTable?: SheetTable | null;
   synthSizing?: {
     shareByRowKey: Record<string, number>;
     totalCapitalEur: number;
   } | null;
+  sizingVariant?: SimLoopSizingVariant;
+  onSizingVariantChange?: (v: SimLoopSizingVariant) => void;
 }) {
   const t = useT();
   const { lang } = useLang();
@@ -514,6 +550,33 @@ export function DecisionSimMaturationChart({
     };
   }, [simLoopSynthSeries]);
 
+  const simLoopWeightLookup = useMemo(() => {
+    if (!simLoopWeightedSeries?.length) return null;
+    const sorted = [...simLoopWeightedSeries].sort((a, b) => a.at.localeCompare(b.at));
+    return (at: string, isLive?: boolean) => {
+      if (isLive) {
+        const last = sorted[sorted.length - 1];
+        return last
+          ? {
+              closed: last.simLoopSynthClosedPnlEur,
+              open: last.simLoopSynthOpenMtmEur,
+            }
+          : null;
+      }
+      let last: SimLoopSynthMaturationPoint | null = null;
+      for (const pt of sorted) {
+        if (pt.at > at) break;
+        last = pt;
+      }
+      return last
+        ? {
+            closed: last.simLoopSynthClosedPnlEur,
+            open: last.simLoopSynthOpenMtmEur,
+          }
+        : null;
+    };
+  }, [simLoopWeightedSeries]);
+
   const chartData = useMemo((): MaturationChartPoint[] => {
     const baselineByAt = new Map(
       (compareSeries ?? []).map((p) => [p.at, p.totalPnlEur]),
@@ -552,6 +615,7 @@ export function DecisionSimMaturationChart({
     return preparePaperMaturationChartData(series).map((p) => {
       const dayKey = toDayKey(p.at);
       const synth = simLoopSynthLookup?.(p.at, p.isLive);
+      const weight = simLoopWeightLookup?.(p.at, p.isLive);
       return {
         ...p,
         closedPnlEur: clampMaturationChartValue(p.closedPnlEur) ?? p.closedPnlEur,
@@ -565,9 +629,11 @@ export function DecisionSimMaturationChart({
         ),
         simLoopSynthClosedPnlEur: clampMaturationChartValue(synth?.closed ?? null),
         simLoopSynthOpenMtmEur: clampMaturationChartValue(synth?.open ?? null),
+        simLoopWeightClosedPnlEur: clampMaturationChartValue(weight?.closed ?? null),
+        simLoopWeightOpenMtmEur: clampMaturationChartValue(weight?.open ?? null),
       };
     });
-  }, [series, compareSeries, actualPortfolioSeries, simLoopSynthLookup]);
+  }, [series, compareSeries, actualPortfolioSeries, simLoopSynthLookup, simLoopWeightLookup]);
 
   const overview = useMemo(
     () =>
@@ -603,23 +669,52 @@ export function DecisionSimMaturationChart({
 
   const hasPortfolio = overview.some((g) => g.id === "actual");
   const hasSynth = overview.some((g) => g.id === "simSynth");
+  const hasWeight = Boolean(simLoopWeightedSeries?.length);
 
   const activeCurves = useMemo(() => {
     return MATURATION_CURVE_DEFS.filter((c) => {
       if (c.group === "portfolio") return hasPortfolio;
       if (c.group === "synth") return hasSynth;
+      if (c.group === "weight") return hasWeight;
       if (c.group === "baseline") return raWhatIfActive;
       return true;
     });
-  }, [hasPortfolio, hasSynth, raWhatIfActive]);
+  }, [hasPortfolio, hasSynth, hasWeight, raWhatIfActive]);
 
   const [visibleCurves, setVisibleCurves] = useState(DEFAULT_VISIBLE_CURVES);
+
+  const exclusiveSizingMode = onSizingVariantChange != null;
+
+  useEffect(() => {
+    if (exclusiveSizingMode) {
+      setVisibleCurves((prev) => ({
+        ...prev,
+        simClosed: sizingVariant === "equal",
+        simOpen: sizingVariant === "equal",
+        weightClosed: sizingVariant === "weight" && hasWeight,
+        weightOpen: sizingVariant === "weight" && hasWeight,
+        synthClosed: sizingVariant === "synth" && hasSynth,
+        synthOpen: sizingVariant === "synth" && hasSynth,
+      }));
+      return;
+    }
+    // Dashboard / multi-curve: equal + synth together (subtitle promises both).
+    setVisibleCurves((prev) => ({
+      ...prev,
+      simClosed: true,
+      simOpen: true,
+      synthClosed: hasSynth,
+      synthOpen: hasSynth,
+      weightClosed: false,
+      weightOpen: false,
+    }));
+  }, [sizingVariant, exclusiveSizingMode, hasSynth, hasWeight]);
 
   const toggleCurve = (key: MaturationCurveKey) => {
     setVisibleCurves((prev) => ({ ...prev, [key]: !prev[key] }));
   };
 
-  const toggleGroup = (group: "portfolio" | "sim" | "synth") => {
+  const toggleGroup = (group: "portfolio" | "sim" | "synth" | "weight") => {
     const keys = activeCurves.filter((c) => c.group === group).map((c) => c.key);
     if (keys.length === 0) return;
     setVisibleCurves((prev) => {
@@ -673,16 +768,25 @@ export function DecisionSimMaturationChart({
     <div
       className={`tester-monitor-panel rounded-xl flex flex-col min-w-0 ${compact ? "p-2 space-y-1" : "p-3 space-y-1.5"} ${className ?? ""}`}
     >
-      <div className="shrink-0 min-w-0">
-        <p className={`tester-monitor-text font-semibold truncate ${compact ? "text-[10px]" : "text-[11px]"}`}>
-          {raWhatIfActive
-            ? t("testerMonitor.decisionSim.chart.maturationTitleRa")
-            : t("testerMonitor.decisionSim.chart.maturationTitle")}
-        </p>
-        {!compact ? (
-          <p className="tester-monitor-muted text-[10px] mt-0.5 leading-snug">
-            {t("testerMonitor.decisionSim.chart.maturationSub")}
+      <div className="shrink-0 min-w-0 flex flex-wrap items-start justify-between gap-1.5">
+        <div className="min-w-0 flex-1">
+          <p className={`tester-monitor-text font-semibold truncate ${compact ? "text-[10px]" : "text-[11px]"}`}>
+            {raWhatIfActive
+              ? t("testerMonitor.decisionSim.chart.maturationTitleRa")
+              : t("testerMonitor.decisionSim.chart.maturationTitle")}
           </p>
+          {!compact ? (
+            <p className="tester-monitor-muted text-[10px] mt-0.5 leading-snug">
+              {t("testerMonitor.decisionSim.chart.maturationSub")}
+            </p>
+          ) : null}
+        </div>
+        {onSizingVariantChange ? (
+          <SimLoopSizingVariantToggle
+            value={sizingVariant}
+            onChange={onSizingVariantChange}
+            compact
+          />
         ) : null}
       </div>
 

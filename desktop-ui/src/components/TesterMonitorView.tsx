@@ -438,7 +438,9 @@ export function TesterMonitorView({
           </div>
         ) : activeTab === "diversify" ? (
           <div key="diversify-tab" className="flex flex-col flex-1">
-            <TesterPortfolioDiversifyTab apiOk={apiOk} simTable={simTable} />
+            <ViewErrorBoundary label="Cap & Div">
+              <TesterPortfolioDiversifyTab apiOk={apiOk} simTable={simTable} />
+            </ViewErrorBoundary>
           </div>
         ) : (
           <div key="mobile-tab" className="flex flex-col gap-4 flex-1">

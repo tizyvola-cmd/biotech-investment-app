@@ -318,7 +318,7 @@ export function LossAuditView({
         </div>
       </div>
 
-      {/* KPI Cards */}
+      {/* KPI Cards — Row 1: win/loss counts */}
       <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
         <KpiCard
           label={it ? "Trade chiusi" : "Closed trades"}
@@ -331,15 +331,44 @@ export function LossAuditView({
           tone="neutral"
         />
         <KpiCard
+          label={it ? "Win rate" : "Win rate"}
+          value={fmtPct(summary.winRatePct)}
+          sub={
+            it
+              ? `Avg win: ${fmtEur(summary.avgWinEur)} · ${fmtPct(summary.avgWinPct)}`
+              : `Avg win: ${fmtEur(summary.avgWinEur)} · ${fmtPct(summary.avgWinPct)}`
+          }
+          tone={summary.winRatePct >= 55 ? "ok" : summary.winRatePct >= 40 ? "warn" : "danger"}
+        />
+        <KpiCard
           label={it ? "Loss rate" : "Loss rate"}
           value={fmtPct(summary.lossRatePct)}
           sub={
             it
-              ? `${summary.totalLosses} su ${summary.totalClosed}`
-              : `${summary.totalLosses} of ${summary.totalClosed}`
+              ? `Avg loss: ${fmtEur(summary.avgLossEur)} · ${fmtPct(summary.avgLossPct)}`
+              : `Avg loss: ${fmtEur(summary.avgLossEur)} · ${fmtPct(summary.avgLossPct)}`
           }
           tone={summary.lossRatePct >= 40 ? "danger" : summary.lossRatePct >= 25 ? "warn" : "ok"}
         />
+        <KpiCard
+          label={it ? "Expectancy €/trade" : "Expectancy €/trade"}
+          value={
+            summary.expectancyEurPerTrade != null
+              ? `${summary.expectancyEurPerTrade >= 0 ? "+" : ""}${summary.expectancyEurPerTrade.toFixed(2)} €`
+              : "—"
+          }
+          sub={it ? "E[trade] = winRate×avgWin + lossRate×avgLoss" : "E[trade] = winRate×avgWin + lossRate×avgLoss"}
+          tone={
+            summary.expectancyEurPerTrade == null
+              ? "neutral"
+              : summary.expectancyEurPerTrade >= 0
+                ? "ok"
+                : "danger"
+          }
+        />
+      </div>
+      {/* KPI Cards — Row 2: loss detail + surprise */}
+      <div className="grid grid-cols-2 md:grid-cols-2 gap-3">
         <KpiCard
           label={it ? "Loss nonostante previsioni" : "Surprise losses"}
           value={fmtPct(summary.surpriseRatePct)}
@@ -351,12 +380,12 @@ export function LossAuditView({
           tone={summary.surpriseRatePct >= 50 ? "danger" : "warn"}
         />
         <KpiCard
-          label={it ? "Perdita realizzata" : "Realized loss"}
+          label={it ? "Perdita realizzata totale" : "Total realized loss"}
           value={fmtEur(summary.realizedLossEur)}
           sub={
             it
-              ? `Media: ${fmtEur(summary.avgLossEur)} · ${fmtPct(summary.avgLossPct)}`
-              : `Avg: ${fmtEur(summary.avgLossEur)} · ${fmtPct(summary.avgLossPct)}`
+              ? `Media per trade loss: ${fmtEur(summary.avgLossEur)} · ${fmtPct(summary.avgLossPct)}`
+              : `Avg per loss trade: ${fmtEur(summary.avgLossEur)} · ${fmtPct(summary.avgLossPct)}`
           }
           tone={summary.realizedLossEur < 0 ? "danger" : "neutral"}
         />

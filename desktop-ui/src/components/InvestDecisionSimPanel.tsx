@@ -15,15 +15,13 @@ import { loadSdsCohort } from "../api/supernova";
 import { loadEisSuperScoreState } from "../api/eisSuperScore";
 import { useCdPatternPolygonOverview } from "../sheet/useCdPatternPolygonOverview";
 import type { LossAnalysisProbOptions } from "../sheet/portfolioLossAnalysis";
-import { runDecisionSimTick, buildDecisionSimEvaluations, type TickerSimEvaluation, type PaperPosition } from "../sheet/investDecisionSimLoop";
+import { runDecisionSimTick, buildDecisionSimEvaluations } from "../sheet/investDecisionSimLoop";
 import { publishSimLoopTradeAlerts } from "../sheet/simLoopTradeAlerts";
 import { scheduleGapInvestigationAfterTick } from "../sheet/gapInvestigationGate";
 import { pendingGapInvestigationRecords } from "../sheet/gapInvestigationAudit";
 import { GAP_INVESTIGATION_EVENT } from "../sheet/gapInvestigationTypes";
-import { PortfolioTickerMark } from "./PortfolioScopeToggle";
-import { fmtPortfolioPnlPct, portfolioPnlTextClass } from "../sheet/portfolioGainLossStyle";
-import { suggestedActionLabel, suggestedActionToneClass, buildSuggestionMonitorRows, isAlertableRecommendation, recommendationRationale, type SuggestionMonitorRow } from "../sheet/suggestionMonitor";
-import { formatTop2VerdictDisplay } from "../sheet/top2DecisionHelpers";
+import { fmtPortfolioPnlPct } from "../sheet/portfolioGainLossStyle";
+import { buildSuggestionMonitorRows, isAlertableRecommendation, type SuggestionMonitorRow } from "../sheet/suggestionMonitor";
 import {
   appendDecisionSimTick,
   DECISION_SIM_CHANGED_EVENT,
@@ -43,7 +41,6 @@ import {
 } from "../sheet/simLoopDiagnostics";
 import {
   MISALIGN_CHART_LABELS,
-  MISALIGN_LABELS,
   criticalMisalignmentSummaryFromEvaluations,
   type CurveMisalignmentId,
 } from "../sheet/investDecisionSimLoop";
@@ -58,20 +55,7 @@ import {
   loadAdviceFeedback,
   type AdviceFeedback,
 } from "../sheet/adviceFeedback";
-import { CompositeScoreCell } from "./CompositeScoreCell";
-import { RecommendationGainIdeaCell } from "./RecommendationGainIdeaCell";
 import { useLiveExperimentPiggy } from "../hooks/useLiveExperimentPiggy";
-import { buildSimRowByKeyMap } from "../sheet/investSimKeys";
-import { simulationRowSeriesKey } from "../data/simulationCharts";
-import { DEFAULT_PLAN_CAPITAL_EUR } from "../sheet/expectedRoiDisplay";
-import { computeRecommendationGainIdea } from "../sheet/recommendationGainIdea";
-import { resolveExpectedGainPlan } from "../sheet/simulationPlanGain";
-import { DealUrgencyFlame } from "./DealUrgencyFlame";
-import {
-  buildDealUrgencyByKey,
-  dealUrgencyRowStyle,
-} from "../sheet/recommendationDealUrgency";
-import type { RecommendationGainIdea } from "../sheet/recommendationGainIdea";
 import type { ClosedSuccessMetrics } from "../sheet/portfolioSuccessBridge";
 import {
   buildUnifiedAdviceSuccess,
@@ -85,28 +69,12 @@ import {
 } from "../sheet/adviceComplementKpis";
 import { buildSimLoopSynthMaturationSeries } from "../sheet/simLoopSynthMaturation";
 import { resolveSimLoopCapitalPot } from "../sheet/investDecisionSimCharts";
-import { syncSimLoopEntryShares } from "../sheet/simLoopPulseView";
 import { useSimLoopSynthAllocation } from "../hooks/useSimLoopSynthAllocation";
-
-const DECISION_SIM_REC_TABLE_COLLAPSED_KEY = "supernova_decision_sim_rec_table_collapsed_v1";
-
-function loadRecTableCollapsed(): boolean {
-  if (typeof window === "undefined") return false;
-  try {
-    return localStorage.getItem(DECISION_SIM_REC_TABLE_COLLAPSED_KEY) === "1";
-  } catch {
-    return false;
-  }
-}
-
-function saveRecTableCollapsed(collapsed: boolean): void {
-  if (typeof window === "undefined") return;
-  try {
-    localStorage.setItem(DECISION_SIM_REC_TABLE_COLLAPSED_KEY, collapsed ? "1" : "0");
-  } catch {
-    /* ignore */
-  }
-}
+import type { SimLoopSizingVariant } from "../sheet/simLoopSizingVariant";
+import {
+  buildSimLoopGainAuditExport,
+  downloadSimLoopGainAuditExcel,
+} from "../sheet/simLoopGainAuditExport";
 
 function Kpi({
   label,
@@ -150,111 +118,6 @@ function fmtTs(iso: string | undefined, locale: string): string {
   }
 }
 
-function actionBadge(action: TickerSimEvaluation["suggestedAction"], hasPosition: boolean): string {
-  return suggestedActionToneClass(action, hasPosition);
-}
-
-function gainIdeaForMonitorRow(
-  ev: SuggestionMonitorRow,
-  simRowByKey: ReturnType<typeof buildSimRowByKeyMap>,
-  pointsBySeriesKey: ReturnType<typeof chartPointsMapFromBundle>,
-  investInputs: ReturnType<typeof useInvestSimInputs>,
-): RecommendationGainIdea {
-  const simRow = simRowByKey.get(ev.key) ?? null;
-  const sk = simRow ? simulationRowSeriesKey(simRow) : null;
-  const chartPts = sk ? pointsBySeriesKey.get(sk) ?? null : null;
-  const cap =
-    investInputs[ev.key]?.capital && investInputs[ev.key]!.capital > 0
-      ? investInputs[ev.key]!.capital
-      : DEFAULT_PLAN_CAPITAL_EUR;
-  const gainPlan = simRow ? resolveExpectedGainPlan(simRow, cap, { chartPoints: chartPts }) : null;
-  return computeRecommendationGainIdea({
-    simRow,
-    chartPoints: chartPts,
-    capitalEur: cap,
-    miiAngleDeg: ev.miiAngleDeg,
-    planReturnPct: ev.planReturnPct ?? gainPlan?.targetReturnPct,
-    daysToTarget: gainPlan?.daysToTarget,
-    suggestedAction: ev.suggestedAction,
-    targetProvisional: gainPlan?.targetProvisional,
-  });
-}
-
-const ACTION_SORT: Record<TickerSimEvaluation["suggestedAction"], number> = {
-  buy: 0,
-  sell: 1,
-  hold: 2,
-  review: 3,
-  none: 4,
-};
-
-function sortEvaluations(rows: SuggestionMonitorRow[]): SuggestionMonitorRow[] {
-  return [...rows].sort((a, b) => {
-    const da = ACTION_SORT[a.suggestedAction] ?? 9;
-    const db = ACTION_SORT[b.suggestedAction] ?? 9;
-    if (da !== db) return da - db;
-    const scoreDiff = (b.compositeScore ?? 0) - (a.compositeScore ?? 0);
-    if (Math.abs(scoreDiff) > 0.01) return scoreDiff;
-    return a.ticker.localeCompare(b.ticker);
-  });
-}
-
-function paperFollowStatus(
-  ev: SuggestionMonitorRow,
-  pos: PaperPosition | undefined,
-  lang: "it" | "en",
-): { label: string; className: string } {
-  const it = lang === "it";
-  const mtm = ev.pnlPct ?? ev.pnlPct24h ?? pos?.lastMarkPct ?? null;
-  const mtmStr = mtm != null ? `${mtm >= 0 ? "+" : ""}${mtm.toFixed(1)}%` : "—";
-
-  if (ev.suggestedAction === "buy") {
-    if (ev.inPaperPortfolio && pos) {
-      return {
-        label: it ? `Seguito · €${pos.capital} · ${mtmStr}` : `Followed · €${pos.capital} · ${mtmStr}`,
-        className: "text-emerald-700 dark:text-emerald-300 font-semibold",
-      };
-    }
-    return {
-      label: it ? "Non seguito" : "Not followed",
-      className: "text-amber-700 dark:text-amber-300 font-semibold",
-    };
-  }
-  if (ev.suggestedAction === "sell") {
-    if (ev.inPaperPortfolio && pos) {
-      return {
-        label: it ? `Paper · vendi · ${mtmStr}` : `Paper · sell · ${mtmStr}`,
-        className: "text-rose-700 dark:text-rose-300 font-semibold",
-      };
-    }
-    if (ev.hasPosition) {
-      const tone =
-        mtm != null && mtm >= 0
-          ? "text-emerald-700 dark:text-emerald-300 font-semibold"
-          : "text-rose-700 dark:text-rose-300 font-semibold";
-      return {
-        label:
-          mtm != null
-            ? it
-              ? `SELL reale · P&L ${mtmStr}`
-              : `Real SELL · P&L ${mtmStr}`
-            : it
-              ? "SELL reale"
-              : "Real SELL",
-        className: tone,
-      };
-    }
-    return { label: "—", className: "text-ink-muted" };
-  }
-  if (ev.inPaperPortfolio && pos) {
-    return {
-      label: it ? `Paper · €${pos.capital} · ${mtmStr}` : `Paper · €${pos.capital} · ${mtmStr}`,
-      className: "text-[rgb(var(--accent))]",
-    };
-  }
-  return { label: "—", className: "text-ink-muted" };
-}
-
 export function InvestDecisionSimPanel({
   simTable,
   chartsBundle,
@@ -275,11 +138,9 @@ export function InvestDecisionSimPanel({
   const [state, setState] = useState<DecisionSimState>(() => loadDecisionSimState());
   const [running, setRunning] = useState(false);
   const [msg, setMsg] = useState<string | null>(null);
-  const [filterMisalign, setFilterMisalign] = useState<CurveMisalignmentId | "">("");
-  const [tableScope, setTableScope] = useState<"recommended" | "all">("recommended");
-  const [recTableCollapsed, setRecTableCollapsed] = useState(() => loadRecTableCollapsed());
   const [expandedTick, setExpandedTick] = useState<string | null>(null);
   const [suggestionsOpen, setSuggestionsOpen] = useState(false);
+  const [simLoopSizingVariant, setSimLoopSizingVariant] = useState<SimLoopSizingVariant>("equal");
   const tickInFlightRef = useRef(false);
 
   const [sdsRows, setSdsRows] = useState<SdsRow[] | null>(null);
@@ -452,11 +313,6 @@ export function InvestDecisionSimPanel({
   const showDecisionSimChartPair = Boolean(simTable?.rows?.length);
   const { preChartRef, preChartHeight } = useDecisionSimPairPrechartHeight(showDecisionSimChartPair);
 
-  const simRowByKey = useMemo(
-    () => buildSimRowByKeyMap(simTable?.rows ?? []),
-    [simTable?.rows],
-  );
-
   const monitorRows = useMemo((): SuggestionMonitorRow[] => {
     if (!simTable?.rows?.length) return [];
     return buildSuggestionMonitorRows({
@@ -502,15 +358,11 @@ export function InvestDecisionSimPanel({
 
   const simLoopSynthMaturation = useMemo(() => {
     if (!synthAlloc) return null;
-    const entryShareByRowKey = syncSimLoopEntryShares(
-      state.paperPortfolio.map((p) => p.key),
-      synthAlloc.shareByRowKey,
-    );
     return buildSimLoopSynthMaturationSeries(state.ticks, {
-      shareByRowKey: synthAlloc.shareByRowKey,
       totalCapitalEur: synthAlloc.totalCapitalEur,
       capitalPerTrade: state.config.capitalPerTrade,
-      entryShareByRowKey,
+      targetGainEur: synthAlloc.targetGainEur,
+      sizingMode: "causal_rebalance",
       live: {
         paperPortfolio: state.paperPortfolio,
         evaluations: liveEvaluations,
@@ -530,15 +382,11 @@ export function InvestDecisionSimPanel({
     if (!synthAlloc?.simLoopApprovedShareByRowKey) return null;
     const keys = Object.keys(synthAlloc.simLoopApprovedShareByRowKey);
     if (keys.length === 0) return null;
-    const entryShareByRowKey = syncSimLoopEntryShares(
-      state.paperPortfolio.map((p) => p.key),
-      synthAlloc.simLoopApprovedShareByRowKey,
-    );
     return buildSimLoopSynthMaturationSeries(state.ticks, {
       shareByRowKey: synthAlloc.simLoopApprovedShareByRowKey,
       totalCapitalEur: synthAlloc.totalCapitalEur,
       capitalPerTrade: state.config.capitalPerTrade,
-      entryShareByRowKey,
+      sizingMode: "static_approved",
       live: {
         paperPortfolio: state.paperPortfolio,
         evaluations: liveEvaluations,
@@ -588,11 +436,6 @@ export function InvestDecisionSimPanel({
 
   const weekRollups = useMemo(() => rollupDecisionSimByWeek(state.ticks), [state.ticks]);
 
-  const paperByKey = useMemo(
-    () => new Map(state.paperPortfolio.map((p) => [p.key, p])),
-    [state.paperPortfolio],
-  );
-
   const recommendationCounts = useMemo(() => {
     const recommended = monitorRows.filter((e) => isAlertableRecommendation(e));
     return {
@@ -617,33 +460,6 @@ export function InvestDecisionSimPanel({
     }
     return { count, eurEst };
   }, [monitorRows, state.config.capitalPerTrade]);
-
-  const filteredEvals = useMemo(() => {
-    let rows = monitorRows;
-    if (tableScope === "recommended") {
-      rows = rows.filter((e) => isAlertableRecommendation(e));
-    }
-    if (filterMisalign) {
-      rows = rows.filter((e) => e.misalignments.includes(filterMisalign));
-    }
-    return sortEvaluations(rows);
-  }, [monitorRows, tableScope, filterMisalign]);
-
-  const rowGainIdeas = useMemo(() => {
-    const map = new Map<string, RecommendationGainIdea>();
-    for (const ev of filteredEvals) {
-      map.set(ev.key, gainIdeaForMonitorRow(ev, simRowByKey, pointsBySeriesKey, investInputs));
-    }
-    return map;
-  }, [filteredEvals, simRowByKey, pointsBySeriesKey, investInputs]);
-
-  const dealUrgencyByKey = useMemo(
-    () =>
-      buildDealUrgencyByKey(
-        filteredEvals.map((row) => ({ key: row.key, idea: rowGainIdeas.get(row.key) })),
-      ),
-    [filteredEvals, rowGainIdeas],
-  );
 
   const liveAdviceReliability = useMemo(() => {
     const entryProbByKey = new Map(
@@ -716,241 +532,6 @@ export function InvestDecisionSimPanel({
     return state.paperPortfolio.map((p) => p.ticker).join(", ");
   }, [state.paperPortfolio]);
 
-  const realPortfolioSummary = useMemo(() => {
-    const rows = monitorRows.filter((e) => e.hasPosition);
-    return {
-      count: rows.length,
-      tickers: rows.map((e) => e.ticker).join(", "),
-    };
-  }, [monitorRows]);
-
-  const toggleRecTableCollapsed = useCallback(() => {
-    setRecTableCollapsed((collapsed) => {
-      const next = !collapsed;
-      saveRecTableCollapsed(next);
-      return next;
-    });
-  }, []);
-
-  const recommendationsTableSection = simTable?.rows?.length ? (
-    <div className="tester-monitor-panel rounded-xl shrink-0">
-      <div
-        className={`flex flex-wrap items-center justify-between gap-2 px-3 py-2 ${
-          recTableCollapsed ? "" : "border-b border-[rgb(var(--tester-monitor-border))]/40"
-        }`}
-      >
-        <button
-          type="button"
-          className="inline-flex items-start gap-1.5 min-w-0 text-left group"
-          onClick={toggleRecTableCollapsed}
-          aria-expanded={!recTableCollapsed}
-          title={
-            recTableCollapsed
-              ? t("testerMonitor.decisionSim.recommendationsTableExpand")
-              : t("testerMonitor.decisionSim.recommendationsTableCollapse")
-          }
-        >
-          <span
-            className={`tester-monitor-muted transition-transform text-[10px] shrink-0 mt-0.5 ${
-              recTableCollapsed ? "" : "rotate-90"
-            }`}
-            aria-hidden
-          >
-            ▶
-          </span>
-          <div className="min-w-0">
-            <p className="tester-monitor-text text-[11px] font-semibold group-hover:text-[rgb(var(--accent))]">
-              {t("testerMonitor.decisionSim.recommendationsTable")} ({filteredEvals.length})
-            </p>
-            <p className="tester-monitor-muted text-[10px] mt-0.5 leading-snug">
-              {t("testerMonitor.decisionSim.recommendationsTableSub", {
-                buy: recommendationCounts.buy,
-                sell: recommendationCounts.sell,
-                missed: recommendationCounts.missedBuy,
-              })}
-            </p>
-          </div>
-        </button>
-        {!recTableCollapsed ? (
-          <div className="flex flex-wrap items-center gap-2">
-            <div className="flex rounded-lg border border-[rgb(var(--border))]/45 overflow-hidden text-[10px] font-semibold">
-              <button
-                type="button"
-                className={`px-2 py-1 transition ${
-                  tableScope === "recommended"
-                    ? "bg-[rgb(var(--accent))]/12 text-[rgb(var(--accent))]"
-                    : "text-ink-muted hover:bg-surface/60"
-                }`}
-                onClick={() => setTableScope("recommended")}
-              >
-                {t("testerMonitor.decisionSim.filterRecommended")} ({recommendationCounts.recommended})
-              </button>
-              <button
-                type="button"
-                className={`px-2 py-1 transition ${
-                  tableScope === "all"
-                    ? "bg-[rgb(var(--accent))]/12 text-[rgb(var(--accent))]"
-                    : "text-ink-muted hover:bg-surface/60"
-                }`}
-                onClick={() => setTableScope("all")}
-              >
-                {t("testerMonitor.decisionSim.filterAll")} ({recommendationCounts.all})
-              </button>
-            </div>
-            <select
-              className="input text-[10px] py-0.5"
-              value={filterMisalign}
-              onChange={(e) => setFilterMisalign(e.target.value as CurveMisalignmentId | "")}
-            >
-              <option value="">{it ? "Tutti i disallineamenti" : "All misalignments"}</option>
-              {(Object.keys(MISALIGN_LABELS) as CurveMisalignmentId[]).map((id) => (
-                <option key={id} value={id}>
-                  {MISALIGN_LABELS[id][lang]}
-                </option>
-              ))}
-            </select>
-          </div>
-        ) : null}
-      </div>
-      {!recTableCollapsed ? (
-      <div className="overflow-x-auto">
-        <table className={`${SHEET_GRID_TABLE_CLASS} tester-monitor-table text-[11px] min-w-[1200px]`}>
-          <SheetGridColgroup columnCount={13} />
-          <thead>
-            <tr className="text-left uppercase tracking-wide text-[10px]">
-              <th className={gridTh("left", "py-2")}>Ticker</th>
-              <th className={gridTh("center", "py-2")} title={t("testerMonitor.decisionSim.compositeHint")}>
-                {t("testerMonitor.decisionSim.col.composite")}
-              </th>
-              <th className={gridTh("center", "py-2")} title={t("recommendation.gainIdea.tip")}>
-                {t("testerMonitor.decisionSim.col.gainIdea")}
-              </th>
-              <th className={gridTh("center", "py-2")}>{it ? "P&L tot." : "Total P&L"}</th>
-              <th className={gridTh("center", "py-2")}>{it ? "Raccom." : "Rec."}</th>
-              <th className={gridTh("center", "py-2")}>{it ? "Sim paper" : "Sim paper"}</th>
-              <th className={gridTh("center", "py-2")}>T−CD</th>
-              <th className={gridTh("left", "py-2")}>{it ? "Motivo / tesi" : "Reason / thesis"}</th>
-              <th className={gridTh("center", "py-2")}>{it ? "Top2 in/uscita" : "Top2 in/out"}</th>
-              <th className={gridTh("center", "py-2")}>P(plan)</th>
-              <th className={gridTh("center", "py-2")}>Target</th>
-              <th className={gridTh("left", "py-2")}>{it ? "Disallineamenti" : "Misalignments"}</th>
-            </tr>
-          </thead>
-          <tbody>
-            {filteredEvals.length === 0 ? (
-              <tr>
-                <td colSpan={13} className={`${gridTd("left", "py-8")} text-center italic tester-monitor-muted`}>
-                  {t("testerMonitor.decisionSim.recommendationsEmpty")}
-                </td>
-              </tr>
-            ) : (
-              filteredEvals.map((ev: SuggestionMonitorRow) => {
-                const pos = paperByKey.get(ev.key);
-                const follow = paperFollowStatus(ev, pos, it ? "it" : "en");
-                const pnlPct = ev.hasPosition ? ev.pnlPct : ev.pnlPct24h;
-                const rationale = recommendationRationale(ev);
-                const gainIdea =
-                  rowGainIdeas.get(ev.key) ??
-                  gainIdeaForMonitorRow(ev, simRowByKey, pointsBySeriesKey, investInputs);
-                const dealVisual = dealUrgencyByKey.get(ev.key);
-                const dealStyle = dealVisual
-                  ? dealUrgencyRowStyle(dealVisual.intensity, dealVisual.temperature)
-                  : undefined;
-                return (
-                  <tr key={ev.key} style={dealStyle}>
-                    <td className={`${gridTd("left", "py-2")}`}>
-                      <div className="flex items-center gap-1">
-                        {dealVisual && gainIdea.gainEur != null && gainIdea.days != null ? (
-                          <DealUrgencyFlame
-                            visual={dealVisual}
-                            gainEur={gainIdea.gainEur}
-                            days={gainIdea.days}
-                            lang={it ? "it" : "en"}
-                          />
-                        ) : null}
-                        <PortfolioTickerMark
-                          ticker={ev.ticker}
-                          inPortfolio={ev.hasPosition}
-                          pnlPct={ev.pnlPct ?? ev.pnlPct24h}
-                          className="text-[11px]"
-                        />
-                      </div>
-                    </td>
-                    <td className={gridTd("center", "py-2")}>
-                      <CompositeScoreCell
-                        score={ev.compositeScore}
-                        zone={ev.scoringZone}
-                        breakdown={ev.scoreBreakdown}
-                        dampened={ev.compositeDampened}
-                        zoneLabel={
-                          ev.scoringZone
-                            ? t(`recommendationAlert.scoringZone.${ev.scoringZone}`)
-                            : undefined
-                        }
-                        dampenedHint={t("recommendationAlert.compositeDampened").trim()}
-                      />
-                    </td>
-                    <td className={gridTd("center", "py-2")}>
-                      <RecommendationGainIdeaCell
-                        idea={gainIdea}
-                        lang={it ? "it" : "en"}
-                        miiAngleDeg={ev.miiAngleDeg}
-                        dealIntensity={dealVisual?.intensity ?? 0}
-                        dealTemperature={dealVisual?.temperature ?? null}
-                      />
-                    </td>
-                    <td
-                      className={`${gridTd("center", "py-2")} tabular-nums font-semibold ${
-                        pnlPct != null ? portfolioPnlTextClass(null, pnlPct) : "text-ink-muted"
-                      }`}
-                      title={!ev.hasPosition && ev.pnlPct24h != null ? (it ? "Var. 24h" : "24h move") : undefined}
-                    >
-                      {pnlPct != null ? fmtPortfolioPnlPct(pnlPct) : "—"}
-                    </td>
-                    <td
-                      className={`${gridTd("center", "py-2")} font-semibold uppercase ${actionBadge(ev.suggestedAction, ev.hasPosition)}`}
-                      title={rationale ?? undefined}
-                    >
-                      {suggestedActionLabel(ev.suggestedAction, it ? "it" : "en", ev.hasPosition)}
-                    </td>
-                    <td className={`${gridTd("center", "py-2")} text-[10px] tabular-nums ${follow.className}`}>
-                      {follow.label}
-                    </td>
-                    <td className={`${gridTd("center", "py-2")} tabular-nums`}>
-                      {ev.daysToCd != null ? `T−${ev.daysToCd}` : "—"}
-                    </td>
-                    <td className={`${gridTd("left", "py-2")} text-[9px] text-ink-muted leading-snug max-w-[240px]`}>
-                      {rationale ?? "—"}
-                    </td>
-                    <td className={`${gridTd("center", "py-2")} text-[10px]`}>
-                      {formatTop2VerdictDisplay(
-                        ev.profile,
-                        ev.investVerdict,
-                        it ? "it" : "en",
-                      )}
-                    </td>
-                    <td className={`${gridTd("center", "py-2")} tabular-nums`}>
-                      {ev.probPct != null ? `${Math.round(ev.probPct)}%` : "—"}
-                    </td>
-                    <td className={`${gridTd("center", "py-2")} tabular-nums`}>
-                      {ev.readings?.planTargetPct != null && Number.isFinite(ev.readings.planTargetPct)
-                        ? `+${ev.readings.planTargetPct.toFixed(1)}%`
-                        : "—"}
-                    </td>
-                    <td className={`${gridTd("left", "py-2")} text-[9px] text-ink-muted leading-snug`}>
-                      {ev.misalignmentLabels.length ? ev.misalignmentLabels.join(" · ") : "—"}
-                    </td>
-                  </tr>
-                );
-              })
-            )}
-          </tbody>
-        </table>
-      </div>
-      ) : null}
-    </div>
-  ) : null;
-
   const downloadJson = () => {
     const blob = new Blob([JSON.stringify(state, null, 2)], { type: "application/json" });
     const url = URL.createObjectURL(blob);
@@ -960,6 +541,36 @@ export function InvestDecisionSimPanel({
     a.click();
     URL.revokeObjectURL(url);
   };
+
+  const downloadGainAuditExcel = useCallback(() => {
+    const exp = buildSimLoopGainAuditExport({
+      ticks: state.ticks,
+      weightMaturation: simLoopWeightedMaturation,
+      synthMaturation: simLoopSynthMaturation,
+      closedDeals: closedPiggy.deals,
+      live: {
+        piggyBank: livePiggy,
+        paperPortfolio: state.paperPortfolio,
+        evaluations: liveEvaluations,
+      },
+      capitalPerTrade: state.config.capitalPerTrade,
+      maxOpenPositions: state.config.maxOpenPositions,
+      totalCapitalPotEur: synthAlloc?.totalCapitalEur,
+    });
+    downloadSimLoopGainAuditExcel(exp, lang);
+  }, [
+    state.ticks,
+    state.paperPortfolio,
+    state.config.capitalPerTrade,
+    state.config.maxOpenPositions,
+    simLoopWeightedMaturation,
+    simLoopSynthMaturation,
+    closedPiggy.deals,
+    livePiggy,
+    liveEvaluations,
+    synthAlloc?.totalCapitalEur,
+    lang,
+  ]);
 
   return (
     <div className="flex flex-col gap-4 pb-6">
@@ -1016,6 +627,15 @@ export function InvestDecisionSimPanel({
           </button>
           <button
             type="button"
+            className="btn-ghost text-xs py-1.5"
+            disabled={!state.ticks.length}
+            onClick={downloadGainAuditExcel}
+            title={t("testerMonitor.decisionSim.exportGainAuditTip")}
+          >
+            {t("testerMonitor.decisionSim.exportGainAudit")}
+          </button>
+          <button
+            type="button"
             className="btn-ghost text-xs py-1.5 border border-[rgb(var(--accent))]/35 text-[rgb(var(--accent))]"
             disabled={!simTable?.rows?.length}
             onClick={() => setSuggestionsOpen(true)}
@@ -1060,7 +680,6 @@ export function InvestDecisionSimPanel({
       </div>
 
       <div className="flex flex-wrap gap-2 shrink-0">
-        <Kpi label={t("testerMonitor.decisionSim.kpi.ticks")} value={state.ticks.length} />
         <Kpi
           label={t("testerMonitor.decisionSim.kpi.piggyTotal")}
           value={fmtEurKpi(livePiggy.totalPnlEur)}
@@ -1098,16 +717,6 @@ export function InvestDecisionSimPanel({
               ? `${t("testerMonitor.decisionSim.kpi.paperSimTip")} · ${liveMissedBuyStats.count} ${it ? "BUY in attesa del prossimo tick" : "BUY waiting for next tick"}`
               : t("testerMonitor.decisionSim.kpi.paperSimTip")
           }
-        />
-        <Kpi
-          label={t("testerMonitor.decisionSim.kpi.realPortfolio")}
-          value={realPortfolioSummary.count}
-          sub={
-            realPortfolioSummary.count > 0
-              ? `💼 ${realPortfolioSummary.tickers}`
-              : t("testerMonitor.decisionSim.kpi.realPortfolioEmpty")
-          }
-          title={t("testerMonitor.decisionSim.kpi.realPortfolioTip")}
         />
         <Kpi
           label={t("testerMonitor.decisionSim.kpi.buySignals")}
@@ -1178,10 +787,8 @@ export function InvestDecisionSimPanel({
       </div>
 
       <p className="tester-monitor-muted text-[10px] leading-relaxed shrink-0 px-0.5">
-        {t("testerMonitor.decisionSim.buyRulesHint", { n: filteredEvals.length })}
+        {t("testerMonitor.decisionSim.buyRulesHint", { n: recommendationCounts.recommended })}
       </p>
-
-      {recommendationsTableSection}
 
       {simTable?.rows?.length ? (
         <>
@@ -1214,6 +821,8 @@ export function InvestDecisionSimPanel({
             simLoopSynthMaturation={simLoopSynthMaturation}
             simLoopWeightedMaturation={simLoopWeightedMaturation}
             simLoopSizedTotalCapitalEur={synthAlloc?.totalCapitalEur}
+            sizingVariant={simLoopSizingVariant}
+            onSizingVariantChange={setSimLoopSizingVariant}
           />
         </div>
         {state.ticks.length > 0 || liveMisalign.evaluatedTickers > 0 ? (
@@ -1230,6 +839,9 @@ export function InvestDecisionSimPanel({
                   paperPortfolio={state.paperPortfolio}
                   actualPortfolioSeries={actualPortfolioSeries}
                   simLoopSynthSeries={simLoopSynthMaturation ?? undefined}
+                  simLoopWeightedSeries={simLoopWeightedMaturation ?? undefined}
+                  sizingVariant={simLoopSizingVariant}
+                  onSizingVariantChange={setSimLoopSizingVariant}
                   compact
                   className="min-w-0"
                 />

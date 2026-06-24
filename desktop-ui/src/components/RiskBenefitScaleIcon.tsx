@@ -21,6 +21,7 @@
  */
 import type { LossRiskEntry } from "./LossRiskPoopCell";
 import { riskScoreTone } from "./LossRiskPoopCell";
+import { shouldUseDailyBenefitFallback } from "../sheet/pulsePlanGapDisplay";
 
 /** Color band for the benefit (price growth per unit time) score.
  *  Mirrors `riskScoreTone` but in the rose family (heart-themed).
@@ -47,8 +48,11 @@ export function deriveBenefitFillPct(args: {
   expectedReturnPct: number | null | undefined;
   daysToTarget: number | null | undefined;
   dailyChangePct: number | null | undefined;
+  /** Skip noisy 24h fallback on micro positions or deep MTM losses. */
+  capitalEur?: number | null;
+  pnlPct?: number | null;
 }): number {
-  const { expectedReturnPct, daysToTarget, dailyChangePct } = args;
+  const { expectedReturnPct, daysToTarget, dailyChangePct, capitalEur, pnlPct } = args;
   let perDayPct: number | null = null;
   if (
     expectedReturnPct != null &&
@@ -58,10 +62,12 @@ export function deriveBenefitFillPct(args: {
     daysToTarget > 0
   ) {
     perDayPct = expectedReturnPct / daysToTarget;
-  } else if (dailyChangePct != null && Number.isFinite(dailyChangePct)) {
-    // Fallback: recent realised 24h move — not the same semantics as a
-    // forward-looking gain plan, but better than an empty heart on rows
-    // where the gain plan is unavailable yet.
+  } else if (
+    dailyChangePct != null &&
+    Number.isFinite(dailyChangePct) &&
+    shouldUseDailyBenefitFallback({ capitalEur, pnlPct })
+  ) {
+    // Fallback: recent realised 24h move — not forward ROI; disabled on micro/deep-loss rows.
     perDayPct = dailyChangePct;
   }
   if (perDayPct == null || perDayPct <= 0) return 0;

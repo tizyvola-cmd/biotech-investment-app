@@ -10,6 +10,7 @@ import {
   buildAdviceCalibrationFromLiveRows,
 
   buildAdviceCalibrationFromLog,
+  buildDealLevelCalibrationPoints,
 
   classifyAdviceOutcome,
 
@@ -22,6 +23,10 @@ import {
   signedExpectedReturnForAdvice,
 
   summarizeAdviceCalibration,
+
+  stampPostSellMove24hOnTicks,
+  adviceMonitorPointsExcludingPaperSells,
+  summarizePaperSellOperativeCoverage,
 
 } from "./investDecisionSimAdviceCalibration";
 
@@ -447,6 +452,166 @@ describe("investDecisionSimAdviceCalibration", () => {
     expect(points[0]?.outcome).toBe("good");
   });
 
+  it("excludes paper-sold keys from advice monitor SELL points", () => {
+    const livePoints = [
+      {
+        id: "live|a|cd|sell",
+        ticker: "A",
+        probPct: 70,
+        bucketId: "70-79" as const,
+        bucketLabel: "70–79%",
+        outcome: "good" as const,
+        suggestedAction: "sell" as const,
+        source: "live" as const,
+        kind: "paper_open" as const,
+        at: "",
+      },
+      {
+        id: "live|b|cd|sell",
+        ticker: "B",
+        probPct: 65,
+        bucketId: "60-69" as const,
+        bucketLabel: "60–69%",
+        outcome: "bad" as const,
+        suggestedAction: "sell" as const,
+        source: "live" as const,
+        kind: "sell_rec" as const,
+        at: "",
+      },
+    ];
+    const paperSold = new Set(["a|cd"]);
+    const { points, excludedSellCount } = adviceMonitorPointsExcludingPaperSells(
+      livePoints,
+      paperSold,
+    );
+    expect(excludedSellCount).toBe(1);
+    expect(points).toHaveLength(1);
+    expect(points[0]?.ticker).toBe("B");
+  });
+
+  it("persists post-sell move on trade before tick compact", () => {
+    const ticks = [
+      {
+        id: "t1",
+        at: "2026-06-12T14:31:00.000Z",
+        evaluations: [],
+        portfolioBefore: [{ key: "x|cd", ticker: "XYZ", capital: 5000, entryAt: "2026-06-12T10:00:00.000Z", entryProbPct: 72 } as never],
+        portfolioAfter: [],
+        trades: [
+          {
+            at: "2026-06-12T14:31:00.000Z",
+            ticker: "XYZ",
+            key: "x|cd",
+            side: "sell" as const,
+            reason: "exit",
+            capital: 5000,
+            pnlPctSimulated: 1.2,
+            pnlEurSimulated: 60,
+          },
+        ],
+        summary: {} as never,
+      },
+      {
+        id: "t2",
+        at: "2026-06-12T15:31:00.000Z",
+        evaluations: [{ key: "x|cd", ticker: "XYZ", pnlPct24h: -1.8 } as never],
+        portfolioBefore: [],
+        portfolioAfter: [],
+        trades: [],
+        summary: {} as never,
+      },
+    ] as never[];
+    const stamped = stampPostSellMove24hOnTicks(ticks);
+    expect(stamped[0]?.trades[0]?.postSellMove24hPct).toBe(-1.8);
+    const points = buildAdviceCalibrationFromPaperSells(stamped, () => 3.5, "en");
+    expect(points).toHaveLength(1);
+    expect(points[0]?.outcome).toBe("good");
+  });
+
+  it("summarizePaperSellOperativeCoverage splits missing P(plan) vs post-sell move", () => {
+    const ticks = [
+      {
+        id: "t1",
+        at: "2026-06-12T14:31:00.000Z",
+        evaluations: [],
+        portfolioBefore: [
+          {
+            key: "a|cd",
+            ticker: "AAA",
+            capital: 5000,
+            entryAt: "2026-06-12T10:00:00.000Z",
+          } as never,
+        ],
+        portfolioAfter: [],
+        trades: [
+          {
+            at: "2026-06-12T14:31:00.000Z",
+            ticker: "AAA",
+            key: "a|cd",
+            side: "sell",
+            reason: "exit",
+            capital: 5000,
+          },
+        ],
+        summary: {} as never,
+      },
+      {
+        id: "t2",
+        at: "2026-06-12T15:31:00.000Z",
+        evaluations: [],
+        portfolioBefore: [
+          {
+            key: "b|cd",
+            ticker: "BBB",
+            capital: 5000,
+            entryAt: "2026-06-12T10:00:00.000Z",
+            entryProbPct: 68,
+          } as never,
+        ],
+        portfolioAfter: [],
+        trades: [
+          {
+            at: "2026-06-12T15:31:00.000Z",
+            ticker: "BBB",
+            key: "b|cd",
+            side: "sell",
+            reason: "exit",
+            capital: 5000,
+          },
+        ],
+        summary: {} as never,
+      },
+    ] as DecisionSimTick[];
+
+    expect(summarizePaperSellOperativeCoverage(ticks, () => null)).toEqual({
+      executedCount: 2,
+      scoredCount: 0,
+      missingPplanCount: 1,
+      missingPostMoveCount: 1,
+      pendingFlatCount: 0,
+    });
+
+    const stamped = stampPostSellMove24hOnTicks([
+      ...ticks,
+      {
+        id: "t3",
+        at: "2026-06-12T16:31:00.000Z",
+        evaluations: [{ key: "b|cd", ticker: "BBB", pnlPct24h: -1.2 } as never],
+        portfolioBefore: [],
+        portfolioAfter: [],
+        trades: [],
+        summary: {} as never,
+      },
+    ] as DecisionSimTick[]);
+    expect(summarizePaperSellOperativeCoverage(stamped, () => null)).toEqual({
+      executedCount: 2,
+      scoredCount: 1,
+      missingPplanCount: 1,
+      missingPostMoveCount: 0,
+      pendingFlatCount: 0,
+    });
+  });
+
   it("does not re-score old compact sells with today's live Var. Giorn. %", () => {
     const points = buildAdviceCalibrationFromPaperSells(
       [
@@ -570,6 +735,164 @@ describe("investDecisionSimAdviceCalibration", () => {
     expect(points).toHaveLength(1);
     expect(points[0]?.suggestedAction).toBe("sell");
     expect(buildAdviceForecastErrorScatter(points)[0]?.suggestedAction).toBe("sell");
+  });
+
+  it("deal-level points dedupe repeated good_buy tick marks to one open row", () => {
+    const ticks = [
+      {
+        id: "t1",
+        at: "2026-06-01T10:00:00.000Z",
+        evaluations: [
+          {
+            key: "x|cd",
+            ticker: "XYZ",
+            probPct: 72,
+            pnlPct: 3.5,
+            planReturnPct: 8,
+          } as never,
+        ],
+        portfolioBefore: [],
+        portfolioAfter: [
+          {
+            key: "x|cd",
+            ticker: "XYZ",
+            capital: 5000,
+            entryAt: "2026-06-01T10:00:00.000Z",
+            entryProbPct: 72,
+            entryPlanReturnPct: 8,
+          } as never,
+        ],
+        trades: [
+          {
+            at: "2026-06-01T10:00:00.000Z",
+            ticker: "XYZ",
+            key: "x|cd",
+            side: "buy",
+            reason: "entry",
+            capital: 5000,
+          },
+        ],
+        summary: {} as never,
+      },
+      {
+        id: "t2",
+        at: "2026-06-01T11:00:00.000Z",
+        evaluations: [
+          {
+            key: "x|cd",
+            ticker: "XYZ",
+            probPct: 72,
+            pnlPct: 4.2,
+            planReturnPct: 8,
+          } as never,
+        ],
+        portfolioBefore: [
+          {
+            key: "x|cd",
+            ticker: "XYZ",
+            capital: 5000,
+            entryAt: "2026-06-01T10:00:00.000Z",
+            entryProbPct: 72,
+            entryPlanReturnPct: 8,
+          } as never,
+        ],
+        portfolioAfter: [
+          {
+            key: "x|cd",
+            ticker: "XYZ",
+            capital: 5000,
+            entryAt: "2026-06-01T10:00:00.000Z",
+            entryProbPct: 72,
+            entryPlanReturnPct: 8,
+          } as never,
+        ],
+        trades: [],
+        summary: {} as never,
+      },
+    ] as DecisionSimTick[];
+
+    const adviceLog = [
+      {
+        at: "2026-06-01T10:00:00.000Z",
+        tickId: "t1",
+        ticker: "XYZ",
+        key: "x|cd",
+        kind: "good_buy" as const,
+        capitalEur: 5000,
+        pnlEur: 175,
+        pnlPct: 3.5,
+        probPctAtAdvice: 72,
+        note: "open",
+      },
+      {
+        at: "2026-06-01T11:00:00.000Z",
+        tickId: "t2",
+        ticker: "XYZ",
+        key: "x|cd",
+        kind: "good_buy" as const,
+        capitalEur: 5000,
+        pnlEur: 210,
+        pnlPct: 4.2,
+        probPctAtAdvice: 72,
+        note: "open",
+      },
+    ];
+
+    const tickPoints = buildAdviceCalibrationFromLog(adviceLog, ticks, "en");
+    const dealPoints = buildDealLevelCalibrationPoints(ticks, () => null, "en");
+    const buyTick = tickPoints.filter((p) => p.suggestedAction === "buy");
+    const buyDeal = dealPoints.filter((p) => p.suggestedAction === "buy");
+
+    expect(buyTick).toHaveLength(2);
+    expect(buyDeal).toHaveLength(1);
+    expect(buyDeal[0]?.kind).toBe("deal_buy_open");
+  });
+
+  it("scores every open paper deal from portfolio + live marks", () => {
+    const paperPortfolio = [
+      {
+        key: "a|cd",
+        ticker: "AAA",
+        capital: 5000,
+        entryAt: "2026-06-10",
+        entryProbPct: 65,
+        entryPlanReturnPct: 12,
+        lastMarkPct: 4,
+      },
+      {
+        key: "b|cd",
+        ticker: "BBB",
+        capital: 5000,
+        entryAt: "2026-06-11",
+        entryProbPct: 58,
+        entryPlanReturnPct: 8,
+        lastMarkPct: -2,
+      },
+      {
+        key: "c|cd",
+        ticker: "CCC",
+        capital: 5000,
+        entryAt: "2026-06-12",
+        entryProbPct: 70,
+        entryPlanReturnPct: 10,
+        lastMarkPct: 0,
+      },
+    ] as never[];
+
+    const liveEvaluations = [
+      { key: "a|cd", ticker: "AAA", pnlPct: 5, probPct: 65, planReturnPct: 12 },
+      { key: "b|cd", ticker: "BBB", pnlPct: -3, probPct: 58, planReturnPct: 8 },
+    ] as never[];
+
+    const dealPoints = buildDealLevelCalibrationPoints([], () => null, "en", {
+      paperPortfolio,
+      liveEvaluations,
+    });
+    const buyOpen = dealPoints.filter((p) => p.kind === "deal_buy_open");
+
+    expect(buyOpen).toHaveLength(2);
+    expect(buyOpen.find((p) => p.ticker === "AAA")?.outcome).toBe("good");
+    expect(buyOpen.find((p) => p.ticker === "BBB")?.outcome).toBe("bad");
   });
 
 });

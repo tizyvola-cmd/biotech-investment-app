@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import {
   alignAggregateGainPlanSeriesToLiveGap,
   buildPortfolioGainPlanAggregateSeries,
+  reconcileAggregateActualTrack,
   summarizePlanGap,
 } from "./dashboardPulseAggregate";
 import { buildGainPlanSeries } from "../components/PortfolioGainPlanChart";
@@ -197,5 +198,21 @@ describe("alignAggregateGainPlanSeriesToLiveGap", () => {
     );
     expect(aligned[aligned.length - 1]?.actual).toBe(682);
     expect(aligned[aligned.length - 1]?.label).toBe("now");
+  });
+});
+
+describe("reconcileAggregateActualTrack", () => {
+  it("ramps corrupt negative mid-series to live MTM positive", () => {
+    const series = [
+      { ts: "0", label: "d0", planned: -50, actual: 0 },
+      { ts: "3", label: "d3", planned: -200, actual: -6993 },
+      { ts: "7", label: "d7", planned: -393, actual: -4093 },
+      { ts: "n", label: "d10", planned: -393, actual: -9393 },
+    ];
+    const out = reconcileAggregateActualTrack(series, 49346);
+    expect(out[0]?.actual).toBe(0);
+    expect(out[out.length - 1]?.actual).toBe(49346);
+    expect(out[1]?.actual).toBeGreaterThan(0);
+    expect(out[2]?.actual).toBeGreaterThan(out[1]?.actual ?? 0);
   });
 });

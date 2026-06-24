@@ -11,6 +11,7 @@ import {
   shouldRunDecisionSimTick,
   stopDecisionSimRun,
 } from "./investDecisionSimStorage";
+import { buildDailySimLoopExecution } from "./simLoopDailyEvaluation";
 import { loadAdviceFeedback } from "./adviceFeedback";
 import { publishSimLoopTradeAlerts } from "./simLoopTradeAlerts";
 import { scheduleGapInvestigationAfterTick } from "./gapInvestigationGate";
@@ -36,6 +37,13 @@ function buildAutoTickContext(
   fresh: ReturnType<typeof loadDecisionSimState>,
   ctx: DecisionSimAutoTickContext,
 ) {
+  const simLoopExecution = buildDailySimLoopExecution(fresh.config.capitalPerTrade, {
+    probOptions: ctx.probOptions,
+    simTable: ctx.simTable,
+    inputs: ctx.inputs,
+    pointsBySeriesKey: ctx.pointsBySeriesKey,
+    lang: ctx.lang,
+  });
   return {
     simTable: ctx.simTable,
     inputs: ctx.inputs,
@@ -49,6 +57,7 @@ function buildAutoTickContext(
     cumulativeClosedPnlEur: fresh.cumulativePaperPnlEur,
     badBuyScoredKeys: new Set(fresh.badBuyScoredKeys),
     adviceFeedback: loadAdviceFeedback(),
+    simLoopExecution,
   };
 }
 
@@ -100,6 +109,7 @@ export async function tryRunDecisionSimAutoTick(ctx: DecisionSimAutoTickContext)
       markTick.at,
       fresh.config.capitalPerTrade,
       fresh.config.maxOpenPositions,
+      { resolveBuyCapital: tickCtx.simLoopExecution?.resolveBuyCapital },
     );
 
     if (proposed.length) {

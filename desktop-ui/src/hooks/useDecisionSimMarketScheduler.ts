@@ -9,8 +9,8 @@ import { useCdPatternPolygonOverview } from "../sheet/useCdPatternPolygonOvervie
 import type { InvestSimInputs } from "../sheet/investSimStorage";
 import type { LossAnalysisProbOptions } from "../sheet/portfolioLossAnalysis";
 import {
-  decisionSimMarketHourKey,
-  isDecisionSimMarketWindow,
+  decisionSimDailyEvaluationKey,
+  isDecisionSimDailyEvaluationWindow,
 } from "../sheet/investDecisionSimSchedule";
 import { tryRunDecisionSimAutoTick } from "../sheet/decisionSimAutoTick";
 import { loadDecisionSimState } from "../sheet/investDecisionSimStorage";
@@ -34,7 +34,7 @@ export function useDecisionSimMarketScheduler({
 }) {
   const { lang } = useLang();
   const polygonOverview = useCdPatternPolygonOverview();
-  const lastReloadHourRef = useRef<string | null>(null);
+  const lastReloadDayRef = useRef<string | null>(null);
   const eisStateRef = useRef<Awaited<ReturnType<typeof loadEisSuperScoreState>> | null>(null);
 
   useEffect(() => {
@@ -48,19 +48,18 @@ export function useDecisionSimMarketScheduler({
 
     const run = () => {
       const now = new Date();
-      const inWindow = isDecisionSimMarketWindow(now);
+      const inDailyEval = isDecisionSimDailyEvaluationWindow(now);
 
-      if (inWindow) {
-        const hourKey = decisionSimMarketHourKey(now);
-        if (hourKey && lastReloadHourRef.current !== hourKey) {
-          lastReloadHourRef.current = hourKey;
+      if (inDailyEval) {
+        const dayKey = decisionSimDailyEvaluationKey(now);
+        if (dayKey && lastReloadDayRef.current !== dayKey) {
+          lastReloadDayRef.current = dayKey;
           void onReloadSimulation();
         }
       }
 
       const state = loadDecisionSimState();
       if (!state.config.enabled) return;
-      if (!inWindow) return;
 
       const pointsBySeriesKey = chartPointsMapFromBundle(simChartsBundle);
       const probOptions: LossAnalysisProbOptions | null = {

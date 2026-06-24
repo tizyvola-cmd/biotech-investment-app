@@ -33,21 +33,17 @@ import {
   loadApprovedPattern,
   listProposals,
   listFlaggedTags,
+  patternApprovalSourceLabel,
 } from "../riskPattern/patternProposalStore";
 import { normalizedRowKey } from "../sheet/investSimKeys";
 import type {
   PatternProposal,
+  PatternApprovalSource,
   RiskPattern,
 } from "../riskPattern/riskPatternTypes";
-import {
-  pickActiveManualAllocationInput,
-  runManualAllocationSynthesizer,
-  type ManualAllocationPatternResult,
-  type ManualAllocationSynthesizerBundle,
-  type ManualAllocationSynthesizerInput,
-} from "../sheet/manualAllocationPatternSynthesizer";
 import { applyManualAllocationPattern } from "../riskPattern/manualAllocationPatternApply";
 import { useLang } from "../shared/i18n";
+import { listSnapshots } from "../sheet/patternSearchHistory";
 
 function fmtPct01(v: number | null | undefined, d = 1): string {
   if (v == null || !Number.isFinite(v)) return "—";
@@ -59,15 +55,12 @@ export function CapDivStep2RiskView({
   simTable,
   sdsRows,
   onPatternChanged,
-  manualAllocationBundle,
 }: {
   closedRows: SimOutcomeRow[];
   simTable?: SheetTable | null;
   sdsRows?: SdsRow[] | null;
   /** Notify orchestrator when approved pattern changes (so Step 3 toggle picks it up). */
   onPatternChanged?: () => void;
-  /** Open-position manual sizing from Step 3 — reverse-engineered into a pattern preview. */
-  manualAllocationBundle?: ManualAllocationSynthesizerBundle | null;
 }) {
   const { lang } = useLang();
   const it = lang === "it";
@@ -102,32 +95,13 @@ export function CapDivStep2RiskView({
     return evaluatePatternStats(p, outOfSample, features);
   }, [approvedRecord, closedRows, features]);
 
-  // â”€â”€ Pattern from Step 3 manual allocation (OPEN positions) â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
-  const manualSynthInput = useMemo(
-    () => pickActiveManualAllocationInput(manualAllocationBundle),
-    [manualAllocationBundle],
-  );
-  const manualSynthResult = useMemo(
-    () =>
-      runManualAllocationSynthesizer(manualSynthInput, {
-        simTable,
-        sdsRows,
-        closedRows,
-      }),
-    [manualSynthInput, simTable, sdsRows, closedRows],
-  );
+  // ── Auto-detected empirical pattern (closed trades — retrospective) ──
+  const pcseSnap = useMemo(() => {
+    const snaps = listSnapshots();
+    if (!snaps.length) return null;
+    return snaps[snaps.length - 1]!;
+  }, [proposals]);
 
-  function onApplyManualSynthToScore() {
-    if (!manualSynthResult) return;
-    const ok = applyManualAllocationPattern(
-      manualSynthResult.pattern,
-      it ? "it" : "en",
-      "manual_allocation_step3",
-    );
-    if (ok) refresh();
-  }
-
-  // â”€â”€ Auto-detected empirical pattern (closed trades — retrospective) â”€â”€â”€â”€â”€
   const [searchKey, setSearchKey] = useState(0);
   const empiricalAuto = useMemo(
     () =>
@@ -223,8 +197,12 @@ export function CapDivStep2RiskView({
           </h2>
           <p className="text-[11px] leading-relaxed text-rose-800/75 dark:text-rose-200/75 max-w-3xl">
             {it
-              ? "Due fonti: (A) trade chiusi — scatter errori + pattern empirico sulle perdite; (B) posizioni aperte — muovi gli slider in Step 3 e il pattern AND si aggiorna in tempo reale sul book corrente. Un click approva il pattern nello score."
-              : "Two sources: (A) closed trades — error scatter + empirical loss pattern; (B) open positions — move Step 3 sliders and the AND pattern updates live on your current book. One click approves it into the score."}
+              ? "Questo step identifica automaticamente quali combinazioni di caratteristiche (fascia SDS, fase clinica, ecc.) sono statisticamente associate alle perdite nel tuo storico. " +
+                "Il sistema cerca il pattern AND che meglio predice le perdite, lo mostra nel grafico scatter, e ti chiede se vuoi approvarlo. " +
+                "Una volta approvato, il pattern abbassa automaticamente il sizing suggerito (Step 3) per i deal che lo matchano."
+              : "This step automatically identifies which feature combinations (SDS bucket, clinical phase, etc.) are statistically associated with losses in your history. " +
+                "The system searches for the AND pattern that best predicts losses, shows it on the scatter chart, and asks if you want to approve it. " +
+                "Once approved, the pattern automatically lowers the suggested sizing (Step 3) for any deal that matches it."}
           </p>
         </div>
       </header>
@@ -232,22 +210,12 @@ export function CapDivStep2RiskView({
       {/* Currently approved pattern + OOS stats */}
       <ApprovedPatternCard
         approved={approvedRecord.current}
+        approvalSource={approvedRecord.currentSource}
         oos={approvedOos}
         flaggedButTakenCount={flaggedTags.length}
         it={it}
       />
 
-      {/* Pattern synthesized from Step 3 manual allocation (OPEN book) */}
-      {manualSynthInput ? (
-        <ManualAllocationPatternCard
-          result={manualSynthResult}
-          input={manualSynthInput}
-          onApply={onApplyManualSynthToScore}
-          it={it}
-        />
-      ) : null}
-
-      {/* Errors scatter — closed trades retrospective */}
       <LossErrorsScatter
         points={scatterPoints}
         baseLossRate={phaseA.globalLossRate}
@@ -293,95 +261,49 @@ export function CapDivStep2RiskView({
       />
       ) : null}
 
+      {/* PCSE badge — stato del sistema, full UI nel Calibration Center */}
+      <div className="flex items-center gap-3 rounded-xl border border-indigo-200/40 dark:border-indigo-800/30 bg-indigo-50/20 dark:bg-indigo-950/10 px-4 py-2.5">
+        <span className="text-[11px] text-indigo-700 dark:text-indigo-300 font-semibold">
+          {it ? "⚡ Pattern combinations" : "⚡ Pattern combinations"}
+        </span>
+        {pcseSnap ? (
+          <>
+            <span className="text-[11px] text-ink-muted">
+              {pcseSnap.topCandidates.filter(r => r.promotionReady).length > 0
+                ? (it
+                  ? `${pcseSnap.topCandidates.filter(r => r.promotionReady).length} pronti · `
+                  : `${pcseSnap.topCandidates.filter(r => r.promotionReady).length} ready · `)
+                : ""}
+              {it
+                ? `${pcseSnap.topCandidates.length} combinazioni · ultimo run ${pcseSnap.ts.slice(0,10)}`
+                : `${pcseSnap.topCandidates.length} combinations · last run ${pcseSnap.ts.slice(0,10)}`}
+            </span>
+          </>
+        ) : (
+          <span className="text-[11px] text-ink-muted italic">
+            {it ? "Nessun run ancora" : "No run yet"}
+          </span>
+        )}
+        <span className="ml-auto text-[10px] text-indigo-500 dark:text-indigo-400">
+          {it ? "→ Model Quality · Combinazioni" : "→ Model Quality · Combinations"}
+        </span>
+      </div>
+
     </section>
   );
 }
 
 // -- Subcomponents -----------------------------------------------------------
 
-function ManualAllocationPatternCard({
-  result,
-  input,
-  onApply,
-  it,
-}: {
-  result: ManualAllocationPatternResult | null;
-  input: ManualAllocationSynthesizerInput;
-  onApply: () => void;
-  it: boolean;
-}) {
-  const universeLabel =
-    input.universe === "portfolio"
-      ? it
-        ? "Portfolio reale (aperte)"
-        : "Real portfolio (open)"
-      : it
-        ? "Sim loop BUY (aperte)"
-        : "Sim loop BUY (open)";
-
-  if (!result) {
-    return (
-      <div className="rounded-xl border border-teal-200/50 bg-teal-50/30 dark:bg-teal-950/15 px-3 py-2">
-        <p className="text-[12px] font-semibold text-teal-900 dark:text-teal-100">
-          {it ? "Pattern da allocazione manuale (Step 3)" : "Pattern from manual allocation (Step 3)"}
-        </p>
-        <p className="text-[10px] text-teal-800/80 dark:text-teal-200/70 mt-0.5">
-          {it
-            ? `${universeLabel}: n=${input.deals.length} posizioni aperte — abbassa almeno uno slider sotto il peso weighted per generare un pattern.`
-            : `${universeLabel}: n=${input.deals.length} open positions — lower at least one slider below the weighted share to synthesize a pattern.`}
-        </p>
-                  </div>
-    );
-  }
-
-  const condLabel = result.pattern.conditions
-    .map((c) => conditionLabel(c, it ? "it" : "en"))
-    .join(" AND ");
-
-  return (
-    <div className="rounded-xl border border-teal-300/60 bg-teal-50/50 dark:bg-teal-950/20 px-3 py-3 space-y-2">
-      <div className="flex flex-wrap items-start justify-between gap-2">
-        <div>
-          <p className="text-[10px] uppercase font-semibold text-teal-700 dark:text-teal-300">
-            {it ? "Pattern sintetizzato — posizioni aperte" : "Synthesized pattern — open book"}
-          </p>
-          <p className="text-[12px] font-semibold text-teal-900 dark:text-teal-100 mt-0.5 font-mono">
-            {condLabel}
-          </p>
-          <p className="text-[10px] text-teal-800/75 dark:text-teal-200/70 mt-1">
-            {universeLabel} · n={result.openBookStats.n} ·{" "}
-            {it ? "penalizzate" : "down-weighted"}: {result.penalizedTickers.join(", ") || "—"}
-          </p>
-                </div>
-        <button type="button" className="btn-primary text-[11px]" onClick={onApply}>
-          {it ? "Approva pattern" : "Approve pattern"}
-        </button>
-          </div>
-      <div className="flex flex-wrap gap-3 text-[10px] tabular-nums">
-        <span>
-          {it ? "Precisione (aperte)" : "Precision (open)"}:{" "}
-          {fmtPct01(result.openBookStats.precision)}
-        </span>
-        <span>Recall: {fmtPct01(result.openBookStats.recall)}</span>
-        <span>Lift: {result.openBookStats.lift.toFixed(2)}x</span>
-        {result.closedValidation ? (
-          <span className="text-ink-muted">
-            {it ? "Validazione storica (chiusi)" : "Historical check (closed)"}: loss{" "}
-            {fmtPct01(result.closedValidation.precision)} · n={result.closedValidation.firedN}
-          </span>
-      ) : null}
-      </div>
-    </div>
-  );
-}
-
 function ApprovedPatternCard({
   approved,
+  approvalSource,
   oos,
   flaggedButTakenCount,
   it,
 }: {
   approved: RiskPattern | null;
+  approvalSource?: PatternApprovalSource | null;
   oos: import("../riskPattern/riskPatternTypes").PatternStats | null;
   flaggedButTakenCount: number;
   it: boolean;
@@ -418,6 +340,12 @@ function ApprovedPatternCard({
           <p className="text-[10px] text-ink-muted mt-0.5">
             {it ? "Approvato il" : "Approved at"} {approved.approvedAt ? new Date(approved.approvedAt).toLocaleString() : "—"}
           </p>
+          <p className="text-[11px] text-indigo-800/90 dark:text-indigo-200/90 mt-1">
+            {it ? "Fonte:" : "Source:"}{" "}
+            <span className="font-semibold">
+              {patternApprovalSourceLabel(approvalSource, it ? "it" : "en")}
+            </span>
+          </p>
         </div>
       </div>
       <div className="grid grid-cols-2 sm:grid-cols-4 gap-2">
@@ -426,24 +354,36 @@ function ApprovedPatternCard({
           value={fmtPct01(approved.inSampleStats.precision)}
           sub={`n=${approved.inSampleStats.firedN}`}
           isSample="in"
+          tooltip={it
+            ? `Precision = quando il pattern scatta, quante volte il trade finisce in perdita. Es. 60% = 6 volte su 10 il deal matchato risulta una perdita. IS = calcolato sui trade usati per costruire il pattern.`
+            : `Precision = when the pattern fires, how often does the trade end in a loss? E.g. 60% = 6 out of 10 matched deals were losses. IS = computed on the trades used to build the pattern.`}
         />
         <ApprovedStat
           label={it ? "Precision out-of-sample" : "OOS precision"}
           value={oos ? fmtPct01(oos.precision) : (it ? "n/d" : "n/a")}
           sub={oos ? `n=${oos.firedN}` : (it ? "nessun trade dopo l'approvazione" : "no trades after approval")}
           isSample="out"
+          tooltip={it
+            ? `OOS (out-of-sample) = precision calcolata sui trade chiusi DOPO l'approvazione del pattern — è il vero test di robustezza. Se n/a non ci sono ancora trade successivi all'approvazione.`
+            : `OOS (out-of-sample) = precision computed on trades closed AFTER the pattern was approved — the real robustness test. n/a means no trades have closed since approval yet.`}
         />
         <ApprovedStat
           label="Recall in-sample"
           value={fmtPct01(approved.inSampleStats.recall)}
           sub={`${describePattern(approved).length > 50 ? "" : ""}`}
           isSample="in"
+          tooltip={it
+            ? `Recall = quante delle perdite storiche verrebbero catturate dal pattern. Es. 40% = il filtro avrebbe bloccato 4 perdite su 10. Recall bassa = il filtro è selettivo ma lascia passare molte perdite.`
+            : `Recall = what fraction of historical losses would the pattern have caught? E.g. 40% = the filter would have blocked 4 out of 10 losses. Low recall = selective filter but misses many losses.`}
         />
         <ApprovedStat
           label={it ? "Lift in-sample" : "In-sample lift"}
-          value={`${approved.inSampleStats.lift.toFixed(2)}×`}
-          sub={`base ${(approved.inSampleStats.baseLossRate * 100).toFixed(1)}%`}
+          value={approved.inSampleStats.lift != null ? `${approved.inSampleStats.lift.toFixed(2)}×` : "—"}
+          sub={approved.inSampleStats.baseLossRate != null ? `base ${(approved.inSampleStats.baseLossRate * 100).toFixed(1)}%` : undefined}
           isSample="in"
+          tooltip={it
+            ? `Lift = quanto è più probabile la perdita nei deal che matchano il pattern rispetto alla media. Es. lift 2× = i deal matchati perdono il doppio rispetto alla media storica. Valori <1.3 indicano un pattern poco discriminante.`
+            : `Lift = how much more likely is a loss for deals matching the pattern vs the average. E.g. lift 2× = matched deals lose twice as often as the historical average. Values <1.3 indicate a weak pattern.`}
         />
       </div>
       {flaggedButTakenCount > 0 ? (
@@ -462,14 +402,19 @@ function ApprovedStat({
   value,
   sub,
   isSample,
+  tooltip,
 }: {
   label: string;
   value: string;
   sub?: string;
   isSample: "in" | "out";
+  tooltip?: string;
 }) {
   return (
-    <div className="rounded-md bg-white/70 dark:bg-surface/70 px-2 py-1.5 border border-[rgb(var(--border))]/30">
+    <div
+      className="rounded-md bg-white/70 dark:bg-surface/70 px-2 py-1.5 border border-[rgb(var(--border))]/30 cursor-help"
+      title={tooltip}
+    >
       <p className="text-[9px] uppercase font-medium text-ink-muted flex items-center gap-1">
         {label}
         <span
@@ -481,6 +426,7 @@ function ApprovedStat({
         >
           {isSample === "in" ? "IS" : "OOS"}
         </span>
+        {tooltip ? <span className="text-[8px] text-ink-muted/60">ⓘ</span> : null}
       </p>
       <p className="text-sm font-bold tabular-nums">{value}</p>
       {sub ? <p className="text-[9px] text-ink-muted tabular-nums">{sub}</p> : null}
@@ -488,10 +434,16 @@ function ApprovedStat({
   );
 }
 
-function BuilderStat({ label, value }: { label: string; value: string }) {
+function BuilderStat({ label, value, tooltip }: { label: string; value: string; tooltip?: string }) {
   return (
-    <div className="rounded-md border border-rose-200/40 bg-rose-50/30 dark:bg-rose-950/15 px-2 py-1.5">
-      <p className="text-[9px] uppercase font-medium text-ink-muted">{label}</p>
+    <div
+      className="rounded-md border border-rose-200/40 bg-rose-50/30 dark:bg-rose-950/15 px-2 py-1.5 cursor-help"
+      title={tooltip}
+    >
+      <p className="text-[9px] uppercase font-medium text-ink-muted flex items-center gap-1">
+        {label}
+        {tooltip ? <span className="text-[8px] text-ink-muted/60">ⓘ</span> : null}
+      </p>
       <p className="text-sm font-bold tabular-nums">{value}</p>
     </div>
   );
@@ -832,8 +784,12 @@ function AutoPatternCard({
           </p>
           <p className="text-[10px] text-ink-muted mt-1 leading-snug max-w-2xl">
             {it
-              ? "Combinazione AND di feature×bucket che meglio predice la perdita sui trade chiusi. Score combina precision, lift (cap 3×) e log(n)."
-              : "The AND-combination of feature×bucket that best predicts loss on closed trades. Score combines precision, lift (capped at 3×) and log(n)."}
+              ? "Combinazione AND di feature×bucket che meglio predice la perdita sui trade chiusi. " +
+                "Es: \"SDS <40 AND Phase 2\" significa che i deal con SDS basso E in fase 2 perdono più spesso. " +
+                "Clicca \"Usa nello score\" per attivarlo: i deal che lo matchano riceveranno un sizing suggerito più basso in Step 3."
+              : "The AND-combination of feature×bucket that best predicts loss on closed trades. " +
+                "E.g. \"SDS <40 AND Phase 2\" means deals with low SDS AND in phase 2 lose more often. " +
+                "Click \"Use in score\" to activate it: deals matching it will get a lower suggested sizing in Step 3."}
           </p>
         </div>
         {sameAsActive ? (
@@ -844,11 +800,33 @@ function AutoPatternCard({
       </header>
 
       <div className="grid grid-cols-2 sm:grid-cols-5 gap-2">
-        <BuilderStat label="n fired" value={String(stats.firedN)} />
-        <BuilderStat label="Precision" value={`${(stats.precision * 100).toFixed(1)}%`} />
-        <BuilderStat label="Recall" value={`${(stats.recall * 100).toFixed(1)}%`} />
-        <BuilderStat label={it ? "Lift vs base" : "Lift vs base"} value={`${stats.lift.toFixed(2)}×`} />
-        <BuilderStat label={it ? "Base loss" : "Base loss"} value={`${(stats.baseLossRate * 100).toFixed(1)}%`} />
+        <BuilderStat
+          label="n fired"
+          value={String(stats.firedN)}
+          tooltip={it ? "Quanti trade storici matchano questo pattern (lo avrebbero triggerato)" : "How many historical trades match this pattern (would have triggered it)"}
+        />
+        <BuilderStat
+          label="Precision"
+          value={`${(stats.precision * 100).toFixed(1)}%`}
+          tooltip={it ? "% dei deal matchati che sono finiti in perdita — più alto = pattern più affidabile come filtro" : "% of matched deals that ended in a loss — higher = more reliable filter"}
+        />
+        <BuilderStat
+          label="Recall"
+          value={`${(stats.recall * 100).toFixed(1)}%`}
+          tooltip={it ? "% delle perdite storiche totali che il pattern avrebbe catturato — più alto = cattura più errori" : "% of total historical losses this pattern would have caught — higher = catches more errors"}
+        />
+        <BuilderStat
+          label={it ? "Lift vs base" : "Lift vs base"}
+          value={`${stats.lift.toFixed(2)}×`}
+          tooltip={it
+            ? `Lift = tasso di perdita nei deal matchati ÷ tasso base (${(stats.baseLossRate * 100).toFixed(1)}%). Es. 2.56× = i deal matchati perdono 2.56 volte più spesso della media`
+            : `Lift = loss rate in matched deals ÷ base rate (${(stats.baseLossRate * 100).toFixed(1)}%). E.g. 2.56× = matched deals lose 2.56× more often than average`}
+        />
+        <BuilderStat
+          label={it ? "Base loss" : "Base loss"}
+          value={`${(stats.baseLossRate * 100).toFixed(1)}%`}
+          tooltip={it ? "Tasso di perdita medio su tutti i trade chiusi — è il riferimento (benchmark) contro cui si misura il lift" : "Average loss rate across all closed trades — this is the benchmark against which lift is measured"}
+        />
       </div>
 
       {alternatives.length > 0 ? (

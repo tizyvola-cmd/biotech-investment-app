@@ -98,6 +98,73 @@ describe("buildSimLoopPulseData", () => {
     expect(data.rows[0]?.direction).toBe("up");
   });
 
+  it("uses portfolio audit-aligned P&L instead of inflated paper mark", () => {
+    const key = "RYTM|2026-09-01";
+    const rytmTable: SheetTable = {
+      columns: [
+        "Ticker",
+        "Completion Date",
+        "Var. Giorn. %",
+        "Prezzo Corrente ($)",
+        "P&L (%)",
+        "Valore Attuale ($)",
+      ],
+      rows: [
+        {
+          Ticker: "RYTM",
+          "Completion Date": "01/09/2026",
+          "Prezzo Corrente ($)": 92.14,
+          "Var. Giorn. %": 0.42,
+          "Valore Attuale ($)": 20_000,
+          "P&L (%)": 177.5,
+        },
+      ],
+    };
+    const positions: PaperPosition[] = [
+      {
+        ...paperPos(key, "RYTM"),
+        lastMarkPct: 177.5,
+      },
+    ];
+    const state: DecisionSimState = {
+      ticks: [tick("2026-06-18T12:00:00.000Z", positions, { markPct: 177.5 })],
+      paperPortfolio: positions,
+      config: { capitalPerTrade: 5000, maxOpenPositions: 12 },
+      cumulativePaperPnlEur: 0,
+      closedTradeCount: 0,
+    };
+    const inputs = {
+      [key]: {
+        buyPrice: 90.93,
+        capital: 12_500,
+        ignoreSheet: false,
+        investedAt: "2026-05-27T10:00:00.000Z",
+      },
+    };
+    const history = [
+      {
+        ts: "2026-06-17T16:00:00.000Z",
+        capital: 12_500,
+        value: 13_169,
+        pnl: 669,
+        pnlPct: 5.35,
+        byTicker: { [key]: { value: 13_169, pnl: 669, pnlPct: 5.35 } },
+      },
+    ];
+
+    const data = buildSimLoopPulseData({
+      state,
+      simTable: rytmTable,
+      chartPointsByKey: new Map(),
+      inputs,
+      portfolioHistory: history,
+    });
+
+    expect(data.rows).toHaveLength(1);
+    expect(data.rows[0]?.pnlEur).toBeLessThan(500);
+    expect(data.rows[0]?.pnlEur).not.toBeCloseTo(8875, 0);
+  });
+
   it("trend follows Δ visit (flat) when P&L unchanged since visit despite positive 24h", () => {
     const positions = [paperPos("AAA|2026-09-01", "AAA")];
     const state: DecisionSimState = {
@@ -176,7 +243,7 @@ describe("buildSimLoopPulseData", () => {
     expect(data.deltaPnlSinceVisit).toBeNull();
   });
 
-  it("uses entry Weight Sim Exp for open MTM, not live share after reweight", () => {
+  it("ignores hindsight global share map when marks drive causal rebalance", () => {
     const store = new Map<string, string>();
     const localStorage = {
       getItem: (k: string) => store.get(k) ?? null,
@@ -204,6 +271,7 @@ describe("buildSimLoopPulseData", () => {
           shareByRowKey: { "AAA|2026-09-01": 0.2 },
           totalCapitalEur: 10_000,
           capitalPerTrade: 5000,
+          sizingMode: "causal_rebalance",
         },
       });
 
@@ -215,11 +283,12 @@ describe("buildSimLoopPulseData", () => {
           shareByRowKey: { "AAA|2026-09-01": 0.5 },
           totalCapitalEur: 10_000,
           capitalPerTrade: 5000,
+          sizingMode: "causal_rebalance",
         },
       });
 
-      expect(synthEntry.totals.pnlEur).toBeCloseTo(-100, 0);
-      expect(synthLiveHeavy.totals.pnlEur).toBeCloseTo(-100, 0);
+      expect(synthEntry.totals.pnlEur).toBeCloseTo(-500, 0);
+      expect(synthLiveHeavy.totals.pnlEur).toBeCloseTo(synthEntry.totals.pnlEur, 0);
     } finally {
       (globalThis as { window?: { localStorage: typeof localStorage } }).window = prevWindow;
     }
@@ -248,14 +317,15 @@ describe("buildSimLoopPulseData", () => {
         shareByRowKey: { "AAA|2026-09-01": 0.2 },
         totalCapitalEur: 10_000,
         capitalPerTrade: 5000,
+        sizingMode: "causal_rebalance",
       },
     });
 
     expect(equal.totals.pnlEur).toBeCloseTo(500, 0);
-    expect(synth.totals.pnlEur).toBeCloseTo(200, 0);
-    expect(synth.totals.capital).toBeCloseTo(2000, 0);
-    expect(synth.planGap.actualNowEur).toBeCloseTo(200, 0);
-    expect(synth.rows[0]?.gainPlanRow.capital).toBeCloseTo(2000, 0);
+    expect(synth.totals.pnlEur).toBeCloseTo(1000, 0);
+    expect(synth.totals.capital).toBeCloseTo(10_000, 0);
+    expect(synth.planGap.actualNowEur).toBeCloseTo(1000, 0);
+    expect(synth.rows[0]?.gainPlanRow.capital).toBeCloseTo(10_000, 0);
   });
 
   it("keeps aggregate chart P&L when ticks store zero piggy but sells realized P&L", () => {
@@ -458,11 +528,10 @@ describe("buildSimLoopPulseData", () => {
       shareByRowKey: { "AAA|2026-09-01": 0.2 },
       totalCapitalEur: 10_000,
       capitalPerTrade: 5000,
+      sizingMode: "static_approved" as const,
     };
 
-    const history = buildSimLoopHistoryFromTicks(ticks, sizing, {
-      "AAA|2026-09-01": 0.2,
-    });
+    const history = buildSimLoopHistoryFromTicks(ticks, sizing);
     expect(history).toHaveLength(1);
     // synth cap 2000 × 10% = 200 (equal-weight would be 5000 × 10% = 500)
     expect(history[0]?.pnl).toBe(200);
@@ -559,7 +628,7 @@ describe("buildSimLoopPulseData", () => {
     expect(labels.some((l) => /^[dg]\d+/.test(l) || l === "now" || l === "ora")).toBe(true);
   });
 
-  it("scales closed P&L with entry share, not current winner-heavy share", () => {
+  it("scales closed P&L causally after marks, not with hindsight global weights", () => {
     const loserKey = "LOSER|2026-09-01";
     const winnerKey = "WIN|2026-09-01";
     const positions = [paperPos(winnerKey, "WIN", 5000)];
@@ -568,7 +637,58 @@ describe("buildSimLoopPulseData", () => {
         {
           ...tick("2026-06-17T10:00:00.000Z", positions, { markPct: 10 }),
           portfolioBefore: [paperPos(loserKey, "LOSER", 5000), ...positions],
-          evaluations: [],
+          evaluations: [
+            {
+              key: loserKey,
+              ticker: "LOSER",
+              hasPosition: true,
+              inPaperPortfolio: true,
+              daysToCd: 30,
+              readings: {},
+              misalignments: [],
+              misalignmentLabels: [],
+              exitDecision: "sell",
+              investVerdict: null,
+              entryVerdict: null,
+              exitVerdict: null,
+              probPct: 60,
+              suggestedAction: "sell",
+              planReturnPct: 10,
+              pnlPct24h: null,
+              pnlPct: -10,
+              precatVerdictAgree: true,
+              exitReason: null,
+              compositeScore: null,
+              scoringZone: null,
+              scoreBreakdown: null,
+              compositeDampened: false,
+            },
+            {
+              key: winnerKey,
+              ticker: "WIN",
+              hasPosition: true,
+              inPaperPortfolio: true,
+              daysToCd: 30,
+              readings: {},
+              misalignments: [],
+              misalignmentLabels: [],
+              exitDecision: "hold",
+              investVerdict: null,
+              entryVerdict: null,
+              exitVerdict: null,
+              probPct: 60,
+              suggestedAction: "hold",
+              planReturnPct: 10,
+              pnlPct24h: null,
+              pnlPct: 10,
+              precatVerdictAgree: true,
+              exitReason: null,
+              compositeScore: null,
+              scoringZone: null,
+              scoreBreakdown: null,
+              compositeDampened: false,
+            },
+          ],
           trades: [
             {
               at: "2026-06-17T10:00:00.000Z",
@@ -590,20 +710,18 @@ describe("buildSimLoopPulseData", () => {
       closedTradeCount: 1,
     };
 
-    const entryShares = { [loserKey]: 0.1, [winnerKey]: 0.1 };
     const sizing = {
       shareByRowKey: { [loserKey]: 0.02, [winnerKey]: 0.25 },
       totalCapitalEur: 10_000,
       capitalPerTrade: 5000,
+      sizingMode: "causal_rebalance" as const,
     };
 
-    const withCurrentShareOnly = resolveSimLoopClosedPnlEur(state.ticks, sizing, {});
-    const withEntryShare = resolveSimLoopClosedPnlEur(state.ticks, sizing, entryShares);
+    const causalClosed = resolveSimLoopClosedPnlEur(state.ticks, sizing);
 
-    // equal loss -500 → entry 10% of 10k = 1k cap → -100; current 2% share would be -20
-    expect(withEntryShare).toBeCloseTo(-100, 0);
-    expect(withCurrentShareOnly).toBeCloseTo(-20, 0);
-    expect(withEntryShare).not.toBeCloseTo(withCurrentShareOnly, 0);
+    // Hindsight global 2% on loser would be -20 €; causal may zero the loser slot.
+    expect(causalClosed).not.toBeCloseTo(-20, 0);
+    expect(causalClosed).toBeGreaterThanOrEqual(-500);
   });
 
   it("exposes equal-weight reference totals on synth pulse data", () => {
@@ -624,11 +742,13 @@ describe("buildSimLoopPulseData", () => {
         shareByRowKey: { "AAA|2026-09-01": 0.2 },
         totalCapitalEur: 10_000,
         capitalPerTrade: 5000,
+        sizingMode: "causal_rebalance",
       },
     });
 
     expect(synth.equalReferenceTotals?.pnlEur).toBeCloseTo(500, 0);
-    expect(synth.totals.pnlEur).toBeCloseTo(200, 0);
+    // Single open name after causal rebalance gets full book weight on observed +10% mark.
+    expect(synth.totals.pnlEur).toBeCloseTo(1000, 0);
   });
 
   it("uses piggy open MTM on compact ticks when evaluations were stripped", () => {

@@ -26,7 +26,14 @@ import {
 import { PortfolioBriefcaseMark, PortfolioTickerMark } from "./PortfolioScopeToggle";
 import type { PulseScope } from "./PulseScopeSwitcher";
 import { PulseScopeSwitcher } from "./PulseScopeSwitcher";
+import { PulseOpenPositionsMovementLog, movementLogRowFromGainPlan } from "./PulseOpenPositionsMovementLog";
 import { hydrateUiPrefsFromDisk, loadUiPrefsLocal, saveUiPrefs } from "../sheet/uiPrefs";
+import {
+  planGapAccentClass,
+  planGapMisleadingBeat,
+  planGapPctForDisplay,
+  shouldUseDailyBenefitFallback,
+} from "../sheet/pulsePlanGapDisplay";
 
 function directionGlyph(d: PulseDirection): string {
   if (d === "up") return "↑";
@@ -69,11 +76,11 @@ function KpiTile({
       className="rounded-xl border border-[rgb(var(--panel-mint-border))]/55 bg-white/90 px-3 py-2 min-w-[7.5rem] flex-1"
       title={title}
     >
-      <p className="text-[10px] uppercase tracking-wide font-semibold text-ink-muted/85">{label}</p>
-      <p className={`text-base font-bold tabular-nums mt-0.5 leading-tight ${accentClass ?? "text-ink"}`}>
+      <p className="text-[11px] uppercase tracking-wide font-semibold text-ink-muted/85">{label}</p>
+      <p className={`text-xs font-bold tabular-nums mt-0.5 leading-tight ${accentClass ?? "text-ink"}`}>
         {value}
       </p>
-      {sub ? <p className="text-[10px] text-ink-muted mt-0.5 tabular-nums">{sub}</p> : null}
+      {sub ? <p className="text-[11px] text-ink-muted mt-0.5 tabular-nums">{sub}</p> : null}
     </div>
   );
 }
@@ -90,6 +97,7 @@ export function DashboardPulseTable({
   onOpenSupernovaTab,
   pulseScope,
   onPulseScopeChange,
+  priceAgeNote,
 }: {
   data: DashboardPulseData;
   history: InvestSimHistoryPoint[];
@@ -105,10 +113,29 @@ export function DashboardPulseTable({
   onOpenSupernovaTab?: (ticker: string) => void;
   pulseScope: PulseScope;
   onPulseScopeChange: (scope: PulseScope) => void;
+  /** Price-age note from livePositionSnapshot — shown in the subtitle when prices are stale. */
+  priceAgeNote?: string | null;
 }) {
   const { lang } = useLang();
   const t = useT();
   const it = lang === "it";
+
+  // DEBUG: trace why Gain 24h shows "—" (todayCovered=0)
+  if (import.meta.env.DEV) {
+    const tot = data.portfolioTotals;
+    console.log("[DashboardPulse] portfolioTotals:", {
+      todayCovered: tot.todayCovered,
+      todayTotal: tot.todayTotal,
+      pnlEurToday: tot.pnlEurToday,
+      pnlEur: tot.pnlEur,
+      capital: tot.capital,
+    });
+    console.log("[DashboardPulse] portfolioRows sample (first 3):", data.portfolioRows.slice(0, 3).map(r => ({
+      ticker: r.ticker,
+      pnlEur24h: r.pnlEur24h,
+      pnlPct24h: r.pnlPct24h,
+    })));
+  }
 
   // Same calibrated risk pipeline used by Pick stocks and the Capital &
   // Diversification view — so the skull/heart shown here is numerically
@@ -157,7 +184,6 @@ export function DashboardPulseTable({
 
   const ptfTone = portfolioPnlTone(data.portfolioTotals.pnlEur, data.portfolioTotals.pnlPct);
   const shellCls = portfolioPnlTabShellClass(data.winRate.winPct);
-  const gap = data.portfolioPlanGap;
 
   return (
     <section
@@ -166,10 +192,10 @@ export function DashboardPulseTable({
       <div className="dashboard-pulse-head flex flex-col gap-2 px-4 py-3 border-b border-[rgb(var(--panel-lab-border))]/45 bg-white">
         <div className="flex flex-wrap items-start justify-between gap-2 min-w-0">
           <div className="min-w-0 flex-1">
-            <h2 className="text-base font-semibold text-ink inline-flex items-center gap-1.5">
+            <h2 className="text-xs font-semibold text-ink inline-flex items-center gap-1.5">
               <PortfolioBriefcaseMark
                 title={t("sim.lossAnalysis.summaryTable.portfolioMark")}
-                className="text-sm"
+                className="text-xs"
               />
               {t("dashboard.pulse.title")}
             </h2>
@@ -179,12 +205,17 @@ export function DashboardPulseTable({
                     when: formatVisitAgo(data.priorVisitAt, lang),
                   })
                 : t("dashboard.pulse.firstVisit")}
+              {priceAgeNote ? (
+                <span className="ml-1 text-amber-600 dark:text-amber-400 font-medium">
+                  · {priceAgeNote}
+                </span>
+              ) : null}
             </p>
           </div>
           <div className="flex items-center gap-2 shrink-0">
             {data.winRate.decisive > 0 ? (
               <span
-                className={`text-[11px] font-semibold tabular-nums px-2 py-1 rounded-full border border-[rgb(var(--panel-feed-border))]/45 bg-white/80 ${
+                className={`text-xs font-semibold tabular-nums px-2 py-1 rounded-full border border-[rgb(var(--panel-feed-border))]/45 bg-white/80 ${
                   data.winRate.winPct != null && data.winRate.winPct >= 50
                     ? "text-[rgb(var(--signal-up))]"
                     : "text-[rgb(var(--signal-down))]"
@@ -201,7 +232,7 @@ export function DashboardPulseTable({
       </div>
 
       {data.portfolioRows.length === 0 ? (
-        <p className="text-sm text-ink-muted text-center py-8 px-4">{t("dashboard.pulse.noPortfolio")}</p>
+        <p className="text-xs text-ink-muted text-center py-8 px-4">{t("dashboard.pulse.noPortfolio")}</p>
       ) : (
         <>
           <div className="dashboard-pulse-hero grid gap-3 p-3 lg:grid-cols-[minmax(0,1.35fr)_minmax(0,1fr)]">
@@ -212,55 +243,55 @@ export function DashboardPulseTable({
               </p>
               <div className="flex flex-wrap gap-2">
                 <KpiTile
-                  label={t("dashboard.pulse.portfolioPnl")}
+                  label={it ? "Gain open (MTM)" : "Gain open (MTM)"}
                   value={fmtPulseEur(data.portfolioTotals.pnlEur)}
-                  sub={fmtPulsePct(data.portfolioTotals.pnlPct)}
+                  sub={[
+                    fmtPulsePct(data.portfolioTotals.pnlPct),
+                    priceAgeNote ?? null,
+                  ].filter(Boolean).join(" · ") || undefined}
                   accentClass={portfolioPnlAccentClass(data.portfolioTotals.pnlEur)}
-                  title={t("dashboard.pulse.portfolioPnlTip")}
+                  title={it ? "P&L mark-to-market sulle posizioni aperte" : "Mark-to-market P&L on open positions"}
                 />
-                {data.deltaPortfolioPnlSinceVisit != null ? (
+                <KpiTile
+                  label={it ? "Gain 24h" : "Gain 24h"}
+                  value={data.portfolioTotals.todayCovered > 0 ? fmtPulseEur(data.portfolioTotals.pnlEurToday) : "—"}
+                  sub={data.portfolioTotals.todayCovered === 0 ? (it ? "mercato chiuso" : "market closed") : undefined}
+                  accentClass={data.portfolioTotals.todayCovered > 0 ? portfolioPnlAccentClass(data.portfolioTotals.pnlEurToday) : undefined}
+                  title={t("dashboard.pulse.pnl24hTip")}
+                />
+                <KpiTile
+                  label={it ? "Δ visita" : "Δ visit"}
+                  value={data.deltaPortfolioPnlSinceVisit != null ? fmtPulseEur(data.deltaPortfolioPnlSinceVisit) : "—"}
+                  sub={data.deltaPortfolioPnlSinceVisit == null ? (it ? "prima visita" : "first visit") : undefined}
+                  accentClass={data.deltaPortfolioPnlSinceVisit != null ? portfolioPnlAccentClass(data.deltaPortfolioPnlSinceVisit) : undefined}
+                  title={it ? "Variazione P&L dall'ultima visita" : "P&L change since last visit"}
+                />
+                {data.portfolioTotals.closedCount > 0 && (
                   <KpiTile
-                    label={t("dashboard.pulse.colDelta")}
-                    value={fmtPulseEur(data.deltaPortfolioPnlSinceVisit)}
-                    accentClass={portfolioPnlAccentClass(data.deltaPortfolioPnlSinceVisit)}
-                    title={t("dashboard.pulse.deltaTip")}
-                  />
-                ) : (
-                  <KpiTile
-                    label={t("dashboard.pulse.colDelta")}
-                    value="—"
-                    sub={t("dashboard.pulse.firstVisitShort")}
+                    label={it ? "Gain closed" : "Gain closed"}
+                    value={fmtPulseEur(data.portfolioTotals.closedPnlEur)}
+                    sub={it ? `${data.portfolioTotals.closedCount} pos. chiuse` : `${data.portfolioTotals.closedCount} closed pos.`}
+                    accentClass={portfolioPnlAccentClass(data.portfolioTotals.closedPnlEur)}
+                    title={it ? "P&L realizzato sulle posizioni già vendute" : "Realized P&L on sold positions"}
                   />
                 )}
-                {data.portfolioTotals.todayCovered > 0 ? (
-                  <KpiTile
-                    label="24h"
-                    value={fmtPulseEur(data.portfolioTotals.pnlEurToday)}
-                    accentClass={portfolioPnlAccentClass(data.portfolioTotals.pnlEurToday)}
-                    title={t("dashboard.pulse.pnl24hTip")}
-                  />
-                ) : null}
               </div>
-              <div className="flex flex-wrap gap-2">
-                <KpiTile
-                  label={t("dashboard.pulse.planActual")}
-                  value={fmtPulseEur(gap.actualNowEur)}
-                  sub={
-                    gap.plannedNowEur != null
-                      ? `${t("dashboard.pulse.planLabel")} ${fmtPulseEur(gap.plannedNowEur)}`
-                      : undefined
-                  }
-                  accentClass={portfolioPnlAccentClass(gap.actualNowEur ?? 0)}
-                  title={t("dashboard.pulse.planActualTip")}
+              {data.portfolioRows.length > 0 ? (
+                <PulseOpenPositionsMovementLog
+                  it={it}
+                  rows={data.portfolioRows.map((row) =>
+                    movementLogRowFromGainPlan({
+                      key: row.key,
+                      ticker: row.ticker,
+                      pnlEur: row.pnlEur,
+                      pnlPct: row.pnlPct,
+                      deltaPnlEurSinceVisit: row.deltaPnlEurSinceVisit,
+                      investedAt: row.gainPlanRow.investedAt,
+                      simRow: row.gainPlanRow.simRow as Record<string, unknown> | undefined,
+                    }),
+                  )}
                 />
-                <KpiTile
-                  label={t("dashboard.pulse.planGap")}
-                  value={gap.gapEur != null ? fmtPulseEur(gap.gapEur) : "—"}
-                  sub={gap.gapPct != null ? fmtPulsePct(gap.gapPct) : undefined}
-                  accentClass={portfolioPnlAccentClass(gap.gapEur ?? 0)}
-                  title={t("dashboard.pulse.planGapTip")}
-                />
-              </div>
+              ) : null}
             </div>
           </div>
 
@@ -273,7 +304,7 @@ export function DashboardPulseTable({
               <span className="text-[11px] font-semibold uppercase tracking-wide text-[rgb(var(--panel-feed-accent-strong))]">
                 {t("dashboard.pulse.positionsSummary", { n: data.portfolioRows.length })}
               </span>
-              <span className="ml-2 text-[10px] text-ink-muted font-normal normal-case tracking-normal">
+              <span className="ml-2 text-[11px] text-ink-muted font-normal normal-case tracking-normal">
                 {positionsOpen ? (it ? "nascondi" : "hide") : it ? "mostra" : "show"}
               </span>
             </summary>
@@ -281,7 +312,7 @@ export function DashboardPulseTable({
             <table className={`${SHEET_GRID_TABLE_CLASS} text-xs border-collapse min-w-[42rem]`}>
               <SheetGridColgroup columnCount={8} />
               <thead>
-                <tr className="bg-[rgb(var(--panel-feed-header-bg))]/80 text-[11px] uppercase tracking-wide text-ink-muted">
+                <tr className="bg-[rgb(var(--panel-feed-header-bg))]/80 text-[11px] uppercase tracking-wide text-ink-muted font-semibold">
                   <th className={gridTh("left", "py-2 font-semibold")}>{t("dashboard.pulse.colTicker")}</th>
                   <th className={gridTh("center", "py-2 font-semibold")} title={t("dashboard.pulse.colTrendTip")}>
                     {t("dashboard.pulse.colTrend")}
@@ -332,7 +363,7 @@ export function DashboardPulseTable({
                         portfolioMarkTitle={t("sim.lossAnalysis.summaryTable.portfolioMark")}
                       />
                     </td>
-                    <td className={`${gridTd("center")} text-lg leading-none font-bold ${directionClass(row.direction)}`}>
+                    <td className={`${gridTd("center")} text-xs leading-none font-bold ${directionClass(row.direction)}`}>
                       {directionGlyph(row.direction)}
                     </td>
                     <td
@@ -349,20 +380,36 @@ export function DashboardPulseTable({
                       className={`${gridTd("center")} tabular-nums whitespace-nowrap font-semibold${portfolioPnlAccentClass(row.pnlEur)}`}
                     >
                       {fmtPulseEur(row.pnlEur)}
-                      <span className="text-[9px] font-normal opacity-80 ml-0.5">
+                      <span className="text-[11px] font-normal opacity-80 ml-0.5">
                         {fmtPulsePct(row.pnlPct)}
                       </span>
                     </td>
                     <td
-                      className={`${gridTd("center")} tabular-nums whitespace-nowrap text-[10px]${portfolioPnlAccentClass(row.planGap.gapEur ?? 0)}`}
-                      title={t("dashboard.pulse.planGapTip")}
+                      className={`${gridTd("center")} tabular-nums whitespace-nowrap text-xs${planGapAccentClass(row.pnlPct, row.planGap.gapEur)}`}
+                      title={
+                        planGapMisleadingBeat(row.pnlPct, row.planGap.gapEur)
+                          ? it
+                            ? `Scostamento vs piano oggi (non ROI atteso). Posizione in perdita ${row.pnlPct.toFixed(0)}% — il piano era ancora più basso. Target modello: ${row.gainPlanRow.expectedGainPct != null ? `${row.gainPlanRow.expectedGainPct.toFixed(0)}%` : "—"}`
+                            : `Gap vs plan today (not expected ROI). Position ${row.pnlPct.toFixed(0)}% MTM loss — plan was lower still. Model target: ${row.gainPlanRow.expectedGainPct != null ? `${row.gainPlanRow.expectedGainPct.toFixed(0)}%` : "—"}`
+                          : `${t("dashboard.pulse.planGapTip")}${row.gainPlanRow.expectedGainPct != null ? (it ? ` · ROI target modello ${row.gainPlanRow.expectedGainPct.toFixed(0)}%` : ` · Model ROI target ${row.gainPlanRow.expectedGainPct.toFixed(0)}%`) : ""}`
+                      }
                     >
                       {row.planGap.gapEur != null ? (
                         <>
                           {fmtPulseEur(row.planGap.gapEur)}
-                          {row.planGap.gapPct != null ? (
-                            <span className="block text-[9px] opacity-85">{fmtPulsePct(row.planGap.gapPct)}</span>
-                          ) : null}
+                          {(() => {
+                            const gapPct = planGapPctForDisplay(
+                              row.planGap.gapPct,
+                              row.gainPlanRow.capital,
+                            );
+                            return gapPct != null ? (
+                              <span className="block text-[11px] opacity-85">{fmtPulsePct(gapPct)}</span>
+                            ) : row.gainPlanRow.capital < 500 ? (
+                              <span className="block text-[9px] opacity-60 font-normal">
+                                {it ? "micro" : "micro"}
+                              </span>
+                            ) : null;
+                          })()}
                         </>
                       ) : (
                         "—"
@@ -389,6 +436,8 @@ export function DashboardPulseTable({
                           expectedReturnPct,
                           daysToTarget,
                           dailyChangePct: row.pnlPct24h,
+                          capitalEur: row.gainPlanRow.capital,
+                          pnlPct: row.pnlPct,
                         });
                         const perDayPct =
                           expectedReturnPct != null &&
@@ -396,7 +445,12 @@ export function DashboardPulseTable({
                           daysToTarget != null &&
                           daysToTarget > 0
                             ? expectedReturnPct / daysToTarget
-                            : row.pnlPct24h ?? null;
+                            : shouldUseDailyBenefitFallback({
+                                capitalEur: row.gainPlanRow.capital,
+                                pnlPct: row.pnlPct,
+                              })
+                              ? row.pnlPct24h ?? null
+                              : null;
                         return (
                           <RiskBenefitScaleCell
                             entry={entry}
@@ -432,7 +486,7 @@ export function DashboardPulseTable({
             <table className={`${SHEET_GRID_TABLE_CLASS} text-xs border-collapse min-w-[28rem]`}>
               <SheetGridColgroup columnCount={5} />
               <thead>
-                <tr className="text-[11px] uppercase tracking-wide text-ink-muted">
+                <tr className="text-[11px] uppercase tracking-wide text-ink-muted font-semibold">
                   <th className={gridTh("left", "py-1.5 font-semibold")}>{t("dashboard.pulse.colTicker")}</th>
                   <th className={gridTh("center", "py-1.5 font-semibold")}>MII °</th>
                   <th className={gridTh("center", "py-1.5 font-semibold")} title={t("dashboard.pulse.miiDeltaTip")}>
@@ -480,7 +534,7 @@ export function DashboardPulseTable({
         </div>
       ) : null}
 
-      <p className="px-4 pb-3 pt-1 text-[10px] text-ink-muted/75 leading-snug border-t border-[rgb(var(--panel-feed-border))]/25 bg-[rgb(var(--panel-feed-header-bg))]/45">
+      <p className="px-4 pb-3 pt-1 text-[11px] text-ink-muted/75 leading-snug border-t border-[rgb(var(--panel-feed-border))]/25 bg-[rgb(var(--panel-feed-header-bg))]/45">
         {t("dashboard.pulse.footnote")}
         {ptfTone === "gain" ? ` · ${t("dashboard.pulse.inGain")}` : ptfTone === "loss" ? ` · ${t("dashboard.pulse.inLoss")}` : ""}
       </p>

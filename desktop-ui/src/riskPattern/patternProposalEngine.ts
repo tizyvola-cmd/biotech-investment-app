@@ -40,6 +40,7 @@ import {
 } from "./patternProposalStore";
 import {
   DEFAULT_PATTERN_PROPOSAL_CONFIG,
+  type PatternApprovalSource,
   type PatternProposal,
   type PatternProposalConfig,
   type PatternProposalReason,
@@ -316,6 +317,26 @@ function describeConditionsKey(p: RiskPattern): string {
 
 // ── Approval / rejection ──────────────────────────────────────────────────
 
+export function inferApprovalSource(proposal: PatternProposal): PatternApprovalSource {
+  if (proposal.id.startsWith("pcse-prop-")) return "pcse";
+  if (proposal.id.startsWith("pat-prop-manual-")) {
+    if (
+      proposal.rationale.includes("Manual allocation synthesizer") ||
+      proposal.rationale.includes("Sintetizzatore allocazione manuale")
+    ) {
+      return "manual";
+    }
+    if (
+      proposal.rationale.includes("One-click apply from errors panel") ||
+      proposal.rationale.includes("Applicazione diretta dal pannello errori")
+    ) {
+      return "auto_apply";
+    }
+    return "manual";
+  }
+  return "engine";
+}
+
 export function approvePatternProposal(
   proposalId: string,
   reviewNote?: string,
@@ -330,7 +351,10 @@ export function approvePatternProposal(
   // currentPatternDegraded with no alternative), do nothing to the approved
   // record — the operator may choose to clear it via clearApprovedPattern().
   if (updated.proposedPattern) {
-    const record = promotePatternToApproved(updated.proposedPattern.pattern);
+    const record = promotePatternToApproved(updated.proposedPattern.pattern, {
+      source: inferApprovalSource(updated),
+      proposalId: updated.id,
+    });
     return { proposal: updated, approvedPattern: record.current };
   }
   return { proposal: updated, approvedPattern: null };

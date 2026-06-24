@@ -32,6 +32,7 @@ import { SIM_HOT_ZONE_DAYS } from "./cdHorizons";
 import { RECOVERY_HOLD_PROB_MIN } from "./recoveryProbability";
 import { portfolioExitRecoveryGuardsActive } from "./portfolioDeclineSell";
 import { demoteAction, type AdviceFeedback } from "./adviceFeedback";
+import type { SimLoopExecutionOpts } from "./simLoopDailyEvaluation";
 import {
   DEFAULT_MAX_OPEN_POSITIONS,
   evaluateExperimentTick,
@@ -52,7 +53,6 @@ import { resolveTop2VerdictFields } from "./top2DecisionHelpers";
 import { signalMetricsFromSimRow } from "./investSignalScore";
 import { computeFairRecs24hFromEvaluations } from "./missedOpportunityFairRecs";
 import type { GapInvestigationRecord } from "./gapInvestigationTypes";
-import { recordTradeLeadTimes, updatePatternMatchState } from "../riskPattern/patternMatchTracker";
 
 export type CurveMisalignmentId =
   | "harmony_pred_slope"
@@ -169,6 +169,8 @@ export type PaperTradeEvent = {
   capital: number;
   pnlPctSimulated: number | null;
   pnlEurSimulated: number | null;
+  /** Var.24h post-vendita — persistito prima del compact tick (evaluations[] vuote). */
+  postSellMove24hPct?: number | null;
 };
 
 export type DecisionSimTickSummary = {
@@ -220,6 +222,8 @@ export type DecisionSimState = {
   paperPortfolio: PaperPosition[];
   ticks: DecisionSimTick[];
   lastTickAt: string | null;
+  /** Rome ymd of last 18:00 solid evaluation mark tick. */
+  lastDailyEvaluationDayKey: string | null;
   cumulativePaperPnlEur: number;
   closedTradeCount: number;
   experimentStartedAt: string | null;
@@ -244,6 +248,12 @@ export type DecisionSimContext = {
   badBuyScoredKeys?: Set<string>;
   /** Learning loop corrections — demotions block paper auto-sell. */
   adviceFeedback?: AdviceFeedback | null;
+  /** Daily solid gate + synth capital (auto tick at 18:00). */
+  simLoopExecution?: SimLoopExecutionOpts | null;
+};
+
+export type SimulatePaperTradesOpts = {
+  resolveBuyCapital?: (ev: TickerSimEvaluation) => number;
 };
 
 const TARGET_SN_GAP_PP = 2.5;
@@ -1182,6 +1192,7 @@ export function simulatePaperTrades(
   at: string,
   capitalPerTrade: number,
   maxOpenPositions: number,
+  opts?: SimulatePaperTradesOpts,
 ): { trades: PaperTradeEvent[]; portfolioAfter: PaperPosition[] } {
   const trades: PaperTradeEvent[] = [];
   const keys = new Set(portfolio.map((p) => p.key));
@@ -1214,12 +1225,13 @@ export function simulatePaperTrades(
   for (const ev of evaluations) {
     if (ev.suggestedAction !== "buy" || keys.has(ev.key)) continue;
     if (next.length >= maxOpenPositions) continue;
+    const buyCapital = opts?.resolveBuyCapital?.(ev) ?? capitalPerTrade;
     const top2Label = getTop2Label(ev.hasPosition, ev.investVerdict, "en");
     const pos: PaperPosition = {
       key: ev.key,
       ticker: ev.ticker,
       entryAt: at,
-      capital: capitalPerTrade,
+      capital: buyCapital,
       entryReason: `${top2Label} · P ${ev.probPct?.toFixed(0) ?? "—"}%`,
       entryPlanReturnPct: ev.planReturnPct,
       entryProbPct: ev.probPct,
@@ -1232,7 +1244,7 @@ export function simulatePaperTrades(
       key: ev.key,
       side: "buy",
       reason: `${top2Label} · ${ev.exitDecision}`,
-      capital: capitalPerTrade,
+      capital: buyCapital,
       pnlPctSimulated: null,
       pnlEurSimulated: null,
     });
@@ -1348,28 +1360,32 @@ export function runDecisionSimTick(ctx: DecisionSimContext): DecisionSimTick {
   const at = new Date().toISOString();
 
   const evaluations = buildDecisionSimEvaluations(ctx);
+  const filtered = ctx.simLoopExecution?.filterEvaluations
+    ? ctx.simLoopExecution.filterEvaluations(evaluations)
+    : evaluations;
 
   const maxOpen = ctx.maxOpenPositions ?? DEFAULT_MAX_OPEN_POSITIONS;
   const tickId = `tick_${Date.now()}`;
 
   const { trades, portfolioAfter: rawAfter } = simulatePaperTrades(
-    evaluations,
+    filtered,
     ctx.paperPortfolio,
     at,
     capital,
     maxOpen,
+    ctx.simLoopExecution
+      ? { resolveBuyCapital: ctx.simLoopExecution.resolveBuyCapital }
+      : undefined,
   );
 
-  const portfolioAfter = stampPortfolioMarks(rawAfter, evaluations);
-  recordTradeLeadTimes(trades, at);
-  updatePatternMatchState(portfolioAfter, at, ctx.simTable);
-  const summary = summarizeTick(evaluations, trades);
+  const portfolioAfter = stampPortfolioMarks(rawAfter, filtered);
+  const summary = summarizeTick(filtered, trades);
 
   const badBuyKeys = new Set(ctx.badBuyScoredKeys ?? []);
   const experiment = evaluateExperimentTick({
     tickId,
     at,
-    evaluations,
+    evaluations: filtered,
     trades,
     portfolioBefore: ctx.paperPortfolio,
     portfolioAfter,
@@ -1383,8 +1399,8 @@ export function runDecisionSimTick(ctx: DecisionSimContext): DecisionSimTick {
   summary.piggyBank = experiment.piggyBank;
   summary.missedBuyCount = experiment.scorecardDelta.missedBuyCount ?? 0;
   summary.adviceEventsCount = experiment.adviceEvents.length;
-  summary.recs24hHypotheticalEur = recs24hFromEvaluations(evaluations, capital);
-  summary.fairRecs24hEur = computeFairRecs24hFromEvaluations(evaluations, portfolioAfter, {
+  summary.recs24hHypotheticalEur = recs24hFromEvaluations(filtered, capital);
+  summary.fairRecs24hEur = computeFairRecs24hFromEvaluations(filtered, portfolioAfter, {
     capitalPerTrade: capital,
     maxOpenPositions: maxOpen,
   });
@@ -1392,7 +1408,7 @@ export function runDecisionSimTick(ctx: DecisionSimContext): DecisionSimTick {
   return {
     id: tickId,
     at,
-    evaluations,
+    evaluations: filtered,
     portfolioBefore: ctx.paperPortfolio,
     portfolioAfter,
     trades,
@@ -1411,19 +1427,21 @@ export function runDecisionSimMarkTick(ctx: DecisionSimContext): DecisionSimTick
   const capital = ctx.capitalPerTrade ?? DEFAULT_PLAN_CAPITAL_EUR;
   const at = new Date().toISOString();
   const evaluations = buildDecisionSimEvaluations(ctx);
+  const filtered = ctx.simLoopExecution?.filterEvaluations
+    ? ctx.simLoopExecution.filterEvaluations(evaluations)
+    : evaluations;
   const maxOpen = ctx.maxOpenPositions ?? DEFAULT_MAX_OPEN_POSITIONS;
   const tickId = `mark_${Date.now()}`;
   const trades: PaperTradeEvent[] = [];
 
   const portfolioAfter = stampPortfolioMarks(ctx.paperPortfolio, evaluations);
-  updatePatternMatchState(portfolioAfter, at, ctx.simTable);
-  const summary = summarizeTick(evaluations, trades);
+  const summary = summarizeTick(filtered, trades);
 
   const badBuyKeys = new Set(ctx.badBuyScoredKeys ?? []);
   const experiment = evaluateExperimentTick({
     tickId,
     at,
-    evaluations,
+    evaluations: filtered,
     trades,
     portfolioBefore: ctx.paperPortfolio,
     portfolioAfter,
@@ -1437,8 +1455,8 @@ export function runDecisionSimMarkTick(ctx: DecisionSimContext): DecisionSimTick
   summary.piggyBank = experiment.piggyBank;
   summary.missedBuyCount = experiment.scorecardDelta.missedBuyCount ?? 0;
   summary.adviceEventsCount = experiment.adviceEvents.length;
-  summary.recs24hHypotheticalEur = recs24hFromEvaluations(evaluations, capital);
-  summary.fairRecs24hEur = computeFairRecs24hFromEvaluations(evaluations, portfolioAfter, {
+  summary.recs24hHypotheticalEur = recs24hFromEvaluations(filtered, capital);
+  summary.fairRecs24hEur = computeFairRecs24hFromEvaluations(filtered, portfolioAfter, {
     capitalPerTrade: capital,
     maxOpenPositions: maxOpen,
   });
@@ -1446,7 +1464,7 @@ export function runDecisionSimMarkTick(ctx: DecisionSimContext): DecisionSimTick
   return {
     id: tickId,
     at,
-    evaluations,
+    evaluations: filtered,
     portfolioBefore: ctx.paperPortfolio,
     portfolioAfter,
     trades,

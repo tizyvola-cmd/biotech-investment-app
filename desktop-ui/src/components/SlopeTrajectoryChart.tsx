@@ -392,19 +392,21 @@ export function SlopeTrajectoryChart({
             }
           />
           <ReferenceLine y={0} stroke="#cbd5e1" strokeDasharray="4 4" />
+          {/* T-10 → CD: grigio sfumato */}
           <ReferenceArea
-            x1={xDomain[0]}
-            x2={todayOffset}
-            fill="#dbeafe"
-            fillOpacity={0.22}
+            x1={-10}
+            x2={0}
+            fill="#94a3b8"
+            fillOpacity={0.18}
             strokeOpacity={0}
             ifOverflow="extendDomain"
           />
+          {/* CD → T+7: giallo senape sfumato */}
           <ReferenceArea
-            x1={todayOffset}
-            x2={0}
-            fill="#fef3c7"
-            fillOpacity={0.28}
+            x1={0}
+            x2={7}
+            fill="#ca8a04"
+            fillOpacity={0.13}
             strokeOpacity={0}
             ifOverflow="extendDomain"
           />

@@ -65,6 +65,7 @@ function ChartLegend({
   showSimLoopSynth,
   isPnlMode,
   isSynthPrimary,
+  isWeightPrimary,
 }: {
   it: boolean;
   showCompare?: boolean;
@@ -72,12 +73,17 @@ function ChartLegend({
   showSimLoopSynth?: boolean;
   isPnlMode?: boolean;
   isSynthPrimary?: boolean;
+  isWeightPrimary?: boolean;
 }) {
   const primaryLabel = isSynthPrimary
     ? it
       ? "Sim loop (synth) P&L €"
       : "Sim loop (synth) P&L €"
-    : isPnlMode
+    : isWeightPrimary
+      ? it
+        ? "Sim loop (weight) P&L €"
+        : "Sim loop (weight) P&L €"
+      : isPnlMode
       ? it
         ? "Sim loop P&L €"
         : "Sim loop P&L €"
@@ -86,6 +92,8 @@ function ChartLegend({
         : "Portfolio value €";
   const primarySwatch = isSynthPrimary ? (
     <span className="inline-block w-5 h-0.5 bg-pink-600 rounded" aria-hidden />
+  ) : isWeightPrimary ? (
+    <span className="inline-block w-5 h-0.5 bg-emerald-600 rounded" aria-hidden />
   ) : (
     <span className="inline-block w-5 h-0.5 bg-[#185FA5] rounded" aria-hidden />
   );
@@ -278,8 +286,8 @@ export function TradePortfolioChart({
   simLoopSynthPortfolioCurve?: PortfolioPoint[];
   /** Y axis: cumulative P&L € (sim loop) or legacy book value. */
   valueMode?: "pnl" | "book";
-  /** Primary curve styling — equal-weight paper sim vs synth sizing. */
-  curveVariant?: "equal" | "synth";
+  /** Primary curve styling — equal / weight / synth sizing. */
+  curveVariant?: "equal" | "weight" | "synth";
   /** Show dashed weight/synth overlays (off when using curveVariant toggle). */
   showOverlayCurves?: boolean;
 }) {
@@ -289,7 +297,8 @@ export function TradePortfolioChart({
   const capitalBase = deployedCapitalEur > 0 ? deployedCapitalEur : (initialCapital ?? 0);
   const isPnlMode = valueMode === "pnl";
   const isSynthPrimary = curveVariant === "synth";
-  const primaryStroke = isSynthPrimary ? "#db2777" : "#185FA5";
+  const isWeightPrimary = curveVariant === "weight";
+  const primaryStroke = isSynthPrimary ? "#db2777" : isWeightPrimary ? "#059669" : "#185FA5";
 
   const chartData = useMemo((): ChartRow[] => {
     const compareByDate = new Map(
@@ -569,6 +578,7 @@ export function TradePortfolioChart({
             showSimLoopSynth={showSimLoopSynth}
             isPnlMode={isPnlMode}
             isSynthPrimary={isSynthPrimary}
+            isWeightPrimary={isWeightPrimary}
           />
         </div>
       ) : null}
@@ -659,6 +669,7 @@ export function TradePortfolioChart({
             showSimLoopSynth={showSimLoopSynth}
             isPnlMode={isPnlMode}
             isSynthPrimary={isSynthPrimary}
+            isWeightPrimary={isWeightPrimary}
           />
         </div>
       ) : null}

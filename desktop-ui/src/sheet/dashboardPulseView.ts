@@ -327,12 +327,28 @@ export function buildDashboardPulseData(opts: {
 
   const gainPlanRows = portfolioRows.map((r) => r.gainPlanRow);
   const portfolioPlanGap = summarizePlanGap(gainPlanRows, history);
+  const gapForChart: PlanGapSummary = {
+    ...portfolioPlanGap,
+    actualNowEur: portfolioTotals.pnlEur,
+    gapEur:
+      portfolioPlanGap.plannedNowEur != null
+        ? Math.round((portfolioTotals.pnlEur - portfolioPlanGap.plannedNowEur) * 100) / 100
+        : portfolioPlanGap.gapEur,
+    gapPct:
+      portfolioPlanGap.plannedNowEur != null && portfolioTotals.capital > 0
+        ? Math.round(
+            ((portfolioTotals.pnlEur - portfolioPlanGap.plannedNowEur) /
+              portfolioTotals.capital) *
+              10000,
+          ) / 100
+        : portfolioPlanGap.gapPct,
+  };
   const aggregateGainPlanSeries = buildPortfolioGainPlanAggregateSeries(
     gainPlanRows,
     history,
     effectivePriorSnapshot?.savedAt ?? null,
     lang,
-    { preferHoldDayAxis: true },
+    { preferHoldDayAxis: true, liveGap: gapForChart },
   );
 
   return {

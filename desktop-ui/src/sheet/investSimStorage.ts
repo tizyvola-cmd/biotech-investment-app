@@ -22,6 +22,10 @@ export type InvestSimInputEntry = {
   closedValue?: number;
   /** P&L realizzato al momento della vendita (€) — closed piggy bank. */
   closedPnlEur?: number;
+  /** P(plan) / composite score catturato al momento del buy (rescue / loss audit). */
+  entryProbPct?: number | null;
+  /** Origine posizione — distingue portfolio reale vs sim loop nei chiusi. */
+  universe?: "real" | "simloop";
 };
 
 export type ClosedSimExitSnapshot = Pick<

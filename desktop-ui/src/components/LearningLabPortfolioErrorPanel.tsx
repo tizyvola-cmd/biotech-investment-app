@@ -103,6 +103,22 @@ export function LearningLabPortfolioErrorPanel({ reloadToken = 0 }: { reloadToke
   const snap = (preview?.snapshot ?? status?.latest) as Record<string, unknown> | undefined;
   const scenarios = (snap?.scenarios ?? {}) as Record<string, number | null>;
 
+  const weightedEqualDelta = useMemo(() => {
+    const eq = scenarios.equal;
+    const wt = scenarios.weighted;
+    if (eq != null && wt != null && Number.isFinite(eq) && Number.isFinite(wt)) {
+      return wt - eq;
+    }
+    const fromSnap = snap?.weighted_vs_equal_delta_eur;
+    if (typeof fromSnap === "number" && Number.isFinite(fromSnap)) return fromSnap;
+    return status?.weighted_vs_equal_delta_eur ?? null;
+  }, [scenarios.equal, scenarios.weighted, snap, status?.weighted_vs_equal_delta_eur]);
+
+  const closedCount =
+    typeof snap?.n_closed === "number"
+      ? snap.n_closed
+      : status?.n_closed ?? null;
+
   return (
     <div className="rounded-lg border border-violet-500/30 bg-violet-500/5 p-3 space-y-3">
       <div className="flex flex-wrap items-start gap-2">
@@ -137,13 +153,18 @@ export function LearningLabPortfolioErrorPanel({ reloadToken = 0 }: { reloadToke
       <div className="grid grid-cols-2 sm:grid-cols-4 gap-2 text-[10px]">
         <div className="rounded border border-[rgb(var(--border))]/40 px-2 py-1.5">
           <p className="text-ink-muted">{it ? "Trade chiusi" : "Closed trades"}</p>
-          <p className="font-semibold tabular-nums">
-            {status?.n_closed ?? (typeof snap?.n_closed === "number" ? snap.n_closed : "—")}
-          </p>
+          <p className="font-semibold tabular-nums">{closedCount ?? "—"}</p>
         </div>
         <div className="rounded border border-[rgb(var(--border))]/40 px-2 py-1.5">
-          <p className="text-ink-muted">Weighted − Equal</p>
-          <p className="font-semibold tabular-nums">{fmtEur(status?.weighted_vs_equal_delta_eur ?? (snap?.weighted_vs_equal_delta_eur as number))}</p>
+          <p className="text-ink-muted">
+            Weighted − Equal
+            {preview ? (
+              <span className="ml-1 text-[9px] text-violet-600 dark:text-violet-300">
+                ({it ? "preview" : "preview"})
+              </span>
+            ) : null}
+          </p>
+          <p className="font-semibold tabular-nums">{fmtEur(weightedEqualDelta)}</p>
         </div>
         <div className="rounded border border-[rgb(var(--border))]/40 px-2 py-1.5">
           <p className="text-ink-muted">Equal</p>

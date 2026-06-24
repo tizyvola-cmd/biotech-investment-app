@@ -74,6 +74,7 @@ export type LossAuditSummary = {
   totalLosses: number;
   totalFlat: number;
   lossRatePct: number;
+  winRatePct: number;
   surpriseLosses: number;
   expectedLosses: number;
   surpriseRatePct: number;
@@ -81,6 +82,10 @@ export type LossAuditSummary = {
   realizedLossEur: number;
   avgLossPct: number;
   avgLossEur: number;
+  avgWinPct: number;
+  avgWinEur: number;
+  /** E[trade] = winRate*avgWin + lossRate*avgLoss (signed). */
+  expectancyEurPerTrade: number | null;
 };
 
 export type LossAuditResult = {
@@ -277,12 +282,17 @@ export function computeLossAudit(
   let surprise = 0;
   let expected = 0;
   let realizedLossEur = 0;
+  let realizedWinEur = 0;
   let totalCapitalEur = 0;
   let sumLossPct = 0;
+  let sumWinPct = 0;
   for (const r of rows) {
     totalCapitalEur += r.capital_eur ?? 0;
-    if (isWin(r)) wins++;
-    else if (isLoss(r)) {
+    if (isWin(r)) {
+      wins++;
+      sumWinPct += r.pnl_pct ?? 0;
+      realizedWinEur += r.pnl_eur ?? 0;
+    } else if (isLoss(r)) {
       losses++;
       sumLossPct += r.pnl_pct ?? 0;
       realizedLossEur += r.pnl_eur ?? 0;
@@ -292,19 +302,31 @@ export function computeLossAudit(
   }
   const totalClosed = rows.length;
   const totalFlat = totalClosed - wins - losses;
+  const decisive = wins + losses;
+  const winRate = decisive > 0 ? wins / decisive : null;
+  const avgWinEur = wins > 0 ? realizedWinEur / wins : 0;
+  const avgLossEur = losses > 0 ? realizedLossEur / losses : 0;
+  const expectancyEurPerTrade =
+    winRate != null
+      ? winRate * avgWinEur + (1 - winRate) * avgLossEur
+      : null;
   const summary: LossAuditSummary = {
     totalClosed,
     totalWins: wins,
     totalLosses: losses,
     totalFlat,
     lossRatePct: totalClosed > 0 ? (losses / totalClosed) * 100 : 0,
+    winRatePct: totalClosed > 0 ? (wins / totalClosed) * 100 : 0,
     surpriseLosses: surprise,
     expectedLosses: expected,
     surpriseRatePct: losses > 0 ? (surprise / losses) * 100 : 0,
     totalCapitalEur,
     realizedLossEur,
     avgLossPct: losses > 0 ? sumLossPct / losses : 0,
-    avgLossEur: losses > 0 ? realizedLossEur / losses : 0,
+    avgLossEur,
+    avgWinPct: wins > 0 ? sumWinPct / wins : 0,
+    avgWinEur,
+    expectancyEurPerTrade,
   };
 
   // ── Confusion matrix (P(plan) ≥ 50% optimism vs realized direction) ────

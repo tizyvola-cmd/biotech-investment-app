@@ -83,6 +83,38 @@ describe("portfolioScenarioGain", () => {
     expect(series.open.map((p) => p.totalPnlEur)).toEqual([100, 150, 130]);
   });
 
+  it("open maturation uses MTM total when daily legs diverge", () => {
+    const series = buildCumulativePortfolioMaturationSeries({
+      dayKeys: ["2026-06-16", "2026-06-17", "2026-06-18"],
+      dayTotals: {},
+      openDayTotals: {},
+      grandTotal: 2023,
+      openGrandTotal: 2023,
+      rows: [
+        {
+          key: "rytm|cd",
+          ticker: "RYTM",
+          archived: false,
+          pnlByDay: {
+            "2026-06-16": 100,
+            "2026-06-17": 48_000,
+            "2026-06-18": 143,
+          },
+          totalEur: 2023,
+          mtmTotalEur: 2023,
+          legs: [],
+        },
+      ],
+      incompleteDailyHistory: false,
+      legTotalDiffersFromMtm: true,
+      openRowCount: 1,
+      archivedRowCount: 0,
+    });
+    expect(series.open[2]?.totalPnlEur).toBe(2023);
+    expect(series.open[1]?.totalPnlEur).toBeLessThan(3000);
+    expect(series.open[1]?.totalPnlEur).toBeGreaterThan(1500);
+  });
+
   it("closed maturation uses realized exit P&L, not Σ daily MTM legs", () => {
     const series = buildCumulativePortfolioMaturationSeries({
       dayKeys: ["2026-06-16", "2026-06-17", "2026-06-18", "2026-06-19"],

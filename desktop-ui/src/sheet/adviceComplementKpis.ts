@@ -25,6 +25,9 @@ export type AdvicePaperReturnKpi = {
   returnPct: number | null;
   totalPnlEur: number;
   bookEur: number;
+  /** Return on CURRENT open book only (totalPnlEur / openCapitalEur). */
+  openBookReturnPct: number | null;
+  openCapitalEur: number;
 };
 
 export type AdviceComplementKpis = {
@@ -102,7 +105,10 @@ export function computePaperReturnKpi(
   const totalPnlEur = roundEur(livePiggy.totalPnlEur);
   const returnPct =
     bookEur > 0 ? round1((totalPnlEur / bookEur) * 100) : null;
-  return { returnPct, totalPnlEur, bookEur };
+  const openCapitalEur = roundEur(livePiggy.openCapitalEur);
+  const openBookReturnPct =
+    openCapitalEur > 0 ? round1((totalPnlEur / openCapitalEur) * 100) : null;
+  return { returnPct, totalPnlEur, bookEur, openBookReturnPct, openCapitalEur };
 }
 
 export function buildAdviceComplementKpis(args: {

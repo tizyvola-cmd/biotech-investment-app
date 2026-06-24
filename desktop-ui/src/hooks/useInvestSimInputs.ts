@@ -16,6 +16,8 @@ import {
   rowHasActivePortfolio,
   sheetBuyPriceFromRow,
 } from "../sheet/simulationPosition";
+import { pickSignalFromSimRow } from "../sheet/top2FromSimulation";
+import { resolveSimulationEntrySolidity } from "../sheet/simulationEntrySolidity";
 import { executePortfolioSell } from "../sheet/portfolioSell";
 import { DEFAULT_PLAN_CAPITAL_EUR } from "../sheet/expectedRoiDisplay";
 
@@ -428,6 +430,10 @@ export function usePortfolioRegisterBuy(simTable: SheetTable | null): PortfolioR
         if (!ok) return false;
       }
       const sheetBuy = sheetBuyPriceFromRow(row);
+      // Capture raScore now (at buy time) as entryProbPct for rescue score consistency
+      const pick = pickSignalFromSimRow(row, getInvestSimInputsSnapshot(), null, null);
+      const sol = resolveSimulationEntrySolidity(pick, undefined, "en", "rascore");
+      const entryProbPct = sol?.composite.total != null ? Math.round(sol.composite.total) : null;
       patchInvestInputs((prev: InvestSimInputs) => {
         const cur = prev[key] ?? { buyPrice: 0, capital: 0 };
         const entryBuy =
@@ -443,7 +449,9 @@ export function usePortfolioRegisterBuy(simTable: SheetTable | null): PortfolioR
             capital: eur,
             ignoreSheet: false,
             investedAt: cur.investedAt ?? new Date().toISOString(),
+            universe: "real" as const,
             ...(cur.purchaseDate ? { purchaseDate: cur.purchaseDate } : {}),
+            ...(entryProbPct != null ? { entryProbPct } : {}),
           },
         };
       });

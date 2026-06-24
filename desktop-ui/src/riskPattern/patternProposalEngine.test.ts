@@ -1,14 +1,16 @@
 import { beforeEach, describe, expect, it } from "vitest";
 import {
-  approvePatternProposal,
-  generatePatternProposalFromOutcomes,
-  rejectPatternProposal,
-} from "./patternProposalEngine";
-import {
   __resetPatternStoreForTests,
   listProposals,
   loadApprovedPattern,
+  proposeFromPCSE,
 } from "./patternProposalStore";
+import {
+  approvePatternProposal,
+  generatePatternProposalFromOutcomes,
+  inferApprovalSource,
+  rejectPatternProposal,
+} from "./patternProposalEngine";
 import { __resetSnapshotStoreForTests } from "../calibration/featureSnapshotStore";
 import type { SimOutcomeRow } from "../data/investmentSimOutcomesData";
 
@@ -82,6 +84,7 @@ describe("patternProposalEngine — first pattern", () => {
     const stored = loadApprovedPattern();
     expect(stored.current).not.toBeNull();
     expect(stored.current!.approvedAt).toBeDefined();
+    expect(stored.currentSource).toBe("engine");
   });
 });
 
@@ -162,5 +165,34 @@ describe("patternProposalEngine — reject keeps audit trail", () => {
     expect(all[0].status).toBe("rejected");
     // No approved pattern was activated
     expect(loadApprovedPattern().current).toBeNull();
+  });
+});
+
+describe("patternProposalEngine — approval source", () => {
+  it("tags engine approvals from the trade-close queue", () => {
+    const outcomes: SimOutcomeRow[] = [];
+    for (let i = 0; i < 9; i++) outcomes.push(row({ ticker: `L${i}`, pnlPct: -10, pplanPct: 20 }));
+    for (let i = 0; i < 9; i++) outcomes.push(row({ ticker: `W${i}`, pnlPct: 10, pplanPct: 60 }));
+    const { proposal } = generatePatternProposalFromOutcomes(outcomes);
+    expect(inferApprovalSource(proposal!)).toBe("engine");
+    approvePatternProposal(proposal!.id);
+    expect(loadApprovedPattern().currentSource).toBe("engine");
+  });
+
+  it("tags PCSE promotions", () => {
+    const proposal = proposeFromPCSE({
+      label: "SDS low + Phase 1",
+      dimensions: ["sdsBucket", "clinicalPhase"],
+      cells: ["SDS <40 (Low)", "Phase 1"],
+      historicalN: 12,
+      historicalLift: 2.1,
+      historicalLossPct: 60,
+      stabilityScore: 80,
+      liveMatchCount: 3,
+    });
+    expect(proposal).not.toBeNull();
+    expect(inferApprovalSource(proposal!)).toBe("pcse");
+    approvePatternProposal(proposal!.id);
+    expect(loadApprovedPattern().currentSource).toBe("pcse");
   });
 });

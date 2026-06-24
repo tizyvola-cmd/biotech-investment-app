@@ -13,6 +13,8 @@ import {
 import {
   formatSignPeakOffset,
   signHitToneClass,
+  buildModelIntrinsicForecastSummary,
+  buildSignAccuracyCurveView,
 } from "../sheet/signAccuracyCurve";
 import { SignAccuracyCurvePanel } from "./SignAccuracyCurvePanel";
 import type { AccuracySummaryDoc } from "../data/accuracyModelData";
@@ -64,34 +66,6 @@ function AnticipatoryStrongSignal({
   );
 }
 
-function SimLiveMini({
-  kpis,
-  t,
-}: {
-  kpis: ModelLearningsView["kpis"];
-  t: (key: import("../shared/i18n").TranslationKey, vars?: Record<string, string | number>) => string;
-}) {
-  if (kpis.nSimPending <= 0 && (kpis.nSimEval ?? 0) <= 0) return null;
-  return (
-    <div
-      className="rounded-lg border border-[rgb(var(--border))]/50 bg-surface/30 px-3 py-2 min-w-0"
-      title={t("modelLab.qc.kpi.simLive.hint")}
-    >
-      <p className="text-[9px] uppercase tracking-wide text-ink-muted truncate">
-        {t("modelLab.qc.kpi.simLive.title")}
-      </p>
-      <p className={`text-sm font-semibold tabular-nums ${accToneClass(kpis.accSim)}`}>
-        {kpis.nSimEval != null && kpis.nSimEval > 0 ? fmtPct(kpis.accSim) : "—"}
-      </p>
-      <p className="text-[9px] text-ink-muted">
-        {t("modelLab.qc.kpi.sub.simClosedPending", {
-          closed: kpis.nSimEval ?? 0,
-          pending: kpis.nSimPending,
-        })}
-      </p>
-    </div>
-  );
-}
 
 export type ModelLearningNarrativeCardProps = {
   reloadToken?: number;
@@ -196,6 +170,19 @@ export function ModelLearningNarrativeCard({
     [viewProp, sources, lang, monitorSource],
   );
 
+  const signCurveView = useMemo(
+    () =>
+      buildSignAccuracyCurveView(
+        accuracySummaryProp ?? accuracySummary,
+        signCurveDailyProp ?? signCurveDaily,
+      ),
+    [accuracySummaryProp, accuracySummary, signCurveDailyProp, signCurveDaily],
+  );
+  const intrinsicForecast = useMemo(
+    () => buildModelIntrinsicForecastSummary(signCurveView),
+    [signCurveView],
+  );
+
   if (loading) {
     return (
       <p className="text-sm text-ink-muted py-4 text-center rounded-xl border border-dashed border-[rgb(var(--border))]/50">
@@ -214,6 +201,8 @@ export function ModelLearningNarrativeCard({
 
   const { kpis } = view;
   const signPeak = kpis.signPeakHit;
+
+  const weightedSignPct = intrinsicForecast?.sign.overallPct ?? null;
 
   const strongSignalsValue = signPeak
     ? fmtPct(signPeak.pct)
@@ -262,15 +251,39 @@ export function ModelLearningNarrativeCard({
           </p>
         </div>
         <AnticipatoryStrongSignal
-          label={t("modelLab.qc.kpi.strongSignals.title")}
+          label={
+            signPeak
+              ? t("modelLab.qc.kpi.strongSignals.peakTitle", {
+                  offset: formatSignPeakOffset(signPeak.offset),
+                })
+              : t("modelLab.qc.kpi.strongSignals.title")
+          }
           value={strongSignalsValue}
           valueClass={strongSignalsValueClass}
           valueExtra={strongSignalsExtra}
-          sub={t("modelLab.qc.kpi.sub.signalsClosedPending", {
-            closed: kpis.closedSignals,
-            pending: kpis.pendingSignals,
-          })}
-          hint={t("modelLab.qc.kpi.strongSignals.hint")}
+          sub={
+            weightedSignPct != null
+              ? it
+                ? `Media pesata bin: ${weightedSignPct.toFixed(1)}% · ${t("modelLab.qc.kpi.sub.signalsClosedPending", {
+                    closed: kpis.closedSignals,
+                    pending: kpis.pendingSignals,
+                  })}`
+                : `Weighted bin mean: ${weightedSignPct.toFixed(1)}% · ${t("modelLab.qc.kpi.sub.signalsClosedPending", {
+                    closed: kpis.closedSignals,
+                    pending: kpis.pendingSignals,
+                  })}`
+              : t("modelLab.qc.kpi.sub.signalsClosedPending", {
+                  closed: kpis.closedSignals,
+                  pending: kpis.pendingSignals,
+                })
+          }
+          hint={
+            signPeak
+              ? it
+                ? "Picco = bin T con hit % massimo. Media pesata = stesso numero del blocco «Segno» in Home dashboard."
+                : "Peak = T-bin with highest hit %. Weighted mean = same as Home dashboard Sign block."
+              : t("modelLab.qc.kpi.strongSignals.hint")
+          }
         />
         <SignAccuracyCurvePanel
           summaryDoc={accuracySummaryProp ?? accuracySummary}
@@ -280,7 +293,6 @@ export function ModelLearningNarrativeCard({
         />
       </div>
 
-      <SimLiveMini kpis={kpis} t={t} />
     </div>
   );
 }

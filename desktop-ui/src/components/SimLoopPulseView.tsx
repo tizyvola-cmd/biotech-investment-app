@@ -7,17 +7,6 @@ import {
 import { useLang, useT } from "../shared/i18n";
 import type { ChartBundle, ChartPoint, SheetTable } from "../types";
 import type { SdsRow } from "../api/supernova";
-import { useLossRiskCatalog, lookupLossRisk } from "../hooks/useLossRiskCatalog";
-import {
-  LossRiskBreakdownModal,
-  type LossRiskEntry,
-} from "./LossRiskPoopCell";
-import {
-  RiskBenefitScaleCell,
-  deriveBenefitFillPct,
-} from "./RiskBenefitScaleIcon";
-import { SHEET_GRID_TABLE_CLASS, gridTd, gridTh } from "../sheet/sheetGridTable";
-import { SheetGridColgroup } from "../sheet/SheetGridColgroup";
 import {
   portfolioPnlAccentClass,
   portfolioPnlTabShellClass,
@@ -28,11 +17,8 @@ import {
   fmtPulsePct,
   PortfolioGainPlanAggregateChart,
 } from "./PortfolioGainPlanAggregateChart";
-import { GainPlanMicroSparkline } from "./GainPlanMicroSparkline";
-import type { PulseDirection } from "../sheet/dashboardPulseView";
 import {
   buildSimLoopPulseData,
-  buildSimLoopEqualSynthReconcile,
   buildSimLoopVisitSnapshotFromData,
   clearSimLoopVisitSnapshot,
   loadSimLoopVisitSnapshot,
@@ -40,32 +26,38 @@ import {
   type SimLoopPulseVariant,
   type SimLoopVisitSnapshot,
 } from "../sheet/simLoopPulseView";
+import type { PulseDirection } from "../sheet/dashboardPulseView";
 import { portfolioPnlDeltaLooksLikeStaleBaseline } from "../sheet/piggyBankTrend";
-import { hydrateUiPrefsFromDisk, loadUiPrefsLocal, saveUiPrefs } from "../sheet/uiPrefs";
 import type { InvestSimInputs } from "../sheet/investSimStorage";
 import { useInvestSimPortfolioHistory } from "../hooks/useInvestSimPortfolioHistory";
 import { resolveSimLoopCapitalPot } from "../sheet/investDecisionSimCharts";
 import { useSimLoopSynthAllocation } from "../hooks/useSimLoopSynthAllocation";
 import type { PulseScope } from "./PulseScopeSwitcher";
 import { PulseScopeSwitcher } from "./PulseScopeSwitcher";
-import { SimLoopEqualSynthDiagnosticPanel } from "./SimLoopEqualSynthDiagnosticPanel";
-
-/**
- * Sim loop "Since your last visit" — inline screen-swap twin of
- * `DashboardPulseTable`. Same layout (Gain vs plan chart · KPI strip ·
- * per-position table) but computed on the paper sim-loop portfolio.
- */
-
-function formatVisitAgo(iso: string | null, lang: "it" | "en"): string {
-  if (!iso) return "—";
-  const d = new Date(iso);
-  if (Number.isNaN(d.getTime())) return "—";
-  const diffH = Math.round((Date.now() - d.getTime()) / 3600000);
-  if (diffH < 1) return lang === "it" ? "<1h fa" : "<1h ago";
-  if (diffH < 48) return lang === "it" ? `${diffH}h fa` : `${diffH}h ago`;
-  const diffD = Math.round(diffH / 24);
-  return lang === "it" ? `${diffD}g fa` : `${diffD}d ago`;
-}
+import {
+  PulseOpenPositionsMovementLog,
+  movementLogRowFromGainPlan,
+} from "./PulseOpenPositionsMovementLog";
+import { GainPlanMicroSparkline } from "./GainPlanMicroSparkline";
+import { SHEET_GRID_TABLE_CLASS, gridTd, gridTh } from "../sheet/sheetGridTable";
+import { SheetGridColgroup } from "../sheet/SheetGridColgroup";
+import { useLossRiskCatalog, lookupLossRisk } from "../hooks/useLossRiskCatalog";
+import {
+  LossRiskBreakdownModal,
+  type LossRiskEntry,
+} from "./LossRiskPoopCell";
+import {
+  RiskBenefitScaleCell,
+  deriveBenefitFillPct,
+} from "./RiskBenefitScaleIcon";
+import { PortfolioTickerMark } from "./PortfolioScopeToggle";
+import { hydrateUiPrefsFromDisk, loadUiPrefsLocal, saveUiPrefs } from "../sheet/uiPrefs";
+import {
+  planGapAccentClass,
+  planGapMisleadingBeat,
+  planGapPctForDisplay,
+  shouldUseDailyBenefitFallback,
+} from "../sheet/pulsePlanGapDisplay";
 
 function directionGlyph(d: PulseDirection): string {
   if (d === "up") return "↑";
@@ -77,6 +69,17 @@ function directionClass(d: PulseDirection): string {
   if (d === "up") return "text-[rgb(var(--signal-up))]";
   if (d === "down") return "text-[rgb(var(--signal-down))]";
   return "text-ink-muted";
+}
+
+function formatVisitAgo(iso: string | null, lang: "it" | "en"): string {
+  if (!iso) return "—";
+  const d = new Date(iso);
+  if (Number.isNaN(d.getTime())) return "—";
+  const diffH = Math.round((Date.now() - d.getTime()) / 3600000);
+  if (diffH < 1) return lang === "it" ? "<1h fa" : "<1h ago";
+  if (diffH < 48) return lang === "it" ? `${diffH}h fa` : `${diffH}h ago`;
+  const diffD = Math.round(diffH / 24);
+  return lang === "it" ? `${diffD}g fa` : `${diffD}d ago`;
 }
 
 function KpiTile({
@@ -97,20 +100,34 @@ function KpiTile({
       className="rounded-xl border border-[rgb(var(--panel-mint-border))]/55 bg-white/90 px-3 py-2 min-w-[7.5rem] flex-1"
       title={title}
     >
-      <p className="text-[10px] uppercase tracking-wide font-semibold text-ink-muted/85">
-        {label}
-      </p>
-      <p
-        className={`text-base font-bold tabular-nums mt-0.5 leading-tight ${
-          accentClass ?? "text-ink"
-        }`}
-      >
+      <p className="text-[11px] uppercase tracking-wide font-semibold text-ink-muted/85">{label}</p>
+      <p className={`text-xs font-bold tabular-nums mt-0.5 leading-tight ${accentClass ?? "text-ink"}`}>
         {value}
       </p>
-      {sub ? (
-        <p className="text-[10px] text-ink-muted mt-0.5 tabular-nums">{sub}</p>
-      ) : null}
+      {sub ? <p className="text-[11px] text-ink-muted mt-0.5 tabular-nums">{sub}</p> : null}
     </div>
+  );
+}
+
+function SimLoopScopeMark({
+  variant,
+  it,
+}: {
+  variant: SimLoopPulseVariant;
+  it: boolean;
+}) {
+  const label = variant === "synth" ? (it ? "Synth" : "Synth") : "Sim loop";
+  return (
+    <span
+      className={`text-[10px] font-semibold uppercase tracking-wide px-1.5 py-0.5 rounded border shrink-0 ${
+        variant === "synth"
+          ? "border-pink-400/60 text-pink-900/90 bg-pink-50/80 dark:border-pink-600/50 dark:text-pink-100 dark:bg-pink-950/40"
+          : "border-indigo-400/50 text-indigo-900/90 bg-indigo-50/80 dark:border-indigo-600/50 dark:text-indigo-100 dark:bg-indigo-950/40"
+      }`}
+      aria-hidden
+    >
+      {label}
+    </span>
   );
 }
 
@@ -126,7 +143,6 @@ export function SimLoopPulseView({
   onOpenSimulationRow,
   onOpen24hAssessment,
 }: {
-  /** Equal-weight paper sim (default) or Weight Sim Exp synth sizing. */
   variant?: SimLoopPulseVariant;
   pulseScope: PulseScope;
   onPulseScopeChange: (scope: PulseScope) => void;
@@ -192,6 +208,8 @@ export function SimLoopPulseView({
       shareByRowKey: synthAlloc.shareByRowKey,
       totalCapitalEur: synthAlloc.totalCapitalEur,
       capitalPerTrade: state.config.capitalPerTrade,
+      targetGainEur: synthAlloc.targetGainEur,
+      sizingMode: "causal_rebalance" as const,
     };
   }, [isSynth, synthAlloc, state.config.capitalPerTrade]);
 
@@ -207,14 +225,40 @@ export function SimLoopPulseView({
         lang,
         sizing,
         portfolioHistory,
+        inputs: investInputs,
       }),
-    [state, simTable, chartPointsByKey, priorSnapshot, lang, sizing, portfolioHistory],
+    [state, simTable, chartPointsByKey, priorSnapshot, lang, sizing, portfolioHistory, investInputs],
   );
 
-  const equalSynthReconcile = useMemo(() => {
-    if (!isSynth || !sizing) return null;
-    return buildSimLoopEqualSynthReconcile({ state, simTable, sizing });
-  }, [isSynth, sizing, state, simTable]);
+  const { catalog: lossRiskCatalog } = useLossRiskCatalog({
+    simTable,
+    sdsRows,
+    chartBundle,
+    reloadToken: reloadToken ?? 0,
+  });
+  const [riskModalEntry, setRiskModalEntry] = useState<LossRiskEntry | null>(null);
+  const [positionsOpen, setPositionsOpen] = useState(() => {
+    const v = loadUiPrefsLocal().pulsePositionsOpen;
+    return v == null ? true : Boolean(v);
+  });
+
+  useEffect(() => {
+    let cancelled = false;
+    void (async () => {
+      const disk = await hydrateUiPrefsFromDisk();
+      if (cancelled || disk == null || typeof disk.pulsePositionsOpen !== "boolean") return;
+      setPositionsOpen(disk.pulsePositionsOpen);
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
+  const onPositionsToggle = useCallback((e: React.SyntheticEvent<HTMLDetailsElement>) => {
+    const next = (e.currentTarget as HTMLDetailsElement).open;
+    setPositionsOpen(next);
+    saveUiPrefs({ pulsePositionsOpen: next });
+  }, []);
 
   useEffect(() => {
     const prior = loadSimLoopVisitSnapshot(variant);
@@ -248,49 +292,6 @@ export function SimLoopPulseView({
     };
   }, [data, variant]);
 
-  const { catalog: lossRiskCatalog } = useLossRiskCatalog({
-    simTable,
-    sdsRows,
-    chartBundle,
-    reloadToken: reloadToken ?? 0,
-  });
-  const [riskModalEntry, setRiskModalEntry] = useState<LossRiskEntry | null>(null);
-
-  const openSimLoopRow = useCallback(
-    (row: { ticker: string; completionDate?: string }) => {
-      const focus = { ticker: row.ticker, cd: row.completionDate };
-      if (onOpen24hAssessment) {
-        onOpen24hAssessment(focus);
-      } else {
-        onOpenSimulationRow?.(focus);
-      }
-    },
-    [onOpen24hAssessment, onOpenSimulationRow],
-  );
-
-  const [positionsOpen, setPositionsOpen] = useState(() => {
-    const v = loadUiPrefsLocal().pulsePositionsOpen;
-    return v == null ? true : Boolean(v);
-  });
-
-  useEffect(() => {
-    let cancelled = false;
-    void (async () => {
-      const disk = await hydrateUiPrefsFromDisk();
-      if (cancelled || disk == null || typeof disk.pulsePositionsOpen !== "boolean") return;
-      setPositionsOpen(disk.pulsePositionsOpen);
-    })();
-    return () => {
-      cancelled = true;
-    };
-  }, []);
-
-  const onPositionsToggle = useCallback((e: React.SyntheticEvent<HTMLDetailsElement>) => {
-    const next = (e.currentTarget as HTMLDetailsElement).open;
-    setPositionsOpen(next);
-    saveUiPrefs({ pulsePositionsOpen: next });
-  }, []);
-
   const persistAndSwitch = useCallback(
     (nextScope: PulseScope) => {
       if (nextScope === pulseScope) return;
@@ -304,148 +305,193 @@ export function SimLoopPulseView({
     [data, variant, pulseScope, onPulseScopeChange],
   );
 
-  const synthUnavailable = isSynth && !synthAlloc;
+  const openPortfolioRow = useCallback(
+    (row: { ticker: string; completionDate?: string }) => {
+      const focus = { ticker: row.ticker, cd: row.completionDate };
+      if (onOpen24hAssessment) {
+        onOpen24hAssessment(focus);
+      } else {
+        onOpenSimulationRow?.(focus);
+      }
+    },
+    [onOpen24hAssessment, onOpenSimulationRow],
+  );
 
-  const ptfTone = portfolioPnlTone(data.totals.pnlEur, data.totals.pnlPct);
+  const synthUnavailable = isSynth && !synthAlloc;
   const shellCls = portfolioPnlTabShellClass(data.winRate.winPct);
-  const gap = data.planGap;
+  const ptfTone = portfolioPnlTone(data.totals.openPnlEur, data.totals.openPnlPct);
 
   return (
-    <>
-      <section
-        className={`dashboard-pulse-table shrink-0 rounded-2xl border border-[rgb(var(--panel-feed-border))]/55 overflow-x-hidden shadow-[0_2px_16px_rgb(99_102_241_/_0.08)] ${shellCls}`}
-      >
-        <div className="dashboard-pulse-head flex flex-col gap-2 px-4 py-3 border-b border-[rgb(var(--panel-lab-border))]/45 bg-white">
-          <div className="flex flex-wrap items-start justify-between gap-2 min-w-0">
-            <div className="min-w-0 flex-1">
-              <h2 className="text-base font-semibold text-ink">
-                {t(`${copyPrefix}.title`)}
-              </h2>
-              <p className="ui-subtitle-clamp mt-1">
-                {data.hasPriorVisit
-                  ? t(`${copyPrefix}.sinceVisit`, {
-                      when: formatVisitAgo(data.priorVisitAt, lang),
-                    })
-                  : t(`${copyPrefix}.firstVisit`)}
-              </p>
-            </div>
-            <div className="flex items-center gap-2 shrink-0 flex-wrap justify-end">
-              {data.winRate.decisive > 0 ? (
-                <span
-                  className={`text-[11px] font-semibold tabular-nums px-2 py-1 rounded-full border border-[rgb(var(--panel-feed-border))]/45 bg-white/80 ${
-                    data.winRate.winPct != null && data.winRate.winPct >= 50
-                      ? "text-[rgb(var(--signal-up))]"
-                      : "text-[rgb(var(--signal-down))]"
-                  }`}
-                >
-                  {it
-                    ? `${data.winRate.gainCount}↑ · ${data.winRate.lossCount}↓`
-                    : `${data.winRate.gainCount} up · ${data.winRate.lossCount} down`}
-                </span>
-              ) : null}
-              <PulseScopeSwitcher active={pulseScope} onSelect={persistAndSwitch} />
-            </div>
+    <section
+      className={`dashboard-pulse-table shrink-0 rounded-2xl border border-[rgb(var(--panel-feed-border))]/55 overflow-x-hidden shadow-[0_2px_16px_rgb(99_102_241_/_0.08)] ${shellCls}`}
+    >
+      <div className="dashboard-pulse-head flex flex-col gap-2 px-4 py-3 border-b border-[rgb(var(--panel-lab-border))]/45 bg-white">
+        <div className="flex flex-wrap items-start justify-between gap-2 min-w-0">
+          <div className="min-w-0 flex-1">
+            <h2 className="text-xs font-semibold text-ink inline-flex items-center gap-1.5 flex-wrap">
+              <SimLoopScopeMark variant={variant} it={it} />
+              {t("dashboard.pulse.title")}
+            </h2>
+            <p className="ui-subtitle-clamp mt-1">
+              {data.hasPriorVisit
+                ? t("dashboard.pulse.sinceVisit", {
+                    when: formatVisitAgo(data.priorVisitAt, lang),
+                  })
+                : t(`${copyPrefix}.firstVisit`)}
+            </p>
+          </div>
+          <div className="flex items-center gap-2 shrink-0 flex-wrap justify-end">
+            {data.winRate.decisive > 0 ? (
+              <span
+                className={`text-xs font-semibold tabular-nums px-2 py-1 rounded-full border border-[rgb(var(--panel-feed-border))]/45 bg-white/80 ${
+                  data.winRate.winPct != null && data.winRate.winPct >= 50
+                    ? "text-[rgb(var(--signal-up))]"
+                    : "text-[rgb(var(--signal-down))]"
+                }`}
+              >
+                {it
+                  ? `${data.winRate.gainCount}↑ · ${data.winRate.lossCount}↓`
+                  : `${data.winRate.gainCount} up · ${data.winRate.lossCount} down`}
+              </span>
+            ) : null}
+            <PulseScopeSwitcher active={pulseScope} onSelect={persistAndSwitch} />
           </div>
         </div>
+      </div>
 
-        {synthUnavailable ? (
-          <p className="text-sm text-ink-muted text-center py-8 px-4">
-            {t("dashboard.pulse.simLoopSynth.unavailable")}
-          </p>
-        ) : data.rows.length === 0 ? (
-          <p className="text-sm text-ink-muted text-center py-8 px-4">
-            {t(`${copyPrefix}.noPortfolio`)}
-          </p>
-        ) : (
-          <>
-            <div className="dashboard-pulse-hero grid gap-3 p-3 lg:grid-cols-[minmax(0,1.35fr)_minmax(0,1fr)]">
-              <PortfolioGainPlanAggregateChart
-                series={data.aggregateGainPlanSeries}
-                height={172}
-                titleKey={`${copyPrefix}.chartTitle`}
-                captionKey={`${copyPrefix}.chartCaption`}
-              />
-              <div className="flex flex-col gap-2 min-w-0">
-                <p className="text-[11px] font-semibold uppercase tracking-wide text-[rgb(var(--panel-feed-accent-strong))]">
-                  {t(`${copyPrefix}.kpiTitle`)}
-                </p>
-                <div className="flex flex-wrap gap-2">
+      {synthUnavailable ? (
+        <p className="text-xs text-ink-muted text-center py-8 px-4">
+          {t("dashboard.pulse.simLoopSynth.unavailable")}
+        </p>
+      ) : data.rows.length === 0 ? (
+        <p className="text-xs text-ink-muted text-center py-8 px-4">
+          {t(`${copyPrefix}.noPortfolio`)}
+        </p>
+      ) : (
+        <>
+          <div className="dashboard-pulse-hero grid gap-3 p-3 lg:grid-cols-[minmax(0,1.35fr)_minmax(0,1fr)]">
+            <PortfolioGainPlanAggregateChart
+              series={data.aggregateGainPlanSeries}
+              height={172}
+              titleKey={`${copyPrefix}.chartTitle`}
+              captionKey={`${copyPrefix}.chartCaption`}
+            />
+            <div className="flex flex-col gap-2 min-w-0">
+              <p className="text-[11px] font-semibold uppercase tracking-wide text-[rgb(var(--panel-feed-accent-strong))]">
+                {t(`${copyPrefix}.kpiTitle`)}
+              </p>
+              <div className="flex flex-wrap gap-2">
+                <KpiTile
+                  label={it ? "Gain open (MTM)" : "Gain open (MTM)"}
+                  value={fmtPulseEur(data.totals.openPnlEur)}
+                  sub={data.totals.openPnlPct != null ? fmtPulsePct(data.totals.openPnlPct) : undefined}
+                  accentClass={portfolioPnlAccentClass(data.totals.openPnlEur)}
+                  title={
+                    it
+                      ? "P&L mark-to-market sulle posizioni paper aperte"
+                      : "Mark-to-market P&L on open paper positions"
+                  }
+                />
+                <KpiTile
+                  label={it ? "Gain 24h" : "Gain 24h"}
+                  value={
+                    data.totals.todayCovered > 0 ? fmtPulseEur(data.totals.pnlEurToday) : "—"
+                  }
+                  sub={
+                    data.totals.todayCovered === 0
+                      ? it
+                        ? "mercato chiuso"
+                        : "market closed"
+                      : undefined
+                  }
+                  accentClass={
+                    data.totals.todayCovered > 0
+                      ? portfolioPnlAccentClass(data.totals.pnlEurToday)
+                      : undefined
+                  }
+                  title={t("dashboard.pulse.pnl24hTip")}
+                />
+                <KpiTile
+                  label={it ? "Δ visita" : "Δ visit"}
+                  value={
+                    data.deltaPnlSinceVisit != null ? fmtPulseEur(data.deltaPnlSinceVisit) : "—"
+                  }
+                  sub={
+                    data.deltaPnlSinceVisit == null
+                      ? it
+                        ? "prima visita"
+                        : "first visit"
+                      : undefined
+                  }
+                  accentClass={
+                    data.deltaPnlSinceVisit != null
+                      ? portfolioPnlAccentClass(data.deltaPnlSinceVisit)
+                      : undefined
+                  }
+                  title={t("dashboard.pulse.deltaTip")}
+                />
+                {data.totals.closedDealCount > 0 ? (
                   <KpiTile
-                    label={t(`${copyPrefix}.portfolioPnl`)}
-                    value={fmtPulseEur(data.totals.pnlEur)}
-                    sub={data.totals.pnlPct != null ? fmtPulsePct(data.totals.pnlPct) : undefined}
-                    accentClass={portfolioPnlAccentClass(data.totals.pnlEur)}
-                  />
-                  {data.deltaPnlSinceVisit != null ? (
-                    <KpiTile
-                      label={t("dashboard.pulse.colDelta")}
-                      value={fmtPulseEur(data.deltaPnlSinceVisit)}
-                      accentClass={portfolioPnlAccentClass(data.deltaPnlSinceVisit)}
-                      title={t(`${copyPrefix}.deltaTip`)}
-                    />
-                  ) : (
-                    <KpiTile
-                      label={t("dashboard.pulse.colDelta")}
-                      value="—"
-                      sub={t("dashboard.pulse.firstVisitShort")}
-                    />
-                  )}
-                  {data.totals.todayCovered > 0 ? (
-                    <KpiTile
-                      label="24h"
-                      value={fmtPulseEur(data.totals.pnlEurToday)}
-                      accentClass={portfolioPnlAccentClass(data.totals.pnlEurToday ?? 0)}
-                    />
-                  ) : null}
-                </div>
-                <div className="flex flex-wrap gap-2">
-                  <KpiTile
-                    label={t("dashboard.pulse.planActual")}
-                    value={fmtPulseEur(gap.actualNowEur)}
+                    label={it ? "Gain closed" : "Gain closed"}
+                    value={fmtPulseEur(data.totals.closedPnlEur)}
                     sub={
-                      gap.plannedNowEur != null
-                        ? `${t("dashboard.pulse.planLabel")} ${fmtPulseEur(gap.plannedNowEur)}`
-                        : undefined
+                      it
+                        ? `${data.totals.closedDealCount} deal chiuse`
+                        : `${data.totals.closedDealCount} closed deals`
                     }
-                    accentClass={portfolioPnlAccentClass(gap.actualNowEur ?? 0)}
+                    accentClass={portfolioPnlAccentClass(data.totals.closedPnlEur)}
+                    title={
+                      it
+                        ? "P&L realizzato sui SELL paper del sim loop"
+                        : "Realized P&L on sim loop paper SELL trades"
+                    }
                   />
-                  <KpiTile
-                    label={t("dashboard.pulse.planGap")}
-                    value={gap.gapEur != null ? fmtPulseEur(gap.gapEur) : "—"}
-                    sub={gap.gapPct != null ? fmtPulsePct(gap.gapPct) : undefined}
-                    accentClass={portfolioPnlAccentClass(gap.gapEur ?? 0)}
-                    title={t("dashboard.pulse.planGapTip")}
-                  />
-                </div>
+                ) : null}
               </div>
+              {data.rows.length > 0 ? (
+                <PulseOpenPositionsMovementLog
+                  it={it}
+                  rows={data.rows.map((row) =>
+                    movementLogRowFromGainPlan({
+                      key: row.key,
+                      ticker: row.ticker,
+                      pnlEur: row.pnlEur,
+                      pnlPct: row.pnlPct,
+                      deltaPnlEurSinceVisit: row.deltaPnlEurSinceVisit,
+                      investedAt: row.gainPlanRow.investedAt,
+                      simRow: row.gainPlanRow.simRow as Record<string, unknown> | undefined,
+                    }),
+                  )}
+                />
+              ) : null}
             </div>
+          </div>
 
-            {equalSynthReconcile ? (
-              <SimLoopEqualSynthDiagnosticPanel reconcile={equalSynthReconcile} />
-            ) : null}
-
-            <details
-              open={positionsOpen}
-              onToggle={onPositionsToggle}
-              className="border-t border-[rgb(var(--panel-feed-border))]/35 shrink-0"
-            >
-              <summary className="cursor-pointer select-none list-none px-4 py-2 bg-[rgb(var(--panel-feed-header-bg))]/50 hover:bg-[rgb(var(--panel-feed-row-hover))]/35 transition-colors [&::-webkit-details-marker]:hidden">
-                <span className="text-[11px] font-semibold uppercase tracking-wide text-[rgb(var(--panel-feed-accent-strong))]">
-                  {t("dashboard.pulse.positionsSummary", { n: data.rows.length })}
-                </span>
-                <span className="ml-2 text-[10px] text-ink-muted font-normal normal-case tracking-normal">
-                  {positionsOpen ? (it ? "nascondi" : "hide") : it ? "mostra" : "show"}
-                </span>
-              </summary>
-              <div className="overflow-x-auto">
+          <details
+            open={positionsOpen}
+            onToggle={onPositionsToggle}
+            className="border-t border-[rgb(var(--panel-feed-border))]/35 shrink-0"
+          >
+            <summary className="cursor-pointer select-none list-none px-4 py-2 bg-[rgb(var(--panel-feed-header-bg))]/50 hover:bg-[rgb(var(--panel-feed-row-hover))]/35 transition-colors [&::-webkit-details-marker]:hidden">
+              <span className="text-[11px] font-semibold uppercase tracking-wide text-[rgb(var(--panel-feed-accent-strong))]">
+                {t("dashboard.pulse.positionsSummary", { n: data.rows.length })}
+              </span>
+              <span className="ml-2 text-[11px] text-ink-muted font-normal normal-case tracking-normal">
+                {positionsOpen ? (it ? "nascondi" : "hide") : it ? "mostra" : "show"}
+              </span>
+            </summary>
+            <div className="overflow-x-auto">
               <table className={`${SHEET_GRID_TABLE_CLASS} text-xs border-collapse min-w-[42rem]`}>
                 <SheetGridColgroup columnCount={8} />
                 <thead>
-                  <tr className="bg-[rgb(var(--panel-feed-header-bg))]/80 text-[11px] uppercase tracking-wide text-ink-muted">
+                  <tr className="bg-[rgb(var(--panel-feed-header-bg))]/80 text-[11px] uppercase tracking-wide text-ink-muted font-semibold">
                     <th className={gridTh("left", "py-2 font-semibold")}>
                       {t("dashboard.pulse.colTicker")}
                     </th>
-                    <th className={gridTh("center", "py-2 font-semibold")} title={t("dashboard.pulse.colTrendTip")}>
+                    <th
+                      className={gridTh("center", "py-2 font-semibold")}
+                      title={t("dashboard.pulse.colTrendTip")}
+                    >
                       {t("dashboard.pulse.colTrend")}
                     </th>
                     <th className={gridTh("center", "py-2 font-semibold")}>
@@ -455,10 +501,16 @@ export function SimLoopPulseView({
                     <th className={gridTh("center", "py-2 font-semibold")}>
                       {t("dashboard.pulse.colPnl")}
                     </th>
-                    <th className={gridTh("center", "py-2 font-semibold")} title={t("dashboard.pulse.planGapTip")}>
+                    <th
+                      className={gridTh("center", "py-2 font-semibold")}
+                      title={t("dashboard.pulse.planGapTip")}
+                    >
                       {t("dashboard.pulse.colPlanGap")}
                     </th>
-                    <th className={gridTh("center", "py-2 font-semibold")} title={t("sim.gainPlan.title")}>
+                    <th
+                      className={gridTh("center", "py-2 font-semibold")}
+                      title={t("sim.gainPlan.title")}
+                    >
                       {t("dashboard.pulse.colGainPlan")}
                     </th>
                     <th
@@ -478,21 +530,38 @@ export function SimLoopPulseView({
                     <tr
                       key={row.key}
                       className="border-t border-[rgb(var(--panel-feed-border))]/25 hover:bg-[rgb(var(--panel-feed-row-hover))]/45 cursor-pointer bg-white/70"
-                      onClick={() => openSimLoopRow(row)}
+                      onClick={() =>
+                        openPortfolioRow({
+                          ticker: row.ticker,
+                          completionDate: row.completionDate,
+                        })
+                      }
                       role="button"
                       tabIndex={0}
                       onKeyDown={(e) => {
                         if (e.key === "Enter" || e.key === " ") {
                           e.preventDefault();
-                          openSimLoopRow(row);
+                          openPortfolioRow({
+                            ticker: row.ticker,
+                            completionDate: row.completionDate,
+                          });
                         }
                       }}
                     >
-                      <td className={`${gridTd("left")} font-bold text-ink whitespace-nowrap`}>
-                        {row.ticker}
+                      <td className={`${gridTd("left")} whitespace-nowrap`}>
+                        <PortfolioTickerMark
+                          ticker={row.ticker}
+                          inPortfolio
+                          pnlPct={row.pnlPct}
+                          pnlEur={row.pnlEur}
+                          className="text-xs"
+                          portfolioMarkTitle={
+                            it ? "Posizione paper sim loop" : "Sim loop paper position"
+                          }
+                        />
                       </td>
                       <td
-                        className={`${gridTd("center")} text-lg leading-none font-bold ${directionClass(row.direction)}`}
+                        className={`${gridTd("center")} text-xs leading-none font-bold ${directionClass(row.direction)}`}
                       >
                         {directionGlyph(row.direction)}
                       </td>
@@ -512,24 +581,38 @@ export function SimLoopPulseView({
                         className={`${gridTd("center")} tabular-nums whitespace-nowrap font-semibold${portfolioPnlAccentClass(row.pnlEur)}`}
                       >
                         {fmtPulseEur(row.pnlEur)}
-                        {row.pnlPct != null ? (
-                          <span className="text-[9px] font-normal opacity-80 ml-0.5">
-                            {fmtPulsePct(row.pnlPct)}
-                          </span>
-                        ) : null}
+                        <span className="text-[11px] font-normal opacity-80 ml-0.5">
+                          {fmtPulsePct(row.pnlPct)}
+                        </span>
                       </td>
                       <td
-                        className={`${gridTd("center")} tabular-nums whitespace-nowrap text-[10px]${portfolioPnlAccentClass(row.planGap.gapEur ?? 0)}`}
-                        title={t("dashboard.pulse.planGapTip")}
+                        className={`${gridTd("center")} tabular-nums whitespace-nowrap text-xs${planGapAccentClass(row.pnlPct, row.planGap.gapEur)}`}
+                        title={
+                          planGapMisleadingBeat(row.pnlPct, row.planGap.gapEur)
+                            ? it
+                              ? `Scostamento vs piano oggi (non ROI atteso). Posizione in perdita ${row.pnlPct?.toFixed(0) ?? "—"}% — il piano era ancora più basso. Target modello: ${row.gainPlanRow.expectedGainPct != null ? `${row.gainPlanRow.expectedGainPct.toFixed(0)}%` : "—"}`
+                              : `Gap vs plan today (not expected ROI). Position ${row.pnlPct?.toFixed(0) ?? "—"}% MTM loss — plan was lower still. Model target: ${row.gainPlanRow.expectedGainPct != null ? `${row.gainPlanRow.expectedGainPct.toFixed(0)}%` : "—"}`
+                            : `${t("dashboard.pulse.planGapTip")}${row.gainPlanRow.expectedGainPct != null ? (it ? ` · ROI target modello ${row.gainPlanRow.expectedGainPct.toFixed(0)}%` : ` · Model ROI target ${row.gainPlanRow.expectedGainPct.toFixed(0)}%`) : ""}`
+                        }
                       >
                         {row.planGap.gapEur != null ? (
                           <>
                             {fmtPulseEur(row.planGap.gapEur)}
-                            {row.planGap.gapPct != null ? (
-                              <span className="block text-[9px] opacity-85">
-                                {fmtPulsePct(row.planGap.gapPct)}
-                              </span>
-                            ) : null}
+                            {(() => {
+                              const gapPct = planGapPctForDisplay(
+                                row.planGap.gapPct,
+                                row.gainPlanRow.capital,
+                              );
+                              return gapPct != null ? (
+                                <span className="block text-[11px] opacity-85">
+                                  {fmtPulsePct(gapPct)}
+                                </span>
+                              ) : row.gainPlanRow.capital < 500 ? (
+                                <span className="block text-[9px] opacity-60 font-normal">
+                                  {it ? "micro" : "micro"}
+                                </span>
+                              ) : null;
+                            })()}
                           </>
                         ) : (
                           "—"
@@ -562,6 +645,8 @@ export function SimLoopPulseView({
                             expectedReturnPct,
                             daysToTarget,
                             dailyChangePct: row.pnlPct24h,
+                            capitalEur: row.gainPlanRow.capital,
+                            pnlPct: row.pnlPct,
                           });
                           const perDayPct =
                             expectedReturnPct != null &&
@@ -569,7 +654,12 @@ export function SimLoopPulseView({
                             daysToTarget != null &&
                             daysToTarget > 0
                               ? expectedReturnPct / daysToTarget
-                              : row.pnlPct24h ?? null;
+                              : shouldUseDailyBenefitFallback({
+                                    capitalEur: row.gainPlanRow.capital,
+                                    pnlPct: row.pnlPct,
+                                  })
+                                ? (row.pnlPct24h ?? null)
+                                : null;
                           return (
                             <RiskBenefitScaleCell
                               entry={entry}
@@ -585,35 +675,27 @@ export function SimLoopPulseView({
                   ))}
                 </tbody>
               </table>
-              </div>
-            </details>
-          </>
-        )}
-
-        <p className="px-4 pb-3 pt-1 text-[10px] text-ink-muted/75 leading-snug border-t border-[rgb(var(--panel-feed-border))]/25 bg-[rgb(var(--panel-feed-header-bg))]/45">
-          {t(`${copyPrefix}.footnote`)}
-          {isSynth && data.equalReferenceTotals != null ? (
-            <>
-              {" "}
-              {t("dashboard.pulse.simLoopSynth.equalRefFootnote", {
-                cap: String(state.config.capitalPerTrade),
-                pnl: fmtPulseEur(data.equalReferenceTotals.pnlEur),
-              })}
-            </>
-          ) : null}
-          {ptfTone === "gain"
-            ? ` · ${t("dashboard.pulse.inGain")}`
-            : ptfTone === "loss"
-              ? ` · ${t("dashboard.pulse.inLoss")}`
-              : ""}
-        </p>
-      </section>
+            </div>
+          </details>
+        </>
+      )}
 
       <LossRiskBreakdownModal
         entry={riskModalEntry}
         onClose={() => setRiskModalEntry(null)}
         it={it}
       />
-    </>
+
+      {!synthUnavailable && data.rows.length > 0 ? (
+        <p className="px-4 pb-3 pt-1 text-[11px] text-ink-muted/75 leading-snug border-t border-[rgb(var(--panel-feed-border))]/25 bg-[rgb(var(--panel-feed-header-bg))]/45">
+          {t(`${copyPrefix}.footnote`)}
+          {ptfTone === "gain"
+            ? ` · ${t("dashboard.pulse.inGain")}`
+            : ptfTone === "loss"
+              ? ` · ${t("dashboard.pulse.inLoss")}`
+              : ""}
+        </p>
+      ) : null}
+    </section>
   );
 }

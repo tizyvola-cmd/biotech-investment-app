@@ -98,6 +98,7 @@ export function previewDecisionSimTrades(
   at: string,
   capitalPerTrade: number,
   maxOpenPositions: number,
+  opts?: { resolveBuyCapital?: (ev: TickerSimEvaluation) => number },
 ): PaperTradeEvent[] {
   return simulatePaperTrades(
     evaluations,
@@ -105,5 +106,6 @@ export function previewDecisionSimTrades(
     at,
     capitalPerTrade,
     maxOpenPositions,
+    opts,
   ).trades;
 }

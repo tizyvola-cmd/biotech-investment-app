@@ -1,5 +1,10 @@
-import type { ExperimentAdviceEvent } from "./investDecisionSimExperiment";
-import type { DecisionSimTick } from "./investDecisionSimLoop";
+import { sanitizePaperMovePct, type ExperimentAdviceEvent } from "./investDecisionSimExperiment";
+import type { OperativeSellCoverageBreakdown } from "./accuracySummary";
+import type {
+  DecisionSimTick,
+  PaperPosition,
+  TickerSimEvaluation,
+} from "./investDecisionSimLoop";
 import { miiGainScale } from "./recommendationGainIdea";
 
 /** Legacy open-position thresholds (experiment log). */
@@ -57,6 +62,8 @@ export type AdviceCalibrationPoint = {
   source: "experiment" | "live";
   kind: string;
   at: string;
+  /** Days to completion date at advice / entry (for peak-by-CD annotation). */
+  daysToCdAtAdvice?: number | null;
 };
 
 export type AdviceCalibrationBucketRow = {
@@ -193,6 +200,84 @@ function applySellForecastFallback(
   return {
     expectedReturnPct: expected,
     forecastErrorPct: Math.round((priceChangePct - expected) * 10) / 10,
+  };
+}
+
+export function stampPostSellMove24hOnTicks(ticks: DecisionSimTick[]): DecisionSimTick[] {
+  const sorted = [...ticks].sort((a, b) => a.at.localeCompare(b.at));
+  return sorted.map((tick, ti) => {
+    if (!tick.trades.some((tr) => tr.side === "sell")) return tick;
+    const trades = tick.trades.map((tr) => {
+      if (tr.side !== "sell") return tr;
+      if (tr.postSellMove24hPct != null && Number.isFinite(tr.postSellMove24hPct)) return tr;
+      for (let j = ti + 1; j < sorted.length; j++) {
+        const ev = sorted[j]?.evaluations.find((e) => e.key === tr.key);
+        if (ev?.pnlPct24h != null && Number.isFinite(ev.pnlPct24h)) {
+          return { ...tr, postSellMove24hPct: ev.pnlPct24h };
+        }
+      }
+      return tr;
+    });
+    return trades === tick.trades ? tick : { ...tick, trades };
+  });
+}
+
+/** Distinct paper SELL executions across ticks. */
+export function countPaperSellExecutions(ticks: DecisionSimTick[]): number {
+  return summarizePaperSellOperativeCoverage(ticks, () => null).executedCount;
+}
+
+/** Per-exit reasons operative SELL n may be below total paper SELL count. */
+export function summarizePaperSellOperativeCoverage(
+  ticks: DecisionSimTick[],
+  resolvePostMove24h: (key: string) => number | null,
+): OperativeSellCoverageBreakdown {
+  const sorted = [...ticks].sort((a, b) => a.at.localeCompare(b.at));
+  const seen = new Set<string>();
+  let executedCount = 0;
+  let scoredCount = 0;
+  let missingPplanCount = 0;
+  let missingPostMoveCount = 0;
+  let pendingFlatCount = 0;
+
+  for (let ti = 0; ti < sorted.length; ti++) {
+    const tick = sorted[ti]!;
+    for (const tr of tick.trades) {
+      if (tr.side !== "sell") continue;
+      const dedupe = `${tr.key}|${tr.at}`;
+      if (seen.has(dedupe)) continue;
+      seen.add(dedupe);
+      executedCount += 1;
+
+      const entryPos = tick.portfolioBefore.find((p) => p.key === tr.key);
+      const ev = tick.evaluations.find((e) => e.key === tr.key);
+      const probPct = entryPos?.entryProbPct ?? ev?.probPct ?? null;
+      if (probPct == null || !Number.isFinite(probPct)) {
+        missingPplanCount += 1;
+        continue;
+      }
+
+      const priceChangePct =
+        tr.postSellMove24hPct != null && Number.isFinite(tr.postSellMove24hPct)
+          ? tr.postSellMove24hPct
+          : resolvePostSellMove24h(sorted, ti, tr.key, resolvePostMove24h);
+      if (priceChangePct == null || !Number.isFinite(priceChangePct)) {
+        missingPostMoveCount += 1;
+        continue;
+      }
+
+      const outcome = classifyAdviceOutcome("sell", priceChangePct);
+      if (outcome === "good" || outcome === "bad") scoredCount += 1;
+      else pendingFlatCount += 1;
+    }
+  }
+
+  return {
+    executedCount,
+    scoredCount,
+    missingPplanCount,
+    missingPostMoveCount,
+    pendingFlatCount,
   };
 }
 
@@ -487,6 +572,7 @@ export type LiveAdviceCalibRow = {
   pnlPct?: number | null;
   pnlPct24h?: number | null;
   priceChangePct?: number | null;
+  daysToCdAtAdvice?: number | null;
 };
 
 function resolveLiveCalibAction(row: LiveAdviceCalibRow): AdviceActionKind | null {
@@ -554,9 +640,64 @@ export function buildAdviceCalibrationFromLiveRows(
       source: "live",
       kind: row.inPaperPortfolio ? "paper_open" : `${action}_rec`,
       at: "",
+      daysToCdAtAdvice:
+        row.daysToCdAtAdvice != null && Number.isFinite(row.daysToCdAtAdvice)
+          ? Math.round(row.daysToCdAtAdvice)
+          : null,
     });
   }
   return out;
+}
+
+/** Keys that already have a paper SELL execution in sim-loop ticks. */
+export function keysWithPaperSellExecution(ticks: DecisionSimTick[]): Set<string> {
+  const keys = new Set<string>();
+  for (const tick of ticks) {
+    for (const tr of tick.trades) {
+      if (tr.side === "sell") keys.add(tr.key);
+    }
+  }
+  return keys;
+}
+
+function keyFromLiveAdviceCalibrationId(id: string): string | null {
+  if (!id.startsWith("live|")) return null;
+  const rest = id.slice(5);
+  const actionSep = rest.lastIndexOf("|");
+  if (actionSep <= 0) return null;
+  return rest.slice(0, actionSep);
+}
+
+/**
+ * Live monitor advice — excludes SELL on keys already closed in paper
+ * (those are scored in deal-level operative i · Trade direction).
+ */
+export function adviceMonitorPointsExcludingPaperSells(
+  livePoints: AdviceCalibrationPoint[],
+  paperSoldKeys: Set<string>,
+): { points: AdviceCalibrationPoint[]; excludedSellCount: number } {
+  let excludedSellCount = 0;
+  const points = livePoints.filter((p) => {
+    if (p.suggestedAction !== "sell") return true;
+    const key = keyFromLiveAdviceCalibrationId(p.id);
+    if (key && paperSoldKeys.has(key)) {
+      excludedSellCount += 1;
+      return false;
+    }
+    return true;
+  });
+  return { points, excludedSellCount };
+}
+
+/** Monitor rows for advice-only operative — drop SELL on paper-closed keys. */
+export function liveCalibRowsExcludingPaperSells(
+  rows: LiveAdviceCalibRow[],
+  paperSoldKeys: Set<string>,
+): LiveAdviceCalibRow[] {
+  return rows.filter((row) => {
+    if (!paperSoldKeys.has(row.key)) return true;
+    return resolveLiveCalibAction(row) !== "sell";
+  });
 }
 
 /** Paper SELL eseguiti — valutati con Var. 24h post-vendita (titolo scende = ✓, sale = ✗). */
@@ -583,7 +724,10 @@ export function buildAdviceCalibrationFromPaperSells(
       if (probPct == null || !Number.isFinite(probPct)) continue;
 
       const planReturnPct = ev?.planReturnPct ?? ev?.readings?.planTargetPct ?? entryPos?.entryPlanReturnPct ?? null;
-      const priceChangePct = resolvePostSellMove24h(sorted, ti, tr.key, resolvePostMove24h);
+      const priceChangePct =
+        tr.postSellMove24hPct != null && Number.isFinite(tr.postSellMove24hPct)
+          ? tr.postSellMove24hPct
+          : resolvePostSellMove24h(sorted, ti, tr.key, resolvePostMove24h);
       const outcome = classifyAdviceOutcome("sell", priceChangePct);
       let { expectedReturnPct, forecastErrorPct } = computeAdviceForecastErrorPct(
         "sell",
@@ -618,6 +762,186 @@ export function buildAdviceCalibrationFromPaperSells(
       });
     }
   }
+  return out;
+}
+
+export type BuildDealLevelCalibrationOpts = {
+  /** Current paper book — scores every open deal with live marks (not only last tick). */
+  paperPortfolio?: PaperPosition[];
+  liveEvaluations?: TickerSimEvaluation[];
+};
+
+function resolvePaperOpenMarkPct(
+  pos: PaperPosition,
+  evByKey: Map<string, TickerSimEvaluation>,
+): number | null {
+  const ev = evByKey.get(pos.key);
+  return (
+    sanitizePaperMovePct(ev?.pnlPct) ??
+    sanitizePaperMovePct(pos.lastMarkPct) ??
+    sanitizePaperMovePct(ev?.pnlPct24h) ??
+    null
+  );
+}
+
+function resolveEntryProbForPaperDeal(
+  sorted: DecisionSimTick[],
+  key: string,
+  pos: PaperPosition,
+  ev: TickerSimEvaluation | undefined,
+): number | null {
+  if (pos.entryProbPct != null && Number.isFinite(pos.entryProbPct)) {
+    return pos.entryProbPct;
+  }
+  if (ev?.probPct != null && Number.isFinite(ev.probPct)) return ev.probPct;
+  for (const tick of sorted) {
+    const tickEv = tick.evaluations.find((e) => e.key === key);
+    if (tickEv?.probPct != null && Number.isFinite(tickEv.probPct)) {
+      return tickEv.probPct;
+    }
+    for (const tr of tick.trades) {
+      if (tr.side !== "buy" || tr.key !== key) continue;
+      const after = tick.portfolioAfter.find((p) => p.key === key);
+      if (after?.entryProbPct != null && Number.isFinite(after.entryProbPct)) {
+        return after.entryProbPct;
+      }
+    }
+  }
+  return null;
+}
+
+function closedRoundTripBuyOutcome(pnlPct: number): AdviceOutcomeClass | null {
+  if (pnlPct > 0) return "good";
+  if (pnlPct < 0) return "bad";
+  return null;
+}
+
+function openPaperBuyOutcome(markPct: number): AdviceOutcomeClass | null {
+  return closedRoundTripBuyOutcome(markPct);
+}
+
+/**
+ * One scored outcome per deal — avoids inflating precision with repeated tick marks
+ * (good_buy every hour while open) or duplicate SELL rows (log + paper_sell).
+ */
+export function buildDealLevelCalibrationPoints(
+  ticks: DecisionSimTick[],
+  resolvePostMove24h: (key: string) => number | null,
+  lang: "it" | "en",
+  opts: BuildDealLevelCalibrationOpts = {},
+): AdviceCalibrationPoint[] {
+  const sorted = [...ticks].sort((a, b) => a.at.localeCompare(b.at));
+  const out: AdviceCalibrationPoint[] = [];
+
+  for (let ti = 0; ti < sorted.length; ti++) {
+    const tick = sorted[ti]!;
+    for (const tr of tick.trades) {
+      if (tr.side !== "sell") continue;
+      const entryPos = tick.portfolioBefore.find((p) => p.key === tr.key);
+      const ev = tick.evaluations.find((e) => e.key === tr.key);
+      const probPct = entryPos?.entryProbPct ?? ev?.probPct ?? null;
+      if (probPct == null || !Number.isFinite(probPct)) continue;
+
+      const pnlPct = tr.pnlPctSimulated;
+      if (pnlPct == null || !Number.isFinite(pnlPct)) continue;
+      const outcome = closedRoundTripBuyOutcome(pnlPct);
+      if (!outcome) continue;
+
+      const planReturnPct =
+        entryPos?.entryPlanReturnPct ??
+        ev?.planReturnPct ??
+        ev?.readings?.planTargetPct ??
+        null;
+      const { expectedReturnPct, forecastErrorPct } = computeAdviceForecastErrorPct(
+        "buy",
+        planReturnPct,
+        pnlPct,
+        null,
+      );
+      const bucket = probToAdviceBucket(probPct);
+      out.push({
+        id: `deal|buy|${tr.key}|${tr.at}`,
+        ticker: tr.ticker,
+        probPct,
+        bucketId: bucket.id,
+        bucketLabel: lang === "it" ? bucket.labelIt : bucket.labelEn,
+        outcome,
+        pnlPct,
+        priceChangePct: pnlPct,
+        expectedReturnPct,
+        forecastErrorPct,
+        suggestedAction: "buy",
+        source: "experiment",
+        kind: "deal_buy_closed",
+        at: tr.at,
+      });
+    }
+  }
+
+  const lastTick = sorted[sorted.length - 1];
+  const openBook: PaperPosition[] =
+    opts.paperPortfolio && opts.paperPortfolio.length > 0
+      ? opts.paperPortfolio
+      : (lastTick?.portfolioAfter ?? []);
+  const evByKey = new Map<string, TickerSimEvaluation>();
+  for (const ev of lastTick?.evaluations ?? []) {
+    evByKey.set(ev.key, ev);
+  }
+  for (const ev of opts.liveEvaluations ?? []) {
+    evByKey.set(ev.key, ev);
+  }
+  const openAt = lastTick?.at ?? new Date().toISOString();
+
+  for (const pos of openBook) {
+    const ev = evByKey.get(pos.key);
+    const mark = resolvePaperOpenMarkPct(pos, evByKey);
+    if (mark == null) continue;
+    const outcome = openPaperBuyOutcome(mark);
+    if (!outcome) continue;
+
+    const probPct = resolveEntryProbForPaperDeal(sorted, pos.key, pos, ev);
+    if (probPct == null || !Number.isFinite(probPct)) continue;
+
+    const planReturnPct =
+      pos.entryPlanReturnPct ??
+      ev?.planReturnPct ??
+      ev?.readings?.planTargetPct ??
+      null;
+    const { expectedReturnPct, forecastErrorPct } = computeAdviceForecastErrorPct(
+      "buy",
+      planReturnPct,
+      mark,
+      null,
+    );
+    const bucket = probToAdviceBucket(probPct);
+    out.push({
+      id: `deal|buy|open|${pos.key}`,
+      ticker: pos.ticker,
+      probPct,
+      bucketId: bucket.id,
+      bucketLabel: lang === "it" ? bucket.labelIt : bucket.labelEn,
+      outcome,
+      pnlPct: mark,
+      priceChangePct: mark,
+      expectedReturnPct,
+      forecastErrorPct,
+      suggestedAction: "buy",
+      source: "experiment",
+      kind: "deal_buy_open",
+      at: openAt,
+    });
+  }
+
+  for (const p of buildAdviceCalibrationFromPaperSells(sorted, resolvePostMove24h, lang)) {
+    if (p.outcome !== "good" && p.outcome !== "bad") continue;
+    out.push({
+      ...p,
+      id: `deal|sell|${p.id.replace(/^paper-sell\|/, "")}`,
+      source: "experiment",
+      kind: "deal_sell",
+    });
+  }
+
   return out;
 }
 
@@ -702,6 +1026,36 @@ export function summarizeAdviceCalibrationFromLiveRows(
   lang: "it" | "en",
 ): AdviceCalibrationSummary {
   return summarizeAdviceCalibration(buildAdviceCalibrationFromLiveRows(rows, lang));
+}
+
+/** Compact KPI block for SynthGainImpactPanel / system stats strip. */
+export type AdviceActionAccuracySummary = {
+  scoredCount: number;
+  overallPct: number | null;
+  overallGood: number;
+  overallBad: number;
+  avgForecastErrorPct: number | null;
+};
+
+export function summarizeAdviceActionAccuracy(
+  points: AdviceCalibrationPoint[],
+): AdviceActionAccuracySummary {
+  const summary = summarizeAdviceCalibration(points);
+  const scored = points.filter((p) => p.outcome === "good" || p.outcome === "bad");
+  const errors = scored
+    .map((p) => p.forecastErrorPct)
+    .filter((v): v is number => v != null && Number.isFinite(v));
+  const avgForecastErrorPct =
+    errors.length > 0
+      ? Math.round((errors.reduce((a, b) => a + b, 0) / errors.length) * 10) / 10
+      : null;
+  return {
+    scoredCount: summary.scoredCount,
+    overallPct: summary.overallSuccessRatePct,
+    overallGood: summary.goodCount,
+    overallBad: summary.badCount,
+    avgForecastErrorPct,
+  };
 }
 
 export type BadAdviceCategory =

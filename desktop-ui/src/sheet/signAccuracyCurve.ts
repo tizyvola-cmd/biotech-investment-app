@@ -554,3 +554,164 @@ export function signHitToneClass(
   if (pct >= 52) return "text-warn";
   return "text-negative";
 }
+
+export type ModelIntrinsicMetric = {
+  overallPct: number | null;
+  minPct: number | null;
+  minOffset: number | null;
+  maxPct: number | null;
+  maxOffset: number | null;
+  n: number;
+  cohort: "simulation" | "retro" | null;
+};
+
+export type ModelIntrinsicForecastSummary = {
+  sign: ModelIntrinsicMetric;
+  priceAccuracy: ModelIntrinsicMetric;
+  /** Peak day-over-day sign hit across T-offset bins (Model quality anticipatory KPI). */
+  signPeak: SignPeakHit | null;
+  /** Same horizon as Model quality charts (sign_curve_daily x_offsets). */
+  horizonLabelIt: string;
+  horizonLabelEn: string;
+  metric: SignAccuracyCurveView["metric"];
+};
+
+function preferredSignCurveCohort(view: SignAccuracyCurveView): "simulation" | "retro" {
+  const simHasData = view.points.some(
+    (p) =>
+      p.simN > 0 &&
+      (p.simSignPct != null || p.simPricePct != null),
+  );
+  return simHasData ? "simulation" : "retro";
+}
+
+function scanSignCurveMetric(
+  view: SignAccuracyCurveView,
+  mode: "sign" | "price",
+): ModelIntrinsicMetric {
+  const empty: ModelIntrinsicMetric = {
+    overallPct: null,
+    minPct: null,
+    minOffset: null,
+    maxPct: null,
+    maxOffset: null,
+    n: 0,
+    cohort: null,
+  };
+  if (!view.points.length) return empty;
+
+  const cohort = preferredSignCurveCohort(view);
+  let sumWeighted = 0;
+  let totalN = 0;
+  let minBin: { pct: number; offset: number; n: number } | null = null;
+  let maxBin: { pct: number; offset: number; n: number } | null = null;
+
+  for (const p of view.points) {
+    if (mode === "sign") {
+      const row = hitFromPoint(p, cohort);
+      const pct = row.hitPct;
+      if (pct == null || !Number.isFinite(pct) || row.n <= 0) continue;
+      sumWeighted += pct * row.n;
+      totalN += row.n;
+      if (!minBin || pct < minBin.pct || (pct === minBin.pct && p.offset < minBin.offset)) {
+        minBin = { pct, offset: p.offset, n: row.n };
+      }
+      if (!maxBin || pct > maxBin.pct || (pct === maxBin.pct && row.n > maxBin.n)) {
+        maxBin = { pct, offset: p.offset, n: row.n };
+      }
+      continue;
+    }
+    const row = priceFromPoint(p, cohort);
+    const pct = row.priceAccPct;
+    if (pct == null || !Number.isFinite(pct) || row.n <= 0) continue;
+    sumWeighted += pct * row.n;
+    totalN += row.n;
+    if (!minBin || pct < minBin.pct || (pct === minBin.pct && p.offset < minBin.offset)) {
+      minBin = { pct, offset: p.offset, n: row.n };
+    }
+    if (!maxBin || pct > maxBin.pct || (pct === maxBin.pct && row.n > maxBin.n)) {
+      maxBin = { pct, offset: p.offset, n: row.n };
+    }
+  }
+
+  const cohortSummary = cohort === "simulation" ? view.simulation : view.retro;
+  const overallFallback =
+    mode === "sign"
+      ? (cohortSummary?.overallSignPct ?? view.preCdHitPct)
+      : cohortSummary?.overallPricePct;
+
+  const overallPct =
+    totalN > 0
+      ? Math.round((sumWeighted / totalN) * 10) / 10
+      : overallFallback != null && Number.isFinite(overallFallback)
+        ? Math.round(overallFallback * 10) / 10
+        : null;
+
+  return {
+    overallPct,
+    minPct: minBin?.pct ?? null,
+    minOffset: minBin?.offset ?? null,
+    maxPct: maxBin?.pct ?? null,
+    maxOffset: maxBin?.offset ?? null,
+    n: totalN > 0 ? totalN : (cohortSummary?.nEvents ?? 0),
+    cohort: overallPct != null ? cohort : null,
+  };
+}
+
+/** Min/max T-offset annotation aligned with Model quality sign/price curves. */
+export function formatModelIntrinsicRangeLabel(
+  metric: ModelIntrinsicMetric,
+  lang: "it" | "en",
+): string | null {
+  if (
+    metric.minPct == null ||
+    metric.maxPct == null ||
+    metric.minOffset == null ||
+    metric.maxOffset == null
+  ) {
+    return null;
+  }
+  const minT = formatSignPeakOffset(metric.minOffset);
+  const maxT = formatSignPeakOffset(metric.maxOffset);
+  if (lang === "it") {
+    return `min ${metric.minPct.toFixed(1)}% T${minT} · max ${metric.maxPct.toFixed(1)}% T${maxT}`;
+  }
+  return `min ${metric.minPct.toFixed(1)}% T${minT} · max ${metric.maxPct.toFixed(1)}% T${maxT}`;
+}
+
+function formatHorizonSpan(view: SignAccuracyCurveView): { it: string; en: string } {
+  const offsets = view.xOffsets.length
+    ? view.xOffsets
+    : view.points.map((p) => p.offset);
+  if (!offsets.length) {
+    return { it: "T-60…T+7", en: "T-60…T+7" };
+  }
+  const lo = Math.min(...offsets);
+  const hi = Math.max(...offsets);
+  return {
+    it: `T${formatSignPeakOffset(lo)}…T${formatSignPeakOffset(hi)}`,
+    en: `T${formatSignPeakOffset(lo)}…T${formatSignPeakOffset(hi)}`,
+  };
+}
+
+/**
+ * Unified model forecast quality — same bins as Model quality charts.
+ * Independent of Simulation vs sim loop execution cohorts.
+ */
+export function buildModelIntrinsicForecastSummary(
+  view: SignAccuracyCurveView | null | undefined,
+): ModelIntrinsicForecastSummary | null {
+  if (!view?.points?.length) return null;
+  const sign = scanSignCurveMetric(view, "sign");
+  const priceAccuracy = scanSignCurveMetric(view, "price");
+  if (sign.overallPct == null && priceAccuracy.overallPct == null) return null;
+  const horizon = formatHorizonSpan(view);
+  return {
+    sign,
+    priceAccuracy,
+    signPeak: peakSignHitFromPoints(view.points),
+    horizonLabelIt: horizon.it,
+    horizonLabelEn: horizon.en,
+    metric: view.metric,
+  };
+}

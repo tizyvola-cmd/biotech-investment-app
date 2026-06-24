@@ -729,9 +729,18 @@ export function CapDivStep3BreakevenWidget({
                             </span>
                           ))
                       : null}
-                    {/* Phase B approved pattern match — red flag */}
+                    {/* Phase B approved pattern match — red flag (only when lift>=1.3 and precision>=50%) */}
                     {m.lossRisk.matchedApprovedPattern ? (
-                      <span className="px-1.5 py-0.5 rounded font-semibold bg-rose-200 text-rose-900 dark:bg-rose-800/60 dark:text-rose-100">
+                      <span
+                        className="px-1.5 py-0.5 rounded font-semibold bg-rose-200 text-rose-900 dark:bg-rose-800/60 dark:text-rose-100 cursor-help"
+                        title={(() => {
+                          const s = approvedPattern?.inSampleStats;
+                          if (!s) return it ? "Pattern di rischio attivo" : "Risk pattern match";
+                          return it
+                            ? `Pattern di rischio attivo\nlift=${s.lift.toFixed(2)}× · precisione=${(s.precision * 100).toFixed(0)}% · n=${s.n}\n${approvedPattern?.name ?? ""}`
+                            : `Risk pattern match\nlift=${s.lift.toFixed(2)}× · precision=${(s.precision * 100).toFixed(0)}% · n=${s.n}\n${approvedPattern?.name ?? ""}`;
+                        })()}
+                      >
                         {it ? "Pattern di rischio attivo" : "Risk pattern match"}
                       </span>
                     ) : null}

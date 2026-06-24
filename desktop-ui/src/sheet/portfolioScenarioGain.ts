@@ -1,5 +1,11 @@
-import type { PortfolioDailyPnlLedger, PortfolioTickerDailyRow } from "./simulationPosition";
+import {
+  sumLedgerRowDailyLegs,
+  type PortfolioDailyPnlLedger,
+  type PortfolioTickerDailyRow,
+} from "./simulationPosition";
 import type { ComparisonDeal, PortfolioAllocation } from "./threePortfolioCompare";
+
+const PNL_EPS_EUR = 0.01;
 
 function roundEur(n: number): number {
   return Math.round(n * 100) / 100;
@@ -25,6 +31,37 @@ function rowExitDayKey(row: PortfolioTickerDailyRow): string {
 /** Realized P&L for a closed row — prefer stored exit P&L over Σ daily MTM legs. */
 function archivedRowRealizedPnl(row: PortfolioTickerDailyRow): number {
   return roundEur(row.totalEur);
+}
+
+/** Authoritative open MTM — matches Piggy Bank / maturation overview footer. */
+function openRowAuthoritativePnl(row: PortfolioTickerDailyRow): number {
+  return roundEur(row.mtmTotalEur ?? row.totalEur);
+}
+
+function openRowLegsDifferFromAuthoritative(row: PortfolioTickerDailyRow): boolean {
+  const authoritative = openRowAuthoritativePnl(row);
+  const legTotal = sumLedgerRowDailyLegs(row);
+  return Math.abs(legTotal - authoritative) > PNL_EPS_EUR;
+}
+
+/**
+ * Cumulative open P&L at a ledger day. When history legs were contaminated,
+ * scale the leg curve so the last day matches authoritative MTM (not Σ legs).
+ */
+function openRowCumulativePnlAtDay(
+  row: PortfolioTickerDailyRow,
+  dayKey: string,
+  lastDayKey: string,
+): number {
+  const legAtDay = rowPnlThroughDay(row, dayKey);
+  if (!openRowLegsDifferFromAuthoritative(row)) return legAtDay;
+
+  const authoritative = openRowAuthoritativePnl(row);
+  const legAtLast = rowPnlThroughDay(row, lastDayKey);
+  if (Math.abs(legAtLast) <= PNL_EPS_EUR) {
+    return dayKey >= lastDayKey ? authoritative : legAtDay;
+  }
+  return roundEur(legAtDay * (authoritative / legAtLast));
 }
 
 /** Unified MTM gain: cap × return% / 100 (same across Portfolio · Sim loop · Synth). */
@@ -103,8 +140,12 @@ export function buildCumulativePortfolioMaturationSeries(
     return { at: dayKey, totalPnlEur: roundEur(total) };
   });
 
+  const lastDayKey = ledger.dayKeys[ledger.dayKeys.length - 1] ?? "";
   const open: PortfolioMaturationSeriesPoint[] = ledger.dayKeys.map((dayKey) => {
-    const total = openRows.reduce((sum, row) => sum + rowPnlThroughDay(row, dayKey), 0);
+    const total = openRows.reduce(
+      (sum, row) => sum + openRowCumulativePnlAtDay(row, dayKey, lastDayKey),
+      0,
+    );
     return { at: dayKey, totalPnlEur: roundEur(total) };
   });
 

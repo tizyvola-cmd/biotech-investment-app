@@ -201,7 +201,10 @@ export function useLossRiskCatalog(args: {
       // the recommendation shown in the Risk cell and the one driving the
       // chart are guaranteed to use the same numbers (no duplicate logic).
       let patternMatchByRowKey = new Map<string, boolean>();
-      if (approvedPattern) {
+      const patternStats = approvedPattern?.inSampleStats;
+      const patternQualityOk =
+        (patternStats?.lift ?? 0) >= 1.3 && (patternStats?.precision ?? 0) >= 0.50;
+      if (approvedPattern && patternQualityOk) {
         try {
           const features = extractAllRowFeatures(closedRows, {
             simTable,

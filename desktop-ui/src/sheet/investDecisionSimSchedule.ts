@@ -1,8 +1,11 @@
-/** Decision sim auto-tick window — Europe/Rome, Mon–Fri 15:00–22:59. */
+/** Decision sim auto-tick window — Europe/Rome, Mon–Fri 15:00–22:59 (legacy reload band). */
 export const DECISION_SIM_MARKET_TZ = "Europe/Rome";
 export const DECISION_SIM_MARKET_START_H = 15;
 export const DECISION_SIM_MARKET_END_H = 22;
 export const DECISION_SIM_MARKET_INTERVAL_H = 1;
+
+/** Daily solid-BUY evaluation + synth capital rebalance — once at 18:00 Rome. */
+export const DECISION_SIM_DAILY_EVAL_H = 18;
 
 const ROME_WEEKDAY: Record<string, number> = {
   Mon: 1,
@@ -56,6 +59,18 @@ export function decisionSimMarketHourKey(at: Date = new Date()): string | null {
   if (!isDecisionSimMarketWindow(at)) return null;
   const { ymd, hour } = getRomeClockParts(at);
   return `${ymd}T${String(hour).padStart(2, "0")}`;
+}
+
+/** Mon–Fri, hour 18 Rome — daily evaluation window for sim-loop paper. */
+export function isDecisionSimDailyEvaluationWindow(at: Date = new Date()): boolean {
+  const { weekday, hour } = getRomeClockParts(at);
+  return weekday >= 1 && weekday <= 5 && hour === DECISION_SIM_DAILY_EVAL_H;
+}
+
+/** One evaluation slot per Rome calendar day (18:00 band). */
+export function decisionSimDailyEvaluationKey(at: Date = new Date()): string | null {
+  if (!isDecisionSimDailyEvaluationWindow(at)) return null;
+  return getRomeClockParts(at).ymd;
 }
 
 export function effectiveDecisionSimIntervalHours(

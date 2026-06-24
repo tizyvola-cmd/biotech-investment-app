@@ -35,6 +35,10 @@ export type SdsGainRow = {
   deliveredWinRate: number;
   /** Average pnl_pct across all closed (positive and negative). */
   deliveredAvgPnlPct: number | null;
+  /** Average pnl_pct for winning trades only (> +2%). null if no wins. */
+  deliveredAvgWinPct: number | null;
+  /** Average pnl_pct for losing trades only (< -2%). null if no losses. */
+  deliveredAvgLossPct: number | null;
   /** Average pnl_eur across all closed. */
   deliveredAvgPnlEur: number | null;
   /** Average hold days (entry → exit). null if unknown. */
@@ -124,16 +128,19 @@ export function computeSdsGainBreakdown(
   type DAgg = {
     n: number;
     wins: number;
+    losses: number;
     sumPnlPct: number;
     sumPnlEur: number;
     sumHoldDays: number;
     holdNonNull: number;
+    sumWinPct: number;
+    sumLossPct: number;
   };
   const delivered = new Map<string, DAgg>();
   function dAgg(b: string): DAgg {
     let a = delivered.get(b);
     if (!a) {
-      a = { n: 0, wins: 0, sumPnlPct: 0, sumPnlEur: 0, sumHoldDays: 0, holdNonNull: 0 };
+      a = { n: 0, wins: 0, losses: 0, sumPnlPct: 0, sumPnlEur: 0, sumHoldDays: 0, holdNonNull: 0, sumWinPct: 0, sumLossPct: 0 };
       delivered.set(b, a);
     }
     return a;
@@ -165,8 +172,15 @@ export function computeSdsGainBreakdown(
     const bucket = bucketSds(frozen.sds);
     const agg = dAgg(bucket);
     agg.n += 1;
-    if ((r.pnl_pct ?? 0) > -LOSS_THRESHOLD_PCT) agg.wins += 1;
-    agg.sumPnlPct += r.pnl_pct ?? 0;
+    const pnlPct = r.pnl_pct ?? 0;
+    if (pnlPct > -LOSS_THRESHOLD_PCT) {
+      agg.wins += 1;
+      agg.sumWinPct += pnlPct;
+    } else if (pnlPct < LOSS_THRESHOLD_PCT) {
+      agg.losses += 1;
+      agg.sumLossPct += pnlPct;
+    }
+    agg.sumPnlPct += pnlPct;
     agg.sumPnlEur += r.pnl_eur ?? 0;
     const hd = holdDaysFor(r);
     if (hd != null) {
@@ -255,6 +269,8 @@ export function computeSdsGainBreakdown(
     const d = delivered.get(bucket);
     const p = promised.get(bucket);
     const deliveredAvgPnlPct = d && d.n > 0 ? d.sumPnlPct / d.n : null;
+    const deliveredAvgWinPct = d && d.wins > 0 ? d.sumWinPct / d.wins : null;
+    const deliveredAvgLossPct = d && d.losses > 0 ? d.sumLossPct / d.losses : null;
     const deliveredAvgHold = d && d.holdNonNull > 0 ? d.sumHoldDays / d.holdNonNull : null;
     const deliveredAvgRoiPerDay =
       deliveredAvgPnlPct != null && deliveredAvgHold != null && deliveredAvgHold > 0
@@ -276,6 +292,8 @@ export function computeSdsGainBreakdown(
       deliveredWins: d?.wins ?? 0,
       deliveredWinRate: d && d.n > 0 ? d.wins / d.n : 0,
       deliveredAvgPnlPct,
+      deliveredAvgWinPct,
+      deliveredAvgLossPct,
       deliveredAvgPnlEur: d && d.n > 0 ? d.sumPnlEur / d.n : null,
       deliveredAvgHoldDays: deliveredAvgHold,
       deliveredAvgRoiPerDay,

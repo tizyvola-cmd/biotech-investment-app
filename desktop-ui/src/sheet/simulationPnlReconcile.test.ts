@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import {
   aggregateOpenPortfolioPnl,
+  assessHistoryContamination,
   buildDashboardPortfolioChips,
   computeSimulationPosition,
   positionCapitalPnlPct,
@@ -111,7 +112,7 @@ describe("P&L total vs trading day", () => {
     const totals = aggregateOpenPortfolioPnl(simTable, inputs, []);
     expect(chips).toHaveLength(1);
     expect(chips[0].pnlEur).toBeCloseTo(pos.pnlEur, 2);
-    expect(chips[0].pnlEur).not.toBeCloseTo(breakdown.totalEur, 0);
+    expect(chips[0].pnlEur).toBeCloseTo(breakdown.totalEur, 0);
     expect(chips[0].pnlEur24h).toBeCloseTo(breakdown.pnlEurToday ?? 0, 2);
     expect(totals.pnlEur).toBeCloseTo(pos.pnlEur, 2);
     expect(totals.pnlEurToday).toBeCloseTo(breakdown.pnlEurToday ?? 0, 2);
@@ -245,5 +246,378 @@ describe("P&L total vs trading day", () => {
     const weighted =
       (pos.pnlEur / pos.capital) * 100;
     expect(fromCapital).toBeCloseTo(weighted, 2);
+  });
+
+  it("ignores stale Excel P&L when user buy is set — dashboard matches history leg total", () => {
+    const key = "NRIX|2026-08-15";
+    const row = {
+      Ticker: "NRIX",
+      "Completion Date": "15/08/2026",
+      "Prezzo Corrente ($)": 28.5,
+      "Var. Giorn. %": 0.42,
+      "Valore Attuale ($)": 20_663,
+      "P&L (%)": 65.3,
+      "Capitale Investito ($)": 12_500,
+    };
+    const inputs = {
+      [key]: {
+        buyPrice: 27.5,
+        capital: 12_500,
+        ignoreSheet: false,
+        investedAt: "2026-05-20T10:00:00.000Z",
+      },
+    };
+    const history = [
+      {
+        ts: "2026-06-18T16:00:00.000Z",
+        capital: 12_500,
+        value: 12_951,
+        pnl: 451,
+        pnlPct: 3.61,
+        byTicker: { [key]: { value: 12_951, pnl: 451, pnlPct: 3.61 } },
+      },
+    ];
+    const simTable = { sheet: "Simulation", rows: [row], columns: [] };
+    const pos = computeSimulationPosition(row, inputs, { history })!;
+    expect(pos.pnlEur).toBeLessThan(1_500);
+    expect(pos.pnlEur).not.toBeCloseTo(8_163, 0);
+
+    const chips = buildDashboardPortfolioChips(simTable, inputs, history);
+    const totals = aggregateOpenPortfolioPnl(simTable, inputs, history);
+    expect(chips[0].pnlEur).toBeLessThan(1_500);
+    expect(totals.pnlEur).toBeLessThan(1_500);
+    expect(totals.pnlEur).toBeCloseTo(totals.priorLegEur + totals.pnlEurToday, 2);
+  });
+
+  it("ignores stale Excel P&L when buy is spot backfill — infers entry from history", () => {
+    const key = "NRIX|2026-08-15";
+    const row = {
+      Ticker: "NRIX",
+      "Completion Date": "15/08/2026",
+      "Prezzo Corrente ($)": 28.5,
+      "Var. Giorn. %": 0.42,
+      "Valore Attuale ($)": 20_663,
+      "P&L (%)": 65.3,
+      "Capitale Investito ($)": 12_500,
+    };
+    const inputs = {
+      [key]: {
+        buyPrice: 28.5,
+        capital: 12_500,
+        ignoreSheet: false,
+        investedAt: "2026-05-20T10:00:00.000Z",
+      },
+    };
+    const history = [
+      {
+        ts: "2026-06-18T16:00:00.000Z",
+        capital: 12_500,
+        value: 12_951,
+        pnl: 451,
+        pnlPct: 3.61,
+        byTicker: { [key]: { value: 12_951, pnl: 451, pnlPct: 3.61 } },
+      },
+    ];
+    const simTable = { sheet: "Simulation", rows: [row], columns: [] };
+    const totals = aggregateOpenPortfolioPnl(simTable, inputs, history);
+    expect(totals.pnlEur).toBeLessThan(1_500);
+    expect(totals.pnlEur).not.toBeCloseTo(8_163, 0);
+  });
+
+  it("ignores contaminated leg chain when clean snapshot preceded bad save", () => {
+    const key = "RYTM|2026-09-15";
+    const row = {
+      Ticker: "RYTM",
+      "Completion Date": "15/09/2026",
+      "Prezzo Corrente ($)": 94.5,
+      "Prezzo Acquisto ($)": 90,
+      "Var. Giorn. %": 0.42,
+      "Valore Attuale ($)": 34_750,
+      "P&L (%)": 178,
+      "Capitale Investito ($)": 12_500,
+    };
+    const inputs = {
+      [key]: {
+        buyPrice: 90,
+        capital: 12_500,
+        ignoreSheet: false,
+        investedAt: "2026-06-12T07:11:18.665Z",
+      },
+    };
+    const history = [
+      {
+        ts: "2026-06-15T16:00:00.000Z",
+        capital: 12_500,
+        value: 13_169,
+        pnl: 669,
+        pnlPct: 5.35,
+        byTicker: { [key]: { value: 13_169, pnl: 669, pnlPct: 5.35 } },
+      },
+      {
+        ts: "2026-06-17T16:00:00.000Z",
+        capital: 12_500,
+        value: 34_750,
+        pnl: 22_250,
+        pnlPct: 178,
+        byTicker: { [key]: { value: 34_750, pnl: 22_250, pnlPct: 178 } },
+      },
+    ];
+    const simTable = { sheet: "Simulation", rows: [row], columns: [] };
+    const chips = buildDashboardPortfolioChips(simTable, inputs, history);
+    const totals = aggregateOpenPortfolioPnl(simTable, inputs, history);
+
+    expect(chips[0]?.pnlEur).toBeLessThan(800);
+    expect(chips[0]?.pnlPct).toBeLessThan(8);
+    expect(totals.pnlEur).toBeLessThan(800);
+    expect(totals.pnlEur).toBeCloseTo(totals.priorLegEur + totals.pnlEurToday, 2);
+  });
+
+  it("ignores contaminated history snapshots when entry buy is known", () => {
+    const key = "RYTM|2026-09-15";
+    const row = {
+      Ticker: "RYTM",
+      "Completion Date": "15/09/2026",
+      "Prezzo Corrente ($)": 94.5,
+      "Prezzo Acquisto ($)": 90,
+      "Var. Giorn. %": 0.42,
+      "Valore Attuale ($)": 34_750,
+      "P&L (%)": 178,
+      "Capitale Investito ($)": 12_500,
+    };
+    const inputs = {
+      [key]: {
+        buyPrice: 90,
+        capital: 12_500,
+        ignoreSheet: false,
+        investedAt: "2026-06-12T07:11:18.665Z",
+      },
+    };
+    const history = [
+      {
+        ts: "2026-06-17T16:00:00.000Z",
+        capital: 12_500,
+        value: 34_750,
+        pnl: 22_250,
+        pnlPct: 178,
+        byTicker: { [key]: { value: 34_750, pnl: 22_250, pnlPct: 178 } },
+      },
+    ];
+    const simTable = { sheet: "Simulation", rows: [row], columns: [] };
+    const chips = buildDashboardPortfolioChips(simTable, inputs, history);
+    expect(chips[0].pnlEur).toBeLessThan(800);
+    expect(chips[0].pnlPct).toBeLessThan(8);
+  });
+
+  it("forces MTM on moderate history contamination (+18% hist vs +5% MTM)", () => {
+    const key = "MOD|2026-09-15";
+    const capital = 10_000;
+    const buy = 100;
+    const curr = 105; // +5% MTM
+    const row = {
+      Ticker: "MOD",
+      "Completion Date": "15/09/2026",
+      "Prezzo Corrente ($)": curr,
+      "Prezzo Acquisto ($)": buy,
+      "Var. Giorn. %": 0.5,
+      "Capitale Investito ($)": capital,
+    };
+    const inputs = {
+      [key]: {
+        buyPrice: buy,
+        capital,
+        ignoreSheet: false,
+        investedAt: "2026-06-01T10:00:00.000Z",
+      },
+    };
+    const history = [
+      {
+        ts: "2026-06-16T16:00:00.000Z",
+        capital,
+        value: capital * 1.18,
+        pnl: capital * 0.18,
+        pnlPct: 18,
+        byTicker: {
+          [key]: {
+            value: capital * 1.18,
+            pnl: capital * 0.18,
+            pnlPct: 18,
+          },
+        },
+      },
+    ];
+    const pos = computeSimulationPosition(row, inputs, { history })!;
+    const breakdown = resolvePositionPnlBreakdown(
+      pos,
+      row,
+      inputs[key].investedAt,
+      history,
+      inputs,
+    );
+    const assessment = assessHistoryContamination(
+      capital,
+      [{ dayKey: "2026-06-16", value: capital * 1.18, ts: history[0].ts }],
+      buy,
+      curr,
+    );
+
+    expect(assessment.contaminated).toBe(true);
+    expect(assessment.driftPp).toBeGreaterThan(12);
+    expect(breakdown.historyContaminated).toBe(true);
+    expect(breakdown.totalSource).toBe("price_mtm_contaminated_history");
+    expect(breakdown.totalEur).toBeCloseTo(500, 0);
+    expect(breakdown.priorLegIsImplicitEstimate).toBe(true);
+    expect(breakdown.priorLegEur! + (breakdown.pnlEurToday ?? 0)).toBeCloseTo(
+      breakdown.totalEur,
+      1,
+    );
+  });
+
+  it("flags uncertain contamination in gray zone and forces MTM", () => {
+    const capital = 10_000;
+    const buy = 100;
+    const curr = 106; // +6% MTM
+    const assessment = assessHistoryContamination(
+      capital,
+      [{ dayKey: "2026-06-16", value: capital * 1.145, ts: "2026-06-16T16:00:00.000Z" }],
+      buy,
+      curr,
+    );
+    expect(assessment.contaminated).toBe(false);
+    expect(assessment.uncertainContamination).toBe(true);
+    expect(assessment.driftPp).toBeGreaterThan(8);
+    expect(assessment.driftPp).toBeLessThanOrEqual(12);
+  });
+});
+
+/** Six-ticker portfolio cross-check (manual audit Excel set). */
+const PORTFOLIO_SIX_TICKERS = [
+  { ticker: "GPCR", cd: "26/08/2026", buy: 45.73, capital: 3499, curr: 48.0 },
+  { ticker: "NRIX", cd: "31/08/2026", buy: 17.73, capital: 12_500, curr: 18.37 },
+  { ticker: "MLTX", cd: "28/09/2026", buy: 18.51, capital: 5, curr: 19.0 },
+  { ticker: "RYTM", cd: "15/09/2026", buy: 90, capital: 12_500, curr: 94.5 },
+  { ticker: "PTCT", cd: "30/09/2026", buy: 78.42, capital: 7697, curr: 80.0 },
+  { ticker: "KURA", cd: "30/09/2026", buy: 9.8, capital: 10_606, curr: 10.2 },
+] as const;
+
+function portfolioRowKey(ticker: string, cd: string): string {
+  const parts = cd.split("/");
+  if (parts.length === 3) {
+    const [d, m, y] = parts;
+    return `${ticker}|${y}-${m.padStart(2, "0")}-${d.padStart(2, "0")}`;
+  }
+  return `${ticker}|${cd}`;
+}
+
+describe("P&L six-ticker portfolio — moderate contamination guard", () => {
+  for (const spec of PORTFOLIO_SIX_TICKERS) {
+    it(`${spec.ticker}: moderate contaminated history forces MTM not leg-sum`, () => {
+      const rowKey = portfolioRowKey(spec.ticker, spec.cd);
+      const mtmPct = ((spec.curr - spec.buy) / spec.buy) * 100;
+      const histPct = mtmPct + 13; // drift > 12pp
+      const histValue = spec.capital * (1 + histPct / 100);
+      const row = {
+        Ticker: spec.ticker,
+        "Completion Date": spec.cd,
+        "Prezzo Corrente ($)": spec.curr,
+        "Prezzo Acquisto ($)": spec.buy,
+        "Var. Giorn. %": 0.4,
+        "Capitale Investito ($)": spec.capital,
+      };
+      const inputs = {
+        [rowKey]: {
+          buyPrice: spec.buy,
+          capital: spec.capital,
+          ignoreSheet: false,
+          investedAt: "2026-06-01T10:00:00.000Z",
+        },
+      };
+      const history = [
+        {
+          ts: "2026-06-16T16:00:00.000Z",
+          capital: spec.capital,
+          value: histValue,
+          pnl: histValue - spec.capital,
+          pnlPct: histPct,
+          byTicker: {
+            [rowKey]: {
+              value: histValue,
+              pnl: histValue - spec.capital,
+              pnlPct: histPct,
+            },
+          },
+        },
+      ];
+      const pos = computeSimulationPosition(row, inputs, { history })!;
+      const expectedMtm = (spec.capital / spec.buy) * spec.curr - spec.capital;
+      const breakdown = resolvePositionPnlBreakdown(
+        pos,
+        row,
+        inputs[rowKey].investedAt,
+        history,
+        inputs,
+      );
+
+      expect(breakdown.historyContaminated || breakdown.historyUncertainContamination).toBe(
+        true,
+      );
+      expect(breakdown.totalEur).toBeCloseTo(expectedMtm, 0);
+      expect(Math.abs(breakdown.totalPct - mtmPct)).toBeLessThan(1.5);
+    });
+  }
+
+  it("aggregate six tickers stays in MTM band under moderate contamination", () => {
+    const rows: Record<string, unknown>[] = [];
+    const inputs: Record<string, { buyPrice: number; capital: number; ignoreSheet: boolean; investedAt: string }> = {};
+    const history: Parameters<typeof aggregateOpenPortfolioPnl>[2] = [];
+    let expectedMtmSum = 0;
+
+    for (const spec of PORTFOLIO_SIX_TICKERS) {
+      const rowKey = portfolioRowKey(spec.ticker, spec.cd);
+      const mtmPct = ((spec.curr - spec.buy) / spec.buy) * 100;
+      const histPct = mtmPct + 13;
+      const histValue = spec.capital * (1 + histPct / 100);
+      expectedMtmSum += (spec.capital / spec.buy) * spec.curr - spec.capital;
+      rows.push({
+        Ticker: spec.ticker,
+        "Completion Date": spec.cd,
+        "Prezzo Corrente ($)": spec.curr,
+        "Prezzo Acquisto ($)": spec.buy,
+        "Var. Giorn. %": 0.4,
+        "Capitale Investito ($)": spec.capital,
+      });
+      inputs[rowKey] = {
+        buyPrice: spec.buy,
+        capital: spec.capital,
+        ignoreSheet: false,
+        investedAt: "2026-06-01T10:00:00.000Z",
+      };
+      history.push({
+        ts: `2026-06-16T16:00:00.000Z`,
+        capital: spec.capital,
+        value: histValue,
+        pnl: histValue - spec.capital,
+        pnlPct: histPct,
+        byTicker: {
+          [rowKey]: {
+            value: histValue,
+            pnl: histValue - spec.capital,
+            pnlPct: histPct,
+          },
+        },
+      });
+    }
+
+    const totals = aggregateOpenPortfolioPnl(
+      { sheet: "Simulation", rows, columns: [] },
+      inputs,
+      history,
+    );
+
+    expect(totals.anyHistoryContaminated || totals.anyHistoryUncertainContamination).toBe(
+      true,
+    );
+    expect(totals.priorLegIsImplicitEstimate).toBe(true);
+    expect(totals.pnlEur).toBeCloseTo(expectedMtmSum, 0);
+    expect(totals.pnlEur).toBeLessThan(5000);
   });
 });

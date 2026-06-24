@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type { AppScreen, ChartBundle, ChartPoint, SheetTable } from "../types";
 import { loadSimulationChartsBundle } from "../data/simulationCharts";
-import { useInvestSimInputsMutable } from "../hooks/useInvestSimInputs";
+import { useInvestSimInputs } from "../hooks/useInvestSimInputs";
 import {
   aggregateOpenPortfolioPnl,
   buildDashboardPortfolioChips,
@@ -61,11 +61,6 @@ import { ClosedPiggyBankCompact } from "./ClosedPiggyBankBeerGlass";
 import { useClosedPiggyBank } from "../hooks/useClosedPiggyBank";
 import { DashboardPanelUpdatedLabel } from "./DashboardPanelUpdatedLabel";
 import { latestDashboardPanelIso } from "../sheet/dashboardPanelDailyRefresh";
-import {
-  countSynthCapitalSyncRows,
-  revertSynthCapitalSyncs,
-  SYNTH_CAPITAL_LOG_CHANGED_EVENT,
-} from "../sheet/synthCapitalSyncLog";
 
 // ── Utility ──────────────────────────────────────────────────
 
@@ -118,6 +113,7 @@ function PiggyBankBar({
   onNavigateToPnl?: () => void;
 }) {
   const { lang } = useLang();
+  const t = useT();
 
   const rowByKey = useMemo(
     () => buildSimRowByKeyMap(simTable?.rows ?? []),
@@ -291,6 +287,39 @@ function PiggyBankBar({
   const priorLegEur = has24h ? piggyBankPriorLegFromEntry(totalPnl, pnl24h.eur) : null;
   const showDayVsTotalNote =
     has24h && piggyBankNeedsDayVsTotalNote(totalPnl, pnl24h.eur);
+  const piggyTotalTitle = useMemo(() => {
+    if (!metricsReady) {
+      return lang === "it"
+        ? "Caricamento prezzi e storico P&L…"
+        : "Loading prices and P&L history…";
+    }
+    if (has24h && priorLegEur != null) {
+      const todayStr = fmtUsd(pnl24h.eur);
+      const priorStr = fmtUsd(priorLegEur);
+      if (portfolioTotals.anyHistoryUncertainContamination) {
+        return t("dashboard.piggy.priorLegUncertain", { today: todayStr, prior: priorStr });
+      }
+      if (portfolioTotals.priorLegIsImplicitEstimate) {
+        return t("dashboard.piggy.priorLegImplicit", { today: todayStr, prior: priorStr });
+      }
+      if (showDayVsTotalNote) {
+        return t("dashboard.piggy.priorLegVerified", { today: todayStr, prior: priorStr });
+      }
+    }
+    return lang === "it"
+      ? "Somma (valore attuale − capitale) su posizioni aperte"
+      : "Sum of (current value − capital) on open positions";
+  }, [
+    metricsReady,
+    lang,
+    t,
+    has24h,
+    priorLegEur,
+    pnl24h.eur,
+    portfolioTotals.anyHistoryUncertainContamination,
+    portfolioTotals.priorLegIsImplicitEstimate,
+    showDayVsTotalNote,
+  ]);
   const pnl24hColor = !has24h
     ? "text-ink-muted"
     : is24hPos
@@ -359,19 +388,7 @@ function PiggyBankBar({
         </p>
         <p
           className={`text-base font-bold tabular-nums leading-none ${pnlColor}`}
-          title={
-            !metricsReady
-              ? lang === "it"
-                ? "Caricamento prezzi e storico P&L…"
-                : "Loading prices and P&L history…"
-              : showDayVsTotalNote && priorLegEur != null
-              ? lang === "it"
-                ? `Totale dall'ingresso. Oggi ${fmtUsd(pnl24h.eur)}; prima ~${fmtUsd(priorLegEur)}`
-                : `Total since entry. Today ${fmtUsd(pnl24h.eur)}; prior ~${fmtUsd(priorLegEur)}`
-              : lang === "it"
-                ? "Somma (valore attuale − capitale) su posizioni aperte"
-                : "Sum of (current value − capital) on open positions"
-          }
+          title={piggyTotalTitle}
         >
           {noData ? (metricsReady ? "—" : "…") : `${totalPnl >= 0 ? "+" : ""}${fmtUsd(totalPnl)}`}
           {!noData && (
@@ -634,8 +651,7 @@ export function MainDashboardView({
   const [recModalOpen, setRecModalOpen] = useState(false);
   const [recStats, setRecStats] = useState({ total: 0, newCount: 0, keySig: "" });
   const recModalAckSigRef = useRef("");
-  const [synthRevertTick, setSynthRevertTick] = useState(0);
-  const { inputs, patchInputs } = useInvestSimInputsMutable(simTable, dashboardReloadToken);
+  const inputs = useInvestSimInputs(simTable, dashboardReloadToken);
   const { history: portfolioHistory, historyReady } = useInvestSimPortfolioHistory(
     dashboardReloadToken,
   );
@@ -684,22 +700,6 @@ export function MainDashboardView({
     () => simRows.filter((r) => rowHasActivePortfolio(r, inputs)),
     [simRows, inputs],
   );
-
-  const simRowByKeyForRevert = useMemo(
-    () => buildSimRowByKeyMap(simRows),
-    [simRows],
-  );
-
-  const synthRevertableCount = useMemo(
-    () => countSynthCapitalSyncRows(),
-    [synthRevertTick, inputs],
-  );
-
-  useEffect(() => {
-    const bump = () => setSynthRevertTick((n) => n + 1);
-    window.addEventListener(SYNTH_CAPITAL_LOG_CHANGED_EVENT, bump);
-    return () => window.removeEventListener(SYNTH_CAPITAL_LOG_CHANGED_EVENT, bump);
-  }, []);
 
   useEffect(() => {
     const unsubTopOpps = subscribeTopOpps(() => {});
@@ -956,42 +956,6 @@ export function MainDashboardView({
           <p className="text-xl font-bold tabular-nums mt-0.5 leading-tight text-ink">
             {totalCapital > 0 ? fmtUsd(totalCapital) : "—"}
           </p>
-          {synthRevertableCount > 0 ? (
-            <button
-              type="button"
-              className="mt-1.5 w-full rounded border border-amber-500/40 bg-amber-500/10 px-1.5 py-0.5 text-[10px] font-semibold text-amber-900 dark:text-amber-100 hover:bg-amber-500/18 transition tabular-nums"
-              title={
-                lang === "it"
-                  ? "Annulla l’ultimo allineamento synth e ripristina il capitale € precedente"
-                  : "Undo the last synth alignment and restore previous € capital"
-              }
-              onClick={() => {
-                const n = synthRevertableCount;
-                const ok = window.confirm(
-                  lang === "it"
-                    ? `Ripristinare il capitale investito com’era prima dell’ultimo sync synth (${n} posizione${n === 1 ? "" : "i"})?`
-                    : `Restore invested capital to before the last synth sync (${n} position${n === 1 ? "" : "s"})?`,
-                );
-                if (!ok) return;
-                const restored = revertSynthCapitalSyncs(
-                  patchInputs,
-                  inputs,
-                  simRowByKeyForRevert,
-                );
-                if (restored === 0) {
-                  window.alert(
-                    lang === "it"
-                      ? "Nessun allineamento synth da annullare (log vuoto o capitale già ripristinato)."
-                      : "Nothing to revert (empty log or capital already restored).",
-                  );
-                }
-              }}
-            >
-              {lang === "it"
-                ? `↩ Annulla synth (${synthRevertableCount})`
-                : `↩ Synth revert (${synthRevertableCount})`}
-            </button>
-          ) : null}
         </div>
         <HeroKpi
           label={lang === "it" ? "Prossimo CD" : "Next Catalyst"}
@@ -1104,6 +1068,7 @@ export function MainDashboardView({
             chartBundle={chartBundle}
             sdsRows={sdsRowsForMig}
             dataUpdatedAt={dataUpdatedAt}
+            onNavigate={onScreen}
             aiFeed={{
               feed: aiFeedTop,
               recentCount: aiFeedRecentCount,

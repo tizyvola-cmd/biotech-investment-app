@@ -224,20 +224,28 @@ export function computeDealLossRisk(
   const aggregateLift = Math.max(0.3, Math.min(3.0, rawAggregate));
 
   // Approved Phase B pattern match — only when the deal carries values for
-  // every dimension the pattern conditions on.
+  // every dimension the pattern conditions on AND the pattern itself meets
+  // minimum quality thresholds (lift >= 1.3, precision >= 0.50).
+  // A pattern that matches 80%+ of all deals is too broad to be a meaningful
+  // risk flag — we suppress the badge rather than cry wolf on every position.
   let matched = false;
   if (approvedPattern && approvedPattern.conditions.length > 0) {
-    // RowFeatures shape — fill from WidgetDeal cells; unknown dims => null.
-    const features = {
-      rowKey: deal.ticker,
-      sdsBucket: deal.cells.sdsBucket || null,
-      clinicalPhase: deal.cells.clinicalPhase || null,
-      clinicalIndication: deal.cells.clinicalIndication || null,
-      pplanBucket: deal.cells.pplanBucket || null,
-      daysToCdBucket: null,
-      precdSlopeSign: null,
-    };
-    matched = matchPattern(approvedPattern, features);
+    const stats = approvedPattern.inSampleStats;
+    const patternLift = stats?.lift ?? 0;
+    const patternPrecision = stats?.precision ?? 0;
+    const qualityOk = patternLift >= 1.3 && patternPrecision >= 0.50;
+    if (qualityOk) {
+      const features = {
+        rowKey: deal.ticker,
+        sdsBucket: deal.cells.sdsBucket || null,
+        clinicalPhase: deal.cells.clinicalPhase || null,
+        clinicalIndication: deal.cells.clinicalIndication || null,
+        pplanBucket: deal.cells.pplanBucket || null,
+        daysToCdBucket: null,
+        precdSlopeSign: null,
+      };
+      matched = matchPattern(approvedPattern, features);
+    }
   }
 
   return {
@@ -614,7 +622,16 @@ export function payoffForSdsBucket(
   // Use the empirical asymmetry W ≈ 1.5 × |L| as a stable shrinker.
   // avg = winRate * 1.5 * |L| + (1 - winRate) * L = L * ((1 - winRate) − 1.5 * winRate)
   // Note L is negative; we solve directly:
-  const avg = row.deliveredAvgPnlPct;
+  //
+  // Bayesian shrinkage on avg toward neutral (0) when n is small, mirroring
+  // the same k=8 pseudo-count used by the shrinkage engine for win rates.
+  // This prevents thin-sample outlier losses from producing extreme EV.
+  const PAYOFF_SHRINK_K = 8; // pseudo-count — same as shrinkage engine default
+  const NEUTRAL_AVG = 0; // prior for avg P&L: assume breakeven until data says otherwise
+  const shrunkAvg =
+    (row.deliveredN * row.deliveredAvgPnlPct + PAYOFF_SHRINK_K * NEUTRAL_AVG) /
+    (row.deliveredN + PAYOFF_SHRINK_K);
+  const avg = shrunkAvg;
   // L * (1 - 2.5 * winRate) = avg → L = avg / (1 - 2.5 * winRate)
   const denom = 1 - 2.5 * winRate;
   let lossPct: number;

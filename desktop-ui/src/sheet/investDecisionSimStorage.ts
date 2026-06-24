@@ -13,9 +13,10 @@ import {
 } from "./investDecisionSimExperiment";
 import { sanitizeLiveExperimentPiggy } from "./decisionSimPnlResolve";
 import { repairDecisionSimState } from "./simLoopDiagnostics";
+import { stampPostSellMove24hOnTicks } from "./investDecisionSimAdviceCalibration";
 import {
-  effectiveDecisionSimIntervalHours,
-  isDecisionSimMarketWindow,
+  decisionSimDailyEvaluationKey,
+  isDecisionSimDailyEvaluationWindow,
 } from "./investDecisionSimSchedule";
 import {
   isPendingSimTradeDue,
@@ -51,6 +52,7 @@ export function defaultDecisionSimState(): DecisionSimState {
     paperPortfolio: [],
     ticks: [],
     lastTickAt: null,
+    lastDailyEvaluationDayKey: null,
     cumulativePaperPnlEur: 0,
     closedTradeCount: 0,
     experimentStartedAt: null,
@@ -114,6 +116,10 @@ function migrateState(parsed: Record<string, unknown>): DecisionSimState {
     ticks: Array.isArray(parsed.ticks)
       ? (parsed.ticks as DecisionSimTick[]).slice(-DECISION_SIM_MAX_TICKS).map(compactTickForStorage)
       : [],
+    lastDailyEvaluationDayKey:
+      typeof parsed.lastDailyEvaluationDayKey === "string"
+        ? parsed.lastDailyEvaluationDayKey
+        : null,
     cumulativePaperPnlEur:
       typeof parsed.cumulativePaperPnlEur === "number" && Number.isFinite(parsed.cumulativePaperPnlEur)
         ? parsed.cumulativePaperPnlEur
@@ -224,10 +230,14 @@ function compactTickForStorage(tick: DecisionSimTick): DecisionSimTick {
 }
 
 export function saveDecisionSimState(state: DecisionSimState): DecisionSimState {
-  const trimmed: DecisionSimState = {
+  const stamped: DecisionSimState = {
     ...state,
     version: 2,
-    ticks: state.ticks.slice(-DECISION_SIM_MAX_TICKS).map(compactTickForStorage),
+    ticks: stampPostSellMove24hOnTicks(state.ticks),
+  };
+  const trimmed: DecisionSimState = {
+    ...stamped,
+    ticks: stamped.ticks.slice(-DECISION_SIM_MAX_TICKS).map(compactTickForStorage),
     adviceLog: state.adviceLog.slice(-DECISION_SIM_ADVICE_LOG_MAX),
     gapInvestigationLog: (state.gapInvestigationLog ?? []).slice(-GAP_INVESTIGATION_LOG_MAX),
   };
@@ -279,11 +289,13 @@ export function appendDecisionSimMarkTick(
   state: DecisionSimState,
   tick: DecisionSimTick,
 ): DecisionSimState {
+  const dayKey = decisionSimDailyEvaluationKey(new Date(tick.at));
   return saveDecisionSimState({
     ...state,
     paperPortfolio: tick.portfolioAfter,
     ticks: [...state.ticks, tick],
     lastTickAt: tick.at,
+    lastDailyEvaluationDayKey: dayKey ?? state.lastDailyEvaluationDayKey,
     piggyBank: tick.summary.piggyBank ?? state.piggyBank,
   });
 }
@@ -339,7 +351,6 @@ export function stopDecisionSimRun(state: DecisionSimState): DecisionSimState {
 
 export function shouldRunDecisionSimTick(state: DecisionSimState, at: Date = new Date()): boolean {
   if (!state.config.enabled) return false;
-  if (!isDecisionSimMarketWindow(at)) return false;
   const pending = loadPendingSimTradeBatch();
   if (pending && !isPendingSimTradeDue(pending, at)) return false;
   if (
@@ -349,11 +360,11 @@ export function shouldRunDecisionSimTick(state: DecisionSimState, at: Date = new
   ) {
     return false;
   }
-  if (!state.lastTickAt) return true;
-  const intervalMs =
-    effectiveDecisionSimIntervalHours(state.config.intervalHours, state.config.experimentMode) *
-    3_600_000;
-  return at.getTime() - new Date(state.lastTickAt).getTime() >= intervalMs * 0.95;
+  if (!isDecisionSimDailyEvaluationWindow(at)) return false;
+  const dayKey = decisionSimDailyEvaluationKey(at);
+  if (!dayKey) return false;
+  if (state.lastDailyEvaluationDayKey === dayKey) return false;
+  return true;
 }
 
 export function isDecisionSimRunExpired(state: DecisionSimState): boolean {

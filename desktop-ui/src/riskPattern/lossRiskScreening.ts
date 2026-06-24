@@ -160,11 +160,16 @@ function extractRowFeatures(
   row: SimOutcomeRow,
   ctx: {
     simRowByKey: Map<string, Record<string, unknown>>;
+    simRowByTicker: Map<string, Record<string, unknown>>;
     sdsByTicker: Map<string, SdsRow>;
   },
 ): RowFeatures {
   const rowKey = normalizedRowKey(row.ticker, row.completion_date);
-  const simRow = ctx.simRowByKey.get(rowKey);
+  // Exact join first; fall back to any row for the same ticker (clinical phase
+  // is ticker-level metadata that doesn't change between CD dates).
+  const simRow =
+    ctx.simRowByKey.get(rowKey) ??
+    ctx.simRowByTicker.get(row.ticker.toUpperCase());
   const livePhaseRaw = simRow ? clinicalPhaseFromSimRow(simRow) : "";
   const liveIndicationRaw = simRow
     ? clinicalIndicationFromSimRow(simRow, 200)
@@ -301,14 +306,20 @@ export function runUnivariateScreening(
   const config = ctxIn.config ?? DEFAULT_SHRINKAGE_CONFIG;
   const resolved = outcomes.filter(isResolved);
 
-  const simRowByKey = ctxIn.simTable
-    ? buildSimRowByKeyMap(ctxIn.simTable.rows ?? [])
+  const simRowsU = ctxIn.simTable?.rows ?? [];
+  const simRowByKey = simRowsU.length
+    ? buildSimRowByKeyMap(simRowsU)
     : new Map<string, Record<string, unknown>>();
+  const simRowByTicker = new Map<string, Record<string, unknown>>();
+  for (const r of simRowsU) {
+    const tk = String(r.Ticker ?? "").trim().toUpperCase();
+    if (tk && !tk.includes("TOTALE")) simRowByTicker.set(tk, r);
+  }
   const sdsByTicker = new Map<string, SdsRow>();
   for (const s of ctxIn.sdsRows ?? []) {
     if (s.ticker) sdsByTicker.set(s.ticker.toUpperCase(), s);
   }
-  const ctx = { simRowByKey, sdsByTicker };
+  const ctx = { simRowByKey, simRowByTicker, sdsByTicker };
 
   // Per-row feature extraction
   const enriched = resolved.map((row) => ({
@@ -427,14 +438,21 @@ export function extractAllRowFeatures(
     sdsRows?: SdsRow[] | null;
   } = {},
 ): Map<string, RowFeatures> {
-  const simRowByKey = ctxIn.simTable
-    ? buildSimRowByKeyMap(ctxIn.simTable.rows ?? [])
+  const simRows = ctxIn.simTable?.rows ?? [];
+  const simRowByKey = simRows.length
+    ? buildSimRowByKeyMap(simRows)
     : new Map<string, Record<string, unknown>>();
+  // Ticker-level fallback: keeps the last simTable row seen per ticker.
+  const simRowByTicker = new Map<string, Record<string, unknown>>();
+  for (const r of simRows) {
+    const tk = String(r.Ticker ?? "").trim().toUpperCase();
+    if (tk && !tk.includes("TOTALE")) simRowByTicker.set(tk, r);
+  }
   const sdsByTicker = new Map<string, SdsRow>();
   for (const s of ctxIn.sdsRows ?? []) {
     if (s.ticker) sdsByTicker.set(s.ticker.toUpperCase(), s);
   }
-  const ctx = { simRowByKey, sdsByTicker };
+  const ctx = { simRowByKey, simRowByTicker, sdsByTicker };
   const map = new Map<string, RowFeatures>();
   for (const r of outcomes) {
     if (!isResolved(r)) continue;

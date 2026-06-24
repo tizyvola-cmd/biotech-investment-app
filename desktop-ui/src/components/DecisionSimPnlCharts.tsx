@@ -8,9 +8,16 @@ import {
   alignSimLoopPnlToPortfolioDates,
   type SimLoopSynthMaturationPoint,
 } from "../sheet/simLoopSynthMaturation";
+import type { SimLoopSizingVariant } from "../sheet/simLoopSizingVariant";
+import { SimLoopSizingVariantToggle } from "./SimLoopSizingVariantToggle";
 import { TradePortfolioChart } from "./TradePortfolioChart";
 import { DECISION_SIM_PAIR_CHART_HEIGHT } from "./decisionSimChartLayout";
 import { buildSimRowByKeyMap } from "../sheet/investSimKeys";
+import {
+  lastTradingSessionCutoffIso,
+  lastUsEquitySessionDayKey,
+  formatSessionDayKey,
+} from "../sheet/marketSession";
 
 export function DecisionSimPnlCharts({
   ticks,
@@ -28,8 +35,10 @@ export function DecisionSimPnlCharts({
   raWhatIfActive = false,
   pairPreChartHeight = null,
   simLoopSynthMaturation = null,
-  simLoopWeightedMaturation: _simLoopWeightedMaturation = null,
+  simLoopWeightedMaturation = null,
   simLoopSizedTotalCapitalEur: _simLoopSizedTotalCapitalEur,
+  sizingVariant = "equal",
+  onSizingVariantChange,
 }: {
   ticks: DecisionSimTick[];
   livePiggy: ExperimentPiggyBank;
@@ -52,15 +61,28 @@ export function DecisionSimPnlCharts({
   simLoopWeightedMaturation?: SimLoopSynthMaturationPoint[] | null;
   /** Pot totale sim loop (capPerTrade × maxOpen) per curve weight/synth. */
   simLoopSizedTotalCapitalEur?: number;
+  sizingVariant?: SimLoopSizingVariant;
+  onSizingVariantChange?: (v: SimLoopSizingVariant) => void;
 }) {
   const t = useT();
-  useLang();
-  const [curveVariant, setCurveVariant] = useState<"equal" | "synth">("equal");
+  const { lang } = useLang();
+  const [timeWindow, setTimeWindow] = useState<"all" | "24h">("24h");
+
+  const sessionCutoffIso = useMemo(() => lastTradingSessionCutoffIso(), []);
+  const sessionDayKey = useMemo(() => lastUsEquitySessionDayKey(), []);
+
+  const visibleTicks = useMemo(
+    () =>
+      timeWindow === "24h"
+        ? ticks.filter((tk) => tk.at >= sessionCutoffIso)
+        : ticks,
+    [ticks, timeWindow, sessionCutoffIso],
+  );
 
   const tradePortfolio = useMemo(
     () =>
       buildDecisionSimTradePortfolio({
-        ticks,
+        ticks: visibleTicks,
         simTable,
         paperPortfolio,
         livePiggy,
@@ -69,7 +91,7 @@ export function DecisionSimPnlCharts({
         maxOpenPositions,
       }),
     [
-      ticks,
+      visibleTicks,
       simTable,
       paperPortfolio,
       livePiggy,
@@ -78,6 +100,15 @@ export function DecisionSimPnlCharts({
       maxOpenPositions,
     ],
   );
+
+  const weightPnlCurve = useMemo(() => {
+    if (!simLoopWeightedMaturation?.length) return null;
+    const aligned = alignSimLoopPnlToPortfolioDates(
+      simLoopWeightedMaturation,
+      tradePortfolio.portfolioCurve,
+    );
+    return aligned.length > 0 ? aligned : null;
+  }, [simLoopWeightedMaturation, tradePortfolio.portfolioCurve]);
 
   const synthPnlCurve = useMemo(() => {
     if (!simLoopSynthMaturation?.length) return null;
@@ -88,8 +119,16 @@ export function DecisionSimPnlCharts({
     return aligned.length > 0 ? aligned : null;
   }, [simLoopSynthMaturation, tradePortfolio.portfolioCurve]);
 
-  const activeCurve =
-    curveVariant === "synth" && synthPnlCurve ? synthPnlCurve : tradePortfolio.portfolioCurve;
+  const activeCurve = useMemo(() => {
+    if (sizingVariant === "weight" && weightPnlCurve?.length) return weightPnlCurve;
+    if (sizingVariant === "synth" && synthPnlCurve?.length) return synthPnlCurve;
+    return tradePortfolio.portfolioCurve;
+  }, [sizingVariant, weightPnlCurve, synthPnlCurve, tradePortfolio.portfolioCurve]);
+
+  const overlayWeight =
+    sizingVariant !== "weight" ? weightPnlCurve : null;
+  const overlaySynth =
+    sizingVariant !== "synth" ? synthPnlCurve : null;
 
   const comparePortfolio = useMemo(() => {
     if (!raWhatIfActive || !compareTicks?.length) return null;
@@ -117,7 +156,14 @@ export function DecisionSimPnlCharts({
   const hasTradeData =
     tradePortfolio.trades.length > 0 || tradePortfolio.portfolioCurve.length > 0;
 
-  const canToggleSynth = Boolean(synthPnlCurve?.length);
+  const chartTitle =
+    sizingVariant === "synth"
+      ? t("testerMonitor.decisionSim.chart.tradesPnlSynth")
+      : sizingVariant === "weight"
+        ? t("testerMonitor.decisionSim.chart.tradesPnlWeight")
+        : raWhatIfActive
+          ? t("testerMonitor.decisionSim.chart.tradesPnlRa")
+          : t("testerMonitor.decisionSim.chart.tradesPnl");
 
   if (!hasTradeData) {
     return (
@@ -140,9 +186,14 @@ export function DecisionSimPnlCharts({
         portfolioCurve={activeCurve}
         deployedCapitalEur={tradePortfolio.deployedCapitalEur}
         comparePortfolioCurve={comparePortfolio?.portfolioCurve}
+        simLoopWeightedPortfolioCurve={overlayWeight ?? weightPnlCurve ?? undefined}
+        simLoopSynthPortfolioCurve={overlaySynth ?? synthPnlCurve ?? undefined}
         valueMode="pnl"
-        curveVariant={curveVariant}
-        showOverlayCurves={false}
+        curveVariant={sizingVariant}
+        showOverlayCurves={Boolean(
+          (weightPnlCurve?.length || synthPnlCurve?.length) &&
+            sizingVariant !== "equal",
+        )}
         compact
         pairLayout={compact}
         pairPreChartHeight={pairPreChartHeight}
@@ -153,42 +204,35 @@ export function DecisionSimPnlCharts({
               className={`tester-monitor-text font-semibold min-w-0 truncate ${
                 compact ? "text-[10px]" : "text-[11px]"
               }`}
-              title={
-                curveVariant === "synth"
-                  ? t("testerMonitor.decisionSim.chart.tradesPnlSynth")
-                  : raWhatIfActive
-                    ? t("testerMonitor.decisionSim.chart.tradesPnlRa")
-                    : t("testerMonitor.decisionSim.chart.tradesPnl")
-              }
+              title={chartTitle}
             >
-              {curveVariant === "synth"
-                ? t("testerMonitor.decisionSim.chart.tradesPnlSynth")
-                : raWhatIfActive
-                  ? t("testerMonitor.decisionSim.chart.tradesPnlRa")
-                  : t("testerMonitor.decisionSim.chart.tradesPnl")}
+              {chartTitle}
             </p>
-            {canToggleSynth ? (
+            <div className="flex flex-wrap items-center gap-1 shrink-0">
+              <SimLoopSizingVariantToggle
+                value={sizingVariant}
+                onChange={(v) => onSizingVariantChange?.(v)}
+                compact
+              />
               <button
                 type="button"
-                onClick={() =>
-                  setCurveVariant((v) => (v === "equal" ? "synth" : "equal"))
-                }
+                onClick={() => setTimeWindow((v) => (v === "all" ? "24h" : "all"))}
                 className={`shrink-0 font-semibold tabular-nums rounded-full border transition-colors ${
-                  curveVariant === "synth"
-                    ? "border-pink-300/70 bg-pink-50/90 text-pink-800 dark:border-pink-700/50 dark:bg-pink-950/30 dark:text-pink-200"
+                  timeWindow === "24h"
+                    ? "border-indigo-300/70 bg-indigo-50/90 text-indigo-800 dark:border-indigo-700/50 dark:bg-indigo-950/30 dark:text-indigo-200"
                     : "border-[rgb(var(--panel-feed-border))]/60 bg-white/90 text-[rgb(var(--panel-feed-accent-strong))] hover:bg-[rgb(var(--panel-feed-row-hover))]/45"
                 } ${compact ? "text-[9px] px-2 py-0.5" : "text-[10px] px-2.5 py-1"}`}
                 title={
-                  curveVariant === "equal"
-                    ? t("testerMonitor.decisionSim.chart.showSynthCurveTip")
-                    : t("testerMonitor.decisionSim.chart.showEqualCurveTip")
+                  timeWindow === "all"
+                    ? (lang === "it" ? `Zoom sull'ultima sessione (${formatSessionDayKey(sessionDayKey, "it")})` : `Zoom last session (${formatSessionDayKey(sessionDayKey, "en")})`)
+                    : (lang === "it" ? "Mostra storico completo" : "Show full history")
                 }
               >
-                {curveVariant === "equal"
-                  ? t("testerMonitor.decisionSim.chart.showSynthCurve")
-                  : t("testerMonitor.decisionSim.chart.showEqualCurve")}
+                {timeWindow === "all"
+                  ? (lang === "it" ? `📅 24h borsa` : `📅 Last session`)
+                  : (lang === "it" ? `↔ Tutto` : `↔ All`)}
               </button>
-            ) : null}
+            </div>
           </div>
         }
       />

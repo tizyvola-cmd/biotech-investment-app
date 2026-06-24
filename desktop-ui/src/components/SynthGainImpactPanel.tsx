@@ -1,8 +1,7 @@
 import type { SynthGainImpact } from "../sheet/threePortfolioCompare";
 import type { PortfolioSizingSuccessComparison } from "../sheet/portfolioWeightedSizing";
 import type { DealUniverseRealizedSuccess } from "../sheet/portfolioSuccessBridge";
-import { useEffect, useState } from "react";
-import { hydrateUiPrefsFromDisk, loadUiPrefsLocal, saveUiPrefs } from "../sheet/uiPrefs";
+import type { AdviceActionAccuracySummary } from "../sheet/investDecisionSimAdviceCalibration";
 
 export type PortfolioBalancingSuccessRow = {
   success: PortfolioSizingSuccessComparison;
@@ -13,264 +12,65 @@ export type PortfolioBalancingSuccessRow = {
   gainSynth24h: SynthGainImpact;
 };
 
-function fmtEur(v: number): string {
-  const sign = v > 0 ? "+" : "";
-  return `${sign}${Math.round(v).toLocaleString("it-IT")} €`;
-}
+/* ─── Helpers ──────────────────────────────────────────────────────────── */
 
-function fmtPctFrac(v: number | null | undefined, digits = 2): string {
-  if (v == null || !Number.isFinite(v)) return "—";
-  return `${(v * 100).toFixed(digits)}%`;
+function fmtPct(v: number | null | undefined): string {
+  return v != null ? `${v.toFixed(1)}%` : "—";
 }
-
-function fmtPp(v: number | null | undefined, digits = 2): string {
-  if (v == null || !Number.isFinite(v)) return "—";
-  const sign = v > 0 ? "+" : "";
-  return `${sign}${v.toFixed(digits)} pp`;
+function fmtDelta(d: number | null | undefined): string | null {
+  return d != null ? `${d > 0 ? "+" : ""}${d.toFixed(1)} pp` : null;
 }
-
-function fmtRelUplift(v: number | null | undefined, digits = 0): string {
-  if (v == null || !Number.isFinite(v)) return "—";
-  const sign = v > 0 ? "+" : "";
-  return `${sign}${v.toFixed(digits)}%`;
+function fmtErr(v: number | null | undefined): string {
+  return v != null ? `${v >= 0 ? "+" : ""}${v.toFixed(1)}%` : "—";
 }
-
-function toneClass(v: number): string {
-  if (v > 0) return "text-emerald-700 dark:text-emerald-300";
-  if (v < 0) return "text-rose-700 dark:text-rose-300";
+function deltaClass(d: number | null | undefined): string {
+  if (d == null) return "text-ink-muted";
+  if (d > 0) return "text-emerald-600 dark:text-emerald-400 font-semibold";
+  if (d < 0) return "text-rose-600 dark:text-rose-400 font-semibold";
   return "text-ink-muted";
 }
-
-function fmtProbPct(v: number | null | undefined, digits = 1): string {
-  if (v == null || !Number.isFinite(v)) return "—";
-  return `${v.toFixed(digits)}%`;
+function winRateClass(pct: number | null | undefined): string {
+  if (pct == null) return "text-ink-muted";
+  if (pct >= 60) return "text-emerald-700 dark:text-emerald-300";
+  if (pct >= 45) return "text-amber-700 dark:text-amber-300";
+  return "text-rose-700 dark:text-rose-300";
 }
 
-function SuccessRow({
+/* ─── Unified compact KPI panel ────────────────────────────────────────── */
+
+function KpiCell({
   label,
-  accent,
-  row,
-  it,
+  value,
+  valueCls,
+  sub,
+  subCls,
+  hint,
 }: {
   label: string;
-  accent: string;
-  row: PortfolioBalancingSuccessRow;
-  it: boolean;
+  value: string;
+  valueCls?: string;
+  sub?: string | null;
+  subCls?: string;
+  hint?: string;
 }) {
-  const { success, realized, gainWeight24h, gainSynth24h } = row;
-  const baseProb = success.equal.probNetAtTargetPct;
-  const deltaWeight =
-    success.weighted != null
-      ? success.weighted.probNetAtTargetPct - baseProb
-      : null;
-  const deltaSynth = success.synth.probNetAtTargetPct - baseProb;
-
   return (
-    <tr className="border-b border-[rgb(var(--border))]/30 align-middle">
-      <td className="py-2 pr-3">
-        <span className="inline-flex items-center gap-1.5 font-medium text-ink">
-          <span
-            className="inline-block w-2 h-2 rounded-full shrink-0"
-            style={{ backgroundColor: accent }}
-            aria-hidden
-          />
-          {label}
-        </span>
-      </td>
-      <td className="py-2 px-2 text-right tabular-nums">
-        {realized.winRatePct != null ? (
-          <span
-            className="font-semibold text-violet-800 dark:text-violet-200"
-            title={
-              it
-                ? `Win rate realizzato su ${realized.sampleSize} round-trip chiusi nel universe (${realized.winCount}W / ${realized.lossCount}L)`
-                : `Realized win rate on ${realized.sampleSize} closed round-trips in universe (${realized.winCount}W / ${realized.lossCount}L)`
-            }
-          >
-            {realized.winRatePct.toFixed(1)}%
-          </span>
-        ) : (
-          <span className="text-ink-muted/60" title={it ? "Nessun chiuso nel universe" : "No closed trades in universe"}>
-            —
-          </span>
-        )}
-        {realized.sampleSize > 0 ? (
-          <span className="block text-[8px] text-ink-muted">n={realized.sampleSize}</span>
-        ) : null}
-      </td>
-      <td className="py-2 px-2 text-right tabular-nums text-ink-muted">
-        <span
-          className="font-semibold text-ink"
-          title={
-            it
-              ? "P(P&L netto portfolio ≥ €0) al capitale pieno · sizing equi · win rate osservato (no shrinkage)"
-              : "P(portfolio net P&L ≥ €0) at full capital · equal sizing · raw observed win rate (no shrinkage)"
-          }
-        >
-          {fmtProbPct(baseProb)}
-        </span>
-      </td>
-      <td className="py-2 px-2 text-right tabular-nums">
-        {success.weighted ? (
-          <span
-            className="font-semibold text-emerald-800 dark:text-emerald-200"
-            title={
-              it
-                ? "P(+) con pesi approvati Learning Lab (senza ottimizzazione synth)"
-                : "P(+) with Learning Lab approved weights (no synth optimization)"
-            }
-          >
-            {fmtProbPct(success.weighted.probNetAtTargetPct)}
-          </span>
-        ) : (
-          <span className="text-ink-muted/60">—</span>
-        )}
-      </td>
-      <td className="py-2 px-2 text-right tabular-nums">
-        {deltaWeight != null ? (
-          <>
-            <span className={`font-bold text-sm ${toneClass(deltaWeight)}`}>
-              {deltaWeight >= 0 ? "+" : ""}
-              {fmtProbPct(deltaWeight, 1)}
-            </span>
-            <span
-              className={`block text-[9px] font-semibold ${toneClass(gainWeight24h.deltaPnlEur)}`}
-              title={
-                it
-                  ? "Gain 24h cumulato extra vs equi dal bilanciamento weight (stessa data del grafico)"
-                  : "Extra cumulative 24h gain vs equal from weight balancing (same chart date)"
-              }
-            >
-              {fmtEur(gainWeight24h.deltaPnlEur)}
-            </span>
-          </>
-        ) : (
-          "—"
-        )}
-      </td>
-      <td className="py-2 px-2 text-right tabular-nums">
-        <span
-          className="font-semibold text-teal-800 dark:text-teal-200"
-          title={it ? "P(+) con mix Weight Sim Exp (synth)" : "P(+) with Weight Sim Exp mix (synth)"}
-        >
-          {fmtProbPct(success.synth.probNetAtTargetPct)}
-        </span>
-      </td>
-      <td className="py-2 pl-2 text-right tabular-nums">
-        <span className={`font-bold text-sm ${toneClass(deltaSynth)}`}>
-          {deltaSynth >= 0 ? "+" : ""}
-          {fmtProbPct(deltaSynth, 1)}
-        </span>
-        <span
-          className={`block text-[9px] font-semibold ${toneClass(gainSynth24h.deltaPnlEur)}`}
-          title={
-            it
-              ? "Gain 24h cumulato extra vs equi dal bilanciamento synth (stessa data del grafico)"
-              : "Extra cumulative 24h gain vs equal from synth balancing (same chart date)"
-          }
-        >
-          {fmtEur(gainSynth24h.deltaPnlEur)}
-        </span>
-      </td>
-    </tr>
-  );
-}
-
-function ImpactRow({
-  label,
-  accent,
-  impact,
-  it,
-}: {
-  label: string;
-  accent: string;
-  impact: SynthGainImpact;
-  it: boolean;
-}) {
-  const hasBaseline = impact.baselineCostEur > 0;
-  const hasSynth = impact.synthCostEur > 0;
-  if (!hasBaseline && !hasSynth) return null;
-
-  return (
-    <tr className="border-b border-[rgb(var(--border))]/30 align-middle">
-      <td className="py-2 pr-3">
-        <span className="inline-flex items-center gap-1.5 font-medium text-ink">
-          <span
-            className="inline-block w-2 h-2 rounded-full shrink-0"
-            style={{ backgroundColor: accent }}
-            aria-hidden
-          />
-          {label}
-        </span>
-      </td>
-      <td className="py-2 px-2 text-right tabular-nums text-ink-muted">
-        {hasBaseline ? (
-          <>
-            <span className={toneClass(impact.baselinePnlEur)}>{fmtEur(impact.baselinePnlEur)}</span>
-            <span className="block text-[9px]">{fmtPctFrac(impact.baselineGainPct)}</span>
-          </>
-        ) : (
-          "—"
-        )}
-      </td>
-      <td className="py-2 px-2 text-right tabular-nums">
-        {hasSynth ? (
-          <>
-            <span className={`font-semibold ${toneClass(impact.synthPnlEur)}`}>
-              {fmtEur(impact.synthPnlEur)}
-            </span>
-            <span className={`block text-[9px] font-semibold ${toneClass(impact.synthGainPct ?? 0)}`}>
-              {fmtPctFrac(impact.synthGainPct)}
-            </span>
-          </>
-        ) : (
-          "—"
-        )}
-      </td>
-      <td className="py-2 px-2 text-right tabular-nums">
-        {hasBaseline && hasSynth ? (
-          <>
-            <span className={`font-semibold ${toneClass(impact.deltaPnlEur)}`}>
-              {fmtEur(impact.deltaPnlEur)}
-            </span>
-            <span className={`block text-[9px] ${toneClass(impact.deltaGainPp ?? 0)}`}>
-              {fmtPp(impact.deltaGainPp)}
-            </span>
-          </>
-        ) : (
-          "—"
-        )}
-      </td>
-      <td className="py-2 pl-2 text-right tabular-nums">
-        {impact.relativeGainUpliftPct != null ? (
-          <span
-            className={`font-bold text-sm ${toneClass(impact.relativeGainUpliftPct)}`}
-            title={
-              it
-                ? "Quanto il gain € con synth supera quello equi (stesso denominatore)"
-                : "How much synth P&L exceeds equal-€ P&L (same capital pot)"
-            }
-          >
-            {fmtRelUplift(impact.relativeGainUpliftPct)}
-          </span>
-        ) : impact.baselinePnlEur === 0 && impact.synthPnlEur !== 0 ? (
-          <span className="text-[9px] text-ink-muted">{it ? "n/d (equi €0)" : "n/a (equal €0)"}</span>
-        ) : (
-          "—"
-        )}
-      </td>
-    </tr>
+    <div
+      className="flex flex-col gap-0.5 min-w-0 px-3 py-2 rounded-lg border border-[rgb(var(--border))]/40 bg-white/50 dark:bg-surface/50"
+      title={hint}
+    >
+      <span className="text-[10px] uppercase tracking-wide text-ink-muted font-medium truncate">{label}</span>
+      <span className={`text-[15px] font-bold tabular-nums ${valueCls ?? "text-ink"}`}>{value}</span>
+      {sub != null && (
+        <span className={`text-[10px] tabular-nums ${subCls ?? "text-ink-muted"}`}>{sub}</span>
+      )}
+    </div>
   );
 }
 
 export function SynthGainImpactPanel({
-  mine24h,
-  sim24h,
-  mineTotal,
-  simTotal,
   mineSuccess,
   simSuccess,
-  synthAvailable,
+  adviceAccuracy,
   it,
 }: {
   mine24h: SynthGainImpact;
@@ -279,177 +79,89 @@ export function SynthGainImpactPanel({
   simTotal: SynthGainImpact;
   mineSuccess: PortfolioBalancingSuccessRow | null;
   simSuccess: PortfolioBalancingSuccessRow | null;
+  adviceAccuracy?: AdviceActionAccuracySummary | null;
   synthAvailable: boolean;
   it: boolean;
 }) {
-  const [open, setOpen] = useState(() => {
-    const v = loadUiPrefsLocal().synthGainImpactOpen;
-    return v == null ? false : Boolean(v);
-  });
-  useEffect(() => {
-    let cancelled = false;
-    void (async () => {
-      const disk = await hydrateUiPrefsFromDisk();
-      if (cancelled || disk == null || typeof disk.synthGainImpactOpen !== "boolean") {
-        return;
-      }
-      setOpen(disk.synthGainImpactOpen);
-    })();
-    return () => {
-      cancelled = true;
-    };
-  }, []);
-  const onToggle = (e: React.SyntheticEvent<HTMLDetailsElement>) => {
-    const next = e.currentTarget.open;
-    setOpen(next);
-    saveUiPrefs({ synthGainImpactOpen: next });
-  };
+  if (!mineSuccess || !simSuccess) return null;
 
-  const collapsedHint =
-    synthAvailable && mine24h.relativeGainUpliftPct != null
-      ? it
-        ? `Mine ${fmtRelUplift(mine24h.relativeGainUpliftPct)} · Sim ${fmtRelUplift(sim24h.relativeGainUpliftPct)}`
-        : `Mine ${fmtRelUplift(mine24h.relativeGainUpliftPct)} · Sim ${fmtRelUplift(sim24h.relativeGainUpliftPct)}`
-      : null;
+  const mine = mineSuccess.realized;
+  const sim  = simSuccess.realized;
+  const n    = mine.sampleSize;
 
-  const renderTable = (
-    title: string,
-    subtitle: string,
-    mine: SynthGainImpact,
-    sim: SynthGainImpact,
-  ) => (
-    <div className="min-w-0 flex-1">
-      <p className="text-[11px] font-semibold text-indigo-900 dark:text-indigo-100">{title}</p>
-      <p className="text-[9px] text-ink-muted mb-2 leading-snug">{subtitle}</p>
-      <div className="overflow-x-auto">
-        <table className="w-full text-[10px]">
-          <thead>
-            <tr className="text-ink-muted border-b border-[rgb(var(--border))]/50">
-              <th className="text-left font-semibold pb-1 pr-3">{it ? "Portafoglio" : "Portfolio"}</th>
-              <th className="text-right font-semibold pb-1 px-2">{it ? "Equi (baseline)" : "Equal (baseline)"}</th>
-              <th className="text-right font-semibold pb-1 px-2">{it ? "Con synth" : "With synth"}</th>
-              <th className="text-right font-semibold pb-1 px-2">Δ</th>
-              <th className="text-right font-semibold pb-1 pl-2">{it ? "Uplift gain" : "Gain uplift"}</th>
-            </tr>
-          </thead>
-          <tbody>
-            <ImpactRow label="Mine" accent="#0d9488" impact={mine} it={it} />
-            <ImpactRow label="Sim loop" accent="#db2777" impact={sim} it={it} />
-          </tbody>
-        </table>
-      </div>
-    </div>
-  );
+  const mineEq = mine.winRatePct;
+  const mineWt = mine.weightedWinRatePct;
+  const simWt  = sim.weightedWinRatePct;
+  const mineDelta = mine.weightingImpactPp;
+  const simDelta  = sim.weightingImpactPp;
+
+  const hasAdvice = adviceAccuracy != null && adviceAccuracy.scoredCount > 0;
 
   return (
-    <details
-      open={open}
-      onToggle={onToggle}
-      className="rounded-xl border border-teal-500/35 bg-teal-500/5 dark:bg-teal-950/20 shrink-0 group"
-    >
-      <summary className="cursor-pointer select-none list-none px-3 py-2.5 [&::-webkit-details-marker]:hidden hover:bg-teal-500/10 dark:hover:bg-teal-950/30 transition-colors">
-        <div className="flex flex-wrap items-start gap-2">
-          <div className="text-lg shrink-0" aria-hidden>
-            📐
-          </div>
-          <div className="flex-1 min-w-[200px]">
-            <h4 className="text-sm font-semibold text-ink">
-              {it ? "Impatto synth sul gain (%)" : "Synth impact on gain (%)"}
-            </h4>
-            {!open && collapsedHint ? (
-              <p className="text-[10px] text-ink-muted tabular-nums mt-0.5">{collapsedHint}</p>
-            ) : (
-              <p className="text-[10px] text-ink-muted leading-relaxed mt-0.5">
-                {it
-                  ? "Confronto synth vs stesso portafoglio a capitale equi — clic per espandere."
-                  : "Synth vs equal € sizing — click to expand."}
-              </p>
-            )}
-          </div>
-          <span className="text-[10px] text-ink-muted shrink-0 self-center">
-            {open ? (it ? "nascondi" : "hide") : it ? "mostra" : "show"}
-          </span>
-        </div>
-      </summary>
-
-      <div className="px-3 pb-3 pt-1 space-y-2 border-t border-teal-500/25">
-      <p className="text-[10px] text-ink-muted leading-relaxed">
+    <div className="rounded-xl border border-[rgb(var(--border))]/50 bg-white/30 dark:bg-surface/30 px-4 py-3 space-y-2">
+      {/* Header */}
+      <p className="text-[11px] font-semibold text-ink uppercase tracking-wide">
+        {it ? "Statistiche sistema" : "System statistics"}
+      </p>
+      <p className="text-[10px] text-ink-muted leading-snug">
         {it
-          ? "La colonna «Con synth» è il rendimento % sul capitale investito; «Uplift gain» = quanto in più guadagni in € rispetto all'equi (relativo al P&L equi)."
-          : "«With synth» = return % on invested capital; «Gain uplift» = extra € P&L vs equal (relative to equal P&L)."}
+          ? `Win rate su ${n} trade chiusi (equal = globale, weighted = pesata per capitale corrente). ${hasAdvice ? `Accuracy su ${adviceAccuracy!.scoredCount} consigli valutati.` : ""}`
+          : `Win rate across ${n} closed trades (equal = global, weighted = capital-weighted). ${hasAdvice ? `Accuracy across ${adviceAccuracy!.scoredCount} scored advice points.` : ""}`}
       </p>
 
-      {!synthAvailable ? (
-        <p className="text-[10px] text-amber-800 dark:text-amber-200">
-          {it
-            ? "Mix synth non disponibile (servono deal nel walk-order e pesi approvati Learning Lab)."
-            : "Synth mix unavailable (need deals in walk-order and Learning Lab approved weights)."}
-        </p>
-      ) : (
-        <div className="flex flex-col xl:flex-row gap-4 pt-1">
-          {renderTable(
-            it ? "Gain 24h cumulato" : "Cumulative 24h gain",
-            it
-              ? "Stessa metrica del grafico a destra — ottimizzazione synth sul target 24h Step 3."
-              : "Same metric as the right chart — synth optimized to Step 3 24h target.",
-            mine24h,
-            sim24h,
-          )}
-          {renderTable(
-            it ? "P&L totale (MTM)" : "Total P&L (MTM)",
-            it
-              ? "Rendimento % sul capitale usando il pick % mark-to-market di ogni deal."
-              : "Return % on capital using each deal's mark-to-market pick %.",
-            mineTotal,
-            simTotal,
-          )}
-        </div>
-      )}
-
-      {synthAvailable && mineSuccess && simSuccess ? (
-        <div className="pt-2 border-t border-teal-500/25 space-y-2">
-          <div>
-            <p className="text-[11px] font-semibold text-indigo-900 dark:text-indigo-100">
-              {it ? "Probabilità totale di successo portafoglio" : "Total portfolio success probability"}
-            </p>
-            <p className="text-[9px] text-ink-muted leading-snug mt-0.5">
-              {it
-                ? "Realized WR = % vincite su round-trip chiusi nel universe. P(+) = probabilità joint modello (deal indipendenti, payoff SDS, win rate grezzo). Sotto Δ weight/synth: uplift P(+) e gain 24h cumulato € vs equi (data = ultimo punto grafico gain 24h)."
-                : "Realized WR = win % on closed round-trips in the universe. P(+) = model joint probability (independent deals, SDS payoffs, raw win rate). Under Δ weight/synth: P(+) uplift and cumulative 24h gain € vs equal (date = last 24h chart point)."}
-            </p>
-          </div>
-          <div className="overflow-x-auto">
-            <table className="w-full text-[10px]">
-              <thead>
-                <tr className="text-ink-muted border-b border-[rgb(var(--border))]/50">
-                  <th className="text-left font-semibold pb-1 pr-3">{it ? "Portafoglio" : "Portfolio"}</th>
-                  <th className="text-right font-semibold pb-1 px-2">{it ? "Realized WR" : "Realized WR"}</th>
-                  <th className="text-right font-semibold pb-1 px-2">{it ? "Equi P(+)" : "Equal P(+)"}</th>
-                  <th className="text-right font-semibold pb-1 px-2">{it ? "Weight P(+)" : "Weight P(+)"}</th>
-                  <th className="text-right font-semibold pb-1 px-2">{it ? "Δ weight" : "Δ weight"}</th>
-                  <th className="text-right font-semibold pb-1 px-2">{it ? "Synth P(+)" : "Synth P(+)"}</th>
-                  <th className="text-right font-semibold pb-1 pl-2">{it ? "Δ synth" : "Δ synth"}</th>
-                </tr>
-              </thead>
-              <tbody>
-                <SuccessRow
-                  label="Mine"
-                  accent="#0d9488"
-                  row={mineSuccess}
-                  it={it}
-                />
-                <SuccessRow
-                  label="Sim loop"
-                  accent="#db2777"
-                  row={simSuccess}
-                  it={it}
-                />
-              </tbody>
-            </table>
-          </div>
-        </div>
-      ) : null}
+      {/* KPI grid */}
+      <div className="grid grid-cols-2 sm:grid-cols-4 gap-2">
+        <KpiCell
+          label={it ? "Win rate equal" : "Win rate equal"}
+          value={fmtPct(mineEq)}
+          valueCls={winRateClass(mineEq)}
+          hint={it
+            ? `Win rate globale del sistema su ${n} round-trip chiusi. Uguale per Portfolio e Sim loop (stesso universo).`
+            : `Global system win rate across ${n} closed round-trips. Same for Portfolio and Sim loop (same universe).`}
+        />
+        <KpiCell
+          label={it ? "Weighted portf." : "Weighted portf."}
+          value={fmtPct(mineWt)}
+          valueCls={winRateClass(mineWt)}
+          sub={fmtDelta(mineDelta)}
+          subCls={deltaClass(mineDelta)}
+          hint={it
+            ? `Win rate ponderata per il capitale allocato su ogni ticker nel tuo portfolio. ${mineDelta != null ? `Δ vs equal: ${fmtDelta(mineDelta)} — ${mineDelta < 0 ? "il weighting orienta verso titoli storicamente più deboli" : "orienta verso titoli più forti"}.` : ""}`
+            : `Win rate weighted by capital allocated per ticker in your portfolio. ${mineDelta != null ? `Δ vs equal: ${fmtDelta(mineDelta)} — ${mineDelta < 0 ? "weighting shifts toward historically weaker tickers" : "shifts toward stronger tickers"}.` : ""}`}
+        />
+        <KpiCell
+          label={it ? "Weighted sim loop" : "Weighted sim loop"}
+          value={fmtPct(simWt)}
+          valueCls={winRateClass(simWt)}
+          sub={fmtDelta(simDelta)}
+          subCls={deltaClass(simDelta)}
+          hint={it
+            ? `Win rate ponderata per il capitale allocato su ogni ticker nel sim loop. ${simDelta != null ? `Δ vs equal: ${fmtDelta(simDelta)}.` : ""}`
+            : `Win rate weighted by capital allocated per ticker in the sim loop. ${simDelta != null ? `Δ vs equal: ${fmtDelta(simDelta)}.` : ""}`}
+        />
+        {hasAdvice ? (
+          <KpiCell
+            label={it ? "Accuracy consigli" : "Advice accuracy"}
+            value={fmtPct(adviceAccuracy!.overallPct)}
+            valueCls={winRateClass(adviceAccuracy!.overallPct)}
+            sub={adviceAccuracy!.avgForecastErrorPct != null
+              ? `${it ? "err. prev." : "forecast err."} ${fmtErr(adviceAccuracy!.avgForecastErrorPct)}`
+              : `${adviceAccuracy!.overallGood}✓ ${adviceAccuracy!.overallBad}✗`}
+            subCls={adviceAccuracy!.avgForecastErrorPct != null
+              ? (adviceAccuracy!.avgForecastErrorPct >= 0 ? "text-emerald-600 dark:text-emerald-400" : "text-rose-600 dark:text-rose-400")
+              : "text-ink-muted"}
+            hint={it
+              ? `Su ${adviceAccuracy!.scoredCount} consigli: ${adviceAccuracy!.overallGood} corretti, ${adviceAccuracy!.overallBad} errati. BUY corretto = stock sale ≥ 0.5%; SELL corretto = stock scende ≥ 0.5%. Errore previsione medio: ${fmtErr(adviceAccuracy!.avgForecastErrorPct)}.`
+              : `Across ${adviceAccuracy!.scoredCount} scored points: ${adviceAccuracy!.overallGood} correct, ${adviceAccuracy!.overallBad} wrong. BUY correct = stock up ≥ 0.5%; SELL correct = stock down ≥ 0.5%. Avg forecast error: ${fmtErr(adviceAccuracy!.avgForecastErrorPct)}.`}
+          />
+        ) : (
+          <KpiCell
+            label={it ? "Accuracy consigli" : "Advice accuracy"}
+            value="—"
+            hint={it ? "Nessun consiglio ancora valutato." : "No advice points scored yet."}
+          />
+        )}
       </div>
-    </details>
+    </div>
   );
 }

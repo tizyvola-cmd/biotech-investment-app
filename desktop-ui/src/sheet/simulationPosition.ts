@@ -154,6 +154,234 @@ export function buyPriceForPnl(merged: { buyPrice: number }): number {
   return merged.buyPrice > 0 ? merged.buyPrice : 0;
 }
 
+/**
+ * Buy € entered in Pick stocks — not a same-day spot backfill placeholder.
+ * When present, MTM must use this price instead of inferring from Excel P&L columns.
+ */
+export function trustedUserEntryBuyUsd(
+  rawInp: InvestSimInputEntry | undefined,
+  curr: number | null,
+  investedAtIso: string | null | undefined,
+): number | null {
+  if (!rawInp || rawInp.ignoreSheet) return null;
+  const local = rawInp.buyPrice;
+  if (local <= 0) return null;
+  if (curr != null && curr > 0 && buyIsStaleSpotBackfill(local, curr, investedAtIso)) {
+    return null;
+  }
+  return local;
+}
+
+/**
+ * Entry buy for portfolio MTM — sheet Prezzo Acquisto, then Pick stocks Buy €.
+ * Never infer from Excel P&L (%) / Valore Attuale or history snapshots.
+ */
+export function resolvePortfolioEntryBuyUsd(
+  row: Record<string, unknown>,
+  rawInp: InvestSimInputEntry | undefined,
+  curr: number | null,
+  investedAtIso: string | null | undefined,
+): number {
+  const sheetBuy = sheetBuyPriceFromRow(row);
+  if (
+    sheetBuy != null &&
+    sheetBuy > 0 &&
+    (curr == null || curr <= 0 || !buyAnchoredToCurrentPrice(sheetBuy, curr))
+  ) {
+    return sheetBuy;
+  }
+
+  const trusted = trustedUserEntryBuyUsd(rawInp, curr, investedAtIso);
+  if (trusted != null) {
+    if (curr != null && curr > 0) {
+      const pricePct = ((curr - trusted) / trusted) * 100;
+      const sheetPct = sheetPnlPct(row);
+      if (
+        sheetPct != null &&
+        Math.abs(sheetPct) > 20 &&
+        Math.abs(pricePct - sheetPct) < 8 &&
+        Math.abs(pricePct) > 20
+      ) {
+        if (
+          sheetBuy != null &&
+          sheetBuy > 0 &&
+          !buyAnchoredToCurrentPrice(sheetBuy, curr)
+        ) {
+          return sheetBuy;
+        }
+      }
+    }
+    return trusted;
+  }
+
+  if (sheetBuy != null && sheetBuy > 0) return sheetBuy;
+  const local = rawInp?.buyPrice ?? 0;
+  if (
+    local > 0 &&
+    (curr == null || curr <= 0 || !buyIsStaleSpotBackfill(local, curr, investedAtIso))
+  ) {
+    return local;
+  }
+  return 0;
+}
+
+/** @deprecated Use resolvePortfolioEntryBuyUsd — kept for callers that imported the old name. */
+export function resolveEntryBuyForMarkToMarket(
+  row: Record<string, unknown>,
+  rawInp: InvestSimInputEntry | undefined,
+  _capital: number,
+  curr: number | null,
+  investedAtIso: string | null | undefined,
+  _history: InvestSimHistoryPoint[] | null | undefined,
+  _key: string,
+): number | null {
+  const buy = resolvePortfolioEntryBuyUsd(row, rawInp, curr, investedAtIso);
+  return buy > 0 ? buy : null;
+}
+
+export function priceMarkValueFromEntryBuy(
+  capital: number,
+  entryBuy: number | null,
+  curr: number | null,
+): number | null {
+  if (capital <= 0 || entryBuy == null || entryBuy <= 0 || curr == null || curr <= 0) {
+    return null;
+  }
+  return roundEur((capital / entryBuy) * curr);
+}
+
+/** Drift (pp) above which history is treated as contaminated (forces MTM total). */
+export const HISTORY_CONTAMINATION_DRIFT_PP = 12;
+/** Gray zone: drift above this but ≤ DRIFT → uncertain + MTM + UI flag. */
+export const HISTORY_CONTAMINATION_UNCERTAIN_DRIFT_PP = 8;
+/** Without buy/price, absolute |histPct| above this → contaminated. */
+export const HISTORY_CONTAMINATION_NO_BUY_PP = 35;
+/** Without buy/price, |histPct| in (UNCERTAIN_NO_BUY, NO_BUY] → uncertain. */
+export const HISTORY_CONTAMINATION_UNCERTAIN_NO_BUY_PP = 25;
+
+export type HistoryContaminationAssessment = {
+  contaminated: boolean;
+  uncertainContamination: boolean;
+  histPct: number | null;
+  pricePct: number | null;
+  driftPp: number | null;
+};
+
+/**
+ * Conservative contamination check — when buy+price exist, drift vs MTM wins over
+ * the old «histPct must exceed 20%» gate (which missed moderate contamination).
+ */
+export function assessHistoryContamination(
+  capital: number,
+  closeSeries: TickerDailyClosePoint[],
+  entryBuy: number | null,
+  curr: number | null,
+): HistoryContaminationAssessment {
+  const empty = {
+    contaminated: false,
+    uncertainContamination: false,
+    histPct: null as number | null,
+    pricePct: null as number | null,
+    driftPp: null as number | null,
+  };
+  if (capital <= 0) return empty;
+  const todayKey = calendarDayKey(new Date());
+  const prior = closeSeries
+    .filter((pt) => pt.dayKey < todayKey)
+    .sort((a, b) => a.dayKey.localeCompare(b.dayKey));
+  if (!prior.length) return empty;
+  const lastClose = prior[prior.length - 1]!.value;
+  const histPct = ((lastClose - capital) / capital) * 100;
+  const priceMtm = priceMarkValueFromEntryBuy(capital, entryBuy, curr);
+  if (priceMtm == null) {
+    const absHist = Math.abs(histPct);
+    return {
+      contaminated: absHist > HISTORY_CONTAMINATION_NO_BUY_PP,
+      uncertainContamination:
+        absHist > HISTORY_CONTAMINATION_UNCERTAIN_NO_BUY_PP &&
+        absHist <= HISTORY_CONTAMINATION_NO_BUY_PP,
+      histPct,
+      pricePct: null,
+      driftPp: null,
+    };
+  }
+  const pricePct = ((priceMtm - capital) / capital) * 100;
+  const driftPp = Math.abs(histPct - pricePct);
+  const contaminated = driftPp > HISTORY_CONTAMINATION_DRIFT_PP;
+  const uncertainContamination =
+    !contaminated &&
+    driftPp > HISTORY_CONTAMINATION_UNCERTAIN_DRIFT_PP &&
+    Math.abs(histPct) > 3;
+  return { contaminated, uncertainContamination, histPct, pricePct, driftPp };
+}
+
+function historyCloseSeriesLooksContaminated(
+  capital: number,
+  closeSeries: TickerDailyClosePoint[],
+  entryBuy: number | null,
+  curr: number | null,
+): boolean {
+  const a = assessHistoryContamination(capital, closeSeries, entryBuy, curr);
+  return a.contaminated || a.uncertainContamination;
+}
+
+/** Mark value aligned to audit export — history closes + Var.% for today. */
+export function auditAlignedMarkValueEur(
+  closeSeries: TickerDailyClosePoint[],
+  dailyPct: number | null,
+  fallbackValueNow: number,
+): number {
+  const todayKey = calendarDayKey(new Date());
+  const prior = closeSeries
+    .filter((pt) => pt.dayKey < todayKey)
+    .sort((a, b) => a.dayKey.localeCompare(b.dayKey));
+  if (prior.length > 0) {
+    const lastClose = prior[prior.length - 1]!.value;
+    if (
+      dailyPct != null &&
+      Number.isFinite(dailyPct) &&
+      isUsEquitySessionDay()
+    ) {
+      return roundEur(lastClose * (1 + dailyPct / 100));
+    }
+    if (fallbackValueNow > 0) return roundEur(fallbackValueNow);
+    return roundEur(lastClose);
+  }
+  return roundEur(fallbackValueNow);
+}
+
+function resolveMtmValueForPositionLegs(
+  pos: Pick<SimulationPosition, "key" | "valueNow" | "capital" | "currPrice">,
+  row: Record<string, unknown> | undefined,
+  inputs: InvestSimInputs | undefined,
+  hist: InvestSimHistoryPoint[],
+  investedAtIso: string | null | undefined,
+): number {
+  const dailyPct = row ? dailyChangePctFromRow(row) : null;
+  const rawInp = inputs?.[pos.key];
+  const curr = pos.currPrice ?? (row ? currentPriceFromRow(row) : null);
+  const entryBuy = resolvePortfolioEntryBuyUsd(
+    row ?? {},
+    rawInp,
+    curr,
+    investedAtIso,
+  );
+  const priceMtm =
+    priceMarkValueFromEntryBuy(pos.capital, entryBuy > 0 ? entryBuy : null, curr) ??
+    pos.valueNow;
+  const closeSeriesRaw = tickerDailyCloseSeries(hist, pos.key, investedAtIso);
+  const histEntry = inferEntryCapitalFromHistory(hist, pos.key);
+  const closeSeries = scaleCloseSeriesToEntryCapital(
+    closeSeriesRaw,
+    pos.capital,
+    histEntry,
+  );
+  if (historyCloseSeriesLooksContaminated(pos.capital, closeSeries, entryBuy, curr)) {
+    return priceMtm;
+  }
+  return auditAlignedMarkValueEur(closeSeries, dailyPct, priceMtm);
+}
+
 export function mergedSimInputs(
   r: Record<string, unknown>,
   inp: InvestSimInputEntry
@@ -665,7 +893,11 @@ export type PositionHistoryBaseline = {
   ts?: string;
 };
 
-export type PositionPnlTotalSource = "daily_close_sum" | "entry_today";
+export type PositionPnlTotalSource =
+  | "daily_close_sum"
+  | "entry_today"
+  | "price_mtm_contaminated_history"
+  | "price_mtm_uncertain_history";
 
 export type TickerDailyClosePoint = {
   dayKey: string;
@@ -692,12 +924,40 @@ export type PositionPnlBreakdown = {
   priorLegEur: number | null;
   /** Chiusure storiche registrate prima di oggi (per ticker). */
   priorCloseCount: number;
+  /** Last stored close % disagrees with price MTM beyond drift threshold. */
+  historyContaminated: boolean;
+  /** Gray-zone drift — MTM forced and UI should warn. */
+  historyUncertainContamination: boolean;
+  /** `priorLegEur` is total − today, not Σ verified daily closes. */
+  priorLegIsImplicitEstimate: boolean;
   /** Δ valore vs ultimo snapshot portfolio salvato (trend tra letture). */
   pnlEurSinceReading: number | null;
   pnlPctSinceReading: number | null;
   priorReadingTs: string | null;
   hasReadingDelta: boolean;
 };
+
+/** Prior leg is an algebraic residual (total − today), not verified daily closes. */
+export function priorLegIsImplicitEstimate(
+  breakdown: Pick<
+    PositionPnlBreakdown,
+    | "totalSource"
+    | "priorCloseCount"
+    | "historyContaminated"
+    | "historyUncertainContamination"
+    | "priorLegIsImplicitEstimate"
+  >,
+): boolean {
+  if (breakdown.priorLegIsImplicitEstimate) return true;
+  if (breakdown.historyContaminated || breakdown.historyUncertainContamination) return true;
+  if (
+    breakdown.totalSource === "price_mtm_contaminated_history" ||
+    breakdown.totalSource === "price_mtm_uncertain_history"
+  ) {
+    return true;
+  }
+  return breakdown.priorCloseCount === 0 && breakdown.totalSource !== "entry_today";
+}
 
 export type PositionReadingDelta = {
   pnlEur: number;
@@ -946,13 +1206,19 @@ export function priorTickerSnapshotBeforeToday(
 export function resolvePositionPnlBreakdown(
   pos: Pick<
     SimulationPosition,
-    "key" | "valueNow" | "pnlEur" | "pnlPct" | "pnlUnavailable" | "buyPrice" | "capital"
+    "key" | "valueNow" | "pnlEur" | "pnlPct" | "pnlUnavailable" | "buyPrice" | "capital" | "currPrice"
   >,
   simRow: Record<string, unknown> | undefined,
   investedAtIso: string | null | undefined,
   history?: InvestSimHistoryPoint[] | null,
+  inputs?: InvestSimInputs,
 ): PositionPnlBreakdown {
   const entryValue = pos.capital > 0 ? pos.capital : 0;
+  const emptyHistoryFlags = {
+    historyContaminated: false,
+    historyUncertainContamination: false,
+    priorLegIsImplicitEstimate: false,
+  };
   const emptyToday = {
     pnlEurToday: null as number | null,
     pnlPctToday: null as number | null,
@@ -963,10 +1229,7 @@ export function resolvePositionPnlBreakdown(
     priorValue: null as number | null,
     priorLegEur: null as number | null,
     priorCloseCount: 0,
-    pnlEurSinceReading: null as number | null,
-    pnlPctSinceReading: null as number | null,
-    priorReadingTs: null as string | null,
-    hasReadingDelta: false,
+    ...emptyHistoryFlags,
   };
   if (pos.pnlUnavailable || pos.buyPrice <= 0 || entryValue <= 0) {
     return attachReadingDelta(
@@ -1000,6 +1263,9 @@ export function resolvePositionPnlBreakdown(
         priorValue: entryValue,
         priorLegEur: 0,
         priorCloseCount: 0,
+        historyContaminated: false,
+        historyUncertainContamination: false,
+        priorLegIsImplicitEstimate: false,
       },
       pos.valueNow,
       history,
@@ -1012,10 +1278,17 @@ export function resolvePositionPnlBreakdown(
     ? calendarDayKey(new Date(investedAtIso))
     : "";
   const dailyPct = simRow ? dailyChangePctFromRow(simRow) : null;
+  const mtmValue = resolveMtmValueForPositionLegs(
+    pos,
+    simRow,
+    inputs,
+    hist,
+    investedAtIso,
+  );
   const closeSeriesRaw = tickerDailyCloseSeries(hist, pos.key, investedAtIso);
   const histEntry = inferEntryCapitalFromHistory(hist, pos.key);
   const closeSeries = scaleCloseSeriesToEntryCapital(closeSeriesRaw, entryValue, histEntry);
-  const summed = sumPnlFromDailyCloseSeries(entryValue, pos.valueNow, closeSeries, {
+  const summed = sumPnlFromDailyCloseSeries(entryValue, mtmValue, closeSeries, {
     investDayKey,
     dailyPct,
   });
@@ -1027,22 +1300,70 @@ export function resolvePositionPnlBreakdown(
         ? "sheet"
         : "history";
 
+  const rawInp = inputs?.[pos.key];
+  const curr = pos.currPrice ?? (simRow ? currentPriceFromRow(simRow) : null);
+  const entryBuy = resolvePortfolioEntryBuyUsd(
+    simRow ?? {},
+    rawInp,
+    curr,
+    investedAtIso,
+  );
+  const assessment = assessHistoryContamination(
+    entryValue,
+    closeSeries,
+    entryBuy > 0 ? entryBuy : null,
+    curr,
+  );
+  const forceMtmTotal =
+    assessment.contaminated ||
+    assessment.uncertainContamination ||
+    (summed.priorCloseCount === 0 && !isInvestedToday(investedAtIso));
+
+  let totalEur = summed.totalEur;
+  let totalPct = summed.totalPct;
+  let priorLegEur = summed.priorLegEur;
+  let totalSource: PositionPnlTotalSource = "daily_close_sum";
+  if (forceMtmTotal) {
+    totalEur = roundEur(mtmValue - entryValue);
+    totalPct =
+      entryValue > 0 ? Math.round((totalEur / entryValue) * 10000) / 100 : 0;
+    if (summed.hasToday && summed.pnlEurToday != null) {
+      priorLegEur = roundEur(totalEur - summed.pnlEurToday);
+    }
+    if (assessment.contaminated) {
+      totalSource = "price_mtm_contaminated_history";
+    } else if (assessment.uncertainContamination) {
+      totalSource = "price_mtm_uncertain_history";
+    }
+  }
+
+  const priorLegIsImplicitEstimate =
+    forceMtmTotal &&
+    summed.hasToday &&
+    summed.pnlEurToday != null &&
+    (summed.priorCloseCount === 0 ||
+      assessment.contaminated ||
+      assessment.uncertainContamination);
+
   return attachReadingDelta(
     {
-      totalEur: summed.totalEur,
-      totalPct: summed.totalPct,
+      totalEur,
+      totalPct,
       entryValue,
       pnlEurToday: summed.pnlEurToday,
       pnlPctToday: summed.pnlPctToday,
       hasToday: summed.hasToday,
       todaySource,
-      totalSource: "daily_close_sum",
+      totalSource,
       dailyLegCount: summed.dailyLegCount,
       priorValue: summed.priorValue,
-      priorLegEur: summed.priorLegEur,
+      priorLegEur,
       priorCloseCount: summed.priorCloseCount,
+      historyContaminated: assessment.contaminated,
+      historyUncertainContamination: assessment.uncertainContamination,
+      priorLegIsImplicitEstimate,
     },
-    pos.valueNow,
+    mtmValue,
     hist,
     pos.key,
   );
@@ -1061,19 +1382,14 @@ export function resolveAggregatePositionPnl(
   const today = hasToday ? breakdown.pnlEurToday! : 0;
   const priorFromLegs = breakdown.priorLegEur ?? 0;
   const legTotal = roundEur(priorFromLegs + (hasToday ? today : 0));
-  const hasPriorHistory = breakdown.priorCloseCount > 0;
 
   if (hasToday) {
-    if (hasPriorHistory) {
-      return { totalEur: legTotal, priorLegEur: priorFromLegs, pnlEurToday: today };
-    }
-    return {
-      totalEur: pos.pnlEur,
-      priorLegEur: roundEur(pos.pnlEur - today),
-      pnlEurToday: today,
-    };
+    return { totalEur: legTotal, priorLegEur: priorFromLegs, pnlEurToday: today };
   }
-  return { totalEur: pos.pnlEur, priorLegEur: 0, pnlEurToday: 0 };
+  if (breakdown.priorCloseCount > 0) {
+    return { totalEur: legTotal, priorLegEur: priorFromLegs, pnlEurToday: 0 };
+  }
+  return { totalEur: roundEur(pos.pnlEur), priorLegEur: 0, pnlEurToday: 0 };
 }
 
 export type PortfolioTickerDailyRow = {
@@ -1237,7 +1553,8 @@ export function buildPortfolioDailyPnlLedger(
         histEntry,
       );
       priorCloseCount = closeSeries.filter((pt) => pt.dayKey < todayKey).length;
-      legs = buildPositionDailyPnlLegs(p.capital, p.valueNow, closeSeries, {
+      const mtmValue = resolveMtmValueForPositionLegs(p, row, inputs, hist, investedAt);
+      legs = buildPositionDailyPnlLegs(p.capital, mtmValue, closeSeries, {
         investDayKey,
         dailyPct,
       });
@@ -1251,8 +1568,36 @@ export function buildPortfolioDailyPnlLedger(
       dailySumEur += leg.pnlEur;
     }
 
-    const mtmTotalEur = roundEur(p.valueNow - p.capital);
-    const totalEur = roundEur(dailySumEur);
+    const mtmValueForRow = resolveMtmValueForPositionLegs(
+      p,
+      row,
+      inputs,
+      hist,
+      investedAt,
+    );
+    const mtmTotalEur = roundEur(mtmValueForRow - p.capital);
+    let totalEur = roundEur(dailySumEur);
+    if (!isInvestedToday(investedAt)) {
+      const rawInp = inputs[p.key];
+      const curr = p.currPrice ?? currentPriceFromRow(row);
+      const entryBuy = resolvePortfolioEntryBuyUsd(row, rawInp, curr, investedAt);
+      const closeSeriesRaw = tickerDailyCloseSeries(hist, p.key, investedAt);
+      const histEntry = inferEntryCapitalFromHistory(hist, p.key);
+      const closeSeriesForCheck = scaleCloseSeriesToEntryCapital(
+        closeSeriesRaw,
+        p.capital,
+        histEntry,
+      );
+      const contaminated = historyCloseSeriesLooksContaminated(
+        p.capital,
+        closeSeriesForCheck,
+        entryBuy > 0 ? entryBuy : null,
+        curr,
+      );
+      if (contaminated || priorCloseCount === 0) {
+        totalEur = mtmTotalEur;
+      }
+    }
     if (!isInvestedToday(investedAt) && priorCloseCount === 0) {
       incompleteDailyHistory = true;
     }
@@ -1422,7 +1767,7 @@ export function pnlTabNeedsPriorLegNote(
 export function positionDailyPnlForPnlTab(
   pos: Pick<
     SimulationPosition,
-    "key" | "valueNow" | "pnlEur" | "pnlPct" | "pnlUnavailable" | "buyPrice" | "capital"
+    "key" | "valueNow" | "pnlEur" | "pnlPct" | "pnlUnavailable" | "buyPrice" | "capital" | "currPrice"
   >,
   simRow: Record<string, unknown> | undefined,
   investedAtIso: string | null | undefined,
@@ -1476,7 +1821,11 @@ export function computeSimulationPosition(
   const inp = mergedSimInputs(r, rawInp);
   const explicitLocalBuy = rawInp.buyPrice > 0 && !rawInp.ignoreSheet;
   const investedAt = resolveInvestedAt(key, rawInp, ctx?.history ?? []);
-  let buyPrice = resolveEffectiveBuyPrice(r, inp, key, ctx?.history, investedAt);
+  const entryBuy = resolvePortfolioEntryBuyUsd(r, rawInp, curr, investedAt);
+  let buyPrice =
+    entryBuy > 0
+      ? entryBuy
+      : resolveEffectiveBuyPrice(r, inp, key, ctx?.history, investedAt);
   const capital = inp.capital > 0 ? inp.capital : 0;
   let shares = 0;
   let valueNow = 0;
@@ -1491,26 +1840,28 @@ export function computeSimulationPosition(
       valueNow = shares * curr;
       pnlEur = valueNow - capital;
       pnlPct = ((curr - buyPrice) / buyPrice) * 100;
-      const reconciled = reconcileAnchoredBuyMarkToMarket(
-        r,
-        {
-          buyPrice,
-          capital,
-          curr,
-          valueNow,
-          pnlEur,
-          pnlPct,
-          shares,
-          key,
-        },
-        ctx?.history,
-        { explicitLocalBuy, investedAtIso: investedAt },
-      );
-      buyPrice = reconciled.buyPrice;
-      shares = reconciled.shares;
-      valueNow = reconciled.valueNow;
-      pnlEur = reconciled.pnlEur;
-      pnlPct = reconciled.pnlPct;
+      if (entryBuy <= 0) {
+        const reconciled = reconcileAnchoredBuyMarkToMarket(
+          r,
+          {
+            buyPrice,
+            capital,
+            curr,
+            valueNow,
+            pnlEur,
+            pnlPct,
+            shares,
+            key,
+          },
+          ctx?.history,
+          { explicitLocalBuy, investedAtIso: investedAt },
+        );
+        buyPrice = reconciled.buyPrice;
+        shares = reconciled.shares;
+        valueNow = reconciled.valueNow;
+        pnlEur = reconciled.pnlEur;
+        pnlPct = reconciled.pnlPct;
+      }
     } else {
       pnlUnavailable = true;
       const sheetPct = sheetPnlPct(r);
@@ -1700,11 +2051,15 @@ export function positionPnlForOpenRow(
   }
   const key = pos.key;
   const investedAt = resolveInvestedAt(key, inputs[key], hist);
-  const b = resolvePositionPnlBreakdown(pos, row, investedAt, hist);
+    const b = resolvePositionPnlBreakdown(pos, row, investedAt, hist, inputs);
+  const agg = resolveAggregatePositionPnl(pos, b);
+  const totalEur = agg?.totalEur ?? b.totalEur;
+  const totalPct =
+    positionCapitalPnlPct(totalEur, pos.capital) ?? b.totalPct;
   return {
     pos,
-    pnlEur: Math.round(b.totalEur * 100) / 100,
-    pnlPct: Math.round(b.totalPct * 100) / 100,
+    pnlEur: Math.round(totalEur * 100) / 100,
+    pnlPct: Math.round(totalPct * 100) / 100,
     pnlEur24h: b.hasToday ? b.pnlEurToday : null,
     pnlPct24h: b.hasToday ? b.pnlPctToday : null,
     pnlEurSinceReading: b.pnlEurSinceReading,
@@ -1750,7 +2105,7 @@ export function buildDashboardPortfolioChips(
     if (!row || !rowHasActivePortfolio(row, inputs)) continue;
     if (pos.capital <= 0 || pos.pnlUnavailable) continue;
     const investedAt = resolveInvestedAt(pos.key, inputs[pos.key], history);
-    const b = resolvePositionPnlBreakdown(pos, row, investedAt, history);
+    const b = resolvePositionPnlBreakdown(pos, row, investedAt, history, inputs);
     const agg = resolveAggregatePositionPnl(pos, b);
     const chipPnlEur = agg?.totalEur ?? pos.pnlEur;
     out.push({
@@ -1774,10 +2129,19 @@ export type PortfolioPnlTotals = {
   pnlPctToday: number | null;
   /** Somma «prima di oggi» per ticker (delta giornalieri registrati). */
   priorLegEur: number;
+  /** Any open row uses MTM fallback or gray-zone history drift. */
+  anyHistoryContaminated: boolean;
+  anyHistoryUncertainContamination: boolean;
+  /** Portfolio «before today» is total − 24h, not verified closes. */
+  priorLegIsImplicitEstimate: boolean;
   capital: number;
   valueNow: number;
   todayCovered: number;
   todayTotal: number;
+  /** P&L realizzato sulle posizioni già chiuse (ignoreSheet=true con closedPnlEur). */
+  closedPnlEur: number;
+  /** Numero di posizioni chiuse con closedPnlEur valorizzato. */
+  closedCount: number;
 };
 
 /** Totali portafoglio aperto — stessa logica delle card Simulation → P&L. */
@@ -1797,12 +2161,18 @@ export function aggregateOpenPortfolioPnl(
   let baselineValue = 0;
   let todayCovered = 0;
   let todayTotal = 0;
+  let anyHistoryContaminated = false;
+  let anyHistoryUncertainContamination = false;
+  let portfolioPriorLegImplicit = false;
   for (const p of positions) {
     const row = rowByKey.get(p.key);
     if (!row || !rowHasActivePortfolio(row, inputs) || p.capital <= 0) continue;
     todayTotal++;
     const investedAt = resolveInvestedAt(p.key, inputs[p.key], hist);
-    const b = resolvePositionPnlBreakdown(p, row, investedAt, hist);
+    const b = resolvePositionPnlBreakdown(p, row, investedAt, hist, inputs);
+    if (b.historyContaminated) anyHistoryContaminated = true;
+    if (b.historyUncertainContamination) anyHistoryUncertainContamination = true;
+    if (priorLegIsImplicitEstimate(b)) portfolioPriorLegImplicit = true;
     const agg = resolveAggregatePositionPnl(p, b);
     if (agg) {
       capital += p.capital;
@@ -1820,6 +2190,16 @@ export function aggregateOpenPortfolioPnl(
       }
     }
   }
+  // Closed positions P&L — sum closedPnlEur for all sold entries
+  let closedPnlEur = 0;
+  let closedCount = 0;
+  for (const entry of Object.values(inputs)) {
+    if (entry?.ignoreSheet && entry.closedPnlEur != null && Number.isFinite(entry.closedPnlEur)) {
+      closedPnlEur += entry.closedPnlEur;
+      closedCount++;
+    }
+  }
+
   const roundedPnl = roundEur(pnlEur);
   const roundedToday = roundEur(pnlEurToday);
   const roundedPrior =
@@ -1830,10 +2210,15 @@ export function aggregateOpenPortfolioPnl(
     pnlEurToday: roundedToday,
     pnlPctToday: baselineValue > 0 ? (roundedToday / baselineValue) * 100 : null,
     priorLegEur: roundedPrior,
+    anyHistoryContaminated,
+    anyHistoryUncertainContamination,
+    priorLegIsImplicitEstimate: portfolioPriorLegImplicit,
     capital,
     valueNow,
     todayCovered,
     todayTotal,
+    closedPnlEur: roundEur(closedPnlEur),
+    closedCount,
   };
 }
 

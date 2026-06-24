@@ -109,6 +109,14 @@ export type PatternStats = {
   computedAt: string;
 };
 
+/** How the currently active pattern was last approved. */
+export type PatternApprovalSource =
+  | "engine"
+  | "pcse"
+  | "manual"
+  | "auto_apply"
+  | "unknown";
+
 // ── Phase A — Univariate screening ────────────────────────────────────────
 
 /** One bucket of one feature, with shrunk loss rate and lift vs base rate. */

@@ -640,6 +640,18 @@ const DICT = {
     en: "Sim loop (synth) · BUY / SELL",
     it: "Sim loop (synth) · BUY / SELL",
   },
+  "testerMonitor.decisionSim.chart.tradesPnlWeight": {
+    en: "Sim loop (weight) · BUY / SELL",
+    it: "Sim loop (weight) · BUY / SELL",
+  },
+  "testerMonitor.decisionSim.exportGainAudit": {
+    en: "Excel gain audit",
+    it: "Excel audit gain",
+  },
+  "testerMonitor.decisionSim.exportGainAuditTip": {
+    en: "Download tick-by-tick equal / weight / synth P&L for external audit (.xls).",
+    it: "Scarica P&L equal / weight / synth per tick per audit esterno (.xls).",
+  },
   "testerMonitor.decisionSim.chart.showSynthCurve": {
     en: "⇄ Synth curve",
     it: "⇄ Curva synth",
@@ -5892,6 +5904,18 @@ const DICT = {
     en: "Open day-by-day gain/loss table for all portfolio tickers",
     it: "Apri tabella gain/loss giorno per giorno per tutti i ticker del portafoglio",
   },
+  "sim.audit.export.label": {
+    en: "Gain audit (Excel)",
+    it: "Audit gain (Excel)",
+  },
+  "sim.audit.export.title": {
+    en: "Download day-by-day log: buy price, purchase date, shares, daily close, position value and P&L — for external reconciliation",
+    it: "Scarica log giorno per giorno: prezzo acquisto, data ingresso, azioni, chiusura giornaliera, valore posizione e P&L — per controllo esterno",
+  },
+  "sim.audit.export.empty": {
+    en: "No portfolio positions to export.",
+    it: "Nessuna posizione da esportare.",
+  },
   "sim.pnl.ledger.title": {
     en: "Daily P&L ledger",
     it: "Registro P&L giornaliero",
@@ -6096,6 +6120,14 @@ const DICT = {
     en: "Since last reset · ledger total € {raw}",
     it: "Dall'ultimo azzeramento · totale ledger € {raw}",
   },
+  "closedPiggy.compactTipSinceReset": {
+    en: "Closed P&L since last Reset: {sinceReset} €. All-time (matches Pulse · Gain closed): {allTime} €.",
+    it: "P&L chiuso dall'ultimo Reset: {sinceReset} €. Totale storico (come Pulse · Gain closed): {allTime} €.",
+  },
+  "closedPiggy.compactTipAllTime": {
+    en: "All-time closed P&L: {allTime} € — same basis as Pulse · Gain closed.",
+    it: "P&L chiuso totale: {allTime} € — stessa base di Pulse · Gain closed.",
+  },
   "closedPiggy.openLedger": {
     en: "Open closed P&L ledger in Simulation",
     it: "Apri ledger P&L chiuso in Simulation",
@@ -6111,6 +6143,14 @@ const DICT = {
   "sim.pnl.hero.breakdown": {
     en: "Before today {prior} · Today {today} ({todayPct}) · adds up to total above",
     it: "Prima di oggi {prior} · Oggi {today} ({todayPct}) · somma = totale sopra",
+  },
+  "sim.pnl.hero.breakdownImplicit": {
+    en: "Before today {prior} (estimated: total − today, daily closes not verified) · Today {today} ({todayPct})",
+    it: "Prima di oggi {prior} (stimato: totale − oggi, chiusure giornaliere non verificate) · Oggi {today} ({todayPct})",
+  },
+  "sim.pnl.hero.breakdownUncertain": {
+    en: "Before today {prior} (estimated — history may be unreliable; using price MTM total) · Today {today} ({todayPct})",
+    it: "Prima di oggi {prior} (stimato — storico possibilmente inaffidabile; totale da MTM prezzo) · Oggi {today} ({todayPct})",
   },
   "sim.pnl.hero.breakdownTodayOnly": {
     en: "Today alone: {today} ({todayPct}) — not your total portfolio loss",
@@ -8392,13 +8432,17 @@ const DICT = {
     en: "Strong signal — peak pre-CD",
     it: "Segnale forte — picco pre-CD",
   },
+  "modelLab.qc.kpi.strongSignals.peakTitle": {
+    en: "T{offset} peak (not average)",
+    it: "Picco T{offset} (non media)",
+  },
   "modelLab.qc.kpi.strongSignals.hint": {
-    en: "Highest day-over-day sign hit on the anticipatory curve (historical + Simulation). Same peak as the chart header.",
-    it: "Massimo hit segno giornaliero sulla curva anticipatoria (storico + Simulation). Stesso picco dell'intestazione grafico.",
+    en: "Best day-over-day sign bin on the anticipatory curve — not the cohort average (~60% on the same chart). Differs from operative panel sign %.",
+    it: "Miglior bin segno giornaliero sulla curva anticipatoria — non la media di coorte (~60% sullo stesso grafico). Diverso dal segno % nel pannello operativo.",
   },
   "modelLab.qc.kpi.strongSignals.peakAtPreCd": {
-    en: "at {offset} days to CD",
-    it: "a {offset} giorni alla CD",
+    en: "at {offset} days to CD · curve peak",
+    it: "a {offset} giorni alla CD · picco curva",
   },
   "modelLab.qc.kpi.strongSignals.peakAtHorizon": {
     en: "{pct} at {window}",
@@ -13456,6 +13500,18 @@ const DICT = {
     en: "Sum of each open position's 24h move in € — not the same as cumulative 8-day charts below.",
     it: "Somma del movimento 24h di ogni posizione aperta — diverso dal cumulativo 8g nei grafici sotto.",
   },
+  "dashboard.piggy.priorLegImplicit": {
+    en: "Total since entry. Today {today}; before today {prior} (estimated: total − today — daily closes not verified).",
+    it: "Totale dall'ingresso. Oggi {today}; prima di oggi {prior} (stimato: totale − oggi — chiusure non verificate).",
+  },
+  "dashboard.piggy.priorLegUncertain": {
+    en: "Total since entry. Today {today}; before today {prior} (estimated — history may be unreliable; total from price MTM).",
+    it: "Totale dall'ingresso. Oggi {today}; prima di oggi {prior} (stimato — storico possibilmente inaffidabile; totale da MTM prezzo).",
+  },
+  "dashboard.piggy.priorLegVerified": {
+    en: "Total since entry. Today {today}; before today ~{prior}.",
+    it: "Totale dall'ingresso. Oggi {today}; prima di oggi ~{prior}.",
+  },
   "dashboard.pulse.deltaTip": {
     en: "P&L change since last dashboard visit",
     it: "Variazione P&L dall'ultima visita dashboard",
@@ -13737,8 +13793,8 @@ const DICT = {
     it: "Scostamento piano (reale − piano)",
   },
   "dashboard.pulse.planGapTip": {
-    en: "Positive = ahead of plan · negative = behind plan (€ and % on capital)",
-    it: "Positivo = avanti al piano · negativo = indietro (€ e % sul capitale)",
+    en: "Gap vs plan today (actual − planned €) — NOT expected ROI. Positive = ahead of today's plan curve. % hidden below €500 capital (too noisy).",
+    it: "Scostamento vs piano oggi (reale − piano €) — NON è il ROI atteso. Positivo = avanti rispetto alla curva piano di oggi. % nascosta sotto €500 capitale (rumore).",
   },
   "dashboard.pulse.colPlanGap": {
     en: "Δ plan",

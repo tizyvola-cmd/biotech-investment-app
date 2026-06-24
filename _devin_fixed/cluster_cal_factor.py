@@ -29,17 +29,11 @@ CLUSTER_CF_CEILING = 1.3
 # Below this in-sample direction accuracy a cohort carries no directional signal,
 # so scaling its predictions only amplifies noise -> hold the cal_factor at 1.0.
 CLUSTER_MIN_DIRECTION_ACC = 0.5
-# Ridge prior centred at 1.0. The raw least-squares scalar overfits the
-# *magnitude ratio* (timid predictions vs volatile biotech actuals) and pins
-# every cohort to a 0.7/1.3 rail even when the mean bias is tiny. Shrinking the
-# OLS estimate toward 1.0 (m = (m_ols + k) / (1 + k)) makes the factor track the
-# modest real bias instead of chasing volatility. Higher k = stronger shrink.
-CLUSTER_SHRINK_PRIOR = 2.0
+# The magnitude correction is scaled by how much predictions explain the
+# outcomes (variance explained; see _solve_cluster_cal_factor), so a cohort with
+# no real signal stays at 1.0 instead of being scaled by noise.
 # Require at least this fractional in-sample MAE reduction before moving off 1.0.
 CLUSTER_MIN_REL_IMPROVEMENT = 0.01
-# Unpredictable tail moves (binary readouts) above this |actual| pp are dropped
-# from the magnitude regression so a few jumps cannot dominate the scalar.
-CLUSTER_OUTLIER_ACTUAL_PP = 50.0
 CLUSTER_GLOBAL_BLEND = 0.6  # 60% cluster, 40% global — raise to 0.8 only when n >= 15
 
 Direction = Literal["too_optimistic", "too_pessimistic", "calibrated"]
@@ -276,30 +270,33 @@ def _solve_cluster_cal_factor(
     mae_baseline: float,
     dir_acc: float,
 ) -> tuple[float, str]:
-    """Magnitude-scaling cal_factor minimising in-sample error, regularised.
+    """Confidence-weighted magnitude cal_factor.
 
-    The raw least-squares scalar ``sum(pred*actual)/sum(pred^2)`` overfits the
-    *magnitude ratio*: biotech predictions are timid while actuals are volatile
-    (binary readouts), so even a tiny mean bias drives the scalar hard against a
-    clip and every cohort ends pinned to the 0.7/1.3 rails instead of settling
-    near 1.0. Guards:
-      * direction accuracy < threshold -> directionally unreliable, hold at 1.0;
-      * tail actuals (|actual| > cap) are dropped from the regression so a few
-        unpredictable jumps cannot dominate the ratio;
-      * the OLS estimate is shrunk toward 1.0 with a ridge prior centred at 1.0
-        (``m = (m_ols + k) / (1 + k)``) so the factor reflects the modest real
-        bias rather than chasing volatility;
-      * the shrunk, clipped factor is applied only if it cuts in-sample MAE by a
-        material margin; otherwise hold at 1.0.
+    The raw least-squares scalar ``sum(pred*actual)/sum(pred^2)`` overfits: when
+    predictions barely track actuals (the biotech norm here — direction ~50%,
+    near-zero magnitude correlation) it collapses toward 0 and pins the cohort to
+    a rail, "correcting" pure noise. Instead the correction is scaled by how much
+    the predictions actually explain the outcomes::
+
+        rho2 = (sum(p*a))^2 / (sum(p^2) * sum(a^2))   # variance explained, 0..1
+        cal  = 1.0 + rho2 * (clip(m_ols) - 1.0)
+
+    No explanatory signal (rho2 ~ 0) -> cal stays at 1.0 (predictions untouched);
+    a strong proportional fit (rho2 -> 1) -> cal approaches the least-squares
+    optimum. Nothing is forced. Guards: anti-correlated cohorts (dir < floor)
+    hold at 1.0, and the result is applied only if it cuts in-sample MAE by a
+    material margin.
     """
     if dir_acc < CLUSTER_MIN_DIRECTION_ACC:
         return 1.0, "direction_unreliable"
-    fit = [(p, a) for p, a in pairs if abs(a) <= CLUSTER_OUTLIER_ACTUAL_PP]
-    den = sum(p * p for p, _ in fit)
-    if den <= 1e-9:
+    sp2 = sum(p * p for p, _ in pairs)
+    sa2 = sum(a * a for _, a in pairs)
+    if sp2 <= 1e-9 or sa2 <= 1e-9:
         return 1.0, "no_improvement"
-    m_ols = sum(p * a for p, a in fit) / den
-    m = (m_ols + CLUSTER_SHRINK_PRIOR) / (1.0 + CLUSTER_SHRINK_PRIOR)
+    spa = sum(p * a for p, a in pairs)
+    rho2 = (spa * spa) / (sp2 * sa2)
+    m_clipped = max(CLUSTER_CF_FLOOR, min(CLUSTER_CF_CEILING, spa / sp2))
+    m = 1.0 + rho2 * (m_clipped - 1.0)
     m = max(CLUSTER_CF_FLOOR, min(CLUSTER_CF_CEILING, m))
     if abs(m - 1.0) < 1e-3:
         return 1.0, "no_improvement"

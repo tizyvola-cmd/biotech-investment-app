@@ -1,13 +1,14 @@
-"""Diagnostic: per-cluster magnitude ratios, to tune the cal_factor solver.
+"""Diagnostic: per-cluster magnitude signal, to preview the cal_factor solver.
 
 Run from the repo root:  python _devin_fixed/diag_cluster_solver.py
 
 It mirrors compute_cluster_cal_factors' pair-building exactly, then prints, per
 cluster: n, bias, mae, direction accuracy, the raw OLS magnitude ratio
-m = sum(p*a)/sum(p^2) WITHOUT trimming and WITH the |actual|<=50pp trim, and the
-shrunk-toward-1.0 factor (clipped to 0.7..1.3) for several shrink strengths k.
-This shows whether the tail-trim flips the signal and which k keeps cohorts off
-the rails. Nothing is written.
+m = sum(p*a)/sum(p^2), the variance explained rho2 = (sum p*a)^2/(sum p^2 * sum a^2),
+and the new confidence-weighted cal_factor cal = 1 + rho2*(clip(m_ols)-1), clipped
+to 0.7..1.3 -- exactly what the fixed solver produces. rho2 ~ 0 means the cohort
+carries no magnitude signal, so cal stays at 1.0 (no forced/false correction).
+Nothing is written.
 """
 from __future__ import annotations
 
@@ -26,18 +27,19 @@ from prediction.cluster_cal_factor import (  # noqa: E402
 )
 
 
-def _ols(pairs: list[tuple[float, float]]) -> float | None:
-    den = sum(p * p for p, _ in pairs)
-    if den <= 1e-9:
-        return None
-    return sum(p * a for p, a in pairs) / den
-
-
-def _shrunk_clipped(m_ols: float | None, k: float) -> float | None:
-    if m_ols is None:
-        return None
-    m = (m_ols + k) / (1.0 + k)
-    return max(CLUSTER_CF_FLOOR, min(CLUSTER_CF_CEILING, m))
+def _signal(pairs: list[tuple[float, float]]) -> tuple[float | None, float | None, float | None]:
+    """Return (m_ols, rho2, cal_new) for the confidence-weighted solver."""
+    sp2 = sum(p * p for p, _ in pairs)
+    sa2 = sum(a * a for _, a in pairs)
+    if sp2 <= 1e-9 or sa2 <= 1e-9:
+        return None, None, None
+    spa = sum(p * a for p, a in pairs)
+    m_ols = spa / sp2
+    rho2 = (spa * spa) / (sp2 * sa2)
+    m_clipped = max(CLUSTER_CF_FLOOR, min(CLUSTER_CF_CEILING, m_ols))
+    cal = 1.0 + rho2 * (m_clipped - 1.0)
+    cal = max(CLUSTER_CF_FLOOR, min(CLUSTER_CF_CEILING, cal))
+    return m_ols, rho2, cal
 
 
 def main() -> int:
@@ -47,10 +49,9 @@ def main() -> int:
         td = o.get("ticker_data") or {"phase": o.get("phase", ""), "condition": o.get("condition", "")}
         buckets.setdefault(classify_ticker(td), []).append(o)
 
-    ks = (2.0, 4.0, 6.0, 9.0)
     header = (
         f"{'cluster':18} {'n':>4} {'bias':>6} {'mae':>6} {'dir':>5} "
-        f"{'m_raw':>6} {'m_trim50':>8}  " + "  ".join(f"k={int(k)}".rjust(6) for k in ks)
+        f"{'m_ols':>6} {'rho2':>6} {'cal_new':>8}"
     )
     print(header)
     print("-" * len(header))
@@ -70,18 +71,18 @@ def main() -> int:
         bias = sum(p - a for p, a in pairs) / len(pairs)
         mae = sum(abs(p - a) for p, a in pairs) / len(pairs)
         dir_acc = sum(1 for p, a in pairs if (p > 0) == (a > 0)) / len(pairs)
-        m_raw = _ols(pairs)
-        m_trim = _ols([(p, a) for p, a in pairs if abs(a) <= 50.0])
-        kcols = "  ".join(
-            (f"{_shrunk_clipped(m_raw, k):.3f}".rjust(6) if m_raw is not None else "  -".rjust(6))
-            for k in ks
-        )
+        m_ols, rho2, cal = _signal(pairs)
+        if m_ols is None:
+            print(f"{name:18} {len(pairs):>4}  (degenerate)")
+            continue
         print(
             f"{name:18} {len(pairs):>4} {bias:>6.2f} {mae:>6.2f} {dir_acc:>5.2f} "
-            f"{(m_raw if m_raw is not None else float('nan')):>6.2f} "
-            f"{(m_trim if m_trim is not None else float('nan')):>8.2f}  {kcols}"
+            f"{m_ols:>6.2f} {rho2:>6.3f} {cal:>8.3f}"
         )
-    print("\nNote: k columns use the RAW (untrimmed) OLS shrunk toward 1.0, clipped to 0.7..1.3.")
+    print(
+        "\nNote: cal_new = 1 + rho2*(clip(m_ols)-1), clipped to 0.7..1.3 "
+        "(the fixed solver). rho2 ~ 0 => no magnitude signal => cal stays 1.0."
+    )
     return 0
 
 

@@ -34,17 +34,11 @@ REGIME_MULT_CEILING = 1.3
 # unreliable: scaling magnitude would amplify wrong-signed predictions, so the
 # multiplier is held at 1.0 instead of "correcting" a broken sample.
 REGIME_MIN_DIRECTION_ACC = 0.5
-# Ridge prior centred at 1.0. The raw least-squares scalar overfits the
-# magnitude ratio (timid predictions vs volatile actuals) and pins the
-# multiplier to a 0.7/1.3 rail even when the mean bias is tiny. Shrinking the
-# OLS estimate toward 1.0 (m = (m_ols + k) / (1 + k)) makes it track the modest
-# real bias instead of chasing volatility. Higher k = stronger shrink.
-REGIME_SHRINK_PRIOR = 2.0
+# The magnitude correction is scaled by how much predictions explain the
+# outcomes (variance explained; see _solve_regime_multiplier), so a regime with
+# no real signal stays at 1.0 instead of being scaled by noise.
 # Require at least this fractional in-sample MAE reduction before moving off 1.0.
 REGIME_MIN_REL_IMPROVEMENT = 0.01
-# Unpredictable tail moves (binary readouts) above this |actual| pp are dropped
-# from the magnitude regression so a few jumps cannot dominate the scalar.
-REGIME_OUTLIER_ACTUAL_PP = 50.0
 ACTIVE_REGIMES = ("RISK_ON", "NEUTRAL", "RISK_OFF")
 UNKNOWN_REGIME = "UNKNOWN"
 
@@ -308,30 +302,33 @@ def _solve_regime_multiplier(
     mae_baseline: float,
     dir_acc: float,
 ) -> tuple[float, str]:
-    """Magnitude-scaling factor that minimises in-sample error, regularised.
+    """Confidence-weighted magnitude multiplier.
 
-    The raw least-squares scalar ``sum(pred*actual)/sum(pred^2)`` overfits the
-    magnitude ratio: predictions are timid while actuals are volatile (binary
-    readouts), so even a tiny mean bias drives the scalar hard against a clip and
-    the multiplier ends pinned to the 0.7/1.3 rails instead of settling near 1.0.
-    Guards:
-      * direction accuracy < threshold -> directionally unreliable, hold at 1.0;
-      * tail actuals (|actual| > cap) are dropped from the regression so a few
-        unpredictable jumps cannot dominate the ratio;
-      * the OLS estimate is shrunk toward 1.0 with a ridge prior centred at 1.0
-        (``m = (m_ols + k) / (1 + k)``) so it reflects the modest real bias
-        rather than chasing volatility;
-      * the shrunk, clipped factor is applied only if it cuts in-sample MAE by a
-        material margin; otherwise hold at 1.0.
+    The raw least-squares scalar ``sum(pred*actual)/sum(pred^2)`` overfits: when
+    predictions barely track actuals (direction ~50%, near-zero magnitude
+    correlation) it collapses toward 0 and pins the multiplier to a rail,
+    "correcting" pure noise. Instead the correction is scaled by how much the
+    predictions actually explain the outcomes::
+
+        rho2 = (sum(p*a))^2 / (sum(p^2) * sum(a^2))   # variance explained, 0..1
+        mult = 1.0 + rho2 * (clip(m_ols) - 1.0)
+
+    No explanatory signal (rho2 ~ 0) -> mult stays at 1.0 (predictions
+    untouched); a strong proportional fit (rho2 -> 1) -> mult approaches the
+    least-squares optimum. Nothing is forced. Guards: anti-correlated samples
+    (dir < floor) hold at 1.0, and the result is applied only if it cuts
+    in-sample MAE by a material margin.
     """
     if dir_acc < REGIME_MIN_DIRECTION_ACC:
         return 1.0, "direction_unreliable"
-    fit = [(p, a) for p, a in pairs if abs(a) <= REGIME_OUTLIER_ACTUAL_PP]
-    den = sum(p * p for p, _ in fit)
-    if den <= 1e-9:
+    sp2 = sum(p * p for p, _ in pairs)
+    sa2 = sum(a * a for _, a in pairs)
+    if sp2 <= 1e-9 or sa2 <= 1e-9:
         return 1.0, "no_improvement"
-    m_ols = sum(p * a for p, a in fit) / den
-    m = (m_ols + REGIME_SHRINK_PRIOR) / (1.0 + REGIME_SHRINK_PRIOR)
+    spa = sum(p * a for p, a in pairs)
+    rho2 = (spa * spa) / (sp2 * sa2)
+    m_clipped = max(REGIME_MULT_FLOOR, min(REGIME_MULT_CEILING, spa / sp2))
+    m = 1.0 + rho2 * (m_clipped - 1.0)
     m = max(REGIME_MULT_FLOOR, min(REGIME_MULT_CEILING, m))
     if abs(m - 1.0) < 1e-3:
         return 1.0, "no_improvement"

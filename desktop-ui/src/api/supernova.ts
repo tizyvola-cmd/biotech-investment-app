@@ -1516,6 +1516,7 @@ export type LearningEffectivenessRow = {
   mae_before: number | null;
   mae_after: number | null;
   mae_delta_pp: number | null;
+  abs_lift_pp?: number | null;
   dir_before: number | null;
   dir_after: number | null;
   dir_delta_pp: number | null;

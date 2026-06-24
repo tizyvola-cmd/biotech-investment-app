@@ -15,6 +15,13 @@ function fmtDelta(v: number | null | undefined, unit: string): string {
   return `${sign}${v.toFixed(1)}${unit}`;
 }
 
+function liftClass(v: number | null | undefined): string {
+  if (v == null || !Number.isFinite(v)) return "text-ink-muted";
+  if (v <= -0.5) return "text-emerald-600 dark:text-emerald-400";
+  if (v >= 0.5) return "text-red-600 dark:text-red-400";
+  return "text-ink-muted";
+}
+
 export function LearningEffectivenessStrip({ rows }: { rows: LearningEffectivenessRow[] }) {
   const t = useT();
   if (!rows.length) return null;
@@ -30,6 +37,7 @@ export function LearningEffectivenessStrip({ rows }: { rows: LearningEffectivene
           <thead>
             <tr className="text-ink-muted border-b border-[rgb(var(--border))]/40">
               <th className="text-left py-1 pr-2 font-medium">{t("learningLab.effectiveness.colMechanism")}</th>
+              <th className="text-right py-1 px-1 font-medium">{t("learningLab.effectiveness.colLift")}</th>
               <th className="text-right py-1 px-1 font-medium">{t("learningLab.effectiveness.colMae")}</th>
               <th className="text-right py-1 px-1 font-medium">{t("learningLab.effectiveness.colDir")}</th>
               <th className="text-right py-1 pl-1 font-medium">{t("learningLab.effectiveness.colVerdict")}</th>
@@ -43,6 +51,9 @@ export function LearningEffectivenessStrip({ rows }: { rows: LearningEffectivene
               return (
                 <tr key={r.mechanism} className="border-b border-[rgb(var(--border))]/20 last:border-0">
                   <td className="py-1.5 pr-2 text-ink">{r.label}</td>
+                  <td className={`py-1.5 px-1 text-right tabular-nums font-medium ${liftClass(r.abs_lift_pp)}`}>
+                    {maeUsesCorr ? "—" : fmtDelta(r.abs_lift_pp, " pp")}
+                  </td>
                   <td className="py-1.5 px-1 text-right tabular-nums text-ink-muted">
                     {maeUsesCorr ? "—" : fmtDelta(r.mae_delta_pp, " pp")}
                   </td>

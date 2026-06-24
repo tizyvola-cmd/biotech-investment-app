@@ -10353,12 +10353,16 @@ const DICT = {
     it: "Tutti i loop learning — efficacia",
   },
   "learningLab.effectiveness.subtitle": {
-    en: "Week-over-week delta per mechanism. MAE ↓ is better; direction / hit rate ↑ is better.",
-    it: "Delta settimanale per meccanismo. MAE ↓ è meglio; direzione / hit rate ↑ è meglio.",
+    en: "Lift = layer MAE vs same-week baseline (↓ = helps). Δ MAE / Δ metric = week-over-week. Changes within noise show Neutral.",
+    it: "Lift = MAE del layer vs baseline stessa settimana (↓ = aiuta). Δ MAE / Δ metrica = settimanale. Variazioni nel rumore → Neutro.",
   },
   "learningLab.effectiveness.colMechanism": {
     en: "Mechanism",
     it: "Meccanismo",
+  },
+  "learningLab.effectiveness.colLift": {
+    en: "Lift",
+    it: "Lift",
   },
   "learningLab.effectiveness.colMae": {
     en: "Δ MAE",

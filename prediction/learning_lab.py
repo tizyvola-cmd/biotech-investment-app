@@ -36,6 +36,8 @@ from prediction.regime_calibration import (
 logger = logging.getLogger(__name__)
 
 LEARNING_WEEK_MIN_N = 15
+VERDICT_MAE_NOISE_PP = 0.5  # |MAE lift| below this (pp) is treated as noise -> neutral
+VERDICT_DIR_NOISE_PP = 2.0  # |dir/corr/hit change| below this (pp) is treated as noise -> neutral
 _OVERVIEW_CACHE: dict[str, Any] | None = None
 _OVERVIEW_CACHE_MONO = 0.0
 _OVERVIEW_CACHE_TTL_S = 90.0
@@ -90,16 +92,31 @@ def append_learning_log(message: str, *, kind: str = "info", meta: dict | None =
     _save_json(path, {"schema_version": 1, "entries": entries[-500:]})
 
 
-def _verdict(mae_delta: float | None, dir_delta: float | None, n: int, min_n: int) -> str:
+def _verdict(
+    abs_lift_pp: float | None,
+    wow_delta_pp: float | None,
+    dir_delta: float | None,
+    n: int,
+    min_n: int,
+) -> str:
+    """Judge a layer on its real MAE lift vs baseline (this week), with a noise band.
+
+    abs_lift_pp < 0 means the layer reduces error (good). Falls back to the
+    week-over-week delta only when an absolute lift is unavailable.
+    """
     if n < min_n:
         return "collecting_data"
-    if mae_delta is None:
+    basis = abs_lift_pp if abs_lift_pp is not None else wow_delta_pp
+    if basis is None:
         return "collecting_data"
-    if mae_delta > 0:
-        return "not_helping"
-    if mae_delta <= -0.3 and (dir_delta or 0) >= 0.03:
+    if basis <= -2 * VERDICT_MAE_NOISE_PP:
         return "improving"
-    if mae_delta <= -0.1 or (dir_delta or 0) >= 0.01:
+    if basis <= -VERDICT_MAE_NOISE_PP:
+        return "learning"
+    if basis >= VERDICT_MAE_NOISE_PP:
+        return "not_helping"
+    # Within the MAE noise band: a clear direction gain still counts as learning.
+    if dir_delta is not None and dir_delta >= VERDICT_DIR_NOISE_PP / 100.0:
         return "learning"
     return "neutral"
 
@@ -282,16 +299,16 @@ def load_validation_feedback_snippet() -> dict[str, Any]:
 
 
 def _verdict_corr(delta_pp: float | None, n: int, min_n: int) -> str:
-    """Verdict when the primary metric is correlation (higher = better)."""
+    """Verdict when the primary metric is correlation/hit-rate (higher = better), with noise band."""
     if n < min_n:
         return "collecting_data"
     if delta_pp is None:
         return "collecting_data"
-    if delta_pp <= -3:
+    if delta_pp <= -VERDICT_DIR_NOISE_PP:
         return "not_helping"
-    if delta_pp >= 3:
+    if delta_pp >= 2 * VERDICT_DIR_NOISE_PP:
         return "improving"
-    if delta_pp >= 1:
+    if delta_pp >= VERDICT_DIR_NOISE_PP:
         return "learning"
     return "neutral"
 
@@ -507,15 +524,34 @@ def build_effectiveness_delta(
         }
     )
 
+    def _live_lift(layer_key: str, base_key: str) -> float | None:
+        a, b = live.get(layer_key), live.get(base_key)
+        if a is None or b is None:
+            return None
+        return round(float(a) - float(b), 2)
+
+    # Marginal MAE lift of each layer vs its same-week baseline (negative = helps).
+    abs_lift_map = {
+        "global_cf": _live_lift("mae_with_all", "mae_global_before"),
+        "cluster_cf": _live_lift("mae_after_cluster", "mae_baseline"),
+        "regime_mult": _live_lift("mae_after_regime", "mae_before_regime"),
+    }
+
     for r in rows:
         mae_b, mae_a = r.get("mae_before"), r.get("mae_after")
         dir_b, dir_a = r.get("dir_before"), r.get("dir_after")
         r["mae_delta_pp"] = round(mae_a - mae_b, 2) if mae_a is not None and mae_b is not None else None
         r["dir_delta_pp"] = round((dir_a - dir_b) * 100, 1) if dir_a is not None and dir_b is not None else None
-        if r.get("mechanism") in ("polygon_match", "eis_super", "signal_calibration"):
+        mech = r.get("mechanism")
+        abs_lift = abs_lift_map.get(mech)
+        if abs_lift is None and mech == "daily_recalib":
+            abs_lift = r["mae_delta_pp"]  # base vs daily over the same events = real lift
+        r["abs_lift_pp"] = abs_lift
+        if mech in ("polygon_match", "eis_super", "signal_calibration"):
             r["verdict"] = _verdict_corr(r["dir_delta_pp"], r["n"], r["min_n"])
         else:
             r["verdict"] = _verdict(
+                abs_lift,
                 r["mae_delta_pp"],
                 (r["dir_delta_pp"] or 0) / 100 if r["dir_delta_pp"] else None,
                 r["n"],

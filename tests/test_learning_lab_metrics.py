@@ -138,3 +138,35 @@ def test_build_effectiveness_ignores_low_n_history_week(monkeypatch, tmp_path):
     assert global_cf["mae_after"] == 7.3
     assert global_cf["dir_after"] == 0.5
     assert global_cf["verdict"] == "collecting_data"
+    cluster_cf = next(r for r in rows if r["mechanism"] == "cluster_cf")
+    # cluster layer cut MAE 7.4 -> 7.1 = -0.3pp lift: within noise band -> neutral
+    assert cluster_cf["abs_lift_pp"] == -0.3
+    assert cluster_cf["verdict"] == "neutral"
+
+
+def test_verdict_noise_band_and_abs_lift():
+    from prediction.learning_lab import _verdict
+
+    n, mn = 50, 15
+    # MAE worse beyond noise -> not helping (even if WoW delta looks fine)
+    assert _verdict(0.8, -2.0, None, n, mn) == "not_helping"
+    # tiny positive lift within noise band -> neutral, not not_helping
+    assert _verdict(0.2, 5.0, None, n, mn) == "neutral"
+    # modest real reduction -> learning
+    assert _verdict(-0.6, 0.0, None, n, mn) == "learning"
+    # strong real reduction -> improving
+    assert _verdict(-1.5, 0.0, None, n, mn) == "improving"
+    # no abs lift -> fall back to week-over-week delta
+    assert _verdict(None, 0.9, None, n, mn) == "not_helping"
+    # below min sample -> collecting
+    assert _verdict(-2.0, -2.0, None, 5, mn) == "collecting_data"
+
+
+def test_verdict_corr_noise_band():
+    from prediction.learning_lab import _verdict_corr
+
+    n, mn = 30, 10
+    assert _verdict_corr(-8.8, n, mn) == "not_helping"
+    assert _verdict_corr(0.5, n, mn) == "neutral"  # was "learning" before noise band
+    assert _verdict_corr(2.5, n, mn) == "learning"
+    assert _verdict_corr(5.0, n, mn) == "improving"

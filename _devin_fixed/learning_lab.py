@@ -913,14 +913,18 @@ def build_overview_payload(*, use_mock: bool = False, force_refresh: bool = Fals
 
     from prediction.eis_super_score_learning import build_eis_super_score_overview
     from prediction.cd_pattern_polygon_accuracy import load_cd_pattern_polygon_accuracy
-    from prediction.expected_move_score import load_expected_move_calibration
 
     eis_super = build_eis_super_score_overview()
     cd_pattern_polygon = load_cd_pattern_polygon_accuracy()
     validation_feedback = load_validation_feedback_snippet()
     signal_calibration = load_signal_calibration_snippet()
     curve_impact = load_curve_impact_snippet()
-    expected_move = load_expected_move_calibration()
+    try:
+        from prediction.expected_move_score import load_expected_move_calibration
+
+        expected_move = load_expected_move_calibration()
+    except Exception:
+        expected_move = {}
 
     fb_summary = validation_feedback.get("summary") if isinstance(validation_feedback.get("summary"), dict) else {}
     fb_updated = fb_summary.get("updated_at")

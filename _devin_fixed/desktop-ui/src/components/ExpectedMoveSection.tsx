@@ -21,7 +21,8 @@ function pieArcPath(
   return `M ${cx} ${cy} L ${sx} ${sy} A ${r} ${r} 0 ${large} 1 ${ex} ${ey} Z`;
 }
 
-/** Simple pie: share of resolved catalysts per expected-move class. */
+/** Pie sized by the big-move probability P(>bigPp) of each expected-move class:
+ *  bigger slice = higher probability the stock makes a large move. */
 function ExpectedMovePie({
   buckets,
   it,
@@ -31,7 +32,13 @@ function ExpectedMovePie({
   it: boolean;
   bigPp: number;
 }) {
-  const total = buckets.reduce((s, b) => s + (b.n || 0), 0);
+  // Slice weight = probability of a big move; fall back to count if the
+  // calibration carries no usable probabilities (keeps the pie non-empty).
+  const probTotal = buckets.reduce((s, b) => s + (b.prob_gt_10pp || 0), 0);
+  const useProb = probTotal > 0;
+  const total = useProb
+    ? probTotal
+    : buckets.reduce((s, b) => s + (b.n || 0), 0);
   if (total <= 0) return null;
   const size = 132;
   const r = size / 2 - 2;
@@ -39,7 +46,8 @@ function ExpectedMovePie({
   const cy = size / 2;
   let angle = 0;
   const slices = buckets.map((b, i) => {
-    const frac = (b.n || 0) / total;
+    const weight = useProb ? b.prob_gt_10pp || 0 : b.n || 0;
+    const frac = weight / total;
     const start = angle;
     const end = buckets.length === 1 ? 359.999 : angle + frac * 360;
     angle = end;
@@ -53,7 +61,7 @@ function ExpectedMovePie({
         viewBox={`0 0 ${size} ${size}`}
         className="shrink-0"
         role="img"
-        aria-label={it ? "Distribuzione movimento atteso" : "Expected-move distribution"}
+        aria-label={it ? "Probabilità di movimento ampio per classe" : "Big-move probability by class"}
       >
         {slices.map((s) => (
           <path
@@ -76,8 +84,8 @@ function ExpectedMovePie({
               <span className="text-ink-muted">Q{s.b.bucket}</span> {s.b.label}
             </span>
             <span className="text-ink-muted tabular-nums">
-              {(s.frac * 100).toFixed(0)}% · ~{s.b.median_move_pp.toFixed(1)}pp ·{" "}
-              {`P(>${bigPp}pp) ${(s.b.prob_gt_10pp * 100).toFixed(0)}%`}
+              {`P(>${bigPp}pp) ${(s.b.prob_gt_10pp * 100).toFixed(0)}%`} · ~
+              {s.b.median_move_pp.toFixed(1)}pp
             </span>
             {s.b.straddle_candidate ? (
               <span className="text-accent font-semibold">✓</span>
@@ -156,8 +164,8 @@ export function ExpectedMoveSection({
       <ExpectedMovePie buckets={buckets} it={it} bigPp={bigPp} />
       <p className="text-[10px] text-ink-muted/80 leading-snug">
         {it
-          ? "Ogni fetta = quota di catalyst storici in quella classe di movimento (~20% per quintile = probabilità che un titolo ci ricada). L'etichetta riporta il movimento mediano atteso e la probabilità di un movimento grande."
-          : "Each slice = share of resolved catalysts in that move class (~20% per quintile = probability a stock lands there). Labels show the median expected move and the big-move probability."}
+          ? `Ogni fetta è proporzionale alla probabilità di un movimento ampio (>${bigPp}pp) di quella classe: fetta più grande = probabilità più alta. Le classi (Q1–Q5) restano ~20% dei titoli ciascuna; ciò che cambia è quanto è probabile il movimento grande (da ${((buckets[0]?.prob_gt_10pp ?? 0) * 100).toFixed(0)}% in Q1 a ${((buckets[buckets.length - 1]?.prob_gt_10pp ?? 0) * 100).toFixed(0)}% in Q5).`
+          : `Each slice is proportional to that class's probability of a big move (>${bigPp}pp): larger slice = higher probability. The classes (Q1–Q5) each still hold ~20% of stocks; what differs is how likely the big move is (from ${((buckets[0]?.prob_gt_10pp ?? 0) * 100).toFixed(0)}% in Q1 to ${((buckets[buckets.length - 1]?.prob_gt_10pp ?? 0) * 100).toFixed(0)}% in Q5).`}
       </p>
       <div className="overflow-x-auto">
         <table className="w-full text-[11px] tabular-nums">

@@ -6,11 +6,13 @@ import { buildSimRowByKeyMap, normalizedRowKey } from "./investSimKeys";
 import {
   aggregateOpenPortfolioPnl,
   buildDashboardPortfolioChips,
+  buildPortfolioDailyPnlLedger,
   computeSimulationPosition,
   currentPriceFromRow,
   portfolioDailyPnlFromRow,
   rowHasActivePortfolio,
 } from "./simulationPosition";
+import { summarizeClosedPiggyBankFromLedger } from "./closedPiggyBank";
 import { filterOffPortfolioHotZoneSimRows } from "./simCdHorizonScope";
 import { pickSignalFromSimRow } from "./top2FromSimulation";
 import { resolveExpectedGainPlan } from "./simulationPlanGain";
@@ -211,6 +213,15 @@ export function buildDashboardPulseData(opts: {
 
   const rowByKey = buildSimRowByKeyMap(simTable?.rows ?? []);
   const portfolioTotals = aggregateOpenPortfolioPnl(simTable, inputs, history);
+  // Reconcile the "Gain closed" KPI with the closed piggy bank (beer glass): the KPI summed only
+  // the stored closedPnlEur on ignoreSheet entries, while the glass sums the archived ledger rows
+  // (P&L rebuilt from the daily close series). They diverged (e.g. -€20/21 vs +€470/23). Use the
+  // ledger source so KPI = glass all-time, as the tooltip promises.
+  const closedFromLedger = summarizeClosedPiggyBankFromLedger(
+    buildPortfolioDailyPnlLedger(simTable, inputs, history),
+  );
+  portfolioTotals.closedPnlEur = closedFromLedger.rawPnlEur;
+  portfolioTotals.closedCount = closedFromLedger.positionCount;
   const effectivePriorSnapshot = resolveEffectiveVisitSnapshot(priorSnapshot, portfolioTotals);
   const chips = buildDashboardPortfolioChips(simTable, inputs, history);
 

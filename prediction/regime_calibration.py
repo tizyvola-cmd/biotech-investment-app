@@ -2,24 +2,45 @@
 Regime multiplier — correct systematic over/undershoot by market regime.
 
 Uses ``market_context_gate`` for RISK_ON / NEUTRAL / RISK_OFF / CRISIS.
-Minimum 8 outcomes per regime before activating.
+Minimum REGIME_MIN_SAMPLES outcomes per regime before activating.
 """
 from __future__ import annotations
 
 import json
 import logging
+import os
 from datetime import date, datetime, timezone
 from pathlib import Path
 from typing import Any, Literal
 
-from orchestrator_io_paths import OUTCOMES_WITH_REGIME_JSON, REGIME_MULTIPLIERS_JSON
+from orchestrator_io_paths import (
+    LEARNING_HISTORY_JSON,
+    OUTCOMES_WITH_REGIME_JSON,
+    REGIME_HISTORY_JSON,
+    REGIME_MULTIPLIERS_JSON,
+)
+from prediction.calibration_circuit_breaker import evaluate_circuit_breaker
 
 logger = logging.getLogger(__name__)
 
-REGIME_MIN_SAMPLES = 8
+# Minimum resolved outcomes per regime before a multiplier may move off 1.0.
+# A small sample is dominated by noise (a 34-row regime sub-pool showed 41%
+# direction accuracy while the full pool sits at ~51%), so the threshold is set
+# high enough to require a representative sample. Override via env for tuning.
+REGIME_MIN_SAMPLES = int(os.getenv("REGIME_MIN_SAMPLES", "30"))
 REGIME_MULT_FLOOR = 0.7
 REGIME_MULT_CEILING = 1.3
+# Below this in-sample direction accuracy the regime sample is directionally
+# unreliable: scaling magnitude would amplify wrong-signed predictions, so the
+# multiplier is held at 1.0 instead of "correcting" a broken sample.
+REGIME_MIN_DIRECTION_ACC = 0.5
+# The magnitude correction is scaled by how much predictions explain the
+# outcomes (variance explained; see _solve_regime_multiplier), so a regime with
+# no real signal stays at 1.0 instead of being scaled by noise.
+# Require at least this fractional in-sample MAE reduction before moving off 1.0.
+REGIME_MIN_REL_IMPROVEMENT = 0.01
 ACTIVE_REGIMES = ("RISK_ON", "NEUTRAL", "RISK_OFF")
+UNKNOWN_REGIME = "UNKNOWN"
 
 MarketRegime = Literal["RISK_ON", "NEUTRAL", "RISK_OFF", "CRISIS"]
 
@@ -103,10 +124,62 @@ def get_current_regime() -> MarketRegime:
     return "NEUTRAL"
 
 
-def get_regime_at_date(iso_date: str) -> MarketRegime:
-    """Best-effort: use current regime if historical series unavailable."""
-    _ = iso_date
-    return get_current_regime()
+def load_regime_history() -> dict[str, str]:
+    """Daily ``date -> regime`` map, seeded from market_context history when empty.
+
+    The dedicated ``regime_history.json`` accumulates one regime per day going
+    forward (see :func:`record_daily_regime`). Until it is populated we seed from
+    the rolling ``market_context.history_7d`` window (last write per day wins).
+    """
+    doc = _load_json(Path(REGIME_HISTORY_JSON), {})
+    by_date = doc.get("by_date") if isinstance(doc, dict) else None
+    out: dict[str, str] = {}
+    if isinstance(by_date, dict):
+        for d, r in by_date.items():
+            rr = str(r or "").upper()
+            if rr in ("RISK_ON", "NEUTRAL", "RISK_OFF", "CRISIS"):
+                out[str(d)[:10]] = rr
+    if out:
+        return out
+    from prediction.market_context_gate import load_market_context
+
+    for e in load_market_context().get("history_7d") or []:
+        d = str(e.get("ts") or "")[:10]
+        rr = str(e.get("regime") or "").upper()
+        if d and rr in ("RISK_ON", "NEUTRAL", "RISK_OFF", "CRISIS"):
+            out[d] = rr
+    return out
+
+
+def record_daily_regime(iso_date: str, regime: str) -> None:
+    """Persist the classified regime for a day so historical outcomes can be
+    attributed to the regime that was actually in force at prediction time."""
+    d = str(iso_date or "")[:10]
+    rr = str(regime or "").upper()
+    if not d or rr not in ("RISK_ON", "NEUTRAL", "RISK_OFF", "CRISIS"):
+        return
+    path = Path(REGIME_HISTORY_JSON)
+    doc = _load_json(path, {"schema_version": 1, "by_date": {}})
+    by_date = doc.get("by_date") if isinstance(doc, dict) else None
+    if not isinstance(by_date, dict):
+        by_date = {}
+    by_date[d] = rr
+    _save_json(path, {"schema_version": 1, "updated_at": _now_iso(), "by_date": by_date})
+
+
+def get_regime_at_date(iso_date: str) -> str:
+    """Regime in force at ``iso_date``.
+
+    Today/empty resolve to the live regime; past dates are looked up in the
+    persisted regime history. Crucially this never stamps the *current* regime
+    onto old outcomes — doing so funnelled the entire pool into one regime and
+    starved the others below the activation threshold. Unknown past dates return
+    ``UNKNOWN`` and are excluded from per-regime calibration.
+    """
+    d = str(iso_date or "")[:10]
+    if not d or d >= _today_iso():
+        return get_current_regime()
+    return load_regime_history().get(d, UNKNOWN_REGIME)
 
 
 def load_outcomes_with_regime() -> list[dict[str, Any]]:
@@ -117,29 +190,47 @@ def load_outcomes_with_regime() -> list[dict[str, Any]]:
 
 
 def enrich_outcomes_with_regime(outcomes: list[dict[str, Any]]) -> list[dict[str, Any]]:
-    """Tag main PastCatalyst outcomes with best-effort regime when the regime store is sparse."""
+    """Tag PastCatalyst outcomes with the regime in force at their prediction date.
+
+    Dates without a recorded regime are tagged ``UNKNOWN`` and excluded from
+    per-regime calibration (rather than misattributed to the current regime).
+    """
     tagged: list[dict[str, Any]] = []
     for o in outcomes:
         row = dict(o)
         if not row.get("regime"):
             pred_date = str(row.get("date") or "")[:10]
-            row["regime"] = get_regime_at_date(pred_date) if pred_date else get_current_regime()
+            row["regime"] = get_regime_at_date(pred_date) if pred_date else UNKNOWN_REGIME
         tagged.append(row)
     return tagged
+
+
+def _outcome_key(o: dict[str, Any]) -> str:
+    return f"{o.get('ticker')}|{str(o.get('date') or '')[:10]}|{o.get('node')}"
 
 
 def resolve_regime_outcomes_for_learning(
     fallback_outcomes: list[dict[str, Any]] | None = None,
 ) -> list[dict[str, Any]]:
-    """Prefer persisted regime store; backfill from PastCatalyst pool when too small."""
+    """Merge persisted regime store with regime-tagged PastCatalyst outcomes.
+
+    The previous logic *switched* sources once the store crossed the minimum
+    sample size, which discontinuously collapsed the evaluation population from
+    the full pool to a tiny, biased subset. We instead always union both sources
+    (deduped); outcomes whose regime cannot be determined stay ``UNKNOWN`` and
+    drop out of per-regime calibration on their own.
+    """
     stored = load_outcomes_with_regime()
-    if len(stored) >= REGIME_MIN_SAMPLES:
-        return stored
     if fallback_outcomes is None:
         from prediction.cluster_cal_factor import collect_resolved_outcomes_from_sources
 
         fallback_outcomes = collect_resolved_outcomes_from_sources()
-    return enrich_outcomes_with_regime(fallback_outcomes)
+    merged: dict[str, dict[str, Any]] = {}
+    for o in enrich_outcomes_with_regime(fallback_outcomes):
+        merged[_outcome_key(o)] = o
+    for o in stored:
+        merged[_outcome_key(o)] = o  # persisted (genuine) tags win
+    return list(merged.values())
 
 
 def append_outcome_with_regime(
@@ -162,7 +253,7 @@ def append_outcome_with_regime(
         "pred": round(float(pred), 4),
         "actual": round(float(actual), 4),
         "node": node,
-        "regime": regime or get_regime_at_date(pred_date),
+        "regime": regime or get_regime_at_date(pred_date) or UNKNOWN_REGIME,
         "date": pred_date,
         "recorded_at": _now_iso(),
     }
@@ -202,6 +293,86 @@ def sync_outcomes_from_signal_audit() -> int:
     return added
 
 
+def _pairs_mae(pairs: list[tuple[float, float]], m: float) -> float:
+    return sum(abs(p * m - a) for p, a in pairs) / len(pairs)
+
+
+def _solve_regime_multiplier(
+    pairs: list[tuple[float, float]],
+    mae_baseline: float,
+    dir_acc: float,
+) -> tuple[float, str]:
+    """Confidence-weighted magnitude multiplier.
+
+    The raw least-squares scalar ``sum(pred*actual)/sum(pred^2)`` overfits: when
+    predictions barely track actuals (direction ~50%, near-zero magnitude
+    correlation) it collapses toward 0 and pins the multiplier to a rail,
+    "correcting" pure noise. Instead the correction is scaled by how much the
+    predictions actually explain the outcomes::
+
+        rho2 = (sum(p*a))^2 / (sum(p^2) * sum(a^2))   # variance explained, 0..1
+        mult = 1.0 + rho2 * (clip(m_ols) - 1.0)
+
+    No explanatory signal (rho2 ~ 0) -> mult stays at 1.0 (predictions
+    untouched); a strong proportional fit (rho2 -> 1) -> mult approaches the
+    least-squares optimum. Nothing is forced. Guards: anti-correlated samples
+    (dir < floor) hold at 1.0, and the result is applied only if it cuts
+    in-sample MAE by a material margin.
+    """
+    if dir_acc < REGIME_MIN_DIRECTION_ACC:
+        return 1.0, "direction_unreliable"
+    sp2 = sum(p * p for p, _ in pairs)
+    sa2 = sum(a * a for _, a in pairs)
+    if sp2 <= 1e-9 or sa2 <= 1e-9:
+        return 1.0, "no_improvement"
+    spa = sum(p * a for p, a in pairs)
+    rho2 = (spa * spa) / (sp2 * sa2)
+    m_clipped = max(REGIME_MULT_FLOOR, min(REGIME_MULT_CEILING, spa / sp2))
+    m = 1.0 + rho2 * (m_clipped - 1.0)
+    m = max(REGIME_MULT_FLOOR, min(REGIME_MULT_CEILING, m))
+    if abs(m - 1.0) < 1e-3:
+        return 1.0, "no_improvement"
+    if _pairs_mae(pairs, m) > mae_baseline * (1.0 - REGIME_MIN_REL_IMPROVEMENT) - 1e-9:
+        return 1.0, "no_improvement"
+    return m, "active"
+
+
+def _load_learning_weeks() -> list[dict[str, Any]]:
+    doc = _load_json(Path(LEARNING_HISTORY_JSON), {})
+    weeks = doc.get("weeks") if isinstance(doc, dict) else None
+    return weeks if isinstance(weeks, list) else []
+
+
+def _circuit_breaker_for_regime(regime: str, proposed: float):
+    """Guard a regime multiplier update against sustained divergence-while-degrading.
+
+    Uses the same general breaker applied to every calibration layer; the
+    per-regime value trail and the regime layer's after/baseline MAE come from
+    the weekly learning history.
+    """
+    weeks = _load_learning_weeks()
+    prev_values: list[float] = []
+    mae_after: list[float | None] = []
+    mae_baseline: list[float | None] = []
+    for w in weeks:
+        rm = w.get("regime_multipliers") if isinstance(w, dict) else None
+        if not isinstance(rm, dict) or regime not in rm:
+            continue
+        try:
+            prev_values.append(float(rm[regime]))
+        except (TypeError, ValueError):
+            continue
+        mae_after.append(w.get("mae_after_regime"))
+        mae_baseline.append(w.get("mae_baseline"))
+    return evaluate_circuit_breaker(
+        key=f"regime:{regime}",
+        proposed_value=proposed,
+        prev_values=prev_values,
+        mae_after=mae_after,
+        mae_baseline=mae_baseline,
+    )
+
+
 def compute_regime_multipliers(
     outcomes: list[dict[str, Any]] | None = None,
     *,
@@ -232,17 +403,23 @@ def compute_regime_multipliers(
         bias = sum(p - a for p, a in pairs) / len(pairs)
         mae = sum(abs(p - a) for p, a in pairs) / len(pairs)
         dir_acc = sum(1 for p, a in pairs if (p > 0) == (a > 0)) / len(pairs)
-        multiplier = max(REGIME_MULT_FLOOR, min(REGIME_MULT_CEILING, 1.0 - bias / 12.0))
 
-        multipliers[regime] = {
+        multiplier, status = _solve_regime_multiplier(pairs, mae, dir_acc)
+        entry = {
             "multiplier": round(multiplier, 3),
             "bias_pp": round(bias, 2),
             "mae": round(mae, 2),
             "direction_acc": round(dir_acc, 3),
             "n": len(regime_outcomes),
-            "status": "active",
+            "status": status,
             "last_updated": _today_iso(),
         }
+        cb = _circuit_breaker_for_regime(regime, multiplier)
+        if cb.triggered:
+            entry["multiplier"] = round(cb.value, 3)
+            entry["status"] = "frozen_circuit_breaker"
+            entry["circuit_breaker"] = cb.detail
+        multipliers[regime] = entry
 
     doc = {
         "schema_version": 1,

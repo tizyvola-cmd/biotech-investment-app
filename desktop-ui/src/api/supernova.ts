@@ -1546,6 +1546,13 @@ export type PredictionWeek = {
   price_accuracy_pct: number | null;
 };
 
+export type PredictionReliabilityNode = {
+  offset: number;
+  label: string;
+  sign_hit_pct: number | null;
+  n: number;
+};
+
 export type RecommendationWeek = {
   week: string;
   n: number;
@@ -1589,6 +1596,9 @@ export type ChannelImpact = {
     pre_cd_price_accuracy_pct: number | null;
     benchmark_sign_hit_pct: number | null;
     benchmark_price_accuracy_pct: number | null;
+    best_node?: PredictionReliabilityNode | null;
+    worst_node?: PredictionReliabilityNode | null;
+    reliability_by_cd?: PredictionReliabilityNode[];
     weekly_delta_pp: number | null;
     weekly_significant?: boolean;
     loops: ChannelLoopEffect[];

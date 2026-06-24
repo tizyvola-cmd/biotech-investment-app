@@ -226,16 +226,45 @@ export function ChannelImpactPanels({
           {pred && pred.available ? (
             <>
               <div className="flex items-end justify-between gap-2">
-                <Metric label={it ? "sign-hit pre-CD" : "pre-CD sign-hit"} value={fmtPct(pred.pre_cd_sign_hit_pct)} />
-                <Metric label={it ? "accuratezza prezzo" : "price accuracy"} value={fmtPct(pred.pre_cd_price_accuracy_pct)} />
+                <Metric
+                  label={it ? "sign-hit max" : "max sign-hit"}
+                  value={fmtPct(pred.best_node?.sign_hit_pct ?? null)}
+                  hint={pred.best_node ? `@ ${pred.best_node.label}` : undefined}
+                />
+                <Metric
+                  label={it ? "sign-hit min" : "min sign-hit"}
+                  value={fmtPct(pred.worst_node?.sign_hit_pct ?? null)}
+                  hint={pred.worst_node ? `@ ${pred.worst_node.label}` : undefined}
+                />
                 <Metric label={it ? "sedute" : "sessions"} value={pred.n_sessions != null ? String(pred.n_sessions) : "—"} />
               </div>
               <div className="flex items-center justify-between gap-2 text-[10px] tabular-nums pt-0.5">
+                <span className="text-ink-muted">{it ? "media pre-CD · accur. prezzo" : "pre-CD avg · price acc."}</span>
+                <span className="text-ink-muted">
+                  {fmtPct(pred.pre_cd_sign_hit_pct)} · {fmtPct(pred.pre_cd_price_accuracy_pct)}
+                </span>
+              </div>
+              <div className="flex items-center justify-between gap-2 text-[10px] tabular-nums">
                 <span className="text-ink-muted">{it ? "benchmark (cohorte storica)" : "benchmark (historical cohort)"}</span>
                 <span className="text-ink-muted">
                   {fmtPct(pred.benchmark_sign_hit_pct)} · {fmtPct(pred.benchmark_price_accuracy_pct)}
                 </span>
               </div>
+              {pred.reliability_by_cd && pred.reliability_by_cd.length > 0 ? (
+                <div className="pt-1">
+                  <div className="flex items-center justify-between gap-2">
+                    <span className="text-[9px] text-ink-muted">
+                      {it ? "affidabilità per distanza-CD (T-60→T-1)" : "reliability by distance-to-CD"}
+                    </span>
+                    <Sparkline values={pred.reliability_by_cd.map((r) => r.sign_hit_pct)} positiveIsGood />
+                  </div>
+                  <span className="text-[8px] text-ink-muted/80 leading-snug">
+                    {it
+                      ? "la predizione è pesata per affidabilità: w = max(0, (R−50)/50)"
+                      : "prediction weighted by reliability: w = max(0, (R−50)/50)"}
+                  </span>
+                </div>
+              ) : null}
               <div className="flex items-center justify-between gap-2 pt-1">
                 <span className="text-[9px] text-ink-muted">{it ? "trend sign-hit pre-CD (settimane)" : "pre-CD sign-hit trend (weeks)"}</span>
                 <Sparkline values={pred.weekly.map((w) => w.sign_hit_pct)} positiveIsGood />

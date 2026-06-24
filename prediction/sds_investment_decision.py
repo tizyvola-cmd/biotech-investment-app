@@ -50,11 +50,46 @@ def classify_exit_reason(
     return decision["exit_reason"] if decision else "capital_removed"
 
 
-def investment_decision(inp: SdsTickerInput, sds: SdsResult) -> dict[str, Any]:
+# Coin-flip floor: a reliability at/below this carries no directional information.
+PRED_RELIABILITY_FLOOR_PCT = 50.0
+
+
+def pred_reliability_weight(reliability_pct: float | None) -> float:
+    """Linear weight with a 50% cutoff: ``w = clamp((R - 50) / 50, 0, 1)``.
+    A reliability at/below the coin-flip floor zeroes the prediction; 100% keeps
+    it full. Missing reliability -> 1.0 (neutral, no penalty)."""
+    if reliability_pct is None:
+        return 1.0
+    try:
+        r = float(reliability_pct)
+    except (TypeError, ValueError):
+        return 1.0
+    return max(0.0, min(1.0, (r - PRED_RELIABILITY_FLOOR_PCT) / (100.0 - PRED_RELIABILITY_FLOOR_PCT)))
+
+
+def _resolve_pred_reliability(days_to_cd: int | None) -> float | None:
+    try:
+        from prediction.sign_curve_daily import reliability_index_for_days_to_cd
+
+        return reliability_index_for_days_to_cd(days_to_cd)
+    except Exception:
+        return None
+
+
+def investment_decision(
+    inp: SdsTickerInput,
+    sds: SdsResult,
+    *,
+    reliability_pct: float | None = None,
+) -> dict[str, Any]:
     regime = str(inp.market_regime or "NEUTRAL").upper()
     days_cd = inp.days_to_cd
     pred = inp.pred5_live
     conf = inp.confidence_score
+    if reliability_pct is None:
+        reliability_pct = _resolve_pred_reliability(days_cd)
+    weight = pred_reliability_weight(reliability_pct)
+    pred_eff = round(pred * weight, 2) if pred is not None else None
 
     if sds.veto == "CASH_CRISIS":
         return {"action": "VETO", "label": "CASH CRISIS", "position_size": "0%", "rationale": sds.recommendation}
@@ -83,14 +118,19 @@ def investment_decision(inp: SdsTickerInput, sds: SdsResult) -> dict[str, Any]:
             "sds_zone": sds.zone_label,
         }
 
-    if pred is not None and conf is not None and (pred < 3.0 or conf < 0.75):
+    if pred_eff is not None and conf is not None and (pred_eff < 3.0 or conf < 0.75):
         return {
             "action": "HOLD",
             "label": "PRED ALIGNMENT",
             "position_size": "0%",
-            "rationale": f"HOLD — pred {pred}% or conf {conf:.0%} insufficient",
+            "rationale": (
+                f"HOLD — pred {pred_eff}% (raw {pred}% × affidabilità {weight:.0%}) "
+                f"or conf {conf:.0%} insufficient"
+            ),
             "sds_score": sds.sds,
             "sds_zone": sds.zone_label,
+            "pred_reliability_pct": reliability_pct,
+            "pred_effective": pred_eff,
         }
 
     if sds.veto == "BINARY_EVENT_LOCK":
@@ -116,7 +156,8 @@ def investment_decision(inp: SdsTickerInput, sds: SdsResult) -> dict[str, Any]:
         "position_size": size,
         "rationale": (
             f"SDS {sds.sds} ({sds.zone_label}) · "
-            f"pred T-5 {pred if pred is not None else '—'}% · "
+            f"pred T-5 {pred_eff if pred_eff is not None else '—'}% "
+            f"(raw {pred if pred is not None else '—'}% × affidabilità {weight:.0%}) · "
             f"T-{days_cd if days_cd is not None else '?'} · "
             f"exit T-3…T-1 before CD"
         ),
@@ -124,4 +165,6 @@ def investment_decision(inp: SdsTickerInput, sds: SdsResult) -> dict[str, Any]:
         "stop_loss": "-15% from entry or SDS < 40",
         "sds_score": sds.sds,
         "sds_zone": sds.zone_label,
+        "pred_reliability_pct": reliability_pct,
+        "pred_effective": pred_eff,
     }

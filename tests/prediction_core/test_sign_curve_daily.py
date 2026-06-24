@@ -18,6 +18,7 @@ from prediction.sign_curve_daily import (  # noqa: E402
     _price_level_accuracy_pct,
     _sign_hit_daily,
     _x_label,
+    reliability_index_for_days_to_cd,
 )
 
 
@@ -62,3 +63,31 @@ def test_aggregate_sessions_by_offset():
 def test_flat_band_constant():
     assert DAILY_FLAT_BAND_PP == 0.5
     assert POST_CD_CALENDAR_DAYS == 7
+
+
+def _snapshot_with_offsets() -> dict:
+    return {
+        "cohorts": {
+            "simulation": {
+                "by_offset": [
+                    {"offset": -60, "sign_hit_pct": 44.0, "n": 10},
+                    {"offset": -5, "sign_hit_pct": 78.0, "n": 12},
+                ]
+            }
+        }
+    }
+
+
+def test_reliability_index_for_days_to_cd_maps_distance_to_bin():
+    snap = _snapshot_with_offsets()
+    # T-5 -> exact bin -5
+    assert reliability_index_for_days_to_cd(5, snapshot=snap) == 78.0
+    # T-60 -> decade bin -60 covers -60..-51
+    assert reliability_index_for_days_to_cd(55, snapshot=snap) == 44.0
+
+
+def test_reliability_index_none_cases():
+    snap = _snapshot_with_offsets()
+    assert reliability_index_for_days_to_cd(None, snapshot=snap) is None
+    assert reliability_index_for_days_to_cd(-3, snapshot=snap) is None  # post-CD
+    assert reliability_index_for_days_to_cd(20, snapshot=snap) is None  # no bin in snapshot

@@ -21,6 +21,11 @@ def _sign_curve(
                 "n_sessions_pre_cd": 500,
                 "overall_sign_hit_pre_cd_pct": sim_sign,
                 "overall_price_accuracy_pre_cd_pct": 88.0,
+                "by_offset": [
+                    {"offset": -60, "sign_hit_pct": 44.0, "n": 50},
+                    {"offset": -5, "sign_hit_pct": 78.0, "n": 60},
+                    {"offset": 3, "sign_hit_pct": 90.0, "n": 20},
+                ],
                 "weekly_pre_cd": weekly if weekly is not None else [
                     {"week": "2026-W22", "n": 30, "sign_hit_pct": 55.0, "price_accuracy_pct": 86.0},
                     {"week": "2026-W23", "n": 30, "sign_hit_pct": 60.0, "price_accuracy_pct": 88.0},
@@ -71,6 +76,18 @@ def test_prediction_channel_pre_cd_and_weekly(monkeypatch):
     # loops list still carries the regime + daily-curve descriptors
     loop_ids = {lp["loop"] for lp in pred["loops"]}
     assert {"regime_multiplier", "daily_curve_recalib"} <= loop_ids
+
+
+def test_prediction_channel_reports_max_min_nodes(monkeypatch):
+    monkeypatch.setattr(llc, "_load_outcomes", lambda: [_outcome(5.0, 4.0, "2026-06-01")])
+    monkeypatch.setattr(llc, "_load_positions", lambda: [])
+    monkeypatch.setattr(llc, "_load_sign_curve", _sign_curve)
+    pred = llc.compute_channel_impact()["prediction"]
+    # max/min computed over PRE-CD nodes only (the +3 post-CD node is excluded)
+    assert pred["best_node"]["label"] == "T-5" and pred["best_node"]["sign_hit_pct"] == 78.0
+    assert pred["worst_node"]["label"] == "T-60" and pred["worst_node"]["sign_hit_pct"] == 44.0
+    offsets = [r["offset"] for r in pred["reliability_by_cd"]]
+    assert offsets == [-60, -5]  # ordered far -> near, post-CD dropped
 
 
 def test_prediction_channel_unavailable_without_sign_curve(monkeypatch):

@@ -12,7 +12,12 @@ from datetime import date, datetime, timezone
 from pathlib import Path
 from typing import Any, Literal
 
-from orchestrator_io_paths import OUTCOMES_WITH_REGIME_JSON, REGIME_MULTIPLIERS_JSON
+from orchestrator_io_paths import (
+    LEARNING_HISTORY_JSON,
+    OUTCOMES_WITH_REGIME_JSON,
+    REGIME_MULTIPLIERS_JSON,
+)
+from prediction.calibration_circuit_breaker import evaluate_circuit_breaker
 
 logger = logging.getLogger(__name__)
 
@@ -20,6 +25,12 @@ REGIME_MIN_SAMPLES = 8
 REGIME_MULT_FLOOR = 0.7
 REGIME_MULT_CEILING = 1.3
 ACTIVE_REGIMES = ("RISK_ON", "NEUTRAL", "RISK_OFF")
+# Apply-side robustness (mirrors cluster_cal_factor): require more evidence
+# before a correction is applied, shrink toward 1.0 by sample size, and skip
+# bias that sits within measurement noise.
+REGIME_MIN_APPLY_SAMPLES = 12
+REGIME_SHRINK_K = 20.0
+REGIME_BIAS_DEADBAND_PP = 1.0
 
 MarketRegime = Literal["RISK_ON", "NEUTRAL", "RISK_OFF", "CRISIS"]
 
@@ -77,20 +88,72 @@ def load_regime_multipliers() -> dict[str, Any]:
     return regimes
 
 
-def build_regime_multiplier_map() -> dict[str, float]:
+def robust_regime_multiplier(regime: str) -> float:
+    """Apply-side robust regime multiplier: require evidence, shrink to 1.0 by
+    sample size, skip noise-level bias, clamp. Mirrors the cluster cal_factor
+    apply-side guards so a regime with thin/noisy evidence stays neutral.
+    """
     factors = load_regime_multipliers()
-    out: dict[str, float] = {}
-    for regime in ACTIVE_REGIMES:
-        entry = factors.get(regime) if isinstance(factors, dict) else None
-        if not isinstance(entry, dict) or entry.get("status") == "insufficient_data":
-            out[regime] = 1.0
-            continue
-        mult = entry.get("multiplier")
+    entry = factors.get(regime) if isinstance(factors, dict) else None
+    if not isinstance(entry, dict) or entry.get("multiplier") is None:
+        return 1.0
+    if entry.get("status") == "insufficient_data":
+        return 1.0
+    n = int(entry.get("n") or 0)
+    if n < REGIME_MIN_APPLY_SAMPLES:
+        return 1.0
+    # Don't apply a correction when the measured bias is within measurement noise.
+    bias_pp = entry.get("bias_pp")
+    if bias_pp is not None:
         try:
-            out[regime] = float(mult) if mult is not None else 1.0
+            if abs(float(bias_pp)) < REGIME_BIAS_DEADBAND_PP:
+                return 1.0
         except (TypeError, ValueError):
-            out[regime] = 1.0
-    return out
+            pass
+    try:
+        mult = float(entry["multiplier"])
+    except (TypeError, ValueError):
+        return 1.0
+    # Shrink the multiplier toward 1.0 by sample size (few obs -> near-neutral).
+    shrink_w = n / (n + REGIME_SHRINK_K)
+    mult = 1.0 + (mult - 1.0) * shrink_w
+    mult = max(REGIME_MULT_FLOOR, min(REGIME_MULT_CEILING, mult))
+    return round(mult, 4)
+
+
+def build_regime_multiplier_map() -> dict[str, float]:
+    return {regime: robust_regime_multiplier(regime) for regime in ACTIVE_REGIMES}
+
+
+def _circuit_breaker_for_regime(regime: str, proposed: float):
+    """Guard a regime multiplier update with the general breaker.
+
+    The per-regime value trail and the regime layer's after/baseline MAE come
+    from the weekly learning history.
+    """
+    doc = _load_json(Path(LEARNING_HISTORY_JSON), {})
+    weeks = doc.get("weeks") if isinstance(doc, dict) else None
+    weeks = weeks if isinstance(weeks, list) else []
+    prev_values: list[float] = []
+    mae_after: list[float | None] = []
+    mae_baseline: list[float | None] = []
+    for w in weeks:
+        rm = w.get("regime_multipliers") if isinstance(w, dict) else None
+        if not isinstance(rm, dict) or regime not in rm:
+            continue
+        try:
+            prev_values.append(float(rm[regime]))
+        except (TypeError, ValueError):
+            continue
+        mae_after.append(w.get("mae_after_regime"))
+        mae_baseline.append(w.get("mae_baseline"))
+    return evaluate_circuit_breaker(
+        key=f"regime:{regime}",
+        proposed_value=proposed,
+        prev_values=prev_values,
+        mae_after=mae_after,
+        mae_baseline=mae_baseline,
+    )
 
 
 def get_current_regime() -> MarketRegime:
@@ -233,6 +296,11 @@ def compute_regime_multipliers(
         mae = sum(abs(p - a) for p, a in pairs) / len(pairs)
         dir_acc = sum(1 for p, a in pairs if (p > 0) == (a > 0)) / len(pairs)
         multiplier = max(REGIME_MULT_FLOOR, min(REGIME_MULT_CEILING, 1.0 - bias / 12.0))
+        status = "active"
+        cb = _circuit_breaker_for_regime(regime, multiplier)
+        if cb.triggered:
+            multiplier = cb.value
+            status = "frozen_circuit_breaker"
 
         multipliers[regime] = {
             "multiplier": round(multiplier, 3),
@@ -240,7 +308,8 @@ def compute_regime_multipliers(
             "mae": round(mae, 2),
             "direction_acc": round(dir_acc, 3),
             "n": len(regime_outcomes),
-            "status": "active",
+            "status": status,
+            **({"circuit_breaker": cb.detail} if cb.triggered else {}),
             "last_updated": _today_iso(),
         }
 
@@ -263,19 +332,7 @@ def apply_regime_multiplier(pred_pct: float, current_regime: MarketRegime | None
     regime = current_regime or get_current_regime()
     if regime == "CRISIS":
         regime = "RISK_OFF"
-    factors = load_regime_multipliers()
-    entry = factors.get(regime) if isinstance(factors, dict) else None
-    if not isinstance(entry, dict):
-        return pred_pct
-    if entry.get("status") == "insufficient_data":
-        return pred_pct
-    mult = entry.get("multiplier")
-    if mult is None:
-        return pred_pct
-    try:
-        m = float(mult)
-    except (TypeError, ValueError):
-        return pred_pct
+    m = robust_regime_multiplier(regime)
     if abs(m - 1.0) < 1e-6:
         return pred_pct
     return round(pred_pct * m, 4)

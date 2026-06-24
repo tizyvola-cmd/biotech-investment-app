@@ -13,6 +13,7 @@
  */
 import type { ChannelImpact, ChannelLoopEffect } from "../api/supernova";
 import type { RescueReboundAnalysis } from "../sheet/recommendationRescue";
+import type { SellDirectionalAnalysis } from "../sheet/recommendationSell";
 
 const SELL_REASON_LABEL: Record<string, { it: string; en: string }> = {
   stop_loss: { it: "stop-loss", en: "stop-loss" },
@@ -196,10 +197,12 @@ export function ChannelImpactPanels({
   data,
   it,
   rescue,
+  sellDirectional,
 }: {
   data?: ChannelImpact;
   it: boolean;
   rescue?: RescueReboundAnalysis | null;
+  sellDirectional?: SellDirectionalAnalysis | null;
 }) {
   if (!data || data.error) {
     return (
@@ -351,12 +354,12 @@ export function ChannelImpactPanels({
             it ? "follow-through direzionale per azione" : "directional follow-through by action"
           }
           badge={
-            rec && !rec.available && !rescue?.available
+            rec && !rec.available && !rescue?.available && !sellDirectional?.available
               ? { text: it ? "in raccolta" : "collecting", tone: VERDICT_TONE.collecting_data }
               : undefined
           }
         >
-          {rec && (rec.available || rescue?.available) ? (
+          {rec && (rec.available || rescue?.available || sellDirectional?.available) ? (
             <>
               {/* BUY -> P(price up) · SELL -> P(price down) */}
               <div className="flex items-end justify-between gap-2">
@@ -367,19 +370,33 @@ export function ChannelImpactPanels({
                 />
                 <Metric
                   label={it ? "SELL → P(ribasso)" : "SELL → P(down)"}
-                  value={fmtPct(rec.sell.down_hit_pct)}
+                  value={fmtPct(
+                    sellDirectional?.available ? sellDirectional.downHitPct : rec.sell.down_hit_pct,
+                  )}
                   hint={
-                    rec.sell.graded_n === 0
-                      ? rec.sell.pending_n > 0
-                        ? `${it ? "in raccolta" : "collecting"} · ${rec.sell.pending_n} ${it ? "in attesa" : "pending"}`
-                        : it ? "in raccolta · 0 SELL chiusi" : "collecting · 0 closed SELLs"
-                      : rec.sell.pending_n > 0
-                        ? `n=${rec.sell.graded_n} · ${rec.sell.pending_n} ${it ? "in attesa" : "pending"}`
-                        : `n=${rec.sell.graded_n}`
+                    sellDirectional?.available
+                      ? `n=${sellDirectional.n} · stop-loss${
+                          sellDirectional.pendingN > 0
+                            ? ` · ${sellDirectional.pendingN} ${it ? "in attesa" : "pending"}`
+                            : ""
+                        }`
+                      : rec.sell.graded_n === 0
+                        ? rec.sell.pending_n > 0
+                          ? `${it ? "in raccolta" : "collecting"} · ${rec.sell.pending_n} ${it ? "in attesa" : "pending"}`
+                          : it ? "in raccolta · 0 SELL chiusi" : "collecting · 0 closed SELLs"
+                        : rec.sell.pending_n > 0
+                          ? `n=${rec.sell.graded_n} · ${rec.sell.pending_n} ${it ? "in attesa" : "pending"}`
+                          : `n=${rec.sell.graded_n}`
                   }
                 />
               </div>
-              {rec.sell.graded_n === 0 ? (
+              {sellDirectional?.available ? (
+                <p className="text-[8px] text-ink-muted/80 leading-snug">
+                  {it
+                    ? "SELL → P(ribasso) = % di stop-loss dopo cui il prezzo è sceso ancora (vendita corretta), valutato sullo storico. SDS<40 e uscita pre-CD restano forward-only."
+                    : "SELL → P(down) = share of stop-loss exits after which the price kept dropping (sell was right), graded on history. SDS<40 and pre-CD exit stay forward-only."}
+                </p>
+              ) : rec.sell.graded_n === 0 ? (
                 <p className="text-[8px] text-ink-muted/80 leading-snug">
                   {it
                     ? "SELL → P(ribasso) = % di SELL dopo cui il prezzo è sceso (probabilità che la vendita sia corretta). Si popola in avanti: lo storico non ha exit_reason né prezzo post-uscita."

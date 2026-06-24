@@ -1,0 +1,30 @@
+Δ% vs Pred−60
+Pred
+−60 = 0
+Δ% vs Pred−60
+Pred
+−30 = 0.0043
+Δ% vs Pred−60
+Pred
+−10 = 0.0119
+Δ% vs Pred−60
+Pred
+−7 = 0.013
+Δ% vs Pred−60
+Pred
+−5 = 0.0141
+Δ% vs Pred−60
+Pred
+−3 = 0.0151
+Δ% vs Pred−60
+Pred
++4 = 0.013
+Δ% vs Pred−60
+Pred
++7 = 0.013
+Inferenza
+modello = Solo esplorativa
+Pred empirica
++5gg (%) = 0.0001
+Δ mod vs emp
++5 (pp) = 8.79

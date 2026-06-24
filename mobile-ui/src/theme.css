@@ -1,0 +1,117 @@
+/* SuperNova Mobile — theme tokens (dark default + light) */
+
+[data-theme="dark"],
+:root:not([data-theme="light"]) {
+  --bg-primary: #0e0e18;
+  --bg-surface: #16162a;
+  --bg-elevated: #1a1a2e;
+  --border-color: #1e1e2e;
+  --border-hover: #3b3b5c;
+  --text-primary: #f1f5f9;
+  --text-secondary: #9ca3af;
+  --text-muted: #6b7280;
+  --accent-color: #a78bfa;
+  --up: #4ade80;
+  --down: #f87171;
+  --warn: #fbbf24;
+  --up-bg: #052e1c;
+  --up-border: #166534;
+  --down-bg: #2e0505;
+  --down-border: #991b1b;
+  --warn-bg: #1c1a05;
+  --warn-border: #92400e;
+
+  --accent: 167 139 250;
+  --border: 30 30 46;
+  --bg-deep: 14 14 24;
+  --surface: 22 22 42;
+  --surface-elevated: 26 26 46;
+  --surface-2: 22 22 42;
+  --surface-3: 46 46 72;
+  --ink: 241 245 249;
+  --ink-muted: 156 163 175;
+  --signal-up: 74 222 128;
+  --signal-down: 248 113 113;
+  --signal-neutral: 107 114 128;
+  --positive: 74 222 128;
+  --negative: 248 113 113;
+  --panel-feed-bg: 22 22 42;
+  --panel-feed-header-bg: 26 26 46;
+  --panel-feed-border: 59 59 92;
+  --panel-feed-row-hover: 36 36 62;
+  --panel-lab-border: 59 59 92;
+  --panel-mint-border: 59 59 92;
+  --purple-soft: 167 139 250;
+  --panel-portfolio-flat-bg: 26 26 46;
+  --cd-hot-zone-label: 251 191 36;
+  --cd-watch-zone-label: 156 163 175;
+}
+
+[data-theme="light"] {
+  --bg-primary: #ffffff;
+  --bg-surface: #f8f7ff;
+  --bg-elevated: #ede9fe;
+  --border-color: #e5e3f5;
+  --border-hover: #c4b5fd;
+  --text-primary: #0f0e1a;
+  --text-secondary: #4b5563;
+  --text-muted: #9ca3af;
+  --accent-color: #7c3aed;
+  --up: #15803d;
+  --down: #dc2626;
+  --warn: #d97706;
+  --up-bg: #dcfce7;
+  --up-border: #86efac;
+  --down-bg: #fee2e2;
+  --down-border: #fca5a5;
+  --warn-bg: #fef3c7;
+  --warn-border: #fcd34d;
+
+  --accent: 124 58 237;
+  --border: 229 227 245;
+  --bg-deep: 255 255 255;
+  --surface: 248 247 255;
+  --surface-elevated: 255 255 255;
+  --surface-2: 248 247 255;
+  --surface-3: 237 233 254;
+  --ink: 15 14 26;
+  --ink-muted: 75 85 99;
+  --signal-up: 21 128 61;
+  --signal-down: 220 38 38;
+  --signal-neutral: 107 114 128;
+  --positive: 21 128 61;
+  --negative: 220 38 38;
+  --panel-feed-bg: 248 247 255;
+  --panel-feed-header-bg: 245 243 255;
+  --panel-feed-border: 199 210 254;
+  --panel-feed-row-hover: 238 242 255;
+  --panel-lab-border: 226 232 240;
+  --panel-mint-border: 196 181 253;
+  --purple-soft: 124 58 237;
+  --panel-portfolio-flat-bg: 248 247 255;
+  --cd-hot-zone-label: 130 78 108;
+  --cd-watch-zone-label: 79 88 130;
+}
+
+[data-theme="violet"] {
+  --sn-primary: #6b4fc8;
+  --sn-primary-dark: #4a3296;
+}
+
+/* Scala tipografica mobile */
+:root {
+  --mobile-text-2xs: 0.6875rem;
+  --mobile-text-xs: 0.75rem;
+  --mobile-text-sm: 0.8125rem;
+  --mobile-text-base: 0.875rem;
+  --mobile-text-md: 0.9375rem;
+  --mobile-text-lg: 1.0625rem;
+  --mobile-radius-sm: 10px;
+  --mobile-radius-md: 12px;
+  --mobile-gap: 8px;
+}
+
+body {
+  background: var(--bg-primary);
+  color: var(--text-primary);
+}

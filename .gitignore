@@ -45,5 +45,17 @@ cd
 
 # Dati sensibili / grossi
 data/
+# Frontend data modules are generated TypeScript code (small), keep them tracked.
+!desktop-ui/src/data/
+!desktop-ui/src/data/**
 cik_tickers.json
 *.png
+!assets/supernova_mobile_icon_source.png
+.env
+
+# Build artifacts / scratch (untracked)
+*.tsbuildinfo
+desktop-ui/__fix.ps1
+desktop-ui/__inspect.js
+risk_on_fix.patch
+risk_on_fix_AD_delta.patch

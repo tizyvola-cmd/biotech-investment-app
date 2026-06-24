@@ -1,0 +1,405 @@
+/* Supernova appearance themes — violet · mint (+ fixed chart tokens) */
+
+[data-theme="violet"] {
+  --sn-bg: #f2f0f8;
+  --sn-surface: #f5f3fa;
+  --sn-surface-raised: #ffffff;
+  --sn-border: #c2bae0;
+  --sn-border-subtle: #d4cef0;
+
+  --sn-primary: #6b4fc8;
+  --sn-primary-dark: #4a3296;
+  --sn-primary-pale: #ede9f9;
+
+  --sn-accent: #c8508a;
+  --sn-accent-dark: #9b3070;
+  --sn-accent-pale: #f9edf4;
+
+  --sn-sidebar-bg: #4a3296;
+  --sn-sidebar-active: #6b4fc8;
+  --sn-sidebar-text: #e8e4f6;
+  --sn-sidebar-muted: #d4cef0;
+  --sn-sidebar-section: #c8c0e8;
+
+  --sn-text: #1e1530;
+  --sn-text-2: #5e5080;
+  --sn-text-3: #9b90be;
+  --sn-text-on-dark: #f2f0f8;
+
+  --sn-long-bg: #ebf7d9;
+  --sn-long-text: #5a9a18;
+  --sn-short-bg: #fdeaea;
+  --sn-short-text: #d64040;
+  --sn-watch-bg: #f9edf4;
+  --sn-watch-text: #9b3070;
+  --sn-hold-bg: #ede9f9;
+  --sn-hold-text: #4a3296;
+
+  --sn-piggy-bg: #ede9f9;
+  --sn-piggy-border: #c2bae0;
+  --sn-piggy-label: #4a3296;
+
+  --sn-chart-grid: rgba(194, 186, 224, 0.22);
+  --sn-chart-tick: #9b90be;
+  --sn-zone-past: rgba(194, 186, 224, 0.13);
+  --sn-zone-cd: rgba(250, 238, 180, 0.48);
+
+  --sn-violet-50: #ede9f9;
+  --sn-violet-200: #b8aee8;
+  --sn-violet-500: #6b4fc8;
+  --sn-violet-700: #4a3296;
+  --sn-violet-900: #2a1a5c;
+
+  --sn-green-50: #ebf7d9;
+  --sn-green-200: #b8e070;
+  --sn-green-500: #7dc42a;
+  --sn-green-700: #5a9a18;
+
+  --sn-rose-50: #f9edf4;
+  --sn-rose-200: #ebb0d2;
+  --sn-rose-500: #c8508a;
+  --sn-rose-700: #9b3070;
+
+  --sn-red-50: #fdeaea;
+  --sn-red-500: #d64040;
+  --sn-red-700: #a32d2d;
+}
+
+[data-theme="mint"] {
+  --sn-bg: #f0f8f5;
+  --sn-surface: #f0faf6;
+  --sn-surface-raised: #ffffff;
+  --sn-border: #a8d4c2;
+  --sn-border-subtle: #c4e4d8;
+
+  --sn-primary: #3baf8a;
+  --sn-primary-dark: #1f7a5e;
+  --sn-primary-pale: #e6f7f1;
+
+  --sn-accent: #c8924a;
+  --sn-accent-dark: #8a5f20;
+  --sn-accent-pale: #fdf3e3;
+
+  --sn-sidebar-bg: #134f3d;
+  --sn-sidebar-active: #3baf8a;
+  --sn-sidebar-text: #e6f7f1;
+  --sn-sidebar-muted: #c4e4d8;
+  --sn-sidebar-section: #a8d4c2;
+
+  --sn-text: #112920;
+  --sn-text-2: #3d6858;
+  --sn-text-3: #7aad98;
+  --sn-text-on-dark: #e6f7f1;
+
+  --sn-long-bg: #e6f7f1;
+  --sn-long-text: #1f7a5e;
+  --sn-short-bg: #fdeaea;
+  --sn-short-text: #d64040;
+  --sn-watch-bg: #fdf3e3;
+  --sn-watch-text: #8a5f20;
+  --sn-hold-bg: #dff0e9;
+  --sn-hold-text: #1f7a5e;
+
+  --sn-piggy-bg: #fdf3e3;
+  --sn-piggy-border: #e5c990;
+  --sn-piggy-label: #8a5f20;
+
+  --sn-chart-grid: rgba(168, 212, 194, 0.25);
+  --sn-chart-tick: #7aad98;
+  --sn-zone-past: rgba(168, 212, 194, 0.15);
+  --sn-zone-cd: rgba(250, 238, 180, 0.48);
+
+  --sn-violet-50: #e6f7f1;
+  --sn-violet-200: #a8d4c2;
+  --sn-violet-500: #3baf8a;
+  --sn-violet-700: #1f7a5e;
+  --sn-violet-900: #134f3d;
+
+  --sn-green-50: #ebf7d9;
+  --sn-green-200: #b8e070;
+  --sn-green-500: #7dc42a;
+  --sn-green-700: #5a9a18;
+
+  --sn-rose-50: #f9edf4;
+  --sn-rose-200: #ebb0d2;
+  --sn-rose-500: #c8508a;
+  --sn-rose-700: #9b3070;
+
+  --sn-red-50: #fdeaea;
+  --sn-red-500: #d64040;
+  --sn-red-700: #a32d2d;
+}
+
+/* Chart tokens — fixed across both themes */
+:root {
+  --chart-model: #6b4fc8;
+  --chart-expected: #c8508a;
+  --chart-actual-long: #3baf8a;
+  --chart-actual-short: #d64040;
+  --chart-today: #c8924a;
+  --chart-today-border: #ffffff;
+  --chart-grad-mid: rgba(220, 190, 100, 0.14);
+  --chart-grad-end: rgba(255, 252, 230, 0);
+  --chart-zone-cd: rgba(250, 238, 180, 0.48);
+}
+
+/*
+ * Solo pulsante Chiaro (html.theme-chiaro) — shell bianco di ieri.
+ * Blu (.dark), Nero (.theme-black) e token Violet/Mint base restano invariati.
+ */
+html.theme-chiaro {
+  --surface: 255 255 255;
+  --surface-elevated: 255 255 255;
+  --bg-deep: 255 255 255;
+  --panel-lab-shell-bg: 255 255 255;
+  --panel-lab-card-bg: 255 255 255;
+  --panel-lab-block-bg: 255 255 255;
+  --sn-bg: #ffffff;
+  --sn-surface: #ffffff;
+  --sn-surface-raised: #ffffff;
+  color-scheme: light;
+}
+
+html.theme-chiaro,
+html.theme-chiaro body,
+html.theme-chiaro #root,
+html.theme-chiaro .app-shell,
+html.theme-chiaro .app-main {
+  background-color: #ffffff !important;
+}
+
+/*
+ * Bridge sn-* → app tokens — Chiaro + appearance only.
+ * Blu (.dark) and Nero (.theme-black) keep index.css display-mode palettes.
+ */
+/* Chiaro + Violet — bianco · menta chiaro · violino chiaro */
+html[data-theme="violet"]:not(.dark) {
+  --surface: 255 255 255;
+  --surface-elevated: 255 255 255;
+  --bg-deep: 255 255 255;
+  --ink: 30 21 48;
+  --ink-muted: 94 80 128;
+  --accent: 107 79 200;
+  --border: 226 232 240;
+  --surface-3: 237 233 246;
+  --positive: 90 154 24;
+  --negative: 214 64 64;
+  --signal-up: 90 154 24;
+  --signal-down: 214 64 64;
+  --signal-neutral: 155 144 190;
+  --warn: 200 80 138;
+  --purple-soft: 184 174 232;
+
+  --panel-feed-bg: 243 244 252;
+  --panel-feed-header-bg: 245 243 255;
+  --panel-feed-border: 199 210 254;
+  --panel-feed-border-soft: 226 232 240;
+  --panel-feed-accent: 107 79 200;
+  --panel-feed-accent-strong: 74 50 150;
+  --panel-feed-toolbar: 255 255 255;
+  --panel-feed-row-hover: 238 242 255;
+
+  --panel-mint-bg: 236 253 245;
+  --panel-mint-bg-soft: 240 253 244;
+  --panel-mint-bg-elevated: 255 255 255;
+  --panel-mint-border: 167 243 208;
+  --panel-mint-border-soft: 191 219 254;
+  --panel-mint-thead: 209 250 229;
+  --panel-mint-ink: 30 21 48;
+  --panel-mint-ink-muted: 94 80 128;
+  --panel-mint-row-hover: 220 252 231;
+
+  --clinical-panel: 243 244 252;
+  --clinical-panel-border: 199 210 254;
+
+  --panel-rose-bg: 255 241 242;
+  --panel-rose-bg-soft: 255 228 230;
+  --panel-portfolio-flat-bg: 248 250 252;
+}
+
+html[data-theme="mint"]:not(.dark) {
+  --surface: 255 255 255;
+  --surface-elevated: 255 255 255;
+  --bg-deep: 255 255 255;
+  --ink: 17 41 32;
+  --ink-muted: 61 104 88;
+  --accent: 59 175 138;
+  --border: 196 228 216;
+  --surface-3: 230 247 241;
+  --positive: 31 122 94;
+  --negative: 214 64 64;
+  --signal-up: 31 122 94;
+  --signal-down: 214 64 64;
+  --signal-neutral: 122 173 152;
+  --warn: 200 146 74;
+  --purple-soft: 168 212 194;
+
+  --panel-feed-bg: 230 247 241;
+  --panel-feed-header-bg: 236 252 245;
+  --panel-feed-border: 168 212 194;
+  --panel-feed-border-soft: 196 228 216;
+  --panel-feed-accent: 59 175 138;
+  --panel-feed-accent-strong: 31 122 94;
+  --panel-feed-toolbar: 255 255 255;
+  --panel-feed-row-hover: 223 240 233;
+
+  --panel-mint-bg: 236 253 245;
+  --panel-mint-bg-soft: 240 253 244;
+  --panel-mint-bg-elevated: 255 255 255;
+  --panel-mint-border: 167 243 208;
+  --panel-mint-border-soft: 191 219 254;
+  --panel-mint-thead: 209 250 229;
+  --panel-mint-ink: 17 41 32;
+  --panel-mint-ink-muted: 61 104 88;
+  --panel-mint-row-hover: 220 252 231;
+
+  --clinical-panel: 240 248 245;
+  --clinical-panel-border: 168 212 194;
+
+  --panel-rose-bg: 255 241 242;
+  --panel-portfolio-flat-bg: 248 250 252;
+}
+
+html[data-theme]:not(.dark) {
+  color: var(--sn-text);
+}
+
+html[data-theme]:not(.dark) body,
+html[data-theme]:not(.dark) #root {
+  background: rgb(var(--bg-deep)) !important;
+  color: var(--sn-text);
+}
+
+/* Sidebar — high contrast on dark violet/mint chrome (Chiaro + appearance) */
+html[data-theme]:not(.dark) .app-sidebar {
+  background: var(--sn-sidebar-bg) !important;
+  border-color: color-mix(in srgb, var(--sn-sidebar-active) 35%, transparent) !important;
+  color: var(--sn-sidebar-text);
+  /* Tailwind ink tokens scoped to sidebar = light on dark */
+  --ink: 242 240 248;
+  --ink-muted: 210 204 235;
+  --accent: 255 255 255;
+  --purple-soft: 212 206 240;
+}
+
+html[data-theme="mint"]:not(.dark) .app-sidebar {
+  --ink: 230 247 241;
+  --ink-muted: 196 228 216;
+  --accent: 255 255 255;
+  --purple-soft: 168 212 194;
+}
+
+html[data-theme]:not(.dark) .app-sidebar .font-bold {
+  color: #ffffff !important;
+}
+
+html[data-theme]:not(.dark) .app-sidebar .app-sidebar-nav > div > p {
+  color: var(--sn-sidebar-section) !important;
+  opacity: 1 !important;
+}
+
+html[data-theme]:not(.dark) .app-sidebar-nav button:not([class*="bg-accent"]) {
+  color: var(--sn-sidebar-text) !important;
+}
+
+html[data-theme]:not(.dark) .app-sidebar-nav button:not([class*="bg-accent"]):hover {
+  background: color-mix(in srgb, var(--sn-sidebar-active) 28%, transparent) !important;
+  color: #ffffff !important;
+}
+
+html[data-theme]:not(.dark) .app-sidebar button[class*="bg-accent"] {
+  background: color-mix(in srgb, var(--sn-sidebar-active) 48%, transparent) !important;
+  color: #ffffff !important;
+  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--sn-accent) 70%, white) !important;
+}
+
+html[data-theme]:not(.dark) .app-sidebar [class*="text-ink-muted"] {
+  color: var(--sn-sidebar-text) !important;
+}
+
+html[data-theme]:not(.dark) .app-sidebar .sidebar-model-status {
+  background: color-mix(in srgb, var(--sn-sidebar-active) 32%, transparent) !important;
+  border-color: color-mix(in srgb, var(--sn-sidebar-text) 45%, transparent) !important;
+}
+
+html[data-theme]:not(.dark) .app-sidebar .sidebar-model-status span {
+  color: var(--sn-sidebar-text) !important;
+}
+
+html[data-theme]:not(.dark) .app-sidebar .sidebar-model-status .sidebar-model-status-value {
+  color: #ffffff !important;
+  font-weight: 700;
+}
+
+/* Main content — darker secondary text + white analysis shells */
+html[data-theme]:not(.dark) .sim-harmonize [class*="text-ink-muted"] {
+  color: rgb(var(--ink-muted)) !important;
+}
+
+html[data-theme]:not(.dark) .sim-harmonize.card {
+  background: #ffffff !important;
+  border-color: rgb(226 232 240 / 0.85) !important;
+  box-shadow:
+    0 1px 2px rgb(15 23 42 / 0.05),
+    0 2px 10px rgb(15 23 42 / 0.06) !important;
+}
+
+html[data-theme]:not(.dark) header {
+  background: rgb(var(--surface-elevated)) !important;
+  border-bottom-color: rgb(var(--border) / 0.65) !important;
+}
+
+/* Chiaro — card bianche (non gradiente viola) */
+html[data-theme]:not(.dark) .card {
+  background: rgb(var(--surface-elevated)) !important;
+  border-color: rgb(var(--border) / 0.85) !important;
+  box-shadow:
+    0 1px 2px rgb(15 23 42 / 0.05),
+    0 2px 10px rgb(15 23 42 / 0.06) !important;
+}
+
+/* Dashboard middle row — white panels (user request for violet/mint) */
+html[data-theme]:not(.dark) .dashboard-middle-panel.card,
+html[data-theme]:not(.dark) .dashboard-feed-card.card {
+  background: #ffffff !important;
+  border-color: rgb(226 232 240 / 0.85) !important;
+  box-shadow:
+    0 1px 2px rgb(15 23 42 / 0.05),
+    0 2px 10px rgb(15 23 42 / 0.06) !important;
+}
+
+html[data-theme]:not(.dark) .dashboard-feed-card .dashboard-feed-card-head {
+  background: #ffffff !important;
+  border-color: rgb(226 232 240 / 0.65) !important;
+}
+
+html[data-theme]:not(.dark) .piggy-bank-bar {
+  background: linear-gradient(
+    135deg,
+    var(--sn-piggy-bg) 0%,
+    var(--sn-surface-raised) 72%,
+    color-mix(in srgb, var(--sn-primary-pale) 40%, var(--sn-surface)) 100%
+  ) !important;
+  border-color: var(--sn-piggy-border) !important;
+}
+
+html[data-theme] .piggy-bank-bar-label {
+  color: var(--sn-piggy-label) !important;
+}
+
+html[data-theme] .signal-up {
+  color: var(--sn-long-text) !important;
+}
+
+html[data-theme] .signal-down {
+  color: var(--sn-short-text) !important;
+}
+
+html[data-theme]:not(.dark) .btn {
+  background: var(--sn-primary) !important;
+}
+
+html[data-theme]:not(.dark) .seg-btn-active {
+  background: var(--sn-primary) !important;
+  color: #fff !important;
+}

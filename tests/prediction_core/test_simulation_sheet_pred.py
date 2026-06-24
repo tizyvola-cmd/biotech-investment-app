@@ -60,6 +60,47 @@ def test_simulation_sheet_model_only_opt_out(monkeypatch, hura_like_pred):
     assert float(pts[1]) != pytest.approx(43.21, abs=3.0)
 
 
+def test_post_cd_keeps_realized_history(monkeypatch, hura_like_pred):
+    """T+4 già passato: resta il valore ricalibrato, non il modello."""
+    from datetime import date
+
+    from prediction.live_recalib_sheet import merge_pred_display_historical_and_model
+
+    monkeypatch.setenv("SIMULATION_POST_CD_MODEL_DISPLAY", "1")
+    cd = date(2026, 1, 1)
+    today = date(2026, 2, 1)
+    display = [0.0, 43.0, 43.0, 43.0, 43.0, 43.0, 55.5, 56.0]
+    model = [0.0, -1.0, -2.0, -2.0, -2.0, -3.0, 10.0, 12.0]
+    out = merge_pred_display_historical_and_model(
+        display,
+        model,
+        cd,
+        today=today,
+    )
+    assert out[6] == pytest.approx(55.5, abs=0.01)
+
+
+def test_post_cd_uses_model_not_seq_plateau(monkeypatch, hura_like_pred):
+    from datetime import date
+
+    from prediction.live_recalib_sheet import merge_pred_display_historical_and_model
+
+    monkeypatch.setenv("SIMULATION_POST_CD_MODEL_DISPLAY", "1")
+    pw = dict(hura_like_pred)
+    orch._accuracy_sim_impute_missing_pre_cd_model_pcts(pw)
+    model = orch._interp_pred_pct_vs_m60_calendar(pw, orch.SIMULATION_PRED_CAL_OFFSETS)
+    cd = date(2026, 12, 1)
+    today = date(2026, 5, 20)
+    out = merge_pred_display_historical_and_model(
+        hura_like_pred["seq_curve_pct_vs_m60"],
+        model,
+        cd,
+        today=today,
+    )
+    assert float(out[6]) != pytest.approx(43.11, abs=2.0)
+    assert float(out[6]) < 25.0
+
+
 def test_accuracy_sheet_keeps_raw_seq_by_default(monkeypatch, hura_like_pred):
     monkeypatch.delenv("ACCURACY_SEQ_BLEND_TO_MODEL", raising=False)
     monkeypatch.delenv("SIMULATION_SEQ_BLEND_TO_MODEL", raising=False)

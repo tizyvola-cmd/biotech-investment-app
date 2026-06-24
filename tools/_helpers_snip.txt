@@ -1,0 +1,39 @@
+    def _index_to_dates(ser: pd.Series) -> pd.Series:
+        try:
+            ser = ser.copy()
+            ser.index = pd.Index(
+                [x.date() if hasattr(x, "date") else x for x in ser.index])
+        except Exception:
+            pass
+        return ser
+
+    def _strip_to_1d_float_series(obj) -> pd.Series:
+        """Da colonna yfinance (Series o DataFrame 1 riga/cols) → Series float 1D."""
+        if obj is None:
+            return pd.Series(dtype=float)
+        x = obj
+        if isinstance(x, pd.DataFrame):
+            if x.empty or x.shape[1] < 1:
+                return pd.Series(dtype=float)
+            x = x.iloc[:, 0]
+        try:
+            return pd.Series(x, copy=False).astype(float).dropna()
+        except Exception:
+            return pd.Series(dtype=float)
+
+    def _close_series_from_raw(raw_pd: pd.DataFrame, sym_u: str) -> pd.Series:
+        """Estrae serie Close per un ticker (compat MultiIndex tipo (Close,TICK))."""
+        if raw_pd is None or getattr(raw_pd, "empty", True):
+            return pd.Series(dtype=float)
+        cols = raw_pd.columns
+        cand = None
+        if isinstance(cols, pd.MultiIndex):
+            for _name in (sym_u, sym_u.replace(".", "-")):
+                _tup = ("Close", _name)
+                try:
+                    if _tup in raw_pd.columns:
+                        cand = raw_pd[_tup]
+                        break
+                except Exception:
+                    pass
+            if cand is None:

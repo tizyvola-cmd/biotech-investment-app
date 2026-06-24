@@ -1,0 +1,578 @@
+"""
+Unified partial/full refresh for past predictions + Excel sheets.
+
+Entry: ``run_prediction_refresh(refresh_kind=...)`` with kinds
+``full`` | ``guida`` | ``accuracy`` | ``grafici``.
+"""
+from __future__ import annotations
+
+import logging
+import os
+import sys
+from dataclasses import dataclass, field
+from typing import Literal
+
+from orchestrator_io_paths import FINAL_JSON, FINAL_XLSX, PAST_CATALYST_PREDICTIONS_JSON
+from past_pred_io import (
+    build_refresh_meta,
+    load_past_pred_document,
+    rows_map_from_doc,
+    save_predictions,
+)
+
+from prediction.enrich import enrich_past_pred_accuracy_metadata
+from prediction.errors import ErrorAccumulator
+from prediction.nct_cohort import select_nct_cohort
+
+_log = logging.getLogger(__name__)
+
+REFRESH_COORDINATOR_VERSION = "refresh_coordinator@1"
+RefreshKind = Literal["full", "guida", "accuracy", "grafici"]
+
+
+def _env_truthy(name: str) -> bool:
+    return os.environ.get(name, "").strip().lower() in (
+        "1",
+        "true",
+        "yes",
+        "on",
+    )
+
+
+def _accuracy_refresh_fast() -> bool:
+    """Salta enrich JSON pesante (CT.gov × migliaia di righe) — usa ``past_pred`` su disco."""
+    return _env_truthy("ACCURACY_REFRESH_FAST")
+
+_GUIDA_SHEET_LEGACY = "📊 Modelli popolazione ristretta"
+_COHORT_BANNER = (
+    "ATTENZIONE: coorte NCT ristretta vuota — rigenerare dopo enrich orchestrator "
+    "o usare --skip-nct-relation-filter / verificare nct_relation_type nel JSON."
+)
+
+
+@dataclass
+class RefreshReport:
+    refresh_kind: str
+    records_in: int
+    records_out: int
+    cohort_size: int
+    nct_filter_applied: bool
+    cohort_empty: bool = False
+    enrich_applied: bool = False
+    json_saved: bool = False
+    excel_written: bool = False
+    warnings: list[str] = field(default_factory=list)
+    errors: list[str] = field(default_factory=list)
+    partial: bool = False
+    alignment: dict | None = None
+
+    def exit_code(self) -> int:
+        if self.cohort_empty and self.refresh_kind == "guida":
+            return 2
+        return 0
+
+
+def _project_abspath(project_root: str, p: str) -> str:
+    if not (p or "").strip():
+        return p
+    p = os.path.expanduser(p.strip())
+    return os.path.normpath(p if os.path.isabs(p) else os.path.join(project_root, p))
+
+
+def _write_guida_banner(wb) -> None:
+    sheet_name = "Predizione — guida"
+    if sheet_name not in wb.sheetnames:
+        ws = wb.create_sheet(sheet_name)
+    else:
+        ws = wb[sheet_name]
+    ws.cell(row=1, column=1, value=_COHORT_BANNER)
+
+
+def run_prediction_refresh(
+    refresh_kind: RefreshKind,
+    *,
+    workbook_path: str | None = None,
+    json_path: str | None = None,
+    skip_nct_filter: bool = False,
+    live_sim_pred: bool = False,
+    save_json: bool = True,
+    check_alignment: bool = False,
+    project_root: str | None = None,
+) -> RefreshReport:
+    """
+    Load JSON → enrich all rows → apply NCT cohort → write Excel (and optional JSON).
+
+    ``full`` is reserved for orchestrator parity checks (enrich + save JSON only).
+    """
+    root = project_root or os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+    wb_path = _project_abspath(root, workbook_path or FINAL_XLSX)
+    j_path = _project_abspath(root, json_path or PAST_CATALYST_PREDICTIONS_JSON)
+    kind = (refresh_kind or "guida").strip().lower()
+    report = RefreshReport(
+        refresh_kind=kind,
+        records_in=0,
+        records_out=0,
+        cohort_size=0,
+        nct_filter_applied=False,
+    )
+    err_acc = ErrorAccumulator()
+
+    if not os.path.isfile(j_path):
+        report.warnings.append(f"JSON not found: {j_path}")
+        return report
+
+    print(f"[Accuracy refresh] Caricamento {j_path} …", flush=True)
+    doc = load_past_pred_document(j_path)
+    if doc.get("_error"):
+        err_acc.record("load_past_pred_document", str(doc["_error"]))
+        report.partial = True
+    rows_all = rows_map_from_doc(doc)
+    report.records_in = len(rows_all)
+    print(f"[Accuracy refresh] JSON: {report.records_in} righe.", flush=True)
+    if not rows_all:
+        report.warnings.append("past_catalyst_predictions.json has no rows.")
+
+    _skip_heavy_enrich = kind == "accuracy" and _accuracy_refresh_fast()
+    if _skip_heavy_enrich:
+        print(
+            "[Accuracy refresh] ACCURACY_REFRESH_FAST=1: skip enrich metadata "
+            "(nct/CT.gov su tutto il JSON).",
+            flush=True,
+        )
+    else:
+        print(
+            "[Accuracy refresh] Enrich metadata (clinical/financial; può richiedere minuti) …",
+            flush=True,
+        )
+        try:
+            enrich_past_pred_accuracy_metadata(
+                rows_all,
+                workbook_path=wb_path,
+                json_path=FINAL_JSON,
+            )
+            report.enrich_applied = True
+            doc["rows"] = rows_all
+            print("[Accuracy refresh] Enrich metadata: ok.", flush=True)
+        except Exception as exc:
+            err_acc.record("enrich_past_pred_accuracy_metadata", exc)
+            report.warnings.append(f"enrich failed (non-blocking): {exc}")
+
+    print("[Accuracy refresh] Filtro coorte NCT …", flush=True)
+    cohort = select_nct_cohort(
+        rows_all,
+        skip_nct_filter=skip_nct_filter,
+        refresh_kind=kind,
+    )
+    report.records_out = len(rows_all)
+    report.cohort_size = cohort.cohort_size
+    report.cohort_empty = cohort.cohort_empty
+    report.nct_filter_applied = cohort.nct_filter_applied
+    report.warnings.extend(cohort.warnings)
+
+    if cohort.cohort_empty:
+        from prediction.config import get_config
+
+        _log.warning(
+            "NCT cohort empty (pre=%s, filtered=%s, strict=%s)",
+            len(cohort.pre_filter),
+            len(cohort.filtered),
+            get_config().pred_nct_strict,
+        )
+
+    if rows_all and cohort.primary:
+        try:
+            from data_orchestrator import _accuracy_sim_enrich_curve_records
+            from prediction.enrich import load_enrich_dataframes
+
+            _, _fin_df = load_enrich_dataframes(
+                workbook_path=wb_path,
+                json_path=FINAL_JSON,
+            )
+
+            _cohort_rows = {
+                k: rows_all[k] for k in cohort.primary if k in rows_all
+            }
+            if kind == "accuracy":
+                print(
+                    f"[Accuracy refresh] Enrich curve su {len(_cohort_rows)} chiavi coorte "
+                    f"(HistLib + seq_curve; progress ogni 100 righe) …",
+                    flush=True,
+                )
+            _histlib = kind in ("guida", "accuracy", "grafici", "full")
+            if kind == "guida":
+                print(
+                    f"[PredizioneGuida] Enrich curve + HistLib su {len(_cohort_rows)} chiavi "
+                    f"(close sessioni per μ/σ guida) …",
+                    flush=True,
+                )
+            _n_cal, _n_seq = _accuracy_sim_enrich_curve_records(
+                _cohort_rows,
+                refresh_histlib=_histlib,
+                log_label=(
+                    "Predizione guida" if kind == "guida" else "Accuracy refresh"
+                ),
+                fast_skip_existing_seq=(
+                    _accuracy_refresh_fast() if kind == "accuracy" else False
+                ),
+                financial_df=_fin_df,
+            )
+            if _n_cal or _n_seq:
+                _log.info(
+                    "past_pred enrich curve: %s T−60 cal., %s seq_curve",
+                    _n_cal,
+                    _n_seq,
+                )
+        except Exception as exc:
+            err_acc.record("accuracy_sim_enrich_curve_records", exc)
+            report.warnings.append(f"curve enrich on JSON (non-blocking): {exc}")
+
+    if save_json and rows_all:
+        print("[Accuracy refresh] Salvataggio JSON …", flush=True)
+        meta = build_refresh_meta(
+            last_refresh_kind=kind,
+            enrich_applied=report.enrich_applied,
+            orchestrator_version=REFRESH_COORDINATOR_VERSION,
+        )
+        try:
+            save_predictions(doc, meta=meta, json_path=j_path)
+            report.json_saved = True
+        except Exception as exc:
+            err_acc.record("save_predictions", exc)
+            report.warnings.append(f"JSON save failed: {exc}")
+
+    if kind in ("guida", "accuracy", "grafici", "full"):
+        if not os.path.isfile(wb_path):
+            report.warnings.append(f"Workbook not found: {wb_path}")
+            return report
+
+    if kind == "guida":
+        report = _refresh_guida(
+            report, wb_path, cohort, skip_excel=cohort.cohort_empty, err_acc=err_acc
+        )
+    elif kind == "accuracy":
+        report = _refresh_accuracy(
+            report, wb_path, cohort, cohort.pre_filter, live_sim_pred=live_sim_pred
+        )
+    elif kind == "grafici":
+        report = _refresh_grafici(report, wb_path, cohort.primary, err_acc=err_acc)
+    elif kind == "full":
+        pass
+
+    if check_alignment and os.path.isfile(wb_path):
+        try:
+            from prediction.io_sync import check_json_excel_alignment
+
+            report.alignment = check_json_excel_alignment(j_path, wb_path)
+            report.warnings.extend(report.alignment.get("warnings") or [])
+        except Exception as exc:
+            err_acc.record("check_json_excel_alignment", exc)
+            report.warnings.append(f"alignment check failed: {exc}")
+
+    err_acc.extend_report(report)
+    return report
+
+
+def _refresh_guida(
+    report: RefreshReport,
+    wb_path: str,
+    cohort,
+    *,
+    skip_excel: bool,
+    err_acc: ErrorAccumulator | None = None,
+) -> RefreshReport:
+    if skip_excel:
+        report.warnings.append(
+            "Skipped «Predizione — guida» Excel overwrite (empty NCT cohort)."
+        )
+        try:
+            from openpyxl import load_workbook
+
+            wb = load_workbook(wb_path, read_only=False, data_only=False)
+            _write_guida_banner(wb)
+            wb.save(wb_path)
+            report.excel_written = True
+        except Exception as exc:
+            if err_acc is not None:
+                err_acc.record("guida_cohort_banner", exc)
+            report.warnings.append(f"banner write failed: {exc}")
+        return report
+
+    from openpyxl import load_workbook
+    from data_orchestrator import _write_prediction_explainer_sheet
+
+    try:
+        wb = load_workbook(wb_path, read_only=False, data_only=False)
+        if _GUIDA_SHEET_LEGACY in wb.sheetnames:
+            del wb[_GUIDA_SHEET_LEGACY]
+        _write_prediction_explainer_sheet(
+            wb,
+            cohort.primary,
+            past_pred_pre_relation_filter=dict(cohort.pre_filter),
+        )
+        wb.save(wb_path)
+        report.excel_written = True
+    except Exception as exc:
+        if err_acc is not None:
+            err_acc.record("write_prediction_explainer_sheet", exc)
+        report.warnings.append(f"guida sheet write failed: {exc}")
+    return report
+
+
+def _accuracy_sim_rows_for_refresh(wb, wb_path: str) -> list:
+    """
+    Stessa coorte dell'orchestrator: Simulation (futuri) + passati + supplemento clinico.
+    Il solo harvest da «Simulation» non include le CD < oggi sotto la linea di separazione.
+    """
+    from datetime import date as _date_cls
+
+    from prediction.enrich import load_enrich_dataframes
+
+    from data_orchestrator import (
+        _normalize_completion_date_ca,
+        _sim_harvest_rows_from_workbook,
+        _sim_rows_merged_for_accuracy_sheet,
+        add_modality_column,
+        add_sponsor_match_column,
+    )
+
+    _today = _date_cls.today()
+    _harv = _sim_harvest_rows_from_workbook(wb)
+    _sim_past: list = []
+    _sim_future: list = []
+    for _r in _harv:
+        if not isinstance(_r, dict):
+            continue
+        _cd = _normalize_completion_date_ca(_r.get("completion_date"))
+        if _cd is None:
+            continue
+        if _cd < _today:
+            _sim_past.append(_r)
+        else:
+            _sim_future.append(_r)
+
+    _clinical_df, _financial_df = load_enrich_dataframes(
+        workbook_path=wb_path,
+        json_path=FINAL_JSON,
+    )
+    try:
+        import pandas as pd
+    except ImportError:
+        pd = None  # type: ignore[assignment]
+
+    if pd is not None and _clinical_df is not None and not getattr(
+        _clinical_df, "empty", True
+    ):
+        try:
+            _clinical_rich = add_sponsor_match_column(
+                add_modality_column(_clinical_df)
+            )
+        except Exception:
+            _clinical_rich = _clinical_df
+    else:
+        _clinical_rich = (
+            _clinical_df
+            if _clinical_df is not None
+            else (pd.DataFrame() if pd is not None else None)
+        )
+    if _financial_df is None and pd is not None:
+        _financial_df = pd.DataFrame()
+
+    _merged = _sim_rows_merged_for_accuracy_sheet(
+        _clinical_rich if _clinical_rich is not None else pd.DataFrame(),
+        _financial_df if _financial_df is not None else pd.DataFrame(),
+        _sim_past,
+        _sim_future,
+        log_supplement=True,
+    )
+    _n_past_cd = sum(
+        1
+        for _r in _merged
+        if isinstance(_r, dict)
+        and (_cd := _normalize_completion_date_ca(_r.get("completion_date")))
+        is not None
+        and _cd < _today
+    )
+    print(
+        f"[Accuracy refresh] Coorte merge: {len(_merged)} righe "
+        f"({len(_sim_future)} da Simulation futuri, {len(_sim_past)} passati su Simulation, "
+        f"+ supplemento clinico; {_n_past_cd} con CD < oggi → sotto la linea).",
+        flush=True,
+    )
+    return _merged
+
+
+def _refresh_accuracy(
+    report: RefreshReport,
+    wb_path: str,
+    cohort,
+    past_pred_pre: dict,
+    *,
+    live_sim_pred: bool,
+) -> RefreshReport:
+    from openpyxl import load_workbook
+    from data_orchestrator import (
+        _enrich_past_pred_calib_empirical,
+        _load_calibration_state,
+        _past_pred_merge_disk_lookup,
+        _write_accuracy_simulation_sheet,
+    )
+    from prediction.enrich import load_enrich_dataframes
+
+    _ppd = dict(cohort.primary)
+    _calib = _load_calibration_state()
+    if not isinstance(_calib, dict):
+        _calib = {}
+    if _ppd:
+        _enrich_past_pred_calib_empirical(_ppd, _calib)
+
+    print(
+        f"[Accuracy refresh] Apertura workbook e scrittura foglio Accuracy "
+        f"(coorte merge orchestrator × JSON) …",
+        flush=True,
+    )
+    wb = load_workbook(wb_path, read_only=False, data_only=False)
+    for _legacy_sec in ("📄 SEC Form 8-K",):
+        if _legacy_sec in wb.sheetnames:
+            del wb[_legacy_sec]
+    _sim_rows = _accuracy_sim_rows_for_refresh(wb, wb_path)
+    if not _sim_rows:
+        report.warnings.append(
+            "Coorte Accuracy vuota — verificare Simulation, clinical JSON/CSV e past_pred."
+        )
+
+    _clinical_df, _financial_df = load_enrich_dataframes(
+        workbook_path=wb_path,
+        json_path=FINAL_JSON,
+    )
+
+    _sim_pred = None
+    if live_sim_pred and _sim_rows:
+        from data_orchestrator import _compute_price_predictions
+
+        _sim_pred = _compute_price_predictions(
+            _sim_rows,
+            calibration_state=_calib,
+            ticker_studies=None,
+            financial_df=_financial_df,
+        ) or None
+
+    _write_accuracy_simulation_sheet(
+        wb,
+        past_pred_pre,
+        sim_rows=_sim_rows,
+        calibration_state=_calib,
+        sim_pred_data=_sim_pred,
+        financial_df=_financial_df,
+    )
+    try:
+        wb.save(wb_path)
+        report.excel_written = True
+    except PermissionError:
+        from datetime import datetime
+        from pathlib import Path
+
+        _p = Path(wb_path)
+        _staged = _p.parent / (
+            f"{_p.stem}__accuracy_staged_{datetime.now():%Y%m%d_%H%M%S}{_p.suffix}"
+        )
+        wb.save(_staged)
+        report.excel_written = True
+        report.warnings.append(
+            f"Workbook principale bloccato (Excel aperto?). Salvato staged: {_staged}"
+        )
+        print(
+            f"[Accuracy refresh] File principale bloccato — salvato su:\n  {_staged.resolve()}",
+            flush=True,
+        )
+        print(
+            "[Accuracy refresh] Chiudi Excel su "
+            f"{_p.name}, poi sostituisci il file principale con lo staged "
+            "(o rilancia refresh_accuracy_modello.py).",
+            flush=True,
+        )
+    return report
+
+
+def _refresh_grafici(
+    report: RefreshReport,
+    wb_path: str,
+    cohort_primary: dict,
+    *,
+    err_acc: ErrorAccumulator | None = None,
+) -> RefreshReport:
+    try:
+        from openpyxl import load_workbook
+        from simulation_grafici_sheet import refresh_grafici_from_simulation
+
+        wb = load_workbook(wb_path, read_only=False, data_only=False)
+        if "Simulation" not in wb.sheetnames:
+            report.warnings.append("Simulation sheet missing — grafici refresh skipped.")
+            return report
+        ws_sim = wb["Simulation"]
+        positions = []
+        for rn in range(4, int(ws_sim.max_row or 0) + 1):
+            tk = str(ws_sim.cell(rn, 1).value or "").strip().upper()
+            if tk and tk not in ("—", "-", "N/D"):
+                positions.append(rn)
+        from prediction.enrich import load_enrich_dataframes
+
+        _, _fin_g = load_enrich_dataframes(workbook_path=wb_path, json_path=FINAL_JSON)
+        refresh_grafici_from_simulation(
+            wb,
+            ws_sim,
+            positions,
+            universe=cohort_primary or None,
+            financial_df=_fin_g,
+        )
+        wb.save(wb_path)
+        report.excel_written = True
+    except Exception as exc:
+        if err_acc is not None:
+            err_acc.record("refresh_grafici_from_simulation", exc)
+        report.warnings.append(f"grafici refresh failed: {exc}")
+    return report
+
+
+def main(argv: list[str] | None = None) -> int:
+    """CLI shim for coordinator-only runs (optional)."""
+    import argparse
+
+    ap = argparse.ArgumentParser(description="Unified prediction refresh coordinator.")
+    ap.add_argument(
+        "kind",
+        choices=("full", "guida", "accuracy", "grafici"),
+        help="Refresh path",
+    )
+    ap.add_argument("--workbook", default=FINAL_XLSX)
+    ap.add_argument("--json", default=PAST_CATALYST_PREDICTIONS_JSON)
+    ap.add_argument("--skip-nct-relation-filter", action="store_true")
+    ap.add_argument("--live-sim-pred", action="store_true")
+    ap.add_argument("--check-alignment", action="store_true")
+    ap.add_argument("--no-save-json", action="store_true")
+    args = ap.parse_args(argv)
+    report = run_prediction_refresh(
+        args.kind,
+        workbook_path=args.workbook,
+        json_path=args.json,
+        skip_nct_filter=args.skip_nct_relation_filter,
+        live_sim_pred=args.live_sim_pred,
+        save_json=not args.no_save_json,
+        check_alignment=args.check_alignment,
+    )
+    print(
+        f"[Refresh] kind={report.refresh_kind} in={report.records_in} "
+        f"out={report.records_out} cohort={report.cohort_size} "
+        f"empty={report.cohort_empty} enrich={report.enrich_applied}",
+        flush=True,
+    )
+    for w in report.warnings:
+        print(f"[Refresh] WARN: {w}", file=sys.stderr)
+    for e in report.errors:
+        print(f"[Refresh] ERROR: {e}", file=sys.stderr)
+    if report.partial:
+        print("[Refresh] partial=True (one or more steps failed non-fatally)", file=sys.stderr)
+    return report.exit_code()
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

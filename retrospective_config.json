@@ -1,0 +1,7 @@
+{
+  "_help": "Preferito: foglio Excel «Studio watchlist» (col. A ticker, B S/N benchmark). Poi: python fetch_retrospective.py --studio-only. JSON = fallback se watchlist vuota.",
+  "benchmark_tickers": ["LLY", "PFE", "AZN"],
+  "tickers": ["MRNA", "REGN", "VRTX", "BIIB", "AMGN", "HURA"],
+  "studio_max_watchlist": 12,
+  "extra_tickers": ["LLY", "PFE", "AZN"]
+}

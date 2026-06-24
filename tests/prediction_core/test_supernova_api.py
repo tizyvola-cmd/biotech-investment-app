@@ -11,6 +11,7 @@ Or use the project venv::
 from __future__ import annotations
 
 import importlib
+from pathlib import Path
 
 import pytest
 
@@ -75,6 +76,21 @@ def test_cors_allows_localhost_origin(monkeypatch: pytest.MonkeyPatch) -> None:
     assert r.headers.get("access-control-allow-origin") == origin
 
 
+def test_manifest_endpoint(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+    import json
+
+    import supernova_api
+
+    manifest = {"updated_at": "2026-05-29T10:00:00+00:00", "sheets": {}}
+    p = tmp_path / "desktop_data_manifest.json"
+    p.write_text(json.dumps(manifest), encoding="utf-8")
+    client = _client(monkeypatch, SUPERNOVA_SERVE_DESKTOP=None)
+    monkeypatch.setattr(supernova_api, "DESKTOP_DATA_MANIFEST_JSON", str(p))
+    r = client.get("/api/desktop/manifest")
+    assert r.status_code == 200
+    assert r.json().get("updated_at") == manifest["updated_at"]
+
+
 def test_cors_permissive_allows_any_origin(monkeypatch: pytest.MonkeyPatch) -> None:
     client = _client(monkeypatch, SUPERNOVA_CORS_PERMISSIVE="1")
     r = client.options(
@@ -106,3 +122,28 @@ def test_get_routes_no_token_when_env_set(monkeypatch: pytest.MonkeyPatch) -> No
     client = _client(monkeypatch, SUPERNOVA_API_TOKEN="secret-test-token")
     r = client.get("/api/health")
     assert r.status_code == 200
+
+
+def test_mobile_tester_register_no_admin_token(monkeypatch: pytest.MonkeyPatch) -> None:
+    client = _client(monkeypatch, SUPERNOVA_API_TOKEN="secret-test-token")
+    r = client.post(
+        "/api/tester-feedback/testers/register",
+        json={
+            "email": "mobile@test.example",
+            "tester_id": "mobile_at_test.example",
+            "display_name": "Mobile",
+            "source": "mobile",
+        },
+    )
+    assert r.status_code != 401
+    assert r.status_code == 200
+    assert r.json()["tester"]["status"] == "pending"
+
+
+def test_tester_status_still_requires_admin_token(monkeypatch: pytest.MonkeyPatch) -> None:
+    client = _client(monkeypatch, SUPERNOVA_API_TOKEN="secret-test-token")
+    r = client.post(
+        "/api/tester-feedback/testers/foo/status",
+        json={"status": "approved"},
+    )
+    assert r.status_code == 401

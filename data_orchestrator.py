@@ -128,7 +128,8 @@ SIM_PRED_HORIZON_CAL_DAYS = 10
 # Quanti giorni futuri MOSTRARE nel foglio Simulation (liste + KPI); deve essere ≥ sopra.
 # Il modello usa comunque giorni alla T — oltre SIM_PRED si ha meno enfasi sul timing stretto,
 # ma le righe non vanno perse né lasciate "fuori vista".
-SIM_SHEET_DISPLAY_HORIZON_CAL_DAYS = 60
+SIM_SHEET_DISPLAY_HORIZON_CAL_DAYS = 120
+SIM_HOT_ZONE_CAL_DAYS = 60
 # Foglio **Accuracy** (cumulativa; ex «Accuratezza Simulation»): include dal clinical tutte le completion
 # Exact/Partial in [oggi, oggi+N] oltre la sola finestra Simulation sopra. Env
 # ACC_SIM_SHEET_CATALYST_HORIZON_CAL_DAYS (intero > 0) sovrascrive N.
@@ -797,6 +798,7 @@ from orchestrator_io_paths import (
     DATA_DIR,
     FINAL_JSON,
     FINAL_XLSX,
+    MODEL_COHORT_ACCURACY_JSON,
     PAST_CATALYST_PREDICTIONS_JSON,
 )
 
@@ -4074,6 +4076,22 @@ def _histlib_metrics_at(close_ser, vol_ser, xbi_close_ser,
     out["vol_accel"] = _vacl_here()
     out["run_up_30d"] = _runup_here(30) if len(c) >= 30 else None
     out["run_up_7d"] = _runup_here(7) if len(c) >= 7 else None
+    # Slope inferito dal run-up 30g + sorgente — coerenti con la cascata di
+    # fallback usata nella UI (precatCurve.ts) e nel dict _pred_row. Servono
+    # come audit: non sostituiscono slope_5d/slope_20d sopra.
+    out["slope_inferred"] = _infer_slope_from_run_up(out["run_up_30d"])
+    out["slope_source"]   = _compute_slope_source(
+        out["slope_20d"], out["slope_5d"], out["run_up_30d"]
+    )
+    # Metriche di stabilità della pendenza — driver per entry/exit (Decision Lab).
+    # Non alterano pred5/pred5_low/pred5_high; sono informative.
+    _ss_metrics = _compute_slope_stability_metrics(
+        out["slope_5d"], out["slope_20d"], slope_45d=out.get("slope_45d"),
+    )
+    out["slope_consistency"]       = _ss_metrics["slope_consistency"]
+    out["slope_rotation_flag"]     = _ss_metrics["slope_rotation_flag"]
+    out["slope_stability_class"]   = _ss_metrics["slope_stability_class"]
+    out["persistence_window_days"] = _ss_metrics["persistence_window_days"]
     out["ath_prox_52wk"] = _ath_here()
     vpd_val = _vpd_here()
     out["vol_price_div"] = vpd_val
@@ -4674,10 +4692,47 @@ def _past_pred_env_disable_disk() -> bool:
         "1", "true", "yes", "on")
 
 
+def _daily_refresh_fast() -> bool:
+    return os.environ.get("DAILY_REFRESH_FAST", "").strip().lower() in (
+        "1",
+        "true",
+        "yes",
+        "on",
+    )
+
+
+def _past_pred_disk_only_mode() -> bool:
+    """Refresh feriale: non ricalcolare Past Catalyst via Yahoo (usa JSON su disco)."""
+    if _past_pred_env_force_full() or _past_pred_env_disable_disk():
+        return False
+    if _past_pred_disk_only_env():
+        return True
+    return _daily_refresh_fast()
+
+def _past_pred_disk_only_env() -> bool:
+    return os.environ.get("PAST_PRED_DISK_ONLY", "").strip().lower() in (
+        "1",
+        "true",
+        "yes",
+        "on",
+    )
+
+
+def _daily_accuracy_enrich_active_only() -> bool:
+    return os.environ.get("DAILY_ACCURACY_ENRICH_ACTIVE_ONLY", "").strip().lower() in (
+        "1",
+        "true",
+        "yes",
+        "on",
+    )
+
+
 def _past_pred_key_from_harvest_row(r: dict) -> str | None:
     """Allinea la chiave a ``_compute_past_catalyst_data`` (``TICKER|YYYY-MM-DD``)."""
     try:
-        tk = str(r.get("ticker", "")).strip().upper()
+        from past_pred_io import clean_ticker_symbol
+
+        tk = clean_ticker_symbol(r.get("ticker", ""))
         if not tk:
             return None
         cd = _normalize_completion_date_ca(r.get("completion_date"))
@@ -4915,17 +4970,32 @@ def _past_pred_acquire_incremental(all_past_rows: list | None) -> dict:
     disk_rows: dict = disk_doc.get("rows") or {}
 
     cached: dict[str, dict] = {}
+    disk_only = _past_pred_disk_only_mode()
     to_compute: list[dict] = []
     for k, src in need.items():
         prev = disk_rows.get(k)
         if (not force_full and isinstance(prev, dict) and _past_pred_record_complete(prev)):
             cached[k] = _past_pred_normalize_loaded(prev)
-        else:
+        elif not disk_only:
             to_compute.append(src)
 
     fresh: dict = {}
     if to_compute:
         fresh = _compute_past_catalyst_data(to_compute) or {}
+    elif disk_only and need:
+        _miss = [k for k in need if k not in cached]
+        if _miss:
+            print(
+                f"[PastPredLib] PAST_PRED_DISK_ONLY: {len(_miss)} chiavi senza JSON "
+                f"completo — saltate (domenica full o FORCE_PAST_PRED_FULL_REBUILD=1).",
+                flush=True,
+            )
+        else:
+            print(
+                f"[PastPredLib] PAST_PRED_DISK_ONLY: {len(need)} chiavi da JSON, "
+                f"nessun ricalcolo Yahoo.",
+                flush=True,
+            )
 
     merged_out: dict[str, dict] = {**cached, **fresh}
     result = {k: merged_out[k] for k in need if k in merged_out}
@@ -4951,6 +5021,17 @@ def _past_pred_acquire_incremental(all_past_rows: list | None) -> dict:
             print(f"[PastPredLib] {disk_doc['built_note']} → {PAST_CATALYST_PREDICTIONS_JSON}")
         except Exception as _pse:
             print(f"[PastPredLib] Salvataggio JSON KO (non bloccante): {_pse}")
+
+        # ── Feedback loop: ricalibra il peso slope5d dai setup contrarian storici ──
+        # Aggiorna data/slope_contrarian_calib.json; direction_ensemble lo leggerà
+        # al prossimo ciclo (cache TTL 10 min). Non bloccante.
+        try:
+            from prediction.slope_contrarian_calib import run_contrarian_calibration
+            from prediction.direction_ensemble import invalidate_s5d_weight_cache
+            run_contrarian_calibration()
+            invalidate_s5d_weight_cache()   # forza reload immediato nel processo corrente
+        except Exception as _cc_exc:
+            print(f"[ContrarianCalib] Errore non bloccante: {_cc_exc}")
     elif need:
         print(
             f"[PastPredLib] richieste={len(need)} — tutte da JSON ({n_disk_hit}), "
@@ -5255,6 +5336,13 @@ def _write_histlib_model_inputs_sheet(wb, hist_doc: dict | None) -> None:
         ("vol_accel", "vol_accel"),
         ("slope_5d", "slope≈5g"),
         ("slope_20d", "slope≈20g"),
+        # Slope inferito da run_up_30g (smorzato ×0.5) — disponibile per audit /
+        # UI quando slope_20d e slope_5d sono mancanti. Non sovrascrive nessun
+        # campo predittivo: serve solo a tracciare la stima alternativa.
+        ("slope_inferred", "slope inferito"),
+        # Sorgente dello slope effettivo: measured_20d / blended / proxy_5d /
+        # inferred_runup / none. Audit trail dell'origine della pendenza.
+        ("slope_source", "fonte slope"),
         ("run_up_30d", "run 30g"),
         ("run_up_7d", "run 7g"),
         ("ath_prox_52wk", "ATHprox"),
@@ -6074,6 +6162,41 @@ def _compute_sponsor_match_detailed(query_company: str,
     return {"sponsor_match": "No match", "partial_type": "", "partial_source": ""}
 
 
+def nct_relation_type_for_company_nct(query_company: str, nct_id: str) -> str:
+    """
+    Relazione company ↔ sponsor CT.gov per un NCT (stessa logica enrich past_pred).
+    Ritorna: direct sponsor | collaborator | correlated company/subsidiary |
+    indirect connections | N/D
+    """
+    _nct = str(nct_id or "").strip().upper()
+    _q_company = str(query_company or "").strip()
+    if not _nct.startswith("NCT") or len(_nct) < 9 or not _q_company:
+        return "N/D"
+    try:
+        _net = _cached_ctgov_sponsor_network(_nct)
+    except Exception:
+        _net = {"lead_sponsor": "", "responsible_party_org": "", "collaborators": []}
+    _lead = str(_net.get("lead_sponsor") or "").strip()
+    _rpo = str(_net.get("responsible_party_org") or "").strip()
+    _colls = [str(x).strip() for x in (_net.get("collaborators") or []) if str(x).strip()]
+    if not (_lead or _rpo or _colls):
+        return "N/D"
+    _q_norm = _norm(_q_company)
+    for _cand in (_lead, _rpo):
+        if _match_one_orch(_q_norm, _norm(_cand)) == "Exact":
+            return "direct sponsor"
+    for _cand in _colls:
+        if _match_one_orch(_q_norm, _norm(_cand)) in ("Exact", "Partial"):
+            return "collaborator"
+    for _cand in (_lead, _rpo):
+        if _match_one_orch(_q_norm, _norm(_cand)) == "Partial":
+            return "correlated company/subsidiary"
+    _det = _compute_sponsor_match_detailed(_q_company, _lead, _rpo, " | ".join(_colls))
+    if str(_det.get("sponsor_match") or "").strip().lower() == "partial":
+        return "indirect connections"
+    return "N/D"
+
+
 def _sponsor_match_reason_text(row: dict | None) -> str:
     """
     Spiegazione testuale del match sponsor (stesso framework per Simulation/Accuratezza).
@@ -6545,20 +6668,109 @@ def _read_invested_tickers(excel_path: str) -> tuple:
         return set(), {}
 
 
-def _get_closest_price(hist: "pd.Series", target) -> "float | None":
+def _pnl_close_series_from_yf(raw: "pd.DataFrame", ticker: str) -> "pd.Series":
+    """
+    Estrae Close come Series con index ``datetime.date`` da output ``yf.download``.
+
+    yfinance (singolo ticker) può restituire DataFrame/MultiIndex: ``hist[date]``
+    su DataFrame indicizza le **colonne**, non le righe → KeyError.
+    """
+    import pandas as pd
+
+    empty = pd.Series(dtype=float)
+    if raw is None or getattr(raw, "empty", True):
+        return empty
+    tk = str(ticker or "").strip().upper()
+    ser = None
+    try:
+        cols = raw.columns
+        if isinstance(cols, pd.MultiIndex):
+            if "Close" in cols.get_level_values(0):
+                close_blk = raw["Close"]
+                if isinstance(close_blk, pd.DataFrame):
+                    if tk and tk in close_blk.columns:
+                        ser = close_blk[tk]
+                    else:
+                        ser = close_blk.squeeze()
+                else:
+                    ser = close_blk
+            else:
+                ser = raw.iloc[:, 0]
+        elif "Close" in cols:
+            ser = raw["Close"]
+            if isinstance(ser, pd.DataFrame):
+                ser = ser.squeeze()
+        else:
+            ser = raw.iloc[:, 0]
+    except Exception:
+        return empty
+    if isinstance(ser, pd.DataFrame):
+        ser = ser.squeeze()
+    if not isinstance(ser, pd.Series):
+        return empty
+    ser = ser.dropna()
+    try:
+        ser = ser.astype(float)
+    except (TypeError, ValueError):
+        return empty
+    try:
+        ser = ser.copy()
+        _dti = pd.to_datetime(ser.index, errors="coerce")
+        ser = ser[~_dti.isna()]
+        ser.index = _dti[~_dti.isna()].date
+    except Exception:
+        return empty
+    return ser
+
+
+def _pnl_hist_as_date_indexed_series(hist) -> "pd.Series":
+    """Coerce P&L history to ``Series`` indexed by ``date`` (never DataFrame)."""
+    import pandas as pd
+
+    if hist is None or (hasattr(hist, "empty") and hist.empty):
+        return pd.Series(dtype=float)
+    if isinstance(hist, pd.DataFrame):
+        hist = hist.squeeze()
+    if not isinstance(hist, pd.Series):
+        return pd.Series(dtype=float)
+    try:
+        out = hist.dropna().astype(float).copy()
+        _dti = pd.to_datetime(out.index, errors="coerce")
+        out = out[~_dti.isna()]
+        out.index = _dti[~_dti.isna()].date
+        return out
+    except Exception:
+        return pd.Series(dtype=float)
+
+
+def _get_closest_price(hist, target) -> "float | None":
     """
     Ritorna il prezzo di chiusura più vicino a target (date) in hist (index=date).
     Cerca il giorno esatto, poi i 5 giorni seguenti (day-off / weekend).
     """
-    from datetime import timedelta as _td
+    from datetime import date as _date, timedelta as _td
+
+    ser = _pnl_hist_as_date_indexed_series(hist)
+    if ser.empty:
+        return None
+    if hasattr(target, "date") and callable(getattr(target, "date", None)):
+        try:
+            target = target.date()
+        except Exception:
+            pass
+    if not isinstance(target, _date):
+        return None
     for offset in range(6):
         d = target + _td(days=offset)
-        if d in hist.index:
-            v = hist[d]
-            try:
-                return float(v)
-            except (TypeError, ValueError):
-                pass
+        if d not in ser.index:
+            continue
+        try:
+            v = ser.loc[d]
+            if hasattr(v, "iloc"):
+                v = v.iloc[0]
+            return float(v)
+        except (TypeError, ValueError, KeyError):
+            pass
     return None
 
 
@@ -6605,24 +6817,7 @@ def _compute_pnl_data(portfolio: dict, past_syms: set,
     if raw is None or raw.empty:
         return {}
 
-    # Normalizza in dict {ticker: Series(date→close)}
-    closes = {}
-    if len(syms) == 1:
-        s = syms[0]
-        try:
-            ser = raw["Close"] if "Close" in raw.columns else raw.iloc[:, 0]
-            ser.index = ser.index.date
-            closes[s] = ser.astype(float)
-        except Exception:
-            pass
-    else:
-        for s in syms:
-            try:
-                ser = raw["Close"][s] if ("Close", s) in raw.columns else raw.iloc[:, 0]
-                ser.index = ser.index.date
-                closes[s] = ser.astype(float)
-            except Exception:
-                pass
+    closes = {s: _pnl_close_series_from_yf(raw, s) for s in syms}
 
     result = {}
     for s in syms:
@@ -6630,7 +6825,10 @@ def _compute_pnl_data(portfolio: dict, past_syms: set,
         cp = portfolio[s]["capital"]
         if bp <= 0:
             continue
-        hist = closes.get(s, pd.Series(dtype=float))
+        hist = closes.get(s)
+        if hist is None or getattr(hist, "empty", True):
+            print(f"[P&L] {s}: nessun prezzo storico — skip.")
+            continue
         comp_dt = completion_dates[s]
 
         def _pnl(price):
@@ -6719,23 +6917,7 @@ def _compute_pnl_data_pairs(portfolio: dict,
     if raw is None or raw.empty:
         return {}
 
-    closes: dict[str, "pd.Series"] = {}
-    if len(syms) == 1:
-        s = syms[0]
-        try:
-            ser = raw["Close"] if "Close" in raw.columns else raw.iloc[:, 0]
-            ser.index = ser.index.date
-            closes[s] = ser.astype(float)
-        except Exception:
-            pass
-    else:
-        for s in syms:
-            try:
-                ser = raw["Close"][s] if ("Close", s) in raw.columns else raw.iloc[:, 0]
-                ser.index = ser.index.date
-                closes[s] = ser.astype(float)
-            except Exception:
-                pass
+    closes = {s: _pnl_close_series_from_yf(raw, s) for s in syms}
 
     result: dict[str, dict] = {}
     for tk, cd_d in work:
@@ -6745,7 +6927,9 @@ def _compute_pnl_data_pairs(portfolio: dict,
         cp = float(portfolio[tk].get("capital") or 0)
         if bp <= 0:
             continue
-        hist = closes.get(tk, pd.Series(dtype=float))
+        hist = closes.get(tk)
+        if hist is None or getattr(hist, "empty", True):
+            continue
 
         def _pnl(price):
             if price is None:
@@ -7696,6 +7880,176 @@ def _accuracy_monitor_pooled_pred_medians(
     return tuple(out)  # type: ignore
 
 
+def _cohort_ok_v4_direction_stats(records: list | None) -> dict:
+    """
+    Hit% direzione v4 (``ok_v4`` o ``_is_direction_prediction_correct``) su righe
+    con filtro strict ``_model_accuracy_metrics_eligible``.
+    """
+    hits = misses = 0
+    for r in records or []:
+        if not isinstance(r, dict) or not _model_accuracy_metrics_eligible(r):
+            continue
+        ok = r.get("ok_v4")
+        if ok is None:
+            ok = _is_direction_prediction_correct(r)
+        if ok is None:
+            continue
+        if ok:
+            hits += 1
+        else:
+            misses += 1
+    n = hits + misses
+    return {
+        "n_evaluable": n,
+        "hits": hits,
+        "misses": misses,
+        "acc_pct": round(hits / n * 100.0, 2) if n else None,
+    }
+
+
+def _sign_curve_hit_from_summary_json() -> dict:
+    """Hit% segno curva v4 per nodo CD± da ``accuracy_v4_v5_summary.json``."""
+    from prediction.accuracy_v4_v5 import ACCURACY_V4_DISPLAY_OFFSETS, horizon_label
+
+    try:
+        p = pathlib.Path(ACCURACY_V4_V5_SUMMARY_JSON)
+        if not p.is_file():
+            return {}
+        doc = json.loads(p.read_text(encoding="utf-8"))
+        lat = doc.get("latest") if isinstance(doc.get("latest"), dict) else None
+        if not lat:
+            hist = doc.get("history") or []
+            if isinstance(hist, list) and hist:
+                lat = hist[-1] if isinstance(hist[-1], dict) else None
+        if not lat:
+            return {}
+        tot = lat.get("total") if isinstance(lat.get("total"), dict) else lat
+        if not isinstance(tot, dict):
+            return {}
+        v4 = tot.get("v4") if isinstance(tot.get("v4"), dict) else {}
+        hit_map = v4.get("hit_pct") if isinstance(v4.get("hit_pct"), dict) else {}
+        n_map = v4.get("mae_n") if isinstance(v4.get("mae_n"), dict) else {}
+        points: list[dict] = []
+        pre_hits = pre_n = 0.0
+        for off in ACCURACY_V4_DISPLAY_OFFSETS:
+            lbl = horizon_label(off)
+            hp = hit_map.get(lbl)
+            try:
+                nn = int(n_map.get(lbl) or 0)
+            except (TypeError, ValueError):
+                nn = 0
+            try:
+                hp_f = round(float(hp), 2) if hp is not None else None
+            except (TypeError, ValueError):
+                hp_f = None
+            points.append({
+                "offset": off,
+                "label": lbl,
+                "hit_pct": hp_f,
+                "n": nn,
+                "zone": "pre_cd" if off < 0 else "post_cd",
+            })
+            if off < 0 and hp_f is not None and nn > 0:
+                pre_hits += hp_f / 100.0 * nn
+                pre_n += nn
+        pre_avg = round(pre_hits / pre_n * 100.0, 2) if pre_n > 0 else None
+        return {
+            "points": points,
+            "pre_cd_hit_pct": pre_avg,
+            "n_rows": tot.get("n_rows"),
+            "source": "accuracy_v4_v5_summary.json",
+        }
+    except Exception:
+        return {}
+
+
+def _build_model_cohort_accuracy_snapshot(
+    retro_records: list | None,
+    *,
+    calib_path=None,
+) -> dict:
+    """
+    Accuratezza direzionale v4 separata:
+    • **retro** — backtest coorte storica (retro ∪ catalyst, NCT ristretti)
+    • **simulation** — record ``pred_calibration.json`` da Simulation (source≠retro)
+    """
+    from datetime import datetime as _dt_coh
+
+    retro_stats = _cohort_ok_v4_direction_stats(retro_records)
+
+    calib = _calib_load(calib_path)
+    _legacy = frozenset({"v1_momentum", "v2_signals", "v3_ensemble"})
+    sim_all = [
+        r for r in calib
+        if isinstance(r, dict)
+        and r.get("model_version", _MODEL_VERSION) not in _legacy
+        and r.get("source", "sim") != "retro"
+    ]
+    sim_complete = [r for r in sim_all if r.get("status") == "complete"]
+    sim_pending = [r for r in sim_all if r.get("status") != "complete"]
+    sim_stats = _cohort_ok_v4_direction_stats(sim_complete)
+    _sign_curve = _sign_curve_hit_from_summary_json()
+    if _sign_curve.get("pre_cd_hit_pct") is not None:
+        retro_stats = {
+            **retro_stats,
+            "acc_pct": _sign_curve["pre_cd_hit_pct"],
+            "metric": "sign_curve_pre_cd_avg",
+        }
+
+    return {
+        "schema_version": 2,
+        "generated_at": _dt_coh.now().replace(microsecond=0).isoformat(),
+        "model_version": _MODEL_VERSION,
+        "definition": {
+            "metric": "sign_curve_v4_per_node",
+            "actual_horizon": "pred vs storico % at each CD offset (T-60..T+7)",
+            "eligible": "past catalyst rows on Accuracy sheet",
+        },
+        "sign_curve": _sign_curve,
+        "retro": {
+            **retro_stats,
+            "label_it": "Segno curva pre-CD (media T−60…T−3)",
+            "label_en": "Pre-CD curve sign (avg T−60…T−3)",
+            "source": "accuracy_v4_v5_summary or retro pool fallback",
+        },
+        "simulation": {
+            **sim_stats,
+            "n_total": len(sim_all),
+            "n_complete": len(sim_complete),
+            "n_pending": len(sim_pending),
+            "label_it": "Simulation (nuove analisi)",
+            "label_en": "Simulation (new entries)",
+            "source": "pred_calibration.json",
+        },
+    }
+
+
+def _write_model_cohort_accuracy_json(
+    retro_records: list | None,
+    *,
+    calib_path=None,
+) -> dict:
+    """Scrive ``data/model_cohort_accuracy.json`` (aggiornato ogni refresh orchestrator)."""
+    snap = _build_model_cohort_accuracy_snapshot(
+        retro_records, calib_path=calib_path)
+    try:
+        p = pathlib.Path(MODEL_COHORT_ACCURACY_JSON)
+        p.parent.mkdir(parents=True, exist_ok=True)
+        p.write_text(json.dumps(snap, ensure_ascii=False, indent=2), encoding="utf-8")
+        _r = snap.get("retro") or {}
+        _s = snap.get("simulation") or {}
+        print(
+            "[CohortAcc] "
+            f"retro={_r.get('acc_pct')}% (N={_r.get('n_evaluable')}) · "
+            f"sim={_s.get('acc_pct')}% (N={_s.get('n_evaluable')}, "
+            f"pending={_s.get('n_pending')}) → {MODEL_COHORT_ACCURACY_JSON}",
+            flush=True,
+        )
+    except Exception as _cae:
+        print(f"[CohortAcc] Salvataggio JSON KO: {_cae}", flush=True)
+    return snap
+
+
 def _accuracy_monitor_append_entry(
     merged_pooled_records: list | None,
     *,
@@ -7730,21 +8084,21 @@ def _accuracy_monitor_append_entry(
         r for r in (merged_pooled_records or [])
         if isinstance(r, dict) and _model_accuracy_metrics_eligible(r)
     ]
-    if not acc_pool:
-        _allow_empty = os.environ.get(
-            "ACCURACY_MONITOR_ALLOW_EMPTY", ""
-        ).strip().lower() in ("1", "true", "yes", "on")
-        if not _allow_empty:
-            print(
-                "[AccMonitor] Snapshot saltato: coorte eleggibile vuota "
-                "(enrich JSON / merge retro∪catalyst prima del monitor).",
-                flush=True,
-            )
-            return {}
     _oks = [r.get("ok_v4") for r in acc_pool if r.get("ok_v4") is not None]
     _hits = sum(1 for x in _oks if x)
     _ne = len(_oks)
     acc_pct = round(_hits / _ne * 100.0, 2) if _ne > 0 else None
+
+    _allow_empty = os.environ.get(
+        "ACCURACY_MONITOR_ALLOW_EMPTY", ""
+    ).strip().lower() in ("1", "true", "yes", "on")
+    if _ne <= 0 and not _allow_empty:
+        print(
+            "[AccMonitor] Snapshot saltato: nessun ok_v4 valutabile "
+            f"(eleggibili={len(acc_pool)}, trigger={snapshot_trigger!r}).",
+            flush=True,
+        )
+        return {}
 
     hist = _accuracy_monitor_load()
     entries = list(hist.get("entries") or [])
@@ -7793,17 +8147,28 @@ def _accuracy_monitor_append_entry(
         _cal_gap_pp = None
 
     _tr = str(snapshot_trigger or "unspecified").strip() or "unspecified"
+    _cohort_snap = _build_model_cohort_accuracy_snapshot(merged_pooled_records)
+    _retro_c = _cohort_snap.get("retro") or {}
+    _sim_c = _cohort_snap.get("simulation") or {}
     snap = {
         "run_iso": _dt_acc.now().replace(microsecond=0).isoformat(),
         "recalibrated": bool(recalibrated),
         "snapshot_trigger": _tr,
-        "schema_version_entry": 4,
+        "schema_version_entry": 5,
         "population_filter": str((_cal_state or {}).get("population_filter") or ""),
         "n_retro_state": int((_cal_state or {}).get("n_retro_total") or 0),
         "n_pooled_eligible_inputs": len(acc_pool),
         "n_evaluable_ok_v4": _ne,
         "ok_v4_hits": _hits,
         "acc_v4_pct": acc_pct,
+        "acc_v4_retro_pct": _retro_c.get("acc_pct"),
+        "n_evaluable_ok_v4_retro": _retro_c.get("n_evaluable"),
+        "ok_v4_hits_retro": _retro_c.get("hits"),
+        "acc_v4_sim_pct": _sim_c.get("acc_pct"),
+        "n_evaluable_ok_v4_sim": _sim_c.get("n_evaluable"),
+        "ok_v4_hits_sim": _sim_c.get("hits"),
+        "n_sim_pending": _sim_c.get("n_pending"),
+        "n_sim_total": _sim_c.get("n_total"),
         "delta_pp_vs_prev": delta,
         "acc_est_model_pct": _acc_est_model,
         "aff_misurata_7_pp": _aff_misurata,
@@ -8666,6 +9031,11 @@ from prediction.calibration import calib_bias as _calib_bias
 from prediction.calibration import calib_load as _calib_load
 from prediction.calibration import calib_save as _calib_save
 from prediction.curve_fit import fit_precat_from_pairs as _fit_precat_from_pairs
+from prediction.curve_forecast import (
+    compute_slope_source as _compute_slope_source,
+    infer_slope_from_run_up as _infer_slope_from_run_up,
+    compute_slope_stability_metrics as _compute_slope_stability_metrics,
+)
 from prediction.extrap_safeguards import (
     cap_pred_pct as _cap_pred_pct_sg,
     damp_model_dm60_extrap as _damp_model_dm60_extrap,
@@ -8683,6 +9053,18 @@ from prediction.seq_calib import (
     pred_curve_seq_load as _pred_curve_seq_load,
     pred_curve_seq_save as _pred_curve_seq_save,
     pred_curve_seq_snap_cal_day_to_offset_index as _pred_curve_seq_snap_cal_day_to_offset_index,
+)
+from prediction.ai_feed_recalib import (
+    get_ai_feed_index as _get_ai_feed_index,
+    merge_ai_feed_observations_into_act as _merge_ai_feed_observations_into_act,
+    events_for_ticker_cd as _ai_feed_events_for_ticker_cd,
+    build_prediction_clinical_signal as _build_prediction_clinical_signal,
+    ai_feed_chart_points as _ai_feed_chart_points,
+)
+from prediction.eis_poly_adjust import (
+    apply_eis_poly_shift as _apply_eis_poly_shift,
+    eis_augment_pairs_for_fit as _eis_augment_pairs_for_fit,
+    eis_synthetic_anchor_pair as _eis_synthetic_anchor_pair,
 )
 # Stato di calibrazione del MODELLO (cal_factor + curve empiriche aggregate +
 # storico timestampato). File separato da pred_calibration.json (che è il log
@@ -9941,6 +10323,7 @@ def _pred_curve_seq_apply_to_predictions(
     ev = doc.setdefault("events", {})
     dirty_state = False
     n_seq_events = 0
+    _ai_feed_idx = _get_ai_feed_index()
     _k8_merge = _pred_curve_k8_seq_merge_enabled()
     _sub_cache_k8: dict[str, dict | None] = {}
     _tk_cik_fb: dict[str, str] = {}
@@ -10036,6 +10419,24 @@ def _pred_curve_seq_apply_to_predictions(
                     ))
                 except Exception:
                     _n_k8_nodes = 0
+        _n_ai_nodes = 0
+        _ai_filled_idx: list[int] = []
+        try:
+            _n_ai_nodes = int(_merge_ai_feed_observations_into_act(
+                tk=tk,
+                cd=cd,
+                p60=float(p60),
+                today=_today,
+                offsets=offsets,
+                act=act,
+                close_series=ser,
+                index=_ai_feed_idx,
+                snap_cal_day_to_offset_index=_pred_curve_seq_snap_cal_day_to_offset_index,
+                filled_offset_indices=_ai_filled_idx,
+            ))
+        except Exception:
+            _n_ai_nodes = 0
+            _ai_filled_idx = []
         last = -1
         for i in range(n):
             if act[i] is not None:
@@ -10097,14 +10498,22 @@ def _pred_curve_seq_apply_to_predictions(
         ]
         pred["seq_curve_t60_usd"] = round(float(p60), 6)
         pred["seq_curve_knot_snapshots"] = knot_snapshots
+        if _ai_filled_idx:
+            pred["seq_curve_ai_feed_offsets"] = [
+                int(offsets[ii]) for ii in _ai_filled_idx if 0 <= ii < n
+            ]
         _note_k8 = (
             f" | 8‑K: {_n_k8_nodes} nodi da chiusure −1/+1…+3 (solo dove mancava il close)"
             if _n_k8_nodes
             else "")
+        _note_ai = (
+            f" | AI feed: {_n_ai_nodes} nodi pub. T…T+3 (solo nodi liberi)"
+            if _n_ai_nodes
+            else "")
         pred["seq_curve_recalib_note"] = (
             f"seq T−60 reale; ultimo nodo oss. offset={offsets[last]}; "
             f"metriche per nodo su serie ≤ trade_date nodo "
-            f"({_today.isoformat()}){_note_k8}"
+            f"({_today.isoformat()}){_note_k8}{_note_ai}"
         )
         ev[k] = {
             "ticker": tk,
@@ -10410,8 +10819,10 @@ def _compute_past_catalyst_data(sim_rows_past: list) -> dict:
 
     _seen_pairs: set = set()
     _ticker_cd_pairs: list = []          # [(ticker, cd), ...]
+    from past_pred_io import clean_ticker_symbol
+
     for _r in sim_rows_past:
-        _tk = str(_r.get("ticker", "")).strip().upper()
+        _tk = clean_ticker_symbol(_r.get("ticker", ""))
         _cd = _to_date(_r.get("completion_date"))
         if not _tk or not _cd: continue
         if (_tk, _cd) not in _seen_pairs:
@@ -11034,6 +11445,7 @@ def _compute_past_catalyst_data(sim_rows_past: list) -> dict:
         )
 
         _struct_blend_meta_pc = {}
+
         if (
             not (_non_quotata or _dati_scarsi)
             and cls is not None
@@ -11060,6 +11472,21 @@ def _compute_past_catalyst_data(sim_rows_past: list) -> dict:
                     "struct_blend": "error",
                     "struct_error": str(_e_sb)[:200],
                 }
+
+        _fit_pre_eis_pc: dict[str, float | None] = {
+            "model_dm7_fit_pct": _m_dm7,
+            "model_dm5_fit_pct": _m_dm5,
+            "model_dm3_fit_pct": _m_dm3,
+            "model_dm10_fit_pct": _m_dm10,
+            "model_dm30_fit_pct": _m_dm30,
+            "model_dm60_fit_pct": _m_dm60,
+            "model_d4_fit_pct": _m_d4,
+            "model_d7_fit_pct": _m_d7,
+            "d3_fit_pct": _m_d3,
+            "d5_fit_pct": _m_d5,
+            "d10_fit_pct": _m_d10,
+            "d30_fit_pct": _m_d30,
+        }
 
         # Δ = effettivo - predetto (errore; negativo = overestimated)
         def _dlt(act, mod):
@@ -11196,6 +11623,8 @@ def _compute_past_catalyst_data(sim_rows_past: list) -> dict:
             "struct_method_version": _struct_blend_meta_pc.get(
                 "struct_method_version"),
             "struct_error": _struct_blend_meta_pc.get("struct_error"),
+            **_fit_pre_eis_pc,
+            "pred_dm5_fit_pct": _m_dm5,
             # Δ = effettivo - predetto
             "delta_d1":  _dlt(d1_act,  _m_d1),
             "delta_d3":  _dlt(d3_act,  _m_d3),
@@ -11398,8 +11827,10 @@ def _collect_all_past_catalyst_rows(
                 for _r in sim_rows_past
             }
             _today_dt = _date_cls.today()
+            from past_pred_io import clean_ticker_symbol
+
             for _, _crow in clin_src.iterrows():
-                _ctk = str(_crow.get(_tcc, "") if _tcc else "").strip().upper()
+                _ctk = clean_ticker_symbol(_crow.get(_tcc) if _tcc else None)
                 _via_fb = False
 
                 if not _ctk and _cicc and _cik_to_tk:
@@ -11613,6 +12044,26 @@ def _normalize_completion_date_ca(val):
         return ts.date()
     except Exception:
         return None
+
+
+def _completion_date_from_pred_row(
+    pred: dict | None,
+    pw: dict | None = None,
+) -> "date | None":
+    """CD da dict predizione (per finalize Simulation quando manca argomento esplicito)."""
+    for src in (pw, pred):
+        if not isinstance(src, dict):
+            continue
+        for key in (
+            "completion_date",
+            "cat_date",
+            "completion_dt",
+            "primary_completion_date",
+        ):
+            d = _normalize_completion_date_ca(src.get(key))
+            if d is not None:
+                return d
+    return None
 
 
 def _hydrate_completati_row_from_financial(tk_upper: str, cd_date,
@@ -11888,6 +12339,9 @@ def _model_records_from_past_pred(past_pred_data: dict | None) -> list[dict]:
             "model_inferenza_affidabile": d.get("model_inferenza_affidabile"),
             "model_inferenza_stato_it": d.get("model_inferenza_stato_it"),
             "model_accuracy_metrics_eligible": _model_accuracy_metrics_eligible(d),
+            "nct_id": d.get("nct_id"),
+            "sponsor_match": d.get("sponsor_match"),
+            "nct_relation_type": d.get("nct_relation_type"),
         })
     return out
 
@@ -11916,6 +12370,7 @@ def _merge_retro_and_catalyst_predictions(
             "model_inputs_pool_n",
             "model_inferenza_affidabile", "model_inferenza_stato", "model_inferenza_stato_it",
             "model_accuracy_metrics_eligible",
+            "nct_id", "sponsor_match", "nct_relation_type",
     )
     for cr in catalyst_records or []:
         k = _retro_row_key(cr.get("ticker"),
@@ -12798,7 +13253,19 @@ def _compute_price_predictions(sim_rows: list,
             if 30 <= rsi <= 70:                     adj += 3
             if rsi > 70:                            adj -= 8
             elif rsi < 30:                          adj -= 5
-        if r2  is not None and r2 < 0.45:           adj -= 15
+        # R² regime: flat pre-CD price is not a defect — it may signal a pending
+        # binary catalyst. Penalise only moderate/poor fits, reward strong fits.
+        if r2 is not None:
+            if r2 >= 0.55 and slope is not None and slope > 0:
+                adj += 5   # buon fit + momentum positivo: segnale affidabile
+            elif r2 >= 0.45:
+                pass       # fit accettabile: neutro
+            elif r2 >= 0.25:
+                adj -= 5   # fit debole: lieve penalità
+            elif r2 >= 0.10:
+                adj -= 10  # fit scarso: penalità moderata
+            else:
+                pass       # r2 < 0.10 = prezzo piatto pre-CD: regime neutro, no penalità
         # ── Nuovi segnali ─────────────────────────────────────────────────────
         if vol_accel is not None:
             if   vol_accel >= 2.0: adj += 8    # forte accelerazione volume
@@ -13189,6 +13656,7 @@ def _compute_price_predictions(sim_rows: list,
     # ── Per ogni evento futuro ────────────────────────────────────────────────
     result = {}
     _n_future = len(future)
+    _ai_feed_idx = _get_ai_feed_index()
     for _fi, (r, comp_date) in enumerate(future):
         if _n_future > 20 and (_fi + 1) % 25 == 0:
             print(
@@ -13347,18 +13815,36 @@ def _compute_price_predictions(sim_rows: list,
             _fit_series = _ls
 
         # Curve fitting (per le estrapolazioni d1/w1/m1 nel tooltip)
+        _clin_sig = _build_prediction_clinical_signal(
+            ticker, comp_date, today=today, index=_ai_feed_idx)
+        _ai_events = _clin_sig.get("events") or []
+        _eis_agg = _clin_sig.get("eis_agg")
+        _clin_ind_pp = float(_clin_sig.get("indicator_shift_pp") or 0.0)
         pairs = []
         for d, price in _fit_series.items():
             dx = (d - today).days
             # Finestra precat in gg calendario vs **oggi** (stesso asse usato per T−k).
             if -130 <= dx <= 0 and float(price) > 0:
                 pairs.append((float(dx), (float(price) / p_now - 1.0) * 100.0))
+        pairs = _eis_augment_pairs_for_fit(
+            pairs,
+            _ai_events,
+            today=today,
+            p_now=float(p_now),
+            eis_agg=_eis_agg,
+        )
+        _syn_pair = _eis_synthetic_anchor_pair(_eis_agg, int(days_to_t))
+        if _syn_pair is not None:
+            pairs = sorted(pairs + [_syn_pair])
         best_r2   = None
         best_name = "N/D"
         model_dm7_pct = model_dm5_pct = model_dm3_pct = None
         model_dm10_pct = model_dm30_pct = model_dm60_pct = None
         model_d4_pct = model_d7_pct = None
         d3_pct = d5_pct = d10_pct = d30_pct = None
+        _eis_poly_meta: dict = {}
+        _fit_pre_eis: dict = {}
+        _emp_blend_meta: dict = {}
         _fit = _fit_precat_from_pairs(
             pairs, int(days_to_t), ticker=ticker, log_short_fit=True)
         if _fit is not None:
@@ -13376,6 +13862,93 @@ def _compute_price_predictions(sim_rows: list,
             d30_pct = _fit.d30_pct
             model_d4_pct = _fit.model_d4_pct
             model_d7_pct = _fit.model_d7_pct
+            _fit_pre_eis = {
+                "model_dm7_fit_pct": model_dm7_pct,
+                "model_dm5_fit_pct": model_dm5_pct,
+                "model_dm3_fit_pct": model_dm3_pct,
+                "model_dm10_fit_pct": model_dm10_pct,
+                "model_dm30_fit_pct": model_dm30_pct,
+                "model_dm60_fit_pct": model_dm60_pct,
+                "model_d4_fit_pct": model_d4_pct,
+                "model_d7_fit_pct": model_d7_pct,
+                "d3_fit_pct": d3_pct,
+                "d5_fit_pct": d5_pct,
+                "d10_fit_pct": d10_pct,
+                "d30_fit_pct": d30_pct,
+            }
+            try:
+                from prediction.empirical_precat_blend import apply_empirical_precat_blend
+
+                _hz_in = {
+                    "model_dm7_pct": model_dm7_pct,
+                    "model_dm5_pct": model_dm5_pct,
+                    "model_dm3_pct": model_dm3_pct,
+                    "model_dm10_pct": model_dm10_pct,
+                    "model_dm30_pct": model_dm30_pct,
+                    "model_dm60_pct": model_dm60_pct,
+                    "model_d4_pct": model_d4_pct,
+                    "model_d7_pct": model_d7_pct,
+                    "d3_pct": d3_pct,
+                    "d5_pct": d5_pct,
+                    "d10_pct": d10_pct,
+                    "d30_pct": d30_pct,
+                }
+                _hz_out, _emp_blend_meta = apply_empirical_precat_blend(
+                    _hz_in,
+                    calibration_state=calibration_state,
+                    ver="v4_options",
+                    curve_cat=_emp_curve_cat,
+                    emp_shape_meta=_emp_shape_meta,
+                )
+                model_dm7_pct = _hz_out.get("model_dm7_pct", model_dm7_pct)
+                model_dm5_pct = _hz_out.get("model_dm5_pct", model_dm5_pct)
+                model_dm3_pct = _hz_out.get("model_dm3_pct", model_dm3_pct)
+                model_dm10_pct = _hz_out.get("model_dm10_pct", model_dm10_pct)
+                model_dm30_pct = _hz_out.get("model_dm30_pct", model_dm30_pct)
+                model_dm60_pct = _hz_out.get("model_dm60_pct", model_dm60_pct)
+                model_d4_pct = _hz_out.get("model_d4_pct", model_d4_pct)
+                model_d7_pct = _hz_out.get("model_d7_pct", model_d7_pct)
+                d3_pct = _hz_out.get("d3_pct", d3_pct)
+                d5_pct = _hz_out.get("d5_pct", d5_pct)
+                d10_pct = _hz_out.get("d10_pct", d10_pct)
+                d30_pct = _hz_out.get("d30_pct", d30_pct)
+            except Exception as _eb_e:
+                _emp_blend_meta = {"emp_precat_blend": "error", "emp_precat_error": str(_eb_e)[:120]}
+            else:
+                if (_emp_blend_meta or {}).get("emp_precat_blend") == "on":
+                    print(
+                        f"[Pred] {ticker} — emp precat blend λ={_emp_blend_meta.get('emp_precat_blend_lam')} "
+                        f"cat={_emp_curve_cat} n={_emp_blend_meta.get('emp_precat_blend_n')}",
+                        flush=True,
+                    )
+            _eis_shifted, _eis_poly_meta = _apply_eis_poly_shift(
+                model_dm7_pct=model_dm7_pct,
+                model_dm5_pct=model_dm5_pct,
+                model_dm3_pct=model_dm3_pct,
+                model_dm10_pct=model_dm10_pct,
+                model_dm30_pct=model_dm30_pct,
+                model_dm60_pct=model_dm60_pct,
+                model_d4_pct=model_d4_pct,
+                model_d7_pct=model_d7_pct,
+                d3_pct=d3_pct,
+                d5_pct=d5_pct,
+                d10_pct=d10_pct,
+                d30_pct=d30_pct,
+                eis_agg=_eis_agg,
+                extra_shift_pp=_clin_ind_pp,
+            )
+            model_dm7_pct = _eis_shifted["model_dm7_pct"]
+            model_dm5_pct = _eis_shifted["model_dm5_pct"]
+            model_dm3_pct = _eis_shifted["model_dm3_pct"]
+            model_dm10_pct = _eis_shifted["model_dm10_pct"]
+            model_dm30_pct = _eis_shifted["model_dm30_pct"]
+            model_dm60_pct = _eis_shifted["model_dm60_pct"]
+            model_d4_pct = _eis_shifted["model_d4_pct"]
+            model_d7_pct = _eis_shifted["model_d7_pct"]
+            d3_pct = _eis_shifted["d3_pct"]
+            d5_pct = _eis_shifted["d5_pct"]
+            d10_pct = _eis_shifted["d10_pct"]
+            d30_pct = _eis_shifted["d30_pct"]
 
             if _pred_damp_dm60_extrap_enabled():
                 model_dm60_pct = _damp_model_dm60_extrap(
@@ -13791,12 +14364,17 @@ def _compute_price_predictions(sim_rows: list,
             "model_dm60_pct": model_dm60_pct,
             "model_d4_pct": model_d4_pct,
             "model_d7_pct": model_d7_pct,
+            **_fit_pre_eis,
+            "pred_dm5_fit_pct": _fit_pre_eis.get("model_dm5_fit_pct"),
             "struct_knots": _struct_blend_meta.get("struct_knots"),
             "struct_lambda": _struct_blend_meta.get("struct_lambda"),
             "struct_blend": _struct_blend_meta.get("struct_blend"),
             "struct_method_version": _struct_blend_meta.get(
                 "struct_method_version"),
             "struct_error": _struct_blend_meta.get("struct_error"),
+            "emp_precat_blend": _emp_blend_meta.get("emp_precat_blend"),
+            "emp_precat_blend_lam": _emp_blend_meta.get("emp_precat_blend_lam"),
+            "emp_precat_blend_n": _emp_blend_meta.get("emp_precat_blend_n"),
             # Predizioni EMPIRICHE dalla curva storica aggregata (benchmark)
             "pred_emp_d3":  _pred_emp_d3.get("pred_pct"),
             "pred_emp_d5":  _pred_emp_d5.get("pred_pct"),
@@ -13814,6 +14392,15 @@ def _compute_price_predictions(sim_rows: list,
             "slope_5d":       slope_5d,
             "slope_20d":      slope_20d,
             "slope_aligned":  slope_aligned,
+            # Slope inferito dal run-up 30g (pp/g) e sorgente effettiva dello
+            # slope per audit trail. Non alterano pred5/score: la cascata di
+            # fallback è applicata in UI (precatCurve.ts) e questi campi servono
+            # per coerenza dato persistente ↔ visualizzazione.
+            "slope_inferred": _infer_slope_from_run_up(run_up),
+            "slope_source":   _compute_slope_source(slope_20d, slope_5d, run_up),
+            # Metriche stabilità pendenza — driver entry/exit Decision Lab.
+            # Vedi prediction/curve_forecast.compute_slope_stability_metrics.
+            **_compute_slope_stability_metrics(slope_5d, slope_20d),
             "vol_accel":      va,
             "run_up_30d":     run_up,
             "run_up_7d":      run_up_7d,
@@ -13832,6 +14419,14 @@ def _compute_price_predictions(sim_rows: list,
                 _dir_pre_clinical
                 if _clinical_overlay_applied and _dir_pre_clinical != direction_adj
                 else None),
+            "eis_poly_agg": _eis_poly_meta.get("eis_poly_agg"),
+            "eis_poly_extra_pp": _eis_poly_meta.get("eis_poly_extra_pp"),
+            "eis_poly_shift_pp": _eis_poly_meta.get("eis_poly_shift_pp"),
+            "eis_poly_applied": _eis_poly_meta.get("eis_poly_applied"),
+            "clinical_feed_verified_only": _clin_sig.get("verified_only"),
+            "clinical_feed_verified_events_n": _clin_sig.get("verified_events_n"),
+            "clinical_indicator_shift_pp": _clin_ind_pp if _clin_ind_pp else None,
+            "clinical_indicator_kpi_n": _clin_sig.get("indicator_kpi_n"),
             "pred_dataset_incomplete": _pred_dataset_incomplete_live,
             **_app_live,
             **_m2_pool_global,
@@ -14625,6 +15220,20 @@ def _write_simulation_sheet_36_columns(
                 log_row_key=_rk_log,
                 pair_empty_logged=_pred_pair_log,
             )
+            try:
+                from prediction.live_recalib_sheet import finalize_simulation_pred_display
+
+                _pred_pct_pts = finalize_simulation_pred_display(
+                    _pred_pct_pts,
+                    _pred,
+                    _pw,
+                    completion_date=_cd_na_row,
+                    today=_today_sim,
+                    log_row_key=_rk_log,
+                    pair_empty_logged=_pred_pair_log,
+                )
+            except Exception:
+                pass
             _pred_pct_pts = _fill_pred_pct_pts_model_fallback(
                 _pred_pct_pts,
                 {**_pred, **_pw},
@@ -18115,13 +18724,23 @@ def _direction_to_curve_category(direction: str | None) -> str:
     return "neutral"
 
 
+def _curve_entry_at_offset(d: dict | None, off: int):
+    """Voce ``d[off]`` con chiavi ``5`` / ``\"5\"`` / ``\"+5\"`` (JSON legacy)."""
+    if not isinstance(d, dict):
+        return None
+    for k in (str(off), off):
+        if k in d:
+            return d.get(k)
+    if off > 0:
+        pk = f"+{off}"
+        if pk in d:
+            return d.get(pk)
+    return None
+
+
 def _median_val(med: dict | None, off: int):
     """Legge median[off] con chiavi int o str compatibili al JSON."""
-    if not med:
-        return None
-    v = med.get(str(off))
-    if v is None:
-        v = med.get(off)
+    v = _curve_entry_at_offset(med, off)
     try:
         return float(v) if v is not None else None
     except (TypeError, ValueError):
@@ -19429,11 +20048,12 @@ def _predict_empirical_curve_cat(state: dict | None, ver: str, curve_cat: str,
 
     # Mappa orizzonte → offset disponibile nella curva
     if horizon_days in (3, 5, 7):
-        off_str = str(_HORIZON_TO_OFFSET[horizon_days])
+        off = _HORIZON_TO_OFFSET[horizon_days]
         med_pts = block.get("median", {})
         stats   = block.get("stats", {})
-        pred = med_pts.get(off_str)
-        rel  = (stats.get(off_str) or {}).get("rel")
+        pred = _median_val(med_pts, off)
+        _stat_blk = _curve_entry_at_offset(stats, off)
+        rel = (_stat_blk or {}).get("rel") if isinstance(_stat_blk, dict) else None
         return {
             "pred_pct": round(pred, 2) if pred is not None else None,
             "rel_pct":  rel,
@@ -23495,6 +24115,14 @@ def _past_pred_sponsor_explainer_token(dd: dict) -> str:
     return _s
 
 
+def _past_pred_is_control_sponsor_cohort(dd: dict) -> bool:
+    """True se il match sponsor non è Exact/Partial (coorte controllo «non match»)."""
+    s = _past_pred_sponsor_explainer_token(dd)
+    if not s:
+        return False
+    return s not in ("exact", "partial")
+
+
 def _supernova_cd7_pct_vs_m60_trajectory(dd: dict | None) -> list[float | None]:
     """
     Dieci punti % vs chiusura **−60 sessioni** prima della CD (stesso schema foglio «SuperNova» /
@@ -24004,6 +24632,26 @@ def _sheet_blended_pred_pct_vs_m60(
         row_key=log_row_key,
         log_audit=False,
     )
+    if not accuracy:
+        try:
+            from datetime import date as _date_cls
+
+            from prediction.live_recalib_sheet import finalize_simulation_pred_display
+
+            _cd_fin = _completion_date_from_pred_row(
+                pred if isinstance(pred, dict) else None, _dd
+            )
+            _blended = finalize_simulation_pred_display(
+                _blended,
+                pred,
+                _dd,
+                completion_date=_cd_fin,
+                today=_date_cls.today(),
+                log_row_key=log_row_key,
+                pair_empty_logged=pair_empty_logged,
+            )
+        except Exception:
+            pass
     try:
         from prediction.pipeline import apply_v5_sim_display_to_pred_points
 
@@ -24138,6 +24786,54 @@ def _interp_pred_pct_vs_m60_calendar(
     except Exception:
         pass
     return out
+
+
+_PRED_FIT_RAW_TO_MODEL_KEYS: tuple[tuple[str, str], ...] = (
+    ("model_dm7_pct", "model_dm7_fit_pct"),
+    ("model_dm5_pct", "model_dm5_fit_pct"),
+    ("model_dm3_pct", "model_dm3_fit_pct"),
+    ("model_dm10_pct", "model_dm10_fit_pct"),
+    ("model_dm30_pct", "model_dm30_fit_pct"),
+    ("model_dm60_pct", "model_dm60_fit_pct"),
+    ("model_d4_pct", "model_d4_fit_pct"),
+    ("model_d7_pct", "model_d7_fit_pct"),
+    ("d3_pct", "d3_fit_pct"),
+    ("d5_pct", "d5_fit_pct"),
+    ("d10_pct", "d10_fit_pct"),
+    ("d30_pct", "d30_fit_pct"),
+)
+
+
+def _interp_pred_pct_vs_m60_calendar_fit_raw(
+    dd: dict | None,
+    offsets: tuple[int, ...],
+    *,
+    log_row_key: str | None = None,
+    pair_empty_logged: set[str] | None = None,
+) -> list[float | None]:
+    """
+    Traiettoria **polinomio grezzo** (pre-EIS, pre-seq): usa ``*_fit_pct`` se presenti,
+    altrimenti ``pred_dm5_fit_pct`` / ``model_dm*`` non alterati da EIS.
+    """
+    if not isinstance(dd, dict):
+        return [None] * len(offsets)
+    _d = dict(dd)
+    _has_fit = False
+    for _mk, _fk in _PRED_FIT_RAW_TO_MODEL_KEYS:
+        _fv = _d.get(_fk)
+        if _fv is None and _fk == "model_dm5_fit_pct":
+            _fv = _d.get("pred_dm5_fit_pct")
+        if _fv is not None:
+            _d[_mk] = _fv
+            _has_fit = True
+    if not _has_fit:
+        return [None] * len(offsets)
+    return _interp_pred_pct_vs_m60_calendar(
+        _d,
+        offsets,
+        log_row_key=log_row_key,
+        pair_empty_logged=pair_empty_logged,
+    )
 
 
 def _fill_pred_pct_pts_model_fallback(
@@ -25528,6 +26224,8 @@ def _ristretta_curve_table_points(
     with_price_usd: bool = False,
     ser_cache: dict | None = None,
     storico_basis: str = "session",
+    financial_df=None,
+    sub_cache: dict | None = None,
 ) -> list[dict]:
     """
     Coorte **Ristretta**: nodi standard (modello + storico + ``seq_curve`` come Accuracy)
@@ -25545,6 +26243,8 @@ def _ristretta_curve_table_points(
     _offsets = offsets if offsets is not None else SIMULATION_PRED_CAL_OFFSETS
     _pred = _interp_pred_pct_vs_m60_calendar(
         pw, _offsets, log_row_key=pk, pair_empty_logged=_plog)
+    _pred_raw = _interp_pred_pct_vs_m60_calendar_fit_raw(
+        pw, _offsets, log_row_key=pk, pair_empty_logged=_plog)
     _tk = str(pw.get("ticker") or (pk.split("|")[0] if "|" in str(pk) else pk)).strip().upper()
     _stor_basis = str(storico_basis or "session").strip().lower()
     if _stor_basis == "calendar":
@@ -25554,6 +26254,12 @@ def _ristretta_curve_table_points(
     else:
         _stor = _sn7_traj_pct_at_table_offsets(pw, _offsets)
     _seq = pw.get("seq_curve_pct_vs_m60")
+    _ai_feed_off: set[int] = set()
+    try:
+        for _ao in pw.get("seq_curve_ai_feed_offsets") or []:
+            _ai_feed_off.add(int(_ao))
+    except (TypeError, ValueError):
+        _ai_feed_off = set()
     _rows: list[dict] = []
     for _i, _off in enumerate(_offsets):
         try:
@@ -25566,6 +26272,12 @@ def _ristretta_curve_table_points(
                 _pm = round(float(_pm), 4)
             except (TypeError, ValueError):
                 _pm = None
+        _pm_raw = _pred_raw[_i] if _i < len(_pred_raw) else None
+        if _pm_raw is not None:
+            try:
+                _pm_raw = round(float(_pm_raw), 4)
+            except (TypeError, ValueError):
+                _pm_raw = None
         _pr = _stor[_i] if _i < len(_stor) else None
         if _pr is not None and _pr == _pr:
             try:
@@ -25610,6 +26322,7 @@ def _ristretta_curve_table_points(
             "pct_curva": _ps if _ps is not None else None,
             "pct_reale": _pr,
             "pct_modello": _pm,
+            "pct_modello_raw": _pm_raw,
         }
         if _ps is not None:
             _row_d["pct_seq"] = _ps
@@ -25634,6 +26347,11 @@ def _ristretta_curve_table_points(
             _row_d["price_usd"] = _sim_grafici_price_usd_at_offset(
                 pw, cd, int(_off), today, _pc_disp, _pr, _pm, pk=pk, pred_log=_plog
             )
+            if int(_off) in _ai_feed_off and _ps is not None:
+                _seq_px = _sim_grafici_price_usd_from_pct_m60(pw, float(_ps))
+                if _seq_px is not None:
+                    _row_d["price_usd"] = _seq_px
+                    _row_d["recalib_source"] = "ai_feed"
             _row_d["price_model_usd"] = _sim_grafici_price_usd_from_pct_m60(pw, _pm)
             _hist_px = None
             if _stor_basis == "calendar":
@@ -25655,7 +26373,23 @@ def _ristretta_curve_table_points(
                     pw, _pr
                 )
         _rows.append(_row_d)
-    for _k8 in _ristretta_k8_rows_from_workbook(wb, _tk, cd, pw=pw):
+    for _k8 in _ristretta_k8_rows_resolved(
+        wb,
+        _tk,
+        cd,
+        pw,
+        ser_cache=ser_cache,
+        sub_cache=sub_cache,
+        financial_df=financial_df,
+        cik_map=(
+            (ser_cache or {}).get("__cik_map__")
+            if isinstance(ser_cache, dict)
+            else None
+        ),
+    ):
+        if _k8.get("pct_curva") is not None:
+            _k8 = dict(_k8)
+            _k8["pct_foglio"] = _k8["pct_curva"]
         if with_price_usd and _k8.get("pct_curva") is not None:
             _k8 = dict(_k8)
             _pv_k = _k8.get("pct_curva")
@@ -25663,6 +26397,32 @@ def _ristretta_curve_table_points(
             _k8["price_storico_usd"] = _k8["price_usd"]
             _k8["price_model_usd"] = None
         _rows.append(_k8)
+    try:
+        _p60_ai = _sim_grafici_base_m60_usd(pw)
+        _cache_ai = ser_cache if ser_cache is not None else {}
+        _ser_ai = _histlib_accuracy_sim_resolve_close_series(_tk, _cache_ai)
+        if _p60_ai is not None and float(_p60_ai) > 0 and _ser_ai is not None:
+            for _af in _ai_feed_chart_points(
+                tk=_tk,
+                cd=cd,
+                p60=float(_p60_ai),
+                today=today,
+                close_series=_ser_ai,
+                index=_get_ai_feed_index(),
+            ):
+                if _af.get("pct_curva") is not None:
+                    _af = dict(_af)
+                    _af["pct_foglio"] = _af["pct_curva"]
+                if with_price_usd and _af.get("pct_curva") is not None:
+                    _af = dict(_af)
+                    _af["price_usd"] = _sim_grafici_price_usd_from_pct_m60(
+                        pw, _af.get("pct_curva")
+                    )
+                    _af["price_storico_usd"] = _af["price_usd"]
+                    _af["price_model_usd"] = None
+                _rows.append(_af)
+    except Exception:
+        pass
     _rows.sort(key=lambda r: r.get("sort", (0, 0)))
     _grafici_annotate_recalib_on_points(
         _rows, pw, cd, today, wb, _tk, ser_cache=ser_cache
@@ -28324,6 +29084,26 @@ def _accuracy_sim_merge_live_pred(
                 continue
             if _prefer_live or _missing_scalar(row.get(_pk)):
                 row[_pk] = _vv
+        for _fk in (
+            "model_dm7_fit_pct",
+            "model_dm5_fit_pct",
+            "model_dm3_fit_pct",
+            "model_dm10_fit_pct",
+            "model_dm30_fit_pct",
+            "model_dm60_fit_pct",
+            "model_d4_fit_pct",
+            "model_d7_fit_pct",
+            "d3_fit_pct",
+            "d5_fit_pct",
+            "d10_fit_pct",
+            "d30_fit_pct",
+            "pred_dm5_fit_pct",
+        ):
+            _fv = sp.get(_fk)
+            if _fv is None or _fv == "":
+                continue
+            if _prefer_live or _missing_scalar(row.get(_fk)):
+                row[_fk] = _fv
         for _sk in (
             "direction",
             "dir_v4",
@@ -29533,9 +30313,11 @@ def _write_accuracy_simulation_sheet(
     su quel giorno di calendario (distanza da CD = data − CD) si ottiene con **interpolazione lineare**
     tra i nodi ``model_dm*`` / ``model_d*`` del JSON (``price_at_cd`` × (1+pct/100) per nodo); ogni
     cella = (prezzo a quella data ÷ prezzo alla data T−60 mostrata − 1), prima colonna → 0%.
-    **Sotto la linea** (CD < oggi): solo curva **modello** (validazione vs «Storico %»).
-    **Sopra la linea** (CD ≥ oggi): come Simulation — **seq_curve** (mercato reale sui nodi
-    passati + estensione modello sui futuri); opt-out ``ACCURACY_SHEET_USE_MODEL_ONLY=1``.
+    **Sotto la linea** (CD < oggi): colonne **Δ% Pred** = curva **modello v4** (validazione
+    vs «Storico %» = close HistLib). Non ``live_recalib`` (altrimenti Pred ≈ Storico).
+    Legacy: ``ACCURACY_PAST_PRED_USE_LIVE=1`` ripristina close reali anche sotto la linea.
+    **Sopra la linea** (CD ≥ oggi): **seq_curve** + 8‑K (mercato sui nodi passati, modello
+    sui futuri); opt-out ``ACCURACY_SHEET_USE_MODEL_ONLY=1``.
 
     **Storico %**: stessa **data** della colonna date sopra; chiusura = barra HistLib con quel giorno
     di calendario (fallback JSON ``close_m*`` / ``close_p*``). Ogni cella del blocco storico =
@@ -34530,7 +35312,13 @@ def regenerate_simulation_sheet_quick(xlsx_path: str | None = None) -> bool:
         sim_sheet_insert_index=_sim_idx,
         preserved_sim_outcomes=_preserved_sim or None,
     )
-    if _ctx and not financial_df.empty:
+    _skip_k8_daily = os.environ.get("ORCH_SKIP_SEC_K8", "").strip().lower() in (
+        "1",
+        "true",
+        "yes",
+        "on",
+    )
+    if _ctx and not financial_df.empty and not _skip_k8_daily:
         try:
             _write_sec_k8_sheet(
                 wb,
@@ -34545,6 +35333,12 @@ def regenerate_simulation_sheet_quick(xlsx_path: str | None = None) -> bool:
             )
         except Exception as _k8e:
             print(f"[SEC K-8][Simulation-only] {_k8e}")
+    elif _ctx and _skip_k8_daily:
+        print(
+            "[Simulation-only] SEC K-8: skip rigenerazione foglio "
+            "(ORCH_SKIP_SEC_K8 / daily fast).",
+            flush=True,
+        )
     try:
         _n = _sanitize_openpyxl_workbook_string_cells(wb)
         if _n:
@@ -34559,6 +35353,33 @@ def regenerate_simulation_sheet_quick(xlsx_path: str | None = None) -> bool:
         _outp = _orch_commit_xlsx_replace_or_stage(
             tgt, _tmp, log_label="[Simulation-only]")
         print(f"[Simulation-only] OK — salvato in: {_outp}", flush=True)
+        try:
+            _spd = (_ctx or {}).get("_sim_pred_data") if _ctx else None
+            if isinstance(_spd, dict) and _spd:
+                from orchestrator_io_paths import SIM_LIVE_PRED_SNAPSHOT_JSON
+                import json as _json_spd
+
+                os.makedirs(os.path.dirname(SIM_LIVE_PRED_SNAPSHOT_JSON) or ".", exist_ok=True)
+                with open(SIM_LIVE_PRED_SNAPSHOT_JSON, "w", encoding="utf-8") as _sf:
+                    _json_spd.dump(
+                        {"rows": _spd, "saved_at": date.today().isoformat()},
+                        _sf,
+                        ensure_ascii=False,
+                        default=str,
+                    )
+                print(
+                    f"[Simulation-only] Live pred snapshot → {SIM_LIVE_PRED_SNAPSHOT_JSON} "
+                    f"({len(_spd)} chiavi)",
+                    flush=True,
+                )
+        except Exception as _spd_e:
+            print(f"[Simulation-only] Live pred snapshot (non bloccante): {_spd_e}", flush=True)
+        try:
+            from excel_sheet_reader import export_simulation_charts_snapshot
+
+            export_simulation_charts_snapshot(xlsx_path=_outp)
+        except Exception as _cex:
+            print(f"[Simulation-only] Chart snapshot export (non bloccante): {_cex}", flush=True)
         return True
     except Exception:
         try:
@@ -35072,6 +35893,16 @@ def save_final_outputs(master_df, clinical_df):
                             "FORCE_ACCURACY_MONITOR_SNAPSHOT=1 dopo modifiche al modello).",
                             flush=True,
                         )
+                    try:
+                        _write_model_cohort_accuracy_json(
+                            _retro_for_calib_curves_restricted)
+                    except Exception as _coh_err:
+                        print(f"[CohortAcc] non bloccante: {_coh_err}", flush=True)
+                    try:
+                        from prediction.sign_curve_daily import save_sign_curve_daily_json
+                        save_sign_curve_daily_json()
+                    except Exception as _scd_err:
+                        print(f"[SignCurveDaily] non bloccante: {_scd_err}", flush=True)
                     write_accuracy_monitor_sheet(writer.book)
                     try:
                         write_accuracy_temporal_sheet(writer.book)
@@ -35214,6 +36045,42 @@ def save_final_outputs(master_df, clinical_df):
                     _past_pred_data = {}
     
                 _enrich_past_pred_calib_empirical(_past_pred_data or None, _calib_state)
+                try:
+                    from prediction.past_pred_fit_enrich import (
+                        enrich_past_pred_fit_horizons_metadata,
+                        persist_past_pred_fit_patches,
+                    )
+
+                    _n_fit = enrich_past_pred_fit_horizons_metadata(
+                        _past_pred_data or None, _calib_state
+                    )
+                    if _n_fit:
+                        persist_past_pred_fit_patches(_past_pred_data)
+                        print(
+                            f"[PastPredLib] Layer-i fit_pct + emp blend: "
+                            f"{_n_fit} righe arricchite → JSON.",
+                            flush=True,
+                        )
+                except Exception as _fit_e:
+                    print(f"[PastPredLib] Fit enrich non bloccante: {_fit_e}", flush=True)
+                try:
+                    from prediction.past_pred_display_enrich import (
+                        enrich_past_pred_display_metadata,
+                        persist_past_pred_display_patches,
+                    )
+
+                    _n_disp = enrich_past_pred_display_metadata(
+                        _past_pred_data or None, _calib_state
+                    )
+                    if _n_disp:
+                        persist_past_pred_display_patches(_past_pred_data)
+                        print(
+                            f"[PastPredLib] Display metadata (EIS/cal_factor): "
+                            f"{_n_disp} righe arricchite → JSON.",
+                            flush=True,
+                        )
+                except Exception as _disp_e:
+                    print(f"[PastPredLib] Display enrich non bloccante: {_disp_e}", flush=True)
                 _enrich_past_pred_accuracy_metadata(
                     _past_pred_data or None,
                     clinical_df_rich if not clinical_df_rich.empty else clinical_df,
@@ -35301,6 +36168,22 @@ def save_final_outputs(master_df, clinical_df):
                     print(f"[Excel] Sanitize stringhe XML-compatible: {_n_san} celle aggiornate.")
             except Exception as _sx:
                 print(f"[Excel] Sanitize workbook (non bloccante): {_sx}")
+        try:
+            from orchestrator_run_summary import record_simulation_cohort
+
+            _rows_for_summary = locals().get("_sim_rows_for_accuracy")
+            if _rows_for_summary is None and "_sim_rows" in locals():
+                _rows_for_summary = _sim_rows_merged_for_accuracy_sheet(
+                    clinical_df_rich if not clinical_df_rich.empty else pd.DataFrame(),
+                    financial_df if "financial_df" in locals() else pd.DataFrame(),
+                    locals().get("_sim_rows_past") or [],
+                    locals().get("_sim_rows") or [],
+                    log_supplement=False,
+                )
+            record_simulation_cohort(_rows_for_summary)
+        except Exception as _sum_e:
+            print(f"[RunSummary] Coorte simulation (non bloccante): {_sum_e}", flush=True)
+
         _written_xlsx = _orch_commit_xlsx_replace_or_stage(
             FINAL_XLSX, _tmp_xlsx, log_label="[Excel]")
         _tmp_committed = True
@@ -35324,6 +36207,13 @@ def save_final_outputs(master_df, clinical_df):
     if _written_xlsx:
         print(f"Saved Excel: {_written_xlsx}")
     print(f"Saved JSON:  {FINAL_JSON}")
+
+    try:
+        from excel_sheet_reader import export_desktop_snapshots
+
+        export_desktop_snapshots()
+    except Exception as _snap_e:
+        print(f"[Desktop snapshots] non bloccante: {_snap_e}")
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -35482,6 +36372,12 @@ def _auto_discover_biotech_tickers(force: bool = False) -> int:
         preview = ", ".join(nuovi[:25]) + (f"… (+{len(nuovi)-25})" if len(nuovi) > 25 else "")
         print(f"[DISCOVERY] Aggiunti {len(nuovi)} nuovi ticker biotech: {preview}")
         print(f"[DISCOVERY] Totale ticker in biotech_symbols.json: {len(updated)}")
+        try:
+            from orchestrator_run_summary import record_discovery_tickers
+
+            record_discovery_tickers(nuovi)
+        except Exception:
+            pass
     else:
         print("[DISCOVERY] Nessun nuovo ticker biotech trovato.")
 
@@ -35544,6 +36440,12 @@ def _sync_extra_tickers() -> int:
               f"{', '.join(nuovi)}")
         print(f"[SYNC] Totale ticker nel file: "
               f"{len(existing) + len(nuovi)}")
+        try:
+            from orchestrator_run_summary import record_extra_config_tickers
+
+            record_extra_config_tickers(nuovi)
+        except Exception:
+            pass
     else:
         print(f"[SYNC] Nessun nuovo ticker da aggiungere "
               f"(extra_tickers già presenti in biotech_symbols.json).")
@@ -35633,6 +36535,12 @@ def main(skip_fetch: bool = False):
         print(f"[ImmutableLibrary] Verifica disco non bloccante: {_ill_e}")
 
     _t_total = time.time()
+    try:
+        from orchestrator_run_summary import begin_orchestrator_run
+
+        begin_orchestrator_run("weekly_full")
+    except Exception:
+        pass
     _perf_enabled = os.environ.get("ORCH_PERF", "").strip() == "1"
 
     def _perf_run(label, fn, *args, **kwargs):
@@ -35740,6 +36648,18 @@ def main(skip_fetch: bool = False):
     _elapsed = time.time() - _t_total
     print(f"\n>>> Orchestration completed successfully <<< "
           f"(totale: {_elapsed//60:.0f}m {_elapsed%60:.0f}s)")
+    try:
+        from orchestrator_run_summary import finalize_orchestrator_run
+        from refresh_fast_status import find_latest_staged_workbook
+
+        finalize_orchestrator_run(
+            ok=True,
+            elapsed_sec=_elapsed,
+            staged_workbook=find_latest_staged_workbook(FINAL_XLSX),
+            exit_code=0,
+        )
+    except Exception as _fin_e:
+        print(f"[RunSummary] Riepilogo run (non bloccante): {_fin_e}", flush=True)
 
 
 if _orch_invoked_as_script():
@@ -35772,6 +36692,37 @@ if _orch_invoked_as_script():
     )
     try:
         main(skip_fetch=_skip_argv or _skip_env)
+    except SystemExit as _se:
+        if _se.code not in (None, 0):
+            try:
+                from orchestrator_run_summary import finalize_orchestrator_run
+                from refresh_fast_status import find_latest_staged_workbook
+
+                finalize_orchestrator_run(
+                    ok=False,
+                    elapsed_sec=0,
+                    staged_workbook=find_latest_staged_workbook(FINAL_XLSX),
+                    exit_code=int(_se.code) if isinstance(_se.code, int) else 1,
+                    error=f"exit {_se.code}",
+                )
+            except Exception:
+                pass
+        raise
+    except Exception as _main_exc:
+        try:
+            from orchestrator_run_summary import finalize_orchestrator_run
+            from refresh_fast_status import find_latest_staged_workbook
+
+            finalize_orchestrator_run(
+                ok=False,
+                elapsed_sec=0,
+                staged_workbook=find_latest_staged_workbook(FINAL_XLSX),
+                exit_code=1,
+                error=str(_main_exc),
+            )
+        except Exception:
+            pass
+        raise
     except KeyboardInterrupt:
         print(
             "\n>>> Interrotto con Ctrl+C (normale se attendevi fetch_yfinance). "

@@ -1,0 +1,3 @@
+﻿close keys ['close_m10', 'close_m3', 'close_m30', 'close_m4', 'close_m5', 'close_m60', 'close_m7', 'close_p3', 'close_p4', 'close_p5', 'close_p7']
+past 8445 m60 5755
+model sample ['dir_v1', 'dir_v1_t1', 'dir_v1_t3', 'dir_v1_t5', 'dir_v2', 'dir_v2_t1', 'dir_v2_t3', 'dir_v2_t5', 'dir_v3', 'dir_v3_t1', 'dir_v3_t3', 'dir_v3_t5', 'dir_v4', 'dir_v4_t1', 'dir_v4_t3', 'dir_v4_t5', 'model_accuracy_metrics_eligible', 'model_d10_pct', 'model_d1_pct', 'model_d30_pct', 'model_d3_pct', 'model_d4_fit_pct', 'model_d4_pct', 'model_d5_pct', 'model_d7_fit_pct', 'model_d7_pct', 'model_dm10_fit_pct', 'model_dm10_pct', 'model_dm30_fit_pct', 'model_dm30_pct']

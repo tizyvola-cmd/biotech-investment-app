@@ -1,0 +1,47 @@
+<!doctype html>
+<html lang="it" data-theme="violet">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>SuperNova</title>
+    <link rel="icon" type="image/x-icon" href="/favicon.ico" />
+    <link rel="icon" type="image/png" sizes="256x256" href="/favicon.png" />
+    <link rel="apple-touch-icon" href="/apple-touch-icon.png" />
+    <script>
+      (function () {
+        try {
+          var appearance =
+            localStorage.getItem("sn-theme") === "mint" ? "mint" : "violet";
+          document.documentElement.setAttribute("data-theme", appearance);
+        } catch (_) {}
+      })();
+    </script>
+    <script>
+      (function () {
+        try {
+          var raw = localStorage.getItem("supernova_theme");
+          if (raw) raw = raw.trim();
+          var root = document.documentElement;
+          root.classList.remove("dark", "theme-black", "theme-chiaro");
+          if (raw === "black") {
+            root.classList.add("dark", "theme-black");
+          } else if (raw === "dark") {
+            root.classList.add("dark");
+          } else if (raw === "light") {
+            root.classList.add("theme-chiaro");
+          } else if (raw !== "light") {
+            if (window.matchMedia("(prefers-color-scheme: dark)").matches) {
+              root.classList.add("dark");
+            } else {
+              root.classList.add("theme-chiaro");
+            }
+          }
+        } catch (_) {}
+      })();
+    </script>
+  </head>
+  <body class="bg-surface text-ink antialiased">
+    <div id="root"></div>
+    <script type="module" src="/src/main.tsx"></script>
+  </body>
+</html>

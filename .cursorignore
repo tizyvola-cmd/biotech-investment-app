@@ -1,0 +1,19 @@
+﻿# Riduce indicizzazione Cursor — cartelle pesanti / generate
+data/
+.venv/
+.venv_*/
+node_modules/
+electron/
+dist/
+build/
+__pycache__/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+*.pyc
+logs/
+.claude/
+*.xlsx
+*.csv
+*.pickle
+*.pkl

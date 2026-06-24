@@ -1,0 +1,44 @@
+---
+description: UI layout density — panel stacks, text clamping, scroll regions (desktop only)
+globs: desktop-ui/src/components/**/*.tsx,desktop-ui/src/index.css
+alwaysApply: false
+---
+
+# Layout density & readable panels
+
+**Desktop only (`desktop-ui/`).** Mobile layout lives in `mobile-ui/` — see `.cursor/rules/mobile-vs-desktop.mdc` and `.cursor/rules/mobile-simplicity.mdc`. Do not apply these patterns to mobile.
+
+Use these patterns whenever a tab mixes **filters + summary table + long card list** (Portfolio 24h, opportunities, dashboards).
+
+## Panel stack (required for full-height tabs)
+
+```tsx
+<div className="panel-stack flex-1 min-h-0">
+  <div className="panel-stack-pin …">  {/* filters, KPI table, summary strip — shrink-0 */}
+  <div className="panel-stack-scroll …">  {/* detail cards — sole vertical scroll */}
+</div>
+```
+
+- Parent chain must include `flex flex-col flex-1 min-h-0 overflow-hidden`.
+- Never put tables and cards in the **same** `overflow-y-auto` without pinning the table.
+
+## Tables in the pin zone
+
+- Wrap wide tables in `panel-table-scroll` (max ~38vh / 260px, internal scroll).
+- Default **collapsed** or capped height when row count > ~5 (opportunities profile).
+- Table body: `text-[10px]`; company/name columns: `truncate` + `max-w-[88px]`.
+- P&L ticker table: class `portfolio-pnl-sheet-table` — sticky header, `min-width: 54rem`, cell padding ≥ 0.5rem, P&L %/€ stacked with `gap-1`, colors via `rgb(var(--signal-up/down))`.
+
+## Text & labels
+
+- Page subtitles: `ui-subtitle-clamp` (max 2 lines) + full text in `title`.
+- Toolbar hints: `ui-caption-clamp` (1 line) + `title` tooltip.
+- Chips: short labels; long copy only in `title` / tooltip.
+- Hero metrics in dense lists: `PlanProbHero variant="compact"` or `"table"`, not `"hero"`.
+
+## Anti-patterns
+
+- `ResponsiveContainer height="100%"` without explicit pixel height on parent.
+- `flex-1` children without `min-h-0` (breaks scroll).
+- Unbounded table height above scrollable content.
+- `text-xl` / `text-lg` in summary strips or multi-row toolbars.

@@ -1,0 +1,24 @@
+function EffectivenessTaxonomyCaption() {
+  const t = useT();
+  return (
+    <DidascaliaBox title={t("learningLab.caption.effectiveness.title")}>
+      <p className="text-[11px] leading-relaxed text-ink-muted">{t("learningLab.caption.effectiveness.intro")}</p>
+      <ul className="text-[10px] text-ink-muted list-disc pl-4 space-y-0.5">
+        <li>
+          <strong className="text-ink">Global cal_factor</strong>
+          {t("learningLab.caption.effectiveness.global")}
+        </li>
+        <li>
+          <strong className="text-ink">Cluster cal_factor</strong>
+          {t("learningLab.caption.effectiveness.cluster")}
+        </li>
+        <li>
+          <strong className="text-ink">Regime ×</strong>
+          {t("learningLab.caption.effectiveness.regime")}
+        </li>
+      </ul>
+    </DidascaliaBox>
+  );
+}
+
+function ClusterCfHint() {

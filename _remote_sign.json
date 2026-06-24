@@ -1,0 +1,248 @@
+{
+  "schema_version": 2,
+  "generated_at": "2026-06-07T10:22:19",
+  "window_calendar_days_pre_cd": 60,
+  "window_calendar_days_post_cd": 7,
+  "metric": "daily_dod_sign_pred_vs_actual",
+  "definition_it": "Variazione giorno-per-giorno: segno(Δ prezzo stimato) = segno(Δ prezzo reale), da T−60 a T+7.",
+  "definition_en": "Day-over-day sign match on estimated vs actual price, from T−60 through T+7.",
+  "n_events": 5565,
+  "n_events_skipped": 2845,
+  "overall": {
+    "hit_pct": 31.82,
+    "hit_pct_pre_cd": 30.76,
+    "n_pairs": 253474,
+    "n_pairs_pre_cd": 222175,
+    "mag_err_when_hit_pp": 2.831
+  },
+  "by_time_bin": [
+    {
+      "cal_offset_lo": -60,
+      "cal_offset_hi": -56,
+      "label": "T-60…-56",
+      "zone": "pre_cd",
+      "hit_pct": 23.81,
+      "mag_err_when_hit_pp": 2.33,
+      "n": 13224
+    },
+    {
+      "cal_offset_lo": -55,
+      "cal_offset_hi": -51,
+      "label": "T-55…-51",
+      "zone": "pre_cd",
+      "hit_pct": 25.27,
+      "mag_err_when_hit_pp": 2.468,
+      "n": 17969
+    },
+    {
+      "cal_offset_lo": -50,
+      "cal_offset_hi": -46,
+      "label": "T-50…-46",
+      "zone": "pre_cd",
+      "hit_pct": 28.11,
+      "mag_err_when_hit_pp": 2.744,
+      "n": 19841
+    },
+    {
+      "cal_offset_lo": -45,
+      "cal_offset_hi": -41,
+      "label": "T-45…-41",
+      "zone": "pre_cd",
+      "hit_pct": 30.22,
+      "mag_err_when_hit_pp": 3.006,
+      "n": 19696
+    },
+    {
+      "cal_offset_lo": -40,
+      "cal_offset_hi": -36,
+      "label": "T-40…-36",
+      "zone": "pre_cd",
+      "hit_pct": 29.95,
+      "mag_err_when_hit_pp": 2.773,
+      "n": 17811
+    },
+    {
+      "cal_offset_lo": -35,
+      "cal_offset_hi": -31,
+      "label": "T-35…-31",
+      "zone": "pre_cd",
+      "hit_pct": 28.04,
+      "mag_err_when_hit_pp": 2.529,
+      "n": 19213
+    },
+    {
+      "cal_offset_lo": -30,
+      "cal_offset_hi": -26,
+      "label": "T-30…-26",
+      "zone": "pre_cd",
+      "hit_pct": 30.88,
+      "mag_err_when_hit_pp": 3.017,
+      "n": 19813
+    },
+    {
+      "cal_offset_lo": -25,
+      "cal_offset_hi": -21,
+      "label": "T-25…-21",
+      "zone": "pre_cd",
+      "hit_pct": 34.22,
+      "mag_err_when_hit_pp": 3.385,
+      "n": 19113
+    },
+    {
+      "cal_offset_lo": -20,
+      "cal_offset_hi": -16,
+      "label": "T-20…-16",
+      "zone": "pre_cd",
+      "hit_pct": 33.79,
+      "mag_err_when_hit_pp": 3.426,
+      "n": 18012
+    },
+    {
+      "cal_offset_lo": -15,
+      "cal_offset_hi": -11,
+      "label": "T-15…-11",
+      "zone": "pre_cd",
+      "hit_pct": 31.44,
+      "mag_err_when_hit_pp": 3.005,
+      "n": 19831
+    },
+    {
+      "cal_offset_lo": -10,
+      "cal_offset_hi": -6,
+      "label": "T-10…-6",
+      "zone": "pre_cd",
+      "hit_pct": 33.89,
+      "mag_err_when_hit_pp": 2.732,
+      "n": 19761
+    },
+    {
+      "cal_offset_lo": -5,
+      "cal_offset_hi": -1,
+      "label": "T-5…-1",
+      "zone": "pre_cd",
+      "hit_pct": 37.52,
+      "mag_err_when_hit_pp": 2.589,
+      "n": 17891
+    },
+    {
+      "cal_offset_lo": 1,
+      "cal_offset_hi": 7,
+      "label": "+1…+7",
+      "zone": "post_cd",
+      "hit_pct": 38.75,
+      "mag_err_when_hit_pp": 2.624,
+      "n": 26546
+    }
+  ],
+  "by_week_bin": [
+    {
+      "cal_offset_lo": -60,
+      "cal_offset_hi": -56,
+      "label": "T-60…-56",
+      "zone": "pre_cd",
+      "hit_pct": 23.81,
+      "mag_err_when_hit_pp": 2.33,
+      "n": 13224
+    },
+    {
+      "cal_offset_lo": -55,
+      "cal_offset_hi": -51,
+      "label": "T-55…-51",
+      "zone": "pre_cd",
+      "hit_pct": 25.27,
+      "mag_err_when_hit_pp": 2.468,
+      "n": 17969
+    },
+    {
+      "cal_offset_lo": -50,
+      "cal_offset_hi": -46,
+      "label": "T-50…-46",
+      "zone": "pre_cd",
+      "hit_pct": 28.11,
+      "mag_err_when_hit_pp": 2.744,
+      "n": 19841
+    },
+    {
+      "cal_offset_lo": -45,
+      "cal_offset_hi": -41,
+      "label": "T-45…-41",
+      "zone": "pre_cd",
+      "hit_pct": 30.22,
+      "mag_err_when_hit_pp": 3.006,
+      "n": 19696
+    },
+    {
+      "cal_offset_lo": -40,
+      "cal_offset_hi": -36,
+      "label": "T-40…-36",
+      "zone": "pre_cd",
+      "hit_pct": 29.95,
+      "mag_err_when_hit_pp": 2.773,
+      "n": 17811
+    },
+    {
+      "cal_offset_lo": -35,
+      "cal_offset_hi": -31,
+      "label": "T-35…-31",
+      "zone": "pre_cd",
+      "hit_pct": 28.04,
+      "mag_err_when_hit_pp": 2.529,
+      "n": 19213
+    },
+    {
+      "cal_offset_lo": -30,
+      "cal_offset_hi": -26,
+      "label": "T-30…-26",
+      "zone": "pre_cd",
+      "hit_pct": 30.88,
+      "mag_err_when_hit_pp": 3.017,
+      "n": 19813
+    },
+    {
+      "cal_offset_lo": -25,
+      "cal_offset_hi": -21,
+      "label": "T-25…-21",
+      "zone": "pre_cd",
+      "hit_pct": 34.22,
+      "mag_err_when_hit_pp": 3.385,
+      "n": 19113
+    },
+    {
+      "cal_offset_lo": -20,
+      "cal_offset_hi": -16,
+      "label": "T-20…-16",
+      "zone": "pre_cd",
+      "hit_pct": 33.79,
+      "mag_err_when_hit_pp": 3.426,
+      "n": 18012
+    },
+    {
+      "cal_offset_lo": -15,
+      "cal_offset_hi": -11,
+      "label": "T-15…-11",
+      "zone": "pre_cd",
+      "hit_pct": 31.44,
+      "mag_err_when_hit_pp": 3.005,
+      "n": 19831
+    },
+    {
+      "cal_offset_lo": -10,
+      "cal_offset_hi": -6,
+      "label": "T-10…-6",
+      "zone": "pre_cd",
+      "hit_pct": 33.89,
+      "mag_err_when_hit_pp": 2.732,
+      "n": 19761
+    },
+    {
+      "cal_offset_lo": -5,
+      "cal_offset_hi": -1,
+      "label": "T-5…-1",
+      "zone": "pre_cd",
+      "hit_pct": 37.52,
+      "mag_err_when_hit_pp": 2.589,
+      "n": 17891
+    }
+  ],
+  "by_days_to_cd": []
+}

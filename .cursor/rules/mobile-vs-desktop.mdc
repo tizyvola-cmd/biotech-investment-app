@@ -1,0 +1,74 @@
+---
+description: Mobile PWA vs desktop app — separate codebases, layouts, and change scope (tester companion)
+globs: mobile-ui/**/*,desktop-ui/**/*
+alwaysApply: true
+---
+
+# Mobile vs desktop — keep separate
+
+Two **independent frontends** share only the **same API server** (VPS :8765). They are **not** the same UI with responsive CSS.
+
+| | Desktop | Mobile (SuperNova Short) |
+|---|---------|---------------------------|
+| Folder | `desktop-ui/` | `mobile-ui/` |
+| URL | `/` (root) | `/mobile/` |
+| Audience | Full product / power users | **Testers** of the desktop app — simplified companion |
+| Layout | Dense dashboards, wide tables, Piggy Bank, Pulse, many panels | **3 tabs:** Dashboard · Portfolio · Opportunities |
+| Components | `desktop-ui/src/components/*` | `mobile-ui/src/components/*` only |
+| CSS | `desktop-ui/src/index.css`, Tailwind in TSX | `mobile-ui/src/index.css`, `theme.css` |
+| Build | `cd desktop-ui && npm run build` | `cd mobile-ui && npm run build` |
+| Dev | desktop-ui Vite (port 5173 typical) | `cd mobile-ui && npm run dev` → :5174 |
+
+## Hard rules for agents
+
+1. **Never import** `desktop-ui/` code into `mobile-ui/` (no shared React components).
+2. **Never apply** mobile compact styles to desktop (or desktop density to mobile) unless the user **explicitly** names both targets.
+3. **Desktop-only changes** (Piggy Bank, Actions table, charts row, panel-stack, simulation grid) → edit **`desktop-ui/` only**.
+4. **Mobile-only changes** (OpportunityCard, tab bar, touch forms) → edit **`mobile-ui/` only**.
+5. **Shared backend contract** (OK to touch both sides when API changes):
+   - `GET/PUT /api/mobile/dashboard-snapshot` — desktop publishes, mobile reads
+   - `GET /api/sheets/simulation`, `GET/POST /api/investment/sim-inputs`
+   - Types/logic duplicated or mirrored in `mobile-ui/src/` (`simLogic.ts`, `opportunityLogic.ts`) — do not refactor into a shared npm package unless asked.
+
+## Mobile scope (tester MVP)
+
+- Dashboard: KPI preview + few recommendations + links — **not** full desktop dashboard.
+- Portfolio: open positions + edit sim (price/capital).
+- Opportunities: filtered list/cards + add to simulator.
+- Settings sheet: API URL + token only.
+- **Out of scope on mobile:** Piggy Bank bar, Pulse table, wide recommendation grid, Model Lab charts, clinical hub, full simulation sheet.
+
+See also: `.cursor/rules/mobile-simplicity.mdc`
+
+## Desktop scope
+
+Full SuperNova desktop — all tabs, dense tables, charts, Decision Lab, etc.
+
+See also: `.cursor/rules/layout-density.mdc` (desktop panels only)
+
+## Commands (reference)
+
+```powershell
+# Mobile — dev locale (proxy → backend :8765)
+cd "c:\coding\Biotech_Investment app 6\mobile-ui"
+npm run dev
+# Browser: http://localhost:5174  — oppure VPS: http://HOST:8765/mobile/
+
+# Mobile — build
+npm run build
+
+# Desktop — build
+cd "c:\coding\Biotech_Investment app 6\desktop-ui"
+npm run build
+
+# Deploy entrambi sul VPS (se script presente)
+cd "c:\coding\Biotech_Investment app 6"
+.\scripts\deploy_vps_update.ps1
+```
+
+## When the user says "mobile" or "desktop"
+
+- **"mobile" / "PWA" / "/mobile/"** → only `mobile-ui/`
+- **"dashboard" / "desktop" / "Piggy Bank" / "Actions to take"** → only `desktop-ui/` (unless they say mobile too)
+
+If unsure which app they mean, ask once — do not guess by applying the same layout fix to both.

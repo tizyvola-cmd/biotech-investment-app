@@ -451,6 +451,108 @@
              "last_updated": _today_iso(),
              "recent_outcomes": [
                  {
+--- a/prediction/learning_lab.py
++++ b/prediction/learning_lab.py
+@@ -28,7 +28,6 @@
+ from prediction.regime_calibration import (
+     compute_regime_multipliers,
+     get_current_regime,
+-    get_regime_at_date,
+     resolve_regime_outcomes_for_learning,
+     sync_outcomes_from_signal_audit,
+ )
+@@ -326,7 +325,6 @@
+     weeks = history.get("weeks") if isinstance(history, dict) else []
+     reliable = _reliable_learning_weeks(weeks)
+     hist_latest = reliable[-1] if reliable else {}
+-    hist_prev = reliable[-2] if len(reliable) >= 2 else {}
+ 
+     if live_metrics is not None:
+         live = live_metrics
+@@ -359,9 +357,9 @@
+         {
+             "mechanism": "global_cf",
+             "label": "Global cal_factor",
+-            "mae_before": hist_prev.get("mae_global_before") or hist_prev.get("mae_baseline"),
++            "mae_before": live_or_hist("mae_global_before"),
+             "mae_after": live_or_hist("mae_with_all"),
+-            "dir_before": hist_prev.get("dir_global_before") or hist_prev.get("dir_with_all"),
++            "dir_before": live_or_hist("dir_global_before"),
+             "dir_after": live_or_hist("dir_with_all"),
+             "n": n_out,
+             "min_n": LEARNING_WEEK_MIN_N,
+@@ -369,9 +367,9 @@
+         {
+             "mechanism": "cluster_cf",
+             "label": "Cluster cal_factor",
+-            "mae_before": hist_prev.get("mae_before_cluster") or live_or_hist("mae_baseline", "mae_baseline"),
++            "mae_before": live_or_hist("mae_before_cluster"),
+             "mae_after": live_or_hist("mae_after_cluster"),
+-            "dir_before": hist_prev.get("dir_before_cluster") or live_or_hist("dir_before_cluster"),
++            "dir_before": live_or_hist("dir_before_cluster"),
+             "dir_after": live_or_hist("dir_after_cluster"),
+             "n": n_out,
+             "min_n": LEARNING_WEEK_MIN_N,
+@@ -379,9 +377,9 @@
+         {
+             "mechanism": "regime_mult",
+             "label": "Regime multiplier",
+-            "mae_before": hist_prev.get("mae_before_regime") or live_or_hist("mae_before_regime"),
++            "mae_before": live_or_hist("mae_before_regime"),
+             "mae_after": live_or_hist("mae_after_regime"),
+-            "dir_before": hist_prev.get("dir_before_regime") or live_or_hist("dir_before_regime"),
++            "dir_before": live_or_hist("dir_before_regime"),
+             "dir_after": live_or_hist("dir_after_regime"),
+             "n": n_reg,
+             "min_n": LEARNING_WEEK_MIN_N,
+@@ -464,17 +462,13 @@
+     )
+ 
+     sig = load_signal_calibration_snippet()
+-    weekly = sig.get("weekly_actionable") if isinstance(sig.get("weekly_actionable"), list) else []
+-    w_prev = weekly[-2] if len(weekly) >= 2 and isinstance(weekly[-2], dict) else {}
+-    w_latest = weekly[-1] if weekly and isinstance(weekly[-1], dict) else {}
+     useful_hit = sig.get("useful_hit_pct")
+-    sig_dir_before = (float(w_prev["hit_pct"]) / 100.0) if w_prev.get("hit_pct") is not None else None
+-    sig_dir_after = (
+-        (float(w_latest["hit_pct"]) / 100.0)
+-        if w_latest.get("hit_pct") is not None
+-        else (float(useful_hit) / 100.0 if useful_hit is not None else None)
+-    )
+-    sig_n = w_latest.get("n") or sig.get("useful_n") or 0
++    # Judge the consolidated actionable cohort against a 50% coin-flip baseline.
++    # Differencing two consecutive weekly buckets (often n<25) made the verdict a
++    # function of single-week noise; the useful cohort aggregates far more samples.
++    sig_dir_after = float(useful_hit) / 100.0 if useful_hit is not None else None
++    sig_dir_before = 0.5 if sig_dir_after is not None else None
++    sig_n = sig.get("useful_n") or 0
+     rows.append(
+         {
+             "mechanism": "signal_calibration",
+@@ -484,7 +478,7 @@
+             "dir_before": sig_dir_before,
+             "dir_after": sig_dir_after,
+             "n": sig_n,
+-            "min_n": 10,
++            "min_n": 30,
+         }
+     )
+ 
+@@ -515,12 +509,8 @@
+         if r.get("mechanism") in ("polygon_match", "eis_super", "signal_calibration"):
+             r["verdict"] = _verdict_corr(r["dir_delta_pp"], r["n"], r["min_n"])
+         else:
+-            r["verdict"] = _verdict(
+-                r["mae_delta_pp"],
+-                (r["dir_delta_pp"] or 0) / 100 if r["dir_delta_pp"] else None,
+-                r["n"],
+-                r["min_n"],
+-            )
++            dir_delta = r["dir_delta_pp"] / 100 if r["dir_delta_pp"] is not None else None
++            r["verdict"] = _verdict(r["mae_delta_pp"], dir_delta, r["n"], r["min_n"])
+     return rows
+ 
+ 
 --- /dev/null	2026-06-24 05:28:06.226363935 +0000
 +++ b/prediction/calibration_circuit_breaker.py
 @@ -0,0 +1,130 @@
@@ -1166,3 +1268,62 @@
 +    factor, status = _solve_cluster_cal_factor(pairs, _pairs_mae(pairs, 1.0), dir_acc)
 +    assert factor == 1.0
 +    assert status == "no_improvement"
+--- /dev/null	2026-06-24 05:28:06.226363935 +0000
++++ b/tests/test_effectiveness_delta.py
+@@ -0,0 +1,56 @@
++"""Effectiveness verdicts must isolate each layer's effect on the SAME outcome pool.
++
++Regression for the temporal-misalignment bug where ``mae_after`` came from the
++live snapshot while ``mae_before`` came from the previous week, conflating a
++layer's effect with week-over-week drift of the pool.
++"""
++from __future__ import annotations
++
++import json
++
++from prediction import learning_lab as ll
++
++LIVE = {
++    "n_outcomes": 1000,
++    "n_regime_outcomes": 1000,
++    "mae_baseline": 8.0,
++    "mae_before_cluster": 8.0,
++    "mae_after_cluster": 7.5,
++    "dir_before_cluster": 0.50,
++    "dir_after_cluster": 0.55,
++    "mae_before_regime": 7.5,
++    "mae_after_regime": 7.0,
++    "dir_before_regime": 0.50,
++    "dir_after_regime": 0.52,
++    "mae_global_before": 7.0,
++    "mae_with_all": 6.9,
++    "dir_global_before": 0.50,
++    "dir_with_all": 0.50,
++}
++
++
++def _rows(monkeypatch, tmp_path):
++    hist = tmp_path / "learning_history.json"
++    hist.write_text(json.dumps({"weeks": []}), encoding="utf-8")
++    monkeypatch.setattr(ll, "LEARNING_HISTORY_JSON", str(hist))
++    rows = ll.build_effectiveness_delta(
++        live_metrics=LIVE,
++        eis_overview={"learning_history": [], "effectiveness": {}, "n_events_scored": 0},
++        polygon_doc={"learning_history": [], "n_samples": 0},
++    )
++    return {r["mechanism"]: r for r in rows}
++
++
++def test_layer_delta_is_within_snapshot_not_cross_week(monkeypatch, tmp_path):
++    rows = _rows(monkeypatch, tmp_path)
++    # each delta = after - before of the SAME live snapshot
++    assert rows["cluster_cf"]["mae_delta_pp"] == -0.5
++    assert rows["regime_mult"]["mae_delta_pp"] == -0.5
++    assert rows["global_cf"]["mae_delta_pp"] == -0.1
++
++
++def test_history_absent_does_not_fabricate_before(monkeypatch, tmp_path):
++    # with no history, before must still come from the live snapshot (not None)
++    rows = _rows(monkeypatch, tmp_path)
++    assert rows["regime_mult"]["mae_delta_pp"] is not None
++    assert rows["regime_mult"]["dir_delta_pp"] == 2.0

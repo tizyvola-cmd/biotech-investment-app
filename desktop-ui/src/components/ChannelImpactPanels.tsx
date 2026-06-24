@@ -54,6 +54,15 @@ function fmtSigned(v: number | null | undefined, unit = " pp", digits = 2): stri
   return `${v > 0 ? "+" : ""}${v.toFixed(digits)}${unit}`;
 }
 
+function liftClass(v: number | null | undefined): string {
+  if (v == null || !Number.isFinite(v)) return "";
+  return v > 0
+    ? "text-emerald-600 dark:text-emerald-400"
+    : v < 0
+      ? "text-rose-600 dark:text-rose-400"
+      : "";
+}
+
 /** Minimal SVG line sparkline over a numeric series (nulls become gaps/0-baseline). */
 function Sparkline({
   values,
@@ -311,6 +320,29 @@ export function ChannelImpactPanels({ data, it }: { data?: ChannelImpact; it: bo
                     </span>
                   </div>
                 ))}
+              </div>
+              <div className="pt-1 space-y-0.5">
+                <div className="flex justify-between text-[9px] uppercase tracking-wide text-ink-muted px-0.5">
+                  <span>{it ? "P&L per regime d'ingresso" : "P&L by entry regime"}</span>
+                  <span className="normal-case">{it ? "n · win% · P&L · lift" : "n · win% · P&L · lift"}</span>
+                </div>
+                {trd.regimes && trd.regimes.length > 0 ? (
+                  trd.regimes.map((rg) => (
+                    <div key={rg.regime} className="flex items-center justify-between gap-2 text-[10px] tabular-nums">
+                      <span className="text-ink">{rg.regime}</span>
+                      <span className="text-ink-muted">
+                        {rg.n} · {fmtPct(rg.win_pct)} · {fmt(rg.mean_pnl_pct)}% ·{" "}
+                        <span className={liftClass(rg.lift_vs_book_pp)}>{fmtSigned(rg.lift_vs_book_pp)}</span>
+                      </span>
+                    </div>
+                  ))
+                ) : (
+                  <p className="text-[9px] text-ink-muted italic leading-snug">
+                    {it
+                      ? "In raccolta: il regime d'ingresso si popola sui nuovi trade chiusi (lo storico non lo porta)."
+                      : "Collecting: entry regime populates on newly closed trades (history lacks it)."}
+                  </p>
+                )}
               </div>
             </>
           ) : (

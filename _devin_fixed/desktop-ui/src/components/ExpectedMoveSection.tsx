@@ -1,4 +1,93 @@
-import type { ExpectedMoveCalibration } from "../api/supernova";
+import type { ExpectedMoveBucket, ExpectedMoveCalibration } from "../api/supernova";
+
+/** Calm → volatile colour ramp for the expected-move buckets (Q1 … Q5). */
+const BUCKET_COLORS = ["#34d399", "#a3e635", "#fbbf24", "#fb923c", "#ef4444"];
+
+function piePolar(cx: number, cy: number, r: number, deg: number): [number, number] {
+  const rad = ((deg - 90) * Math.PI) / 180;
+  return [cx + r * Math.cos(rad), cy + r * Math.sin(rad)];
+}
+
+function pieArcPath(
+  cx: number,
+  cy: number,
+  r: number,
+  start: number,
+  end: number,
+): string {
+  const [sx, sy] = piePolar(cx, cy, r, start);
+  const [ex, ey] = piePolar(cx, cy, r, end);
+  const large = end - start <= 180 ? 0 : 1;
+  return `M ${cx} ${cy} L ${sx} ${sy} A ${r} ${r} 0 ${large} 1 ${ex} ${ey} Z`;
+}
+
+/** Simple pie: share of resolved catalysts per expected-move class. */
+function ExpectedMovePie({
+  buckets,
+  it,
+  bigPp,
+}: {
+  buckets: ExpectedMoveBucket[];
+  it: boolean;
+  bigPp: number;
+}) {
+  const total = buckets.reduce((s, b) => s + (b.n || 0), 0);
+  if (total <= 0) return null;
+  const size = 132;
+  const r = size / 2 - 2;
+  const cx = size / 2;
+  const cy = size / 2;
+  let angle = 0;
+  const slices = buckets.map((b, i) => {
+    const frac = (b.n || 0) / total;
+    const start = angle;
+    const end = buckets.length === 1 ? 359.999 : angle + frac * 360;
+    angle = end;
+    return { b, start, end, frac, color: BUCKET_COLORS[i % BUCKET_COLORS.length] };
+  });
+  return (
+    <div className="flex items-center gap-4 flex-wrap">
+      <svg
+        width={size}
+        height={size}
+        viewBox={`0 0 ${size} ${size}`}
+        className="shrink-0"
+        role="img"
+        aria-label={it ? "Distribuzione movimento atteso" : "Expected-move distribution"}
+      >
+        {slices.map((s) => (
+          <path
+            key={s.b.bucket}
+            d={pieArcPath(cx, cy, r, s.start, s.end)}
+            fill={s.color}
+            stroke="rgb(var(--surface))"
+            strokeWidth={1.5}
+          />
+        ))}
+      </svg>
+      <ul className="text-[11px] space-y-1 min-w-0">
+        {slices.map((s) => (
+          <li key={s.b.bucket} className="flex items-center gap-2 flex-wrap">
+            <span
+              className="inline-block h-2.5 w-2.5 rounded-sm shrink-0"
+              style={{ backgroundColor: s.color }}
+            />
+            <span className="text-ink">
+              <span className="text-ink-muted">Q{s.b.bucket}</span> {s.b.label}
+            </span>
+            <span className="text-ink-muted tabular-nums">
+              {(s.frac * 100).toFixed(0)}% · ~{s.b.median_move_pp.toFixed(1)}pp ·{" "}
+              {`P(>${bigPp}pp) ${(s.b.prob_gt_10pp * 100).toFixed(0)}%`}
+            </span>
+            {s.b.straddle_candidate ? (
+              <span className="text-accent font-semibold">✓</span>
+            ) : null}
+          </li>
+        ))}
+      </ul>
+    </div>
+  );
+}
 
 /**
  * Expected Move (magnitude) calibration panel for the Model Calibration tab.
@@ -64,6 +153,12 @@ export function ExpectedMoveSection({
             : "Q1–Q5 = expected-move quintiles: resolved catalysts ranked by predicted size and split into 5 groups of ~20%. Q1 = smallest move, Q5 = largest (straddle candidate)."}
         </p>
       </div>
+      <ExpectedMovePie buckets={buckets} it={it} bigPp={bigPp} />
+      <p className="text-[10px] text-ink-muted/80 leading-snug">
+        {it
+          ? "Ogni fetta = quota di catalyst storici in quella classe di movimento (~20% per quintile = probabilità che un titolo ci ricada). L'etichetta riporta il movimento mediano atteso e la probabilità di un movimento grande."
+          : "Each slice = share of resolved catalysts in that move class (~20% per quintile = probability a stock lands there). Labels show the median expected move and the big-move probability."}
+      </p>
       <div className="overflow-x-auto">
         <table className="w-full text-[11px] tabular-nums">
           <thead>

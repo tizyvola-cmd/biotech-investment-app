@@ -20,7 +20,6 @@ from pathlib import Path
 from typing import Any, Literal
 
 from orchestrator_io_paths import (
-    DATA_DIR,
     FEEDBACK_HISTORY_JSON,
     FEEDBACK_SUMMARY_JSON,
     PAST_CATALYST_PREDICTIONS_JSON,
@@ -28,7 +27,6 @@ from orchestrator_io_paths import (
 )
 from past_pred_io import load_past_pred_map
 from prediction.evaluationFramework import (
-    DECISION_CLOSE_KEY,
     NODE_CHECKPOINTS,
     actual_pct_at_node,
     pred_base_at_node,
@@ -60,7 +58,29 @@ THRESHOLDS: dict[str, float] = {
     "bias_consecutive_nodes": 3,
     "direction_suspend_acc": 0.35,
     "direction_suspend_min_nodes": 5,
+    # Above this absolute MAE (pp) a ticker is treated as corrupt/outlier data:
+    # excluded from the portfolio average and never used to drive a cal_factor
+    # change (one freak penny-stock move once inflated the avg to ~1668%).
+    "mae_outlier_cap_pp": 300.0,
 }
+
+
+def _portfolio_center_mae(perf: dict[str, dict[str, Any]]) -> float | None:
+    """Mean per-ticker MAE with corrupt/outlier tickers excluded.
+
+    A single absurd value (e.g. MAE 1668%) otherwise dominates the average and
+    distorts every relative threshold (under/over-performer bars).
+    """
+    cap = THRESHOLDS["mae_outlier_cap_pp"]
+    maes = [
+        p["persistent_mae"]
+        for p in perf.values()
+        if p.get("persistent_mae") is not None
+        and p.get("flag") not in ("insufficient_data",)
+        and p["persistent_mae"] <= cap
+    ]
+    return round(statistics.mean(maes), 3) if maes else None
+
 
 FEEDBACK_NODES = ("T-10", "T-5", "T-3")
 
@@ -229,17 +249,13 @@ def _propose_cal_changes(
     seq_doc: dict,
 ) -> tuple[list[dict[str, Any]], dict[str, list[str]]]:
     """Return cal_factor change proposals + flag lists."""
-    maes = [
-        p["persistent_mae"]
-        for p in perf.values()
-        if p.get("persistent_mae") is not None and p.get("flag") not in ("insufficient_data",)
-    ]
-    portfolio_avg_mae = statistics.mean(maes) if maes else None
+    portfolio_avg_mae = _portfolio_center_mae(perf)
 
     underperformers: list[str] = []
     strong: list[str] = []
     bias_flags: list[str] = []
     direction_suspended: list[str] = []
+    data_outliers: list[str] = []
     changes: list[dict[str, Any]] = []
 
     for tk, p in sorted(perf.items()):
@@ -252,6 +268,12 @@ def _propose_cal_changes(
         reason: str | None = None
 
         if flag == "insufficient_data":
+            continue
+
+        if mae is not None and mae > THRESHOLDS["mae_outlier_cap_pp"]:
+            p["flag"] = "data_outlier"
+            p["cal_factor"] = round(old_cal, 4)
+            data_outliers.append(tk)
             continue
 
         if (
@@ -313,6 +335,7 @@ def _propose_cal_changes(
         "strong_performers": strong,
         "bias_flags": bias_flags,
         "direction_suspended": direction_suspended,
+        "data_outliers": data_outliers,
     }
     return changes, summary_flags
 
@@ -339,17 +362,17 @@ def build_portfolio_summary(
     changes: list[dict[str, Any]],
     summary_flags: dict[str, list[str]],
 ) -> dict[str, Any]:
-    maes = [p["persistent_mae"] for p in perf.values() if p.get("persistent_mae") is not None]
     dirs = [p["direction_acc"] for p in perf.values() if p.get("direction_acc") is not None]
     return {
         "version": 1,
         "updated_at": _now_iso(),
-        "portfolio_avg_mae": round(statistics.mean(maes), 3) if maes else None,
+        "portfolio_avg_mae": _portfolio_center_mae(perf),
         "portfolio_direction_acc": round(statistics.mean(dirs), 3) if dirs else None,
         "underperformers": summary_flags.get("underperformers") or [],
         "strong_performers": summary_flags.get("strong_performers") or [],
         "bias_flags": summary_flags.get("bias_flags") or [],
         "direction_suspended": summary_flags.get("direction_suspended") or [],
+        "data_outliers": summary_flags.get("data_outliers") or [],
         "cal_factor_changes": changes,
         "n_tickers": len(perf),
     }

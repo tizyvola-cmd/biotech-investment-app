@@ -591,6 +591,7 @@ def build_investment_sim_outcomes(
     from simulation_preserve import row_key_from_parts
 
     market_price_by_key: dict[str, float] = {}
+    market_price_by_ticker: dict[str, float] = {}
     positions: list[dict[str, Any]] = []
     for row in sim_rows:
         if not isinstance(row, dict):
@@ -604,6 +605,8 @@ def build_investment_sim_outcomes(
         curr = _num(row.get(col_curr)) if col_curr else None
         if rk and curr is not None and curr > 0:
             market_price_by_key[rk] = curr
+        if ticker and curr is not None and curr > 0:
+            market_price_by_ticker[ticker] = curr
         inp = _lookup_input_for_row(
             invest_inputs=invest_inputs,
             row_key=rk or "",
@@ -671,10 +674,12 @@ def build_investment_sim_outcomes(
                 return None
             return round(f, digits) if math.isfinite(f) else None
 
+        universe = inp.get("universe") or "simloop"
         positions.append(
             {
                 "row_key": rk_key,
                 "ticker": ticker,
+                "universe": universe,
                 "completion_date": cd.isoformat() if cd else "",
                 "days_to_cd": days_to_cd,
                 "cd_passed": cd_passed,
@@ -864,12 +869,38 @@ def build_investment_sim_outcomes(
         p["buy_signal_result"] = "not_applicable"
         p["buy_signal_note"] = _SLOPE_RULE_NEUTRALIZED_NOTE
 
+        # SELL side: the slope SUGGESTION is neutralized (slope_20d is non-
+        # predictive — walk-forward backtest), but the post-exit move is still
+        # scored for every closed exit as an exit-quality diagnostic, with the
+        # robust exit/current price fallbacks from the P&L fix.
         exit_s20 = p.get("exit_slope_20d")
         p["sell_signal_suggested"] = False
         p["sell_signal_basis_slope_20d"] = round(float(exit_s20), 4) if exit_s20 is not None else None
-        p["sell_signal_after_move_pct"] = None
-        p["sell_signal_result"] = "not_applicable"
         p["sell_signal_note"] = _SLOPE_RULE_NEUTRALIZED_NOTE
+        has_exit = bool(p.get("exit_ts") or p.get("cd_passed"))
+        exit_px = _num(p.get("exit_current_price_usd"))
+        if (exit_px is None or exit_px <= 0) and has_exit:
+            buy_px = _num(p.get("buy_price_usd")) or _num(p.get("entry_buy_price_usd"))
+            pnl_pct = _num(p.get("exit_pnl_pct_at_event"))
+            if pnl_pct is None:
+                pnl_pct = _num(p.get("pnl_pct"))
+            if buy_px is not None and buy_px > 0 and pnl_pct is not None:
+                exit_px = buy_px * (1.0 + pnl_pct / 100.0)
+        base_key = str(p.get("row_key", "")).split("#cycle", 1)[0]
+        ticker_up = str(p.get("ticker", "")).strip().upper()
+        current_px = _num(market_price_by_key.get(base_key))
+        if current_px is None and ticker_up:
+            current_px = _num(market_price_by_ticker.get(ticker_up))
+        if has_exit and exit_px is not None and exit_px > 0 and current_px is not None and current_px > 0:
+            after_sell_pct = ((current_px - exit_px) / exit_px) * 100.0
+            p["sell_signal_after_move_pct"] = round(after_sell_pct, 2)
+            p["sell_signal_result"] = _signal_result(after_sell_pct, expect="down")
+        elif has_exit:
+            p["sell_signal_after_move_pct"] = None
+            p["sell_signal_result"] = "pending"
+        else:
+            p["sell_signal_after_move_pct"] = None
+            p["sell_signal_result"] = "not_applicable"
 
     closed = [p for p in positions if p.get("cd_passed")]
     open_pos = [p for p in positions if not p.get("cd_passed")]

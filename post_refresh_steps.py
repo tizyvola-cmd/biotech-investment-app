@@ -207,7 +207,9 @@ def run_post_refresh_steps(
                 len(fb.get("cal_factor_changes") or []),
             )
         except Exception as exc:
-            log.warning("validation_feedback_loop failed (non-fatal): %s", exc)
+            # Surface as an error (was a swallowed warning): a silent failure here
+            # left the dashboard stuck on "Collecting data" indefinitely.
+            log.error("validation_feedback_loop failed: %s", exc, exc_info=True)
             failures.append(f"validation_feedback_loop ({exc})")
 
     return failures

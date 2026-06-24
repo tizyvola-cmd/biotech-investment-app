@@ -223,10 +223,20 @@ def build_correlation_timeline(
             ys = [p[1] for p in pairs]
             return _pearson(xs, ys)
 
+        def _mag_mae(pairs: list[tuple[float, float]]) -> float | None:
+            # Magnitude-calibration error: |score| vs |ΔP|. Unlike Pearson ρ this is
+            # sensitive to the per-bin scalar cal_factor (super = raw * K), so a
+            # well-sized cal_factor actually shows up as a lift here.
+            if len(pairs) < 3:
+                return None
+            return round(sum(abs(abs(s) - abs(d)) for s, d in pairs) / len(pairs), 4)
+
         raw_r1 = _rho(raw_1d)
         sup_r1 = _rho(sup_1d)
         raw_r7 = _rho(raw_7d)
         sup_r7 = _rho(sup_7d)
+        mae_raw_7 = _mag_mae(raw_7d)
+        mae_sup_7 = _mag_mae(sup_7d)
 
         out.append(
             {
@@ -243,6 +253,11 @@ def build_correlation_timeline(
                 "corr_super_7d": sup_r7,
                 "lift_1d": round(sup_r1 - raw_r1, 4) if sup_r1 is not None and raw_r1 is not None else None,
                 "lift_7d": round(sup_r7 - raw_r7, 4) if sup_r7 is not None and raw_r7 is not None else None,
+                "mae_raw_7d": mae_raw_7,
+                "mae_super_7d": mae_sup_7,
+                "mae_lift_7d": (
+                    round(mae_raw_7 - mae_sup_7, 4) if mae_raw_7 is not None and mae_sup_7 is not None else None
+                ),
                 "cal_factor": (st.get("windows") or {}).get(label, {}).get("cal_factor"),
             }
         )
@@ -315,6 +330,9 @@ def run_eis_super_score_learning_cycle(*, dry_run: bool = True) -> dict[str, Any
         "mean_corr_raw_7d": _mean_rho("corr_raw_7d"),
         "mean_corr_super_7d": _mean_rho("corr_super_7d"),
         "mean_lift_7d": _mean_rho("lift_7d"),
+        "mean_mae_raw_7d": _mean_rho("mae_raw_7d"),
+        "mean_mae_super_7d": _mean_rho("mae_super_7d"),
+        "mean_mae_lift_7d": _mean_rho("mae_lift_7d"),
         "bins_with_data_7d": sum(1 for r in timeline if r.get("corr_super_7d") is not None),
     }
 
@@ -328,14 +346,22 @@ def run_eis_super_score_learning_cycle(*, dry_run: bool = True) -> dict[str, Any
     }
 
     if not dry_run:
+        today = _today_iso()
         history = list(prev.get("history") or [])
+        # Replace any snapshot already taken today instead of appending a duplicate
+        # (re-running the cycle the same day otherwise produced identical adjacent
+        # points and collapsed every week-over-week delta to 0.0).
+        history = [h for h in history if not (isinstance(h, dict) and h.get("date") == today)]
         history.append(
             {
-                "week": _today_iso()[:7],
-                "date": _today_iso(),
+                "week": today[:7],
+                "date": today,
                 "mean_corr_raw_7d": effectiveness.get("mean_corr_raw_7d"),
                 "mean_corr_super_7d": effectiveness.get("mean_corr_super_7d"),
                 "mean_lift_7d": effectiveness.get("mean_lift_7d"),
+                "mean_mae_raw_7d": effectiveness.get("mean_mae_raw_7d"),
+                "mean_mae_super_7d": effectiveness.get("mean_mae_super_7d"),
+                "mean_mae_lift_7d": effectiveness.get("mean_mae_lift_7d"),
                 "changes": changes,
             }
         )

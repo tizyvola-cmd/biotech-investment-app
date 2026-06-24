@@ -35,6 +35,9 @@ import { ExpectedMoveSection } from "./ExpectedMoveSection";
 import { GlobalCalFactorReadOnly, LearningPipelinePanel } from "./LearningPipelinePanel";
 import { LearningLabPortfolioTab } from "./LearningLabPortfolioTab";
 import { seedCdPatternPolygonOverviewFromLab } from "../sheet/useCdPatternPolygonOverview";
+import { loadInvestSimHistory, loadInvestSimInputs } from "../sheet/investSimStorage";
+import { computeEisFeedWindowScore } from "../sheet/lossRescueEngine";
+import { analyzeRescueRebound, type RescueReboundAnalysis } from "../sheet/recommendationRescue";
 
 const REFRESH_MS = 5 * 60_000;
 const OVERVIEW_SESSION_KEY = "learningLab.overview.v1";
@@ -816,6 +819,23 @@ export function LearningLabView({
 
   const weeks = useMemo(() => parseWeeks(data?.history), [data?.history]);
 
+  // HOLD / rescue rebound analysis lives in the UI sheet (rescue score + daily
+  // PnL path) and feeds the Recommendation channel panel.
+  const rescueRebound = useMemo<RescueReboundAnalysis | null>(() => {
+    if (typeof window === "undefined") return null;
+    try {
+      const history = loadInvestSimHistory();
+      return analyzeRescueRebound({
+        history,
+        inputs: loadInvestSimInputs(),
+        eisScoreForKey: (ticker) => computeEisFeedWindowScore(ticker, lang, null, history),
+      });
+    } catch {
+      return null;
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [reloadToken, lang]);
+
   const globalCfFromPipeline = useMemo(() => {
     const step = pipeline?.steps?.find((s) => s.id === "global_cal_factor");
     const v = step?.summary?.value;
@@ -1006,7 +1026,7 @@ export function LearningLabView({
           <div className="space-y-4">
             <LearningDataMissingBanner data={data} it={it} />
             <LearningLivePoolBanner data={data} it={it} />
-            <ChannelImpactPanels data={data.channel_impact} it={it} />
+            <ChannelImpactPanels data={data.channel_impact} it={it} rescue={rescueRebound} />
             <ExpectedMoveSection data={data.expected_move} it={it} />
             <details className="rounded-xl border border-[rgb(var(--border))]/40 bg-surface/10">
               <summary className="cursor-pointer select-none px-3 py-2 text-[11px] font-medium text-ink-muted hover:text-ink">

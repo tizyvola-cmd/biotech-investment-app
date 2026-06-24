@@ -1550,8 +1550,8 @@ export type RecommendationWeek = {
   week: string;
   n: number;
   buy_n: number;
-  buy_win_pct: number | null;
-  buy_mean_pnl_pct: number | null;
+  buy_up_hit_pct: number | null;
+  buy_graded_n: number;
 };
 
 export type TradingWeek = {
@@ -1562,12 +1562,11 @@ export type TradingWeek = {
   total_eur: number | null;
 };
 
-export type RecommendationAction = {
-  action: string;
+export type RecommendationSellReason = {
+  reason: string;
   n: number;
-  win_pct: number | null;
-  mean_pnl_pct: number | null;
-  lift_vs_book_pp: number | null;
+  graded_n: number;
+  down_hit_pct: number | null;
 };
 
 export type TradingRegimeBucket = {
@@ -1598,11 +1597,25 @@ export type ChannelImpact = {
   };
   recommendation?: {
     available: boolean;
-    n: number;
-    book_win_pct: number | null;
-    actions: RecommendationAction[];
+    buy: {
+      n: number;
+      graded_n: number;
+      up_hit_pct: number | null;
+    };
+    sell: {
+      n: number;
+      graded_n: number;
+      pending_n: number;
+      down_hit_pct: number | null;
+      by_reason: RecommendationSellReason[];
+    };
+    hold: {
+      n: number;
+      rescue_available: boolean;
+      note?: string;
+    };
     weekly: RecommendationWeek[];
-    note?: string;
+    note?: string | null;
   };
   trading?: {
     n: number;

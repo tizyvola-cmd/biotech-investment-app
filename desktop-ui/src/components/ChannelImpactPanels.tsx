@@ -12,6 +12,13 @@
  * Data comes from overview.channel_impact (prediction/recommendation/trading).
  */
 import type { ChannelImpact, ChannelLoopEffect } from "../api/supernova";
+import type { RescueReboundAnalysis } from "../sheet/recommendationRescue";
+
+const SELL_REASON_LABEL: Record<string, { it: string; en: string }> = {
+  stop_loss: { it: "stop-loss", en: "stop-loss" },
+  sds_below_40: { it: "SDS < 40", en: "SDS < 40" },
+  pre_cd_exit: { it: "pre-CD", en: "pre-CD" },
+};
 
 const VERDICT_TONE: Record<string, string> = {
   improving: "bg-emerald-500/15 text-emerald-700 dark:text-emerald-400",
@@ -139,11 +146,12 @@ function Panel({
   );
 }
 
-function Metric({ label, value }: { label: string; value: string }) {
+function Metric({ label, value, hint }: { label: string; value: string; hint?: string }) {
   return (
     <div className="flex flex-col">
       <span className="text-sm font-semibold tabular-nums text-ink leading-none">{value}</span>
       <span className="text-[9px] text-ink-muted">{label}</span>
+      {hint ? <span className="text-[8px] text-ink-muted/80 tabular-nums">{hint}</span> : null}
     </div>
   );
 }
@@ -172,7 +180,15 @@ function LoopRow({ loop, it }: { loop: ChannelLoopEffect; it: boolean }) {
   );
 }
 
-export function ChannelImpactPanels({ data, it }: { data?: ChannelImpact; it: boolean }) {
+export function ChannelImpactPanels({
+  data,
+  it,
+  rescue,
+}: {
+  data?: ChannelImpact;
+  it: boolean;
+  rescue?: RescueReboundAnalysis | null;
+}) {
   if (!data || data.error) {
     return (
       <div className="rounded-xl border border-[rgb(var(--border))]/50 bg-surface/20 p-3 text-[11px] text-ink-muted">
@@ -261,58 +277,132 @@ export function ChannelImpactPanels({ data, it }: { data?: ChannelImpact; it: bo
         {/* ── Channel 2 · Recommendation ─────────────────────────── */}
         <Panel
           title={it ? "2 · Raccomandazione" : "2 · Recommendation"}
-          subtitle={it ? "hit-rate azione SDS vs book" : "SDS action hit-rate vs book"}
+          subtitle={
+            it ? "follow-through direzionale per azione" : "directional follow-through by action"
+          }
           badge={
-            rec && !rec.available
+            rec && !rec.available && !rescue?.available
               ? { text: it ? "in raccolta" : "collecting", tone: VERDICT_TONE.collecting_data }
               : undefined
           }
         >
-          {rec && rec.available ? (
+          {rec && (rec.available || rescue?.available) ? (
             <>
+              {/* BUY -> P(price up) · SELL -> P(price down) */}
               <div className="flex items-end justify-between gap-2">
-                <Metric label={it ? "win book" : "book win"} value={fmtPct(rec.book_win_pct)} />
-                <Metric label="n" value={String(rec.n)} />
+                <Metric
+                  label={it ? "BUY → P(rialzo)" : "BUY → P(up)"}
+                  value={fmtPct(rec.buy.up_hit_pct)}
+                  hint={`n=${rec.buy.graded_n}`}
+                />
+                <Metric
+                  label={it ? "SELL → P(ribasso)" : "SELL → P(down)"}
+                  value={fmtPct(rec.sell.down_hit_pct)}
+                  hint={
+                    rec.sell.pending_n > 0
+                      ? `n=${rec.sell.graded_n} · ${rec.sell.pending_n} ${it ? "in attesa" : "pending"}`
+                      : `n=${rec.sell.graded_n}`
+                  }
+                />
               </div>
-              <div className="pt-1">
-                <div className="flex justify-between text-[9px] text-ink-muted px-0.5">
-                  <span>{it ? "azione" : "action"}</span>
-                  <span>{it ? "n · win% · lift" : "n · win% · lift"}</span>
-                </div>
-                {rec.actions.map((a) => (
-                  <div
-                    key={a.action}
-                    className="flex items-center justify-between gap-2 py-1 border-b border-[rgb(var(--border))]/20 last:border-0"
-                  >
-                    <span className="text-[10.5px] text-ink">{a.action}</span>
-                    <span className="text-[10px] tabular-nums text-ink-muted">
-                      {a.n} · {fmtPct(a.win_pct)} ·{" "}
-                      <span
-                        className={
-                          a.lift_vs_book_pp != null && a.lift_vs_book_pp > 0
-                            ? "text-emerald-600 dark:text-emerald-400"
-                            : a.lift_vs_book_pp != null && a.lift_vs_book_pp < 0
-                              ? "text-rose-600 dark:text-rose-400"
-                              : ""
-                        }
-                      >
-                        {fmtSigned(a.lift_vs_book_pp)}
-                      </span>
-                    </span>
+
+              {rec.sell.by_reason.length > 0 ? (
+                <div className="pt-1">
+                  <div className="flex justify-between text-[9px] text-ink-muted px-0.5">
+                    <span>{it ? "SELL per motivo" : "SELL by reason"}</span>
+                    <span>{it ? "n · P(ribasso)" : "n · P(down)"}</span>
                   </div>
-                ))}
+                  {rec.sell.by_reason.map((b) => (
+                    <div
+                      key={b.reason}
+                      className="flex items-center justify-between gap-2 py-1 border-b border-[rgb(var(--border))]/20 last:border-0"
+                    >
+                      <span className="text-[10.5px] text-ink">
+                        {(SELL_REASON_LABEL[b.reason]?.[it ? "it" : "en"]) ?? b.reason}
+                      </span>
+                      <span className="text-[10px] tabular-nums text-ink-muted">
+                        {b.n} · {fmtPct(b.down_hit_pct)}
+                      </span>
+                    </div>
+                  ))}
+                </div>
+              ) : null}
+
+              {/* HOLD -> rescue score vs actual rebound (computed in the UI sheet) */}
+              <div className="pt-1 border-t border-[rgb(var(--border))]/30">
+                <div className="flex items-end justify-between gap-2">
+                  <span className="text-[10px] font-medium text-ink">
+                    {it ? "HOLD · rescue → rimbalzo" : "HOLD · rescue → rebound"}
+                  </span>
+                  {rescue?.available ? (
+                    <span className="text-[9px] text-ink-muted">
+                      {it ? "rimbalzo ≤" : "rebound ≤"}
+                      {rescue.reboundHorizonDays}
+                      {it ? "gg" : "d"}
+                    </span>
+                  ) : null}
+                </div>
+                {rescue?.available ? (
+                  <>
+                    <div className="flex items-end justify-between gap-2 pt-1">
+                      <Metric
+                        label={it ? "hit rimbalzo" : "rebound hit"}
+                        value={fmtPct(rescue.hitRatePct)}
+                        hint={`n=${rescue.n}`}
+                      />
+                      <Metric
+                        label={it ? "corr score↔gg" : "corr score↔days"}
+                        value={fmt(rescue.corrScoreDays)}
+                      />
+                      <Metric
+                        label={it ? "corr score↔taglia" : "corr score↔size"}
+                        value={fmt(rescue.corrScoreSize)}
+                      />
+                    </div>
+                    <div className="pt-1">
+                      <div className="flex justify-between text-[9px] text-ink-muted px-0.5">
+                        <span>{it ? "tier score" : "score tier"}</span>
+                        <span>{it ? "n · hit · gg · taglia" : "n · hit · days · size"}</span>
+                      </div>
+                      {rescue.tiers
+                        .filter((t) => t.n > 0)
+                        .map((t) => (
+                          <div
+                            key={t.tier}
+                            className="flex items-center justify-between gap-2 py-1 border-b border-[rgb(var(--border))]/20 last:border-0"
+                          >
+                            <span className="text-[10.5px] text-ink">{t.band}</span>
+                            <span className="text-[10px] tabular-nums text-ink-muted">
+                              {t.n} · {fmtPct(t.hitRatePct)} ·{" "}
+                              {t.medianDaysToRebound == null ? "—" : `${fmt(t.medianDaysToRebound, 0)}${it ? "gg" : "d"}`}{" "}
+                              · {fmt(t.meanReboundSizePct, 1)}%
+                            </span>
+                          </div>
+                        ))}
+                    </div>
+                  </>
+                ) : (
+                  <p className="text-[9px] text-ink-muted leading-snug pt-1">
+                    {it
+                      ? "Nessuna posizione in perdita nello storico: il rescue → rimbalzo si popola coi cicli."
+                      : "No loss episode in history yet: rescue → rebound populates as cycles run."}
+                  </p>
+                )}
               </div>
+
               <div className="flex items-center justify-between gap-2 pt-1">
-                <span className="text-[9px] text-ink-muted">{it ? "trend win% BUY" : "BUY win% trend"}</span>
-                <Sparkline values={rec.weekly.map((w) => w.buy_win_pct)} positiveIsGood />
+                <span className="text-[9px] text-ink-muted">
+                  {it ? "trend P(rialzo) BUY" : "BUY P(up) trend"}
+                </span>
+                <Sparkline values={rec.weekly.map((w) => w.buy_up_hit_pct)} positiveIsGood />
               </div>
             </>
           ) : (
             <p className="text-[10px] text-ink-muted leading-snug">
               {rec?.note ??
                 (it
-                  ? "Nessuna posizione porta ancora l'SDS d'ingresso. Si popola con i nuovi cicli."
-                  : "No position carries entry SDS yet. Populates as new cycles close.")}
+                  ? "Nessun BUY/SELL valutabile ancora. Si popola coi cicli chiusi."
+                  : "No gradable BUY/SELL yet. Populates as cycles close.")}
             </p>
           )}
         </Panel>

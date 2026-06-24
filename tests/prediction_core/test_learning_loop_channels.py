@@ -34,7 +34,15 @@ def _sign_curve(
     }
 
 
-def _pos(sds: float | None, pnl_pct: float, *, regime: str = "RISK_ON", date: str = "2026-06-10") -> dict:
+def _pos(
+    sds: float | None,
+    pnl_pct: float,
+    *,
+    regime: str = "RISK_ON",
+    date: str = "2026-06-10",
+    exit_reason: str | None = None,
+    sell_signal_result: str | None = None,
+) -> dict:
     return {
         "entry_sds_score": sds,
         "entry_regime": regime,
@@ -42,6 +50,8 @@ def _pos(sds: float | None, pnl_pct: float, *, regime: str = "RISK_ON", date: st
         "pnl_eur": pnl_pct * 100.0,
         "is_win": pnl_pct > 0,
         "entry_date": date,
+        "exit_reason": exit_reason,
+        "sell_signal_result": sell_signal_result,
     }
 
 
@@ -105,31 +115,57 @@ def test_sign_curve_weekly_pre_cd_series_excludes_post_cd():
     assert wk["price_accuracy_pct"] == 85.0
 
 
-def test_recommendation_channel_unavailable_without_sds(monkeypatch):
+def test_recommendation_channel_unavailable_without_action(monkeypatch):
+    # no SDS -> UNKNOWN action, no exit reason -> nothing graded
     monkeypatch.setattr(llc, "_load_outcomes", lambda: [])
     monkeypatch.setattr(llc, "_load_sign_curve", lambda: {})
     monkeypatch.setattr(llc, "_load_positions", lambda: [_pos(None, 5.0)])
     rec = llc.compute_channel_impact()["recommendation"]
     assert rec["available"] is False
-    assert rec["actions"] == []
+    assert rec["buy"]["n"] == 0
+    assert rec["sell"]["n"] == 0
+    assert rec["note"]
 
 
-def test_recommendation_channel_buckets_by_sds(monkeypatch):
+def test_recommendation_buy_directional(monkeypatch):
     positions = [
-        _pos(80.0, 6.0),  # BUY_FULL win
-        _pos(78.0, -2.0),  # BUY_FULL loss
-        _pos(60.0, 3.0),  # BUY_HALF win
-        _pos(40.0, -1.0),  # HOLD loss
+        _pos(80.0, 6.0),  # BUY_FULL, price up
+        _pos(78.0, -2.0),  # BUY_FULL, price down
+        _pos(60.0, 3.0),  # BUY_HALF, price up
+        _pos(40.0, -1.0),  # HOLD (flat, excluded from BUY grading)
     ]
     monkeypatch.setattr(llc, "_load_outcomes", lambda: [])
     monkeypatch.setattr(llc, "_load_sign_curve", lambda: {})
     monkeypatch.setattr(llc, "_load_positions", lambda: positions)
     rec = llc.compute_channel_impact()["recommendation"]
     assert rec["available"] is True
-    actions = {a["action"]: a for a in rec["actions"]}
-    assert actions["BUY_FULL"]["n"] == 2
-    assert actions["BUY_HALF"]["n"] == 1
-    assert actions["HOLD"]["n"] == 1
+    assert rec["buy"]["n"] == 3
+    assert rec["buy"]["graded_n"] == 3
+    assert rec["buy"]["up_hit_pct"] == 66.7  # 2 of 3 rose
+    assert rec["hold"]["n"] == 1
+
+
+def test_recommendation_sell_directional_by_reason(monkeypatch):
+    positions = [
+        _pos(80.0, -20.0, exit_reason="stop_loss", sell_signal_result="success"),
+        _pos(80.0, -16.0, exit_reason="stop_loss", sell_signal_result="failure"),
+        _pos(70.0, 2.0, exit_reason="pre_cd_exit", sell_signal_result="success"),
+        _pos(60.0, 1.0, exit_reason="sds_below_40", sell_signal_result="pending"),
+    ]
+    monkeypatch.setattr(llc, "_load_outcomes", lambda: [])
+    monkeypatch.setattr(llc, "_load_sign_curve", lambda: {})
+    monkeypatch.setattr(llc, "_load_positions", lambda: positions)
+    rec = llc.compute_channel_impact()["recommendation"]
+    sell = rec["sell"]
+    assert sell["n"] == 4
+    assert sell["graded_n"] == 3  # one pending
+    assert sell["pending_n"] == 1
+    assert sell["down_hit_pct"] == 66.7  # 2 of 3 dropped
+    by_reason = {b["reason"]: b for b in sell["by_reason"]}
+    assert by_reason["stop_loss"]["n"] == 2
+    assert by_reason["stop_loss"]["down_hit_pct"] == 50.0
+    assert by_reason["pre_cd_exit"]["down_hit_pct"] == 100.0
+    assert by_reason["sds_below_40"]["graded_n"] == 0
 
 
 def test_regime_gate_forces_hold(monkeypatch):
@@ -138,8 +174,8 @@ def test_regime_gate_forces_hold(monkeypatch):
     monkeypatch.setattr(llc, "_load_sign_curve", lambda: {})
     monkeypatch.setattr(llc, "_load_positions", lambda: positions)
     rec = llc.compute_channel_impact()["recommendation"]
-    actions = {a["action"]: a for a in rec["actions"]}
-    assert "HOLD" in actions and actions["HOLD"]["n"] == 1
+    assert rec["hold"]["n"] == 1
+    assert rec["buy"]["n"] == 0
 
 
 def test_trading_channel_aggregates(monkeypatch):

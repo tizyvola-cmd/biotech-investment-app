@@ -205,19 +205,41 @@ export function ChannelImpactPanels({ data, it }: { data?: ChannelImpact; it: bo
         {/* ── Channel 1 · Prediction ─────────────────────────────── */}
         <Panel
           title={it ? "1 · Predizione" : "1 · Prediction"}
-          subtitle={it ? "direction-hit % + errore di calibrazione" : "direction-hit % + calibration error"}
+          subtitle={it ? "qualità curva pre-CD (segno + prezzo)" : "pre-CD curve quality (sign + price)"}
         >
-          {pred ? (
+          {pred && pred.available ? (
             <>
               <div className="flex items-end justify-between gap-2">
-                <Metric label={it ? "direction-hit" : "direction-hit"} value={fmtPct(pred.direction_hit_pct)} />
-                <Metric label={it ? "|bias|" : "|bias|"} value={`${fmt(pred.abs_bias_pp)} pp`} />
-                <Metric label="MAE" value={`${fmt(pred.mae_pp)} pp`} />
-                <Metric label="n" value={String(pred.n)} />
+                <Metric label={it ? "sign-hit pre-CD" : "pre-CD sign-hit"} value={fmtPct(pred.pre_cd_sign_hit_pct)} />
+                <Metric label={it ? "accuratezza prezzo" : "price accuracy"} value={fmtPct(pred.pre_cd_price_accuracy_pct)} />
+                <Metric label={it ? "sedute" : "sessions"} value={pred.n_sessions != null ? String(pred.n_sessions) : "—"} />
+              </div>
+              <div className="flex items-center justify-between gap-2 text-[10px] tabular-nums pt-0.5">
+                <span className="text-ink-muted">{it ? "benchmark (cohorte storica)" : "benchmark (historical cohort)"}</span>
+                <span className="text-ink-muted">
+                  {fmtPct(pred.benchmark_sign_hit_pct)} · {fmtPct(pred.benchmark_price_accuracy_pct)}
+                </span>
               </div>
               <div className="flex items-center justify-between gap-2 pt-1">
-                <span className="text-[9px] text-ink-muted">{it ? "trend direction-hit (settimane)" : "direction-hit trend (weeks)"}</span>
-                <Sparkline values={pred.weekly.map((w) => w.direction_hit_pct)} positiveIsGood />
+                <span className="text-[9px] text-ink-muted">{it ? "trend sign-hit pre-CD (settimane)" : "pre-CD sign-hit trend (weeks)"}</span>
+                <Sparkline values={pred.weekly.map((w) => w.sign_hit_pct)} positiveIsGood />
+              </div>
+              <div className="flex items-center justify-between gap-2">
+                <span className="text-[9px] text-ink-muted">{it ? "miglioramento settimanale" : "weekly improvement"}</span>
+                <span className="flex items-center gap-1.5">
+                  <span className={`text-[10px] tabular-nums ${liftClass(pred.weekly_delta_pp)}`}>
+                    {fmtSigned(pred.weekly_delta_pp)}
+                  </span>
+                  <span
+                    className={`rounded px-1.5 py-0.5 text-[9px] font-medium ${
+                      pred.weekly_significant ? VERDICT_TONE.improving : VERDICT_TONE.neutral
+                    }`}
+                  >
+                    {pred.weekly_significant
+                      ? it ? "significativo" : "significant"
+                      : it ? "non significativo" : "not significant"}
+                  </span>
+                </span>
               </div>
               <div className="pt-1">
                 <span className="text-[9px] uppercase tracking-wide text-ink-muted">{it ? "loop sul canale" : "loops on channel"}</span>
@@ -227,7 +249,12 @@ export function ChannelImpactPanels({ data, it }: { data?: ChannelImpact; it: bo
               </div>
             </>
           ) : (
-            <p className="text-[10px] text-ink-muted italic">{it ? "nessun outcome" : "no outcomes"}</p>
+            <p className="text-[10px] text-ink-muted leading-snug italic">
+              {pred?.note ??
+                (it
+                  ? "Curva pre-CD non disponibile: rigenera model_sign_curve_daily.json."
+                  : "Pre-CD curve unavailable: rebuild model_sign_curve_daily.json.")}
+            </p>
           )}
         </Panel>
 

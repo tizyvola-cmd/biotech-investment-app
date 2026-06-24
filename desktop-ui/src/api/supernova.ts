@@ -1542,9 +1542,8 @@ export type ChannelLoopEffect = {
 export type PredictionWeek = {
   week: string;
   n: number;
-  direction_hit_pct: number | null;
-  bias_pp: number | null;
-  mae_pp: number | null;
+  sign_hit_pct: number | null;
+  price_accuracy_pct: number | null;
 };
 
 export type RecommendationWeek = {
@@ -1584,13 +1583,18 @@ export type ChannelImpact = {
   generated_at?: string;
   error?: string;
   prediction?: {
-    n: number;
-    direction_hit_pct: number | null;
-    calibration_bias_pp: number | null;
-    abs_bias_pp: number | null;
-    mae_pp: number | null;
+    available?: boolean;
+    n_events?: number | null;
+    n_sessions?: number | null;
+    pre_cd_sign_hit_pct: number | null;
+    pre_cd_price_accuracy_pct: number | null;
+    benchmark_sign_hit_pct: number | null;
+    benchmark_price_accuracy_pct: number | null;
+    weekly_delta_pp: number | null;
+    weekly_significant?: boolean;
     loops: ChannelLoopEffect[];
     weekly: PredictionWeek[];
+    note?: string | null;
   };
   recommendation?: {
     available: boolean;

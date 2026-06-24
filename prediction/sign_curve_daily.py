@@ -368,6 +368,7 @@ def _daily_sessions_for_record(
             "zone": "pre_cd" if cal_off < 0 else ("cd" if cal_off == 0 else "post_cd"),
             "sign_hit": sign_hit,
             "price_accuracy_pct": price_accuracy_pct,
+            "date": d.isoformat(),
         })
 
         prev_close = act_close
@@ -430,9 +431,47 @@ def _aggregate_sessions(sessions: list[dict]) -> dict[str, Any]:
         "overall_sign_hit_pct": round(all_hits / all_n * 100.0, 2) if all_n else None,
         "overall_sign_hit_pre_cd_pct": round(pre_hits / pre_n * 100.0, 2) if pre_n else None,
         "overall_price_accuracy_pct": round(sum(all_price) / len(all_price), 2) if all_price else None,
+        "overall_price_accuracy_pre_cd_pct": round(sum(pre_price) / len(pre_price), 2) if pre_price else None,
         "overall_price_err_pct": round(sum(all_price) / len(all_price), 2) if all_price else None,
         "n_sessions": all_n,
+        "n_sessions_pre_cd": pre_n,
     }
+
+
+def _iso_week(date_str: str | None) -> str | None:
+    if not date_str:
+        return None
+    try:
+        d = date.fromisoformat(str(date_str)[:10])
+    except ValueError:
+        return None
+    y, w, _ = d.isocalendar()
+    return f"{y}-W{w:02d}"
+
+
+def _weekly_pre_cd_series(sessions: list[dict], limit: int = 12) -> list[dict[str, Any]]:
+    """Retroactive weekly trend of pre-CD quality, bucketing sessions by the ISO
+    calendar week of the trading day (mixes catalysts, but gives an immediate signal).
+    """
+    by_week: dict[str, list[dict]] = defaultdict(list)
+    for s in sessions:
+        if int(s.get("cal_offset", 0)) >= 0:
+            continue  # pre-CD only
+        wk = _iso_week(s.get("date"))
+        if wk:
+            by_week[wk].append(s)
+    out: list[dict[str, Any]] = []
+    for wk in sorted(by_week)[-limit:]:
+        pts = by_week[wk]
+        hits = [bool(p["sign_hit"]) for p in pts if p.get("sign_hit") is not None]
+        prices = [float(p["price_accuracy_pct"]) for p in pts if p.get("price_accuracy_pct") is not None]
+        out.append({
+            "week": wk,
+            "n": len(hits),
+            "sign_hit_pct": round(sum(hits) / len(hits) * 100.0, 2) if hits else None,
+            "price_accuracy_pct": round(sum(prices) / len(prices), 2) if prices else None,
+        })
+    return out
 
 
 def _build_cohort(
@@ -480,6 +519,7 @@ def _build_cohort(
     return {
         "n_events": n_events,
         "n_events_skipped": n_skipped,
+        "weekly_pre_cd": _weekly_pre_cd_series(all_sessions),
         **agg,
     }
 

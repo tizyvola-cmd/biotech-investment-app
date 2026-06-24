@@ -30,12 +30,17 @@ import statistics
 from pathlib import Path
 from typing import Any, Callable
 
-from orchestrator_io_paths import DATA_DIR
+from orchestrator_io_paths import DATA_DIR, MODEL_SIGN_CURVE_DAILY_JSON
 
 LEARNING_LOOP_WEEKLY_IMPACT_JSON = Path(DATA_DIR) / "learning_loop_weekly_impact.json"
 
 # Noise bands (pp): a calibration MAE move smaller than this is treated as noise.
 _MAE_NOISE_PP = 0.5
+
+# Pre-CD weekly improvement: a week needs this many sessions to be trusted, and the
+# week-over-week sign-hit must move at least this much to be flagged "significant".
+_PRED_WEEK_MIN_N = 20
+_PRED_SIGNIFICANT_PP = 3.0
 
 
 # ────────────────────────── numeric helpers ──────────────────────────
@@ -86,13 +91,6 @@ def _first_date(r: dict[str, Any], keys: tuple[str, ...]) -> str | None:
 
 
 # ────────────────────────── prediction metrics ──────────────────────────
-def _dir_hit(pairs: list[tuple[float, float]]) -> float | None:
-    usable = [(p, a) for p, a in pairs if p != 0 and a != 0]
-    if not usable:
-        return None
-    return sum(1 for p, a in usable if (p > 0) == (a > 0)) / len(usable)
-
-
 def _bias(pairs: list[tuple[float, float]]) -> float | None:
     return statistics.mean(p - a for p, a in pairs) if pairs else None
 
@@ -112,6 +110,19 @@ def _load_outcomes() -> list[dict[str, Any]]:
             continue
         rows.append({**r, "pred": p, "actual": a})
     return rows
+
+
+def _load_sign_curve() -> dict[str, Any]:
+    """Read the pre-CD/post-CD sign-curve snapshot (read-only). Built by the
+    refresh pipeline (``sign_curve_daily.save_sign_curve_daily_json``)."""
+    p = Path(MODEL_SIGN_CURVE_DAILY_JSON)
+    if not p.is_file():
+        return {}
+    try:
+        doc = json.loads(p.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        return {}
+    return doc if isinstance(doc, dict) else {}
 
 
 def _load_positions() -> list[dict[str, Any]]:
@@ -270,15 +281,6 @@ def _weekly_series(
     return out
 
 
-def _prediction_week(rs: list[dict[str, Any]]) -> dict[str, Any]:
-    pairs = [(r["pred"], r["actual"]) for r in rs]
-    return {
-        "direction_hit_pct": _round_pct(_dir_hit(pairs)),
-        "bias_pp": _round(_bias(pairs)),
-        "mae_pp": _round(_mae(pairs)),
-    }
-
-
 def _recommendation_week(rs: list[dict[str, Any]]) -> dict[str, Any]:
     buy = [r for r in rs if _recommended_action(r).startswith("BUY")]
     wins = [w for r in buy if (w := _is_win(r)) is not None]
@@ -336,9 +338,21 @@ def _loop_effect(
     }
 
 
-def _prediction_channel(outcomes: list[dict[str, Any]]) -> dict[str, Any]:
+def _weekly_improvement(weekly: list[dict[str, Any]]) -> tuple[float | None, bool]:
+    """Week-over-week change of the pre-CD sign-hit, using the last two weeks that
+    clear the min-sample guard. Returns (delta_pp, is_significant)."""
+    usable = [
+        w for w in weekly
+        if (w.get("n") or 0) >= _PRED_WEEK_MIN_N and w.get("sign_hit_pct") is not None
+    ]
+    if len(usable) < 2:
+        return None, False
+    delta = float(usable[-1]["sign_hit_pct"]) - float(usable[-2]["sign_hit_pct"])
+    return _round(delta, 1), abs(delta) >= _PRED_SIGNIFICANT_PP
+
+
+def _prediction_loops(outcomes: list[dict[str, Any]]) -> list[dict[str, Any]]:
     pairs = [(r["pred"], r["actual"]) for r in outcomes]
-    bias = _bias(pairs)
     loops: list[dict[str, Any]] = []
     if outcomes:
         g, gfn = _global_factor_fn()
@@ -356,7 +370,7 @@ def _prediction_channel(outcomes: list[dict[str, Any]]) -> dict[str, Any]:
             "d_dir_hit_pp": 0.0,
             "is_lever": False,
             "verdict": "not_measurable",
-            "note": "moltiplicatore di regime non isolabile qui (regime non loggato sulle righe storiche di previsione); l'effetto del regime e' mostrato come ripartizione del P&L per stato di regime nel canale Trading",
+            "note": "effetto del regime mostrato come ripartizione del P&L per stato di regime nel canale Trading",
         }
     )
     loops.append(
@@ -369,17 +383,39 @@ def _prediction_channel(outcomes: list[dict[str, Any]]) -> dict[str, Any]:
             "d_dir_hit_pp": None,
             "is_lever": True,
             "verdict": "direction_lever",
-            "note": "unico loop che puo' muovere la direzione (rimodella la curva)",
+            "note": "ricalibra ogni giorno la curva pre-CD: l'unico loop che puo' muovere la direzione",
         }
     )
+    return loops
+
+
+def _prediction_channel(outcomes: list[dict[str, Any]], sign_curve: dict[str, Any]) -> dict[str, Any]:
+    """Pre-CD curve quality (sign-hit + price accuracy) of the Simulation cohort vs
+    the historical cohort, with a weekly-improvement signal.
+
+    The model targets the pre-CD window (~−60d → CD day); post-CD movement is
+    near coin-flip, so we measure the pre-CD sign-hit here, NOT the post-CD outcome.
+    """
+    cohorts = (sign_curve or {}).get("cohorts") or {}
+    sim = cohorts.get("simulation") or {}
+    retro = cohorts.get("retro") or {}
+    weekly = [w for w in (sim.get("weekly_pre_cd") or []) if isinstance(w, dict)]
+    sign_hit = _num(sim.get("overall_sign_hit_pre_cd_pct"))
+    delta, significant = _weekly_improvement(weekly)
+    available = sign_hit is not None
     return {
-        "n": len(pairs),
-        "direction_hit_pct": _round_pct(_dir_hit(pairs)),
-        "calibration_bias_pp": _round(bias),
-        "abs_bias_pp": _round(abs(bias)) if bias is not None else None,
-        "mae_pp": _round(_mae(pairs)),
-        "loops": loops,
-        "weekly": _weekly_series(outcomes, ("date",), _prediction_week),
+        "available": available,
+        "n_events": sim.get("n_events"),
+        "n_sessions": sim.get("n_sessions_pre_cd"),
+        "pre_cd_sign_hit_pct": sign_hit,
+        "pre_cd_price_accuracy_pct": _num(sim.get("overall_price_accuracy_pre_cd_pct")),
+        "benchmark_sign_hit_pct": _num(retro.get("overall_sign_hit_pre_cd_pct")),
+        "benchmark_price_accuracy_pct": _num(retro.get("overall_price_accuracy_pre_cd_pct")),
+        "weekly_delta_pp": delta,
+        "weekly_significant": significant,
+        "weekly": weekly,
+        "loops": _prediction_loops(outcomes),
+        "note": None if available else "curva pre-CD non disponibile: rigenera model_sign_curve_daily.json (cohorte Simulation)",
     }
 
 
@@ -446,9 +482,10 @@ def compute_channel_impact() -> dict[str, Any]:
     """Live, read-only computation of the 3-channel learning-loop impact."""
     outcomes = _load_outcomes()
     positions = _load_positions()
+    sign_curve = _load_sign_curve()
     return {
         "generated_at": _now_iso(),
-        "prediction": _prediction_channel(outcomes),
+        "prediction": _prediction_channel(outcomes, sign_curve),
         "recommendation": _recommendation_channel(positions),
         "trading": _trading_channel(positions),
     }
@@ -490,10 +527,10 @@ def persist_weekly_channel_snapshot(impact: dict[str, Any] | None = None) -> dic
     weeks[_current_iso_week()] = {
         "updated_at": _now_iso(),
         "prediction": {
-            "n": pred.get("n"),
-            "direction_hit_pct": pred.get("direction_hit_pct"),
-            "abs_bias_pp": pred.get("abs_bias_pp"),
-            "mae_pp": pred.get("mae_pp"),
+            "n_sessions": pred.get("n_sessions"),
+            "pre_cd_sign_hit_pct": pred.get("pre_cd_sign_hit_pct"),
+            "pre_cd_price_accuracy_pct": pred.get("pre_cd_price_accuracy_pct"),
+            "benchmark_sign_hit_pct": pred.get("benchmark_sign_hit_pct"),
         },
         "recommendation": {
             "n": rec.get("n"),

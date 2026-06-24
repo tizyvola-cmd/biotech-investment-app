@@ -814,8 +814,27 @@ export function LearningLabView({
   const [previewOpen, setPreviewOpen] = useState(false);
   const [preview, setPreview] = useState<Awaited<ReturnType<typeof previewLearningCycle>> | null>(null);
   const [busy, setBusy] = useState(false);
+  const [reestimating, setReestimating] = useState(false);
   const hasDataRef = useRef(false);
   hasDataRef.current = data != null;
+
+  // Re-estimate the per-channel impact: force a backend recompute (bypassing the
+  // 5-min overview cache) and swap in the fresh values. The ChannelImpactPanels
+  // diffs the new values against the snapshot it took right before this call.
+  const handleReestimateChannels = useCallback(async () => {
+    setReestimating(true);
+    setError(null);
+    try {
+      const doc = await fetchLearningLabOverview({ force: true });
+      setData(doc);
+      saveSessionOverview(doc);
+      seedCdPatternPolygonOverviewFromLab(doc);
+    } catch (e) {
+      setError(e instanceof Error ? e.message : String(e));
+    } finally {
+      setReestimating(false);
+    }
+  }, []);
 
   const weeks = useMemo(() => parseWeeks(data?.history), [data?.history]);
 
@@ -1026,7 +1045,13 @@ export function LearningLabView({
           <div className="space-y-4">
             <LearningDataMissingBanner data={data} it={it} />
             <LearningLivePoolBanner data={data} it={it} />
-            <ChannelImpactPanels data={data.channel_impact} it={it} rescue={rescueRebound} />
+            <ChannelImpactPanels
+              data={data.channel_impact}
+              it={it}
+              rescue={rescueRebound}
+              onReestimate={handleReestimateChannels}
+              reestimating={reestimating}
+            />
             <ExpectedMoveSection data={data.expected_move} it={it} />
             <details className="rounded-xl border border-[rgb(var(--border))]/40 bg-surface/10">
               <summary className="cursor-pointer select-none px-3 py-2 text-[11px] font-medium text-ink-muted hover:text-ink">

@@ -11,8 +11,101 @@
  * per-loop attribution (which loop is actually a lever vs a ~0-impact guardrail).
  * Data comes from overview.channel_impact (prediction/recommendation/trading).
  */
+import { useMemo, useState } from "react";
 import type { ChannelImpact, ChannelLoopEffect } from "../api/supernova";
 import type { RescueReboundAnalysis } from "../sheet/recommendationRescue";
+
+// Snapshot of the channel scores taken when "re-estimate" is pressed, so the new
+// values can be diffed against the ones shown before the recompute (arrows +
+// green/red). Persisted so the comparison survives a rebuild/reload.
+const BASELINE_KEY = "channelImpact.baseline.v1";
+const DELTA_EPS_PP = 0.05;
+type ChannelMetricMap = Record<string, number>;
+type ChannelBaseline = { metrics: ChannelMetricMap; at: string };
+
+function collectChannelMetrics(
+  data: ChannelImpact,
+  rescue?: RescueReboundAnalysis | null,
+): ChannelMetricMap {
+  const m: ChannelMetricMap = {};
+  const put = (k: string, v: number | null | undefined) => {
+    if (v != null && Number.isFinite(v)) m[k] = v;
+  };
+  const p = data.prediction;
+  if (p) {
+    put("pred.max", p.best_node?.sign_hit_pct);
+    put("pred.min", p.worst_node?.sign_hit_pct);
+    put("pred.avg", p.pre_cd_sign_hit_pct);
+    (p.reliability_bands ?? []).forEach((b) => put(`pred.band.${b.key}`, b.mean_pct));
+  }
+  const r = data.recommendation;
+  if (r) {
+    put("rec.buy", r.buy?.up_hit_pct);
+    put("rec.sell", r.sell?.down_hit_pct);
+    (r.sell?.by_reason ?? []).forEach((b) => put(`rec.sell.${b.reason}`, b.down_hit_pct));
+  }
+  if (rescue?.available) {
+    put("rescue.hit", rescue.hitRatePct);
+    (rescue.tiers ?? []).forEach((t) => put(`rescue.tier.${t.tier}`, t.hitRatePct));
+  }
+  const t = data.trading;
+  if (t) {
+    put("trd.win", t.win_pct);
+    put("trd.meanPnl", t.mean_pnl_pct);
+    put("trd.medianPnl", t.median_pnl_pct);
+  }
+  return m;
+}
+
+function readChannelBaseline(): ChannelBaseline | null {
+  try {
+    const raw = localStorage.getItem(BASELINE_KEY);
+    if (!raw) return null;
+    const parsed = JSON.parse(raw) as ChannelBaseline;
+    return parsed && parsed.metrics ? parsed : null;
+  } catch {
+    return null;
+  }
+}
+
+function writeChannelBaseline(b: ChannelBaseline): void {
+  try {
+    localStorage.setItem(BASELINE_KEY, JSON.stringify(b));
+  } catch {
+    /* quota / private mode */
+  }
+}
+
+/** Tailwind text color for a delta (higher = better for every channel score). */
+function deltaTone(diff?: number | null): string {
+  if (diff == null || !Number.isFinite(diff) || Math.abs(diff) < DELTA_EPS_PP) return "";
+  return diff > 0
+    ? "text-emerald-600 dark:text-emerald-400"
+    : "text-rose-600 dark:text-rose-400";
+}
+
+/** Tailwind row tint for a window that improved (green) / worsened (red). */
+function deltaRowTone(diff?: number | null): string {
+  if (diff == null || !Number.isFinite(diff) || Math.abs(diff) < DELTA_EPS_PP) return "";
+  return diff > 0
+    ? "bg-emerald-500/10 rounded px-1 -mx-1"
+    : "bg-rose-500/10 rounded px-1 -mx-1";
+}
+
+function DeltaArrow({ diff }: { diff?: number | null }) {
+  if (diff == null || !Number.isFinite(diff) || Math.abs(diff) < DELTA_EPS_PP) return null;
+  const up = diff > 0;
+  return (
+    <span
+      className={`text-[9px] font-bold tabular-nums ${
+        up ? "text-emerald-600 dark:text-emerald-400" : "text-rose-600 dark:text-rose-400"
+      }`}
+      title={`${up ? "+" : "−"}${Math.abs(diff).toFixed(1)} pp vs precedente`}
+    >
+      {up ? "▲" : "▼"}{Math.abs(diff).toFixed(1)}
+    </span>
+  );
+}
 
 const SELL_REASON_LABEL: Record<string, { it: string; en: string }> = {
   stop_loss: { it: "stop-loss", en: "stop-loss" },
@@ -147,10 +240,24 @@ function Panel({
   );
 }
 
-function Metric({ label, value, hint }: { label: string; value: string; hint?: string }) {
+function Metric({
+  label,
+  value,
+  hint,
+  delta,
+}: {
+  label: string;
+  value: string;
+  hint?: string;
+  delta?: number | null;
+}) {
+  const tone = deltaTone(delta);
   return (
     <div className="flex flex-col">
-      <span className="text-sm font-semibold tabular-nums text-ink leading-none">{value}</span>
+      <span className="text-sm font-semibold tabular-nums leading-none flex items-baseline gap-1">
+        <span className={tone || "text-ink"}>{value}</span>
+        <DeltaArrow diff={delta} />
+      </span>
       <span className="text-[9px] text-ink-muted">{label}</span>
       {hint ? <span className="text-[8px] text-ink-muted/80 tabular-nums">{hint}</span> : null}
     </div>
@@ -197,11 +304,36 @@ export function ChannelImpactPanels({
   data,
   it,
   rescue,
+  onReestimate,
+  reestimating,
 }: {
   data?: ChannelImpact;
   it: boolean;
   rescue?: RescueReboundAnalysis | null;
+  onReestimate?: () => void | Promise<void>;
+  reestimating?: boolean;
 }) {
+  const [baseline, setBaseline] = useState<ChannelBaseline | null>(() => readChannelBaseline());
+  const metrics = useMemo<ChannelMetricMap>(
+    () => (data && !data.error ? collectChannelMetrics(data, rescue) : {}),
+    [data, rescue],
+  );
+  const deltaOf = (key: string): number | null => {
+    if (!baseline) return null;
+    const cur = metrics[key];
+    const base = baseline.metrics[key];
+    if (cur == null || base == null) return null;
+    return cur - base;
+  };
+  const handleReestimate = async () => {
+    // Snapshot the values on screen now, so the recomputed ones are diffed
+    // against them (arrows + green/red windows).
+    const snapshot: ChannelBaseline = { metrics, at: new Date().toISOString() };
+    writeChannelBaseline(snapshot);
+    setBaseline(snapshot);
+    await onReestimate?.();
+  };
+
   if (!data || data.error) {
     return (
       <div className="rounded-xl border border-[rgb(var(--border))]/50 bg-surface/20 p-3 text-[11px] text-ink-muted">
@@ -216,18 +348,40 @@ export function ChannelImpactPanels({
   const pred = data.prediction;
   const rec = data.recommendation;
   const trd = data.trading;
+  const baselineAt = baseline
+    ? new Date(baseline.at).toLocaleString(undefined, { month: "short", day: "numeric", hour: "2-digit", minute: "2-digit" })
+    : null;
 
   return (
     <div className="space-y-2">
-      <div>
-        <h3 className="text-sm font-semibold text-ink">
-          {it ? "Impatto per canale" : "Per-channel impact"}
-        </h3>
-        <p className="text-[10px] text-ink-muted">
-          {it
-            ? "I tre canali che muovono davvero l'efficienza: predizione, raccomandazione, trading. I loop di magnitudo (sotto) hanno impatto ≈0."
-            : "The three channels that actually move efficiency: prediction, recommendation, trading. The magnitude loops (below) have ≈0 impact."}
-        </p>
+      <div className="flex items-start justify-between gap-3">
+        <div>
+          <h3 className="text-sm font-semibold text-ink">
+            {it ? "Impatto per canale" : "Per-channel impact"}
+          </h3>
+          <p className="text-[10px] text-ink-muted">
+            {it
+              ? "I tre canali che muovono davvero l'efficienza: predizione, raccomandazione, trading. I loop di magnitudo (sotto) hanno impatto ≈0."
+              : "The three channels that actually move efficiency: prediction, recommendation, trading. The magnitude loops (below) have ≈0 impact."}
+          </p>
+          {baselineAt ? (
+            <p className="text-[9px] text-ink-muted/80">
+              {it ? `frecce ▲▼ = variazione vs ultima stima (${baselineAt})` : `arrows ▲▼ = change vs last estimate (${baselineAt})`}
+            </p>
+          ) : null}
+        </div>
+        {onReestimate ? (
+          <button
+            type="button"
+            onClick={handleReestimate}
+            disabled={reestimating}
+            className="shrink-0 rounded-md border border-[rgb(var(--border))]/60 bg-surface/60 px-2.5 py-1.5 text-[11px] font-medium text-ink hover:bg-surface disabled:opacity-50 disabled:cursor-not-allowed"
+          >
+            {reestimating
+              ? it ? "Ristimo…" : "Re-estimating…"
+              : it ? "↻ Ristima valori" : "↻ Re-estimate"}
+          </button>
+        ) : null}
       </div>
 
       <div className="grid grid-cols-1 lg:grid-cols-3 gap-3">
@@ -243,11 +397,13 @@ export function ChannelImpactPanels({
                   label={it ? "sign-hit max" : "max sign-hit"}
                   value={fmtPct(pred.best_node?.sign_hit_pct ?? null)}
                   hint={pred.best_node ? `@ ${pred.best_node.label}` : undefined}
+                  delta={deltaOf("pred.max")}
                 />
                 <Metric
                   label={it ? "sign-hit min" : "min sign-hit"}
                   value={fmtPct(pred.worst_node?.sign_hit_pct ?? null)}
                   hint={pred.worst_node ? `@ ${pred.worst_node.label}` : undefined}
+                  delta={deltaOf("pred.min")}
                 />
                 <Metric label={it ? "sedute" : "sessions"} value={pred.n_sessions != null ? String(pred.n_sessions) : "—"} />
               </div>
@@ -284,21 +440,30 @@ export function ChannelImpactPanels({
                           <span className="block text-[11px] font-medium text-ink">
                             {it ? "affidabilità media per periodo" : "average reliability by period"}
                           </span>
-                          {pred.reliability_bands.map((b) => (
-                            <div key={b.key} className="flex items-center justify-between gap-2 text-[13px] tabular-nums py-0.5">
-                              <span className="text-ink">{it ? b.label_it : b.label_en}</span>
-                              {b.mean_pct == null ? (
-                                <span className="text-[11px] text-ink-muted/60">
-                                  {it ? "n/d · curva da CD−60g" : "n/a · curve from CD−60d"}
-                                </span>
-                              ) : (
-                                <span className="text-emerald-600 dark:text-emerald-400">
-                                  <span className="font-semibold">{fmtPct(b.mean_pct)}</span>{" "}
-                                  <span className="text-[11px] text-ink-muted">· n={b.n}</span>
-                                </span>
-                              )}
-                            </div>
-                          ))}
+                          {pred.reliability_bands.map((b) => {
+                            const d = deltaOf(`pred.band.${b.key}`);
+                            return (
+                              <div
+                                key={b.key}
+                                className={`flex items-center justify-between gap-2 text-[13px] tabular-nums py-0.5 ${deltaRowTone(d)}`}
+                              >
+                                <span className="text-ink">{it ? b.label_it : b.label_en}</span>
+                                {b.mean_pct == null ? (
+                                  <span className="text-[11px] text-ink-muted/60">
+                                    {it ? "n/d · curva da CD−60g" : "n/a · curve from CD−60d"}
+                                  </span>
+                                ) : (
+                                  <span className="flex items-baseline gap-1">
+                                    <span className={`font-semibold ${deltaTone(d) || "text-emerald-600 dark:text-emerald-400"}`}>
+                                      {fmtPct(b.mean_pct)}
+                                    </span>
+                                    <DeltaArrow diff={d} />
+                                    <span className="text-[11px] text-ink-muted">· n={b.n}</span>
+                                  </span>
+                                )}
+                              </div>
+                            );
+                          })}
                         </div>
                       ) : null}
                       <div className="flex flex-wrap items-center gap-x-2 gap-y-0.5 text-[12px] tabular-nums pt-0.5">
@@ -386,10 +551,12 @@ export function ChannelImpactPanels({
                   label={it ? "BUY → P(rialzo)" : "BUY → P(up)"}
                   value={fmtPct(rec.buy.up_hit_pct)}
                   hint={`n=${rec.buy.graded_n}`}
+                  delta={deltaOf("rec.buy")}
                 />
                 <Metric
                   label={it ? "SELL → P(ribasso)" : "SELL → P(down)"}
                   value={fmtPct(rec.sell.down_hit_pct)}
+                  delta={deltaOf("rec.sell")}
                   hint={
                     rec.sell.graded_n === 0
                       ? rec.sell.pending_n > 0
@@ -413,19 +580,25 @@ export function ChannelImpactPanels({
                     <span>{it ? "SELL per motivo" : "SELL by reason"}</span>
                     <span>{it ? "n · P(ribasso)" : "n · P(down)"}</span>
                   </div>
-                  {rec.sell.by_reason.map((b) => (
-                    <div
-                      key={b.reason}
-                      className="flex items-center justify-between gap-2 py-1 border-b border-[rgb(var(--border))]/20 last:border-0"
-                    >
-                      <span className="text-[10.5px] text-ink">
-                        {(SELL_REASON_LABEL[b.reason]?.[it ? "it" : "en"]) ?? b.reason}
-                      </span>
-                      <span className="text-[10px] tabular-nums text-ink-muted">
-                        {b.n} · {fmtPct(b.down_hit_pct)}
-                      </span>
-                    </div>
-                  ))}
+                  {rec.sell.by_reason.map((b) => {
+                    const d = deltaOf(`rec.sell.${b.reason}`);
+                    return (
+                      <div
+                        key={b.reason}
+                        className={`flex items-center justify-between gap-2 py-1 border-b border-[rgb(var(--border))]/20 last:border-0 ${deltaRowTone(d)}`}
+                      >
+                        <span className="text-[10.5px] text-ink">
+                          {(SELL_REASON_LABEL[b.reason]?.[it ? "it" : "en"]) ?? b.reason}
+                        </span>
+                        <span className="flex items-baseline gap-1 text-[10px] tabular-nums">
+                          <span className={deltaTone(d) || "text-ink-muted"}>
+                            {b.n} · {fmtPct(b.down_hit_pct)}
+                          </span>
+                          <DeltaArrow diff={d} />
+                        </span>
+                      </div>
+                    );
+                  })}
                 </div>
               ) : null}
 
@@ -450,6 +623,7 @@ export function ChannelImpactPanels({
                         label={it ? "hit rimbalzo" : "rebound hit"}
                         value={fmtPct(rescue.hitRatePct)}
                         hint={`n=${rescue.n}`}
+                        delta={deltaOf("rescue.hit")}
                       />
                       <Metric
                         label={it ? "corr score↔gg" : "corr score↔days"}
@@ -470,19 +644,25 @@ export function ChannelImpactPanels({
                       </div>
                       {rescue.tiers
                         .filter((t) => t.n > 0)
-                        .map((t) => (
-                          <div
-                            key={t.tier}
-                            className="flex items-center justify-between gap-2 py-1.5 border-b border-[rgb(var(--border))]/20 last:border-0"
-                          >
-                            <span className="text-[13px] font-medium text-ink">{t.band}</span>
-                            <span className="text-[12px] tabular-nums text-ink">
-                              {t.n} · <span className="font-semibold">{fmtPct(t.hitRatePct)}</span> ·{" "}
-                              {t.medianDaysToRebound == null ? "—" : `${fmt(t.medianDaysToRebound, 0)}${it ? "gg" : "d"}`}{" "}
-                              · {fmt(t.meanReboundSizePct, 1)}%
-                            </span>
-                          </div>
-                        ))}
+                        .map((t) => {
+                          const d = deltaOf(`rescue.tier.${t.tier}`);
+                          return (
+                            <div
+                              key={t.tier}
+                              className={`flex items-center justify-between gap-2 py-1.5 border-b border-[rgb(var(--border))]/20 last:border-0 ${deltaRowTone(d)}`}
+                            >
+                              <span className="text-[13px] font-medium text-ink">{t.band}</span>
+                              <span className="flex items-baseline gap-1 text-[12px] tabular-nums text-ink">
+                                <span>
+                                  {t.n} · <span className={`font-semibold ${deltaTone(d)}`}>{fmtPct(t.hitRatePct)}</span> ·{" "}
+                                  {t.medianDaysToRebound == null ? "—" : `${fmt(t.medianDaysToRebound, 0)}${it ? "gg" : "d"}`}{" "}
+                                  · {fmt(t.meanReboundSizePct, 1)}%
+                                </span>
+                                <DeltaArrow diff={d} />
+                              </span>
+                            </div>
+                          );
+                        })}
                     </div>
                   </>
                 ) : (
@@ -519,12 +699,12 @@ export function ChannelImpactPanels({
           {trd ? (
             <>
               <div className="flex items-end justify-between gap-2">
-                <Metric label={it ? "win-rate" : "win-rate"} value={fmtPct(trd.win_pct)} />
-                <Metric label={it ? "P&L medio" : "mean P&L"} value={`${fmt(trd.mean_pnl_pct)}%`} />
+                <Metric label={it ? "win-rate" : "win-rate"} value={fmtPct(trd.win_pct)} delta={deltaOf("trd.win")} />
+                <Metric label={it ? "P&L medio" : "mean P&L"} value={`${fmt(trd.mean_pnl_pct)}%`} delta={deltaOf("trd.meanPnl")} />
                 <Metric label="n" value={String(trd.n)} />
               </div>
               <div className="flex items-end justify-between gap-2">
-                <Metric label={it ? "P&L mediano" : "median P&L"} value={`${fmt(trd.median_pnl_pct)}%`} />
+                <Metric label={it ? "P&L mediano" : "median P&L"} value={`${fmt(trd.median_pnl_pct)}%`} delta={deltaOf("trd.medianPnl")} />
                 <Metric label={it ? "tot €" : "total €"} value={fmt(trd.total_eur, 0)} />
               </div>
               <div className="flex items-center justify-between gap-2 pt-1">

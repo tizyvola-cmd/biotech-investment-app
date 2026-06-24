@@ -1735,10 +1735,10 @@ def build_app(cfg: SupernovaConfig | None = None) -> FastAPI:
         return _json_safe(run_now(dry_run=False))
 
     @application.get("/api/models/learning-lab/overview")
-    def learning_lab_overview() -> dict[str, Any]:
+    def learning_lab_overview(force: bool = Query(False)) -> dict[str, Any]:
         from prediction.learning_lab import build_overview_payload
 
-        return _json_safe(build_overview_payload(use_mock=False))
+        return _json_safe(build_overview_payload(use_mock=False, force_refresh=force))
 
     @application.get("/api/models/learning-lab/preview")
     @application.post("/api/models/learning-lab/preview")

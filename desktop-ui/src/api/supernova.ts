@@ -1759,7 +1759,7 @@ let learningLabOverviewInflight: Promise<LearningLabOverview> | null = null;
 export function fetchLearningLabOverview(opts?: { force?: boolean }) {
   if (!opts?.force && learningLabOverviewInflight) return learningLabOverviewInflight;
   learningLabOverviewInflight = api<LearningLabOverview>(
-    "/api/models/learning-lab/overview",
+    opts?.force ? "/api/models/learning-lab/overview?force=1" : "/api/models/learning-lab/overview",
     undefined,
     { timeoutMs: 120_000 },
   ).finally(() => {

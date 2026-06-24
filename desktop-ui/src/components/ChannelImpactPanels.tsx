@@ -279,14 +279,23 @@ export function ChannelImpactPanels({
                           {fmtPct(pred.reliability_window.peak_pct)} @ T{pred.reliability_window.peak_offset}
                         </span>
                       </div>
-                      <div className="flex items-center justify-between gap-2 text-[8px] text-ink-muted/80">
-                        <span className="leading-snug">
-                          {it
-                            ? "5★ entro 2pp dal picco · fuori finestra: non affidabile (nessuna stima)"
-                            : "5★ within 2pp of peak · outside window: not reliable (no estimate)"}
-                        </span>
-                        <Stars n={pred.best_node?.stars ?? null} />
+                      <div className="flex flex-wrap items-center gap-x-2 gap-y-0.5 text-[9px] tabular-nums">
+                        <span className="text-ink-muted">{it ? "stelle per nodo" : "stars by node"}</span>
+                        {pred.reliability_by_cd
+                          .filter((r) => r.reliable && r.stars != null)
+                          .sort((a, b) => b.offset - a.offset)
+                          .map((r) => (
+                            <span key={r.offset} className="inline-flex items-center gap-0.5">
+                              <span className="text-ink-muted">{r.label}</span>
+                              <Stars n={r.stars} />
+                            </span>
+                          ))}
                       </div>
+                      <span className="block text-[8px] text-ink-muted/80 leading-snug">
+                        {it
+                          ? "5★ entro 2pp dal picco · fuori finestra: non affidabile (nessuna stima)"
+                          : "5★ within 2pp of peak · outside window: not reliable (no estimate)"}
+                      </span>
                     </>
                   ) : (
                     <span className="text-[8px] text-ink-muted/80 leading-snug">
@@ -360,12 +369,23 @@ export function ChannelImpactPanels({
                   label={it ? "SELL → P(ribasso)" : "SELL → P(down)"}
                   value={fmtPct(rec.sell.down_hit_pct)}
                   hint={
-                    rec.sell.pending_n > 0
-                      ? `n=${rec.sell.graded_n} · ${rec.sell.pending_n} ${it ? "in attesa" : "pending"}`
-                      : `n=${rec.sell.graded_n}`
+                    rec.sell.graded_n === 0
+                      ? rec.sell.pending_n > 0
+                        ? `${it ? "in raccolta" : "collecting"} · ${rec.sell.pending_n} ${it ? "in attesa" : "pending"}`
+                        : it ? "in raccolta · 0 SELL chiusi" : "collecting · 0 closed SELLs"
+                      : rec.sell.pending_n > 0
+                        ? `n=${rec.sell.graded_n} · ${rec.sell.pending_n} ${it ? "in attesa" : "pending"}`
+                        : `n=${rec.sell.graded_n}`
                   }
                 />
               </div>
+              {rec.sell.graded_n === 0 ? (
+                <p className="text-[8px] text-ink-muted/80 leading-snug">
+                  {it
+                    ? "SELL → P(ribasso) = % di SELL dopo cui il prezzo è sceso (probabilità che la vendita sia corretta). Si popola in avanti: lo storico non ha exit_reason né prezzo post-uscita."
+                    : "SELL → P(down) = share of SELLs followed by a price drop (probability the sell was right). Forward-only: history has no exit_reason or post-exit price."}
+                </p>
+              ) : null}
 
               {rec.sell.by_reason.length > 0 ? (
                 <div className="pt-1">

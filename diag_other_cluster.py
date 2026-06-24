@@ -163,6 +163,58 @@ def main() -> None:
     print("\n  Reading: mag_ratio >> 1 in high tiers => model COMPRESSES big moves")
     print("  (under-predicts magnitude) -> a learnable expansion signal if dir is sane.")
 
+    print("\n" + "=" * 78)
+    print("[6] ACTIONABILITY: bucket by |PRED| (ex-ante, what we have at predict time)")
+    print("=" * 78)
+    print("  A tier multiplier is usable ONLY if E[|actual|] rises with |pred|")
+    print("  (otherwise we can't tell big movers apart before the fact).")
+    pred_tiers = [(0, 3), (3, 6), (6, 10), (10, 15), (15, 1e9)]
+    for lo, hi in pred_tiers:
+        seg = [(p, a) for p, a in allp if lo <= abs(p) < hi]
+        if not seg:
+            continue
+        n = len(seg)
+        mean_abs_pred = sum(abs(p) for p, _ in seg) / n
+        mean_abs_act = sum(abs(a) for _, a in seg) / n
+        dir_acc = sum(1 for p, a in seg if (p > 0) == (a > 0)) / n
+        frac_big = sum(1 for _, a in seg if abs(a) >= 15) / n
+        ratio = mean_abs_act / mean_abs_pred if mean_abs_pred > 1e-9 else float("nan")
+        print(f"   |pred| [{lo:>3}-{hi if hi < 1e9 else 'inf':>3}) n={n:4d}  "
+              f"mean|pred|={mean_abs_pred:5.2f}  E[|act|]={mean_abs_act:5.2f}  "
+              f"exp_factor={ratio:4.2f}  dir={dir_acc:.3f}  P(|act|>=15)={frac_big:.3f}")
+    print("  exp_factor = E[|actual|]/mean|pred| per bucket = the calibration each")
+    print("  |pred| bucket would need; monotone-rising E[|act|] => learnable map.")
+
+    print("\n" + "=" * 78)
+    print("[7] METADATA SOURCE PROBE: is 'other' a fixable routing/key problem?")
+    print("=" * 78)
+    from orchestrator_io_paths import PAST_CATALYST_PREDICTIONS_JSON
+    from past_pred_io import load_past_pred_map
+
+    recs = load_past_pred_map(PAST_CATALYST_PREDICTIONS_JSON) or {}
+    elig = {tk: r for tk, r in recs.items() if r.get("model_accuracy_metrics_eligible")}
+    print(f"  past_pred recs total={len(recs)}  eligible={len(elig)}")
+    cond_keys = ["indication", "condition", "Indication", "Condition",
+                 "disease", "Disease", "therapeutic_area", "Therapeutic Area"]
+    phase_keys = ["phase", "trial_phase", "Phase", "Studio Phase", "Clinical Phase"]
+    cond_present = {k: sum(1 for r in elig.values() if str(r.get(k) or "").strip()) for k in cond_keys}
+    phase_present = {k: sum(1 for r in elig.values() if str(r.get(k) or "").strip()) for k in phase_keys}
+    print("  non-empty CONDITION-like keys across eligible recs:")
+    for k, c in cond_present.items():
+        if c:
+            print(f"     {k:22s} {c}")
+    if not any(cond_present.values()):
+        print("     (NONE — condition truly absent in source, backfill must come from elsewhere)")
+    print("  non-empty PHASE-like keys across eligible recs:")
+    for k, c in phase_present.items():
+        if c:
+            print(f"     {k:22s} {c}")
+    sample = list(elig.items())[:3]
+    print("  sample eligible record keys (first 3):")
+    for tk, r in sample:
+        ks = [k for k in r.keys() if not k.startswith("model_") and not k.endswith("_pct")]
+        print(f"     {tk}: {ks[:25]}")
+
 
 if __name__ == "__main__":
     main()

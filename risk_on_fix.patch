@@ -318,10 +318,10 @@ index 0000000..b6ccc69
 +        },
 +    )
 diff --git a/prediction/cluster_cal_factor.py b/prediction/cluster_cal_factor.py
-index 9948de9..baa23f4 100644
+index 9948de9..e59bf9c 100644
 --- a/prediction/cluster_cal_factor.py
 +++ b/prediction/cluster_cal_factor.py
-@@ -16,14 +16,19 @@ from typing import Any, Literal
+@@ -16,14 +16,30 @@ from typing import Any, Literal
  from orchestrator_io_paths import (
      CLUSTER_CAL_FACTORS_JSON,
      DATA_DIR,
@@ -338,10 +338,21 @@ index 9948de9..baa23f4 100644
 +# Below this in-sample direction accuracy a cohort carries no directional signal,
 +# so scaling its predictions only amplifies noise -> hold the cal_factor at 1.0.
 +CLUSTER_MIN_DIRECTION_ACC = 0.5
++# Ridge prior centred at 1.0. The raw least-squares scalar overfits the
++# *magnitude ratio* (timid predictions vs volatile biotech actuals) and pins
++# every cohort to a 0.7/1.3 rail even when the mean bias is tiny. Shrinking the
++# OLS estimate toward 1.0 (m = (m_ols + k) / (1 + k)) makes the factor track the
++# modest real bias instead of chasing volatility. Higher k = stronger shrink.
++CLUSTER_SHRINK_PRIOR = 2.0
++# Require at least this fractional in-sample MAE reduction before moving off 1.0.
++CLUSTER_MIN_REL_IMPROVEMENT = 0.01
++# Unpredictable tail moves (binary readouts) above this |actual| pp are dropped
++# from the magnitude regression so a few jumps cannot dominate the scalar.
++CLUSTER_OUTLIER_ACTUAL_PP = 50.0
  CLUSTER_GLOBAL_BLEND = 0.6  # 60% cluster, 40% global — raise to 0.8 only when n >= 15
  
  Direction = Literal["too_optimistic", "too_pessimistic", "calibrated"]
-@@ -251,6 +256,37 @@ def apply_cluster_cal_factor(pred_pct: float, ticker_data: dict[str, Any] | None
+@@ -251,6 +267,47 @@ def apply_cluster_cal_factor(pred_pct: float, ticker_data: dict[str, Any] | None
      return round(pred_pct * blended, 4)
  
  
@@ -354,24 +365,34 @@ index 9948de9..baa23f4 100644
 +    mae_baseline: float,
 +    dir_acc: float,
 +) -> tuple[float, str]:
-+    """Magnitude-scaling cal_factor minimising in-sample error, with guards.
++    """Magnitude-scaling cal_factor minimising in-sample error, regularised.
 +
-+    Replaces the compounding ``current_cal * (1 - bias/10)`` (an additive bias fed
-+    into a multiplicative factor, accumulated each cycle until it pins to a clip).
-+    The optimal scalar minimising ``sum((m*pred - actual)^2)`` is
-+    ``sum(pred*actual)/sum(pred^2)``, recomputed from scratch each cycle. Two
-+    guards keep it from amplifying a broken cohort:
++    The raw least-squares scalar ``sum(pred*actual)/sum(pred^2)`` overfits the
++    *magnitude ratio*: biotech predictions are timid while actuals are volatile
++    (binary readouts), so even a tiny mean bias drives the scalar hard against a
++    clip and every cohort ends pinned to the 0.7/1.3 rails instead of settling
++    near 1.0. Guards:
 +      * direction accuracy < threshold -> directionally unreliable, hold at 1.0;
-+      * the clipped solution is applied only if it reduces in-sample MAE.
++      * tail actuals (|actual| > cap) are dropped from the regression so a few
++        unpredictable jumps cannot dominate the ratio;
++      * the OLS estimate is shrunk toward 1.0 with a ridge prior centred at 1.0
++        (``m = (m_ols + k) / (1 + k)``) so the factor reflects the modest real
++        bias rather than chasing volatility;
++      * the shrunk, clipped factor is applied only if it cuts in-sample MAE by a
++        material margin; otherwise hold at 1.0.
 +    """
 +    if dir_acc < CLUSTER_MIN_DIRECTION_ACC:
 +        return 1.0, "direction_unreliable"
-+    den = sum(p * p for p, _ in pairs)
++    fit = [(p, a) for p, a in pairs if abs(a) <= CLUSTER_OUTLIER_ACTUAL_PP]
++    den = sum(p * p for p, _ in fit)
 +    if den <= 1e-9:
 +        return 1.0, "no_improvement"
-+    m = sum(p * a for p, a in pairs) / den
++    m_ols = sum(p * a for p, a in fit) / den
++    m = (m_ols + CLUSTER_SHRINK_PRIOR) / (1.0 + CLUSTER_SHRINK_PRIOR)
 +    m = max(CLUSTER_CF_FLOOR, min(CLUSTER_CF_CEILING, m))
-+    if _pairs_mae(pairs, m) >= mae_baseline - 1e-9:
++    if abs(m - 1.0) < 1e-3:
++        return 1.0, "no_improvement"
++    if _pairs_mae(pairs, m) > mae_baseline * (1.0 - CLUSTER_MIN_REL_IMPROVEMENT) - 1e-9:
 +        return 1.0, "no_improvement"
 +    return m, "active"
 +
@@ -379,7 +400,7 @@ index 9948de9..baa23f4 100644
  def _direction_from_bias(bias: float) -> Direction:
      if bias > 0.5:
          return "too_optimistic"
-@@ -259,6 +295,37 @@ def _direction_from_bias(bias: float) -> Direction:
+@@ -259,6 +316,37 @@ def _direction_from_bias(bias: float) -> Direction:
      return "calibrated"
  
  
@@ -417,7 +438,7 @@ index 9948de9..baa23f4 100644
  def compute_cluster_cal_factors(
      resolved_outcomes: list[dict[str, Any]],
      *,
-@@ -279,8 +346,6 @@ def compute_cluster_cal_factors(
+@@ -279,8 +367,6 @@ def compute_cluster_cal_factors(
      for cluster_name in list(TICKER_CLUSTERS.keys()) + ["other"]:
          errors = cluster_errors.get(cluster_name, [])
          prev = existing.get(cluster_name) if isinstance(existing, dict) else {}
@@ -426,7 +447,7 @@ index 9948de9..baa23f4 100644
  
          if len(errors) < CLUSTER_MIN_SAMPLES:
              cluster_cal_factors[cluster_name] = {
-@@ -295,8 +360,6 @@ def compute_cluster_cal_factors(
+@@ -295,8 +381,6 @@ def compute_cluster_cal_factors(
              }
              continue
  
@@ -435,7 +456,7 @@ index 9948de9..baa23f4 100644
          pairs = [
              (float(e["pred"]), float(e["actual"]))
              for e in errors
-@@ -307,15 +370,23 @@ def compute_cluster_cal_factors(
+@@ -307,15 +391,23 @@ def compute_cluster_cal_factors(
  
          bias = sum(p - a for p, a in pairs) / len(pairs)
          mae = sum(abs(p - a) for p, a in pairs) / len(pairs)
@@ -791,10 +812,10 @@ index a2807dd..71215d0 100644
          "[MarketContext] regime=%s xbi_5d=%s vix=%s → %s",
          regime,
 diff --git a/prediction/regime_calibration.py b/prediction/regime_calibration.py
-index de4e3ab..845eab1 100644
+index de4e3ab..123d1d2 100644
 --- a/prediction/regime_calibration.py
 +++ b/prediction/regime_calibration.py
-@@ -2,24 +2,40 @@
+@@ -2,24 +2,51 @@
  Regime multiplier — correct systematic over/undershoot by market regime.
  
  Uses ``market_context_gate`` for RISK_ON / NEUTRAL / RISK_OFF / CRISIS.
@@ -833,12 +854,23 @@ index de4e3ab..845eab1 100644
 +# unreliable: scaling magnitude would amplify wrong-signed predictions, so the
 +# multiplier is held at 1.0 instead of "correcting" a broken sample.
 +REGIME_MIN_DIRECTION_ACC = 0.5
++# Ridge prior centred at 1.0. The raw least-squares scalar overfits the
++# magnitude ratio (timid predictions vs volatile actuals) and pins the
++# multiplier to a 0.7/1.3 rail even when the mean bias is tiny. Shrinking the
++# OLS estimate toward 1.0 (m = (m_ols + k) / (1 + k)) makes it track the modest
++# real bias instead of chasing volatility. Higher k = stronger shrink.
++REGIME_SHRINK_PRIOR = 2.0
++# Require at least this fractional in-sample MAE reduction before moving off 1.0.
++REGIME_MIN_REL_IMPROVEMENT = 0.01
++# Unpredictable tail moves (binary readouts) above this |actual| pp are dropped
++# from the magnitude regression so a few jumps cannot dominate the scalar.
++REGIME_OUTLIER_ACTUAL_PP = 50.0
  ACTIVE_REGIMES = ("RISK_ON", "NEUTRAL", "RISK_OFF")
 +UNKNOWN_REGIME = "UNKNOWN"
  
  MarketRegime = Literal["RISK_ON", "NEUTRAL", "RISK_OFF", "CRISIS"]
  
-@@ -103,10 +119,62 @@ def get_current_regime() -> MarketRegime:
+@@ -103,10 +130,62 @@ def get_current_regime() -> MarketRegime:
      return "NEUTRAL"
  
  
@@ -905,7 +937,7 @@ index de4e3ab..845eab1 100644
  
  
  def load_outcomes_with_regime() -> list[dict[str, Any]]:
-@@ -117,29 +185,47 @@ def load_outcomes_with_regime() -> list[dict[str, Any]]:
+@@ -117,29 +196,47 @@ def load_outcomes_with_regime() -> list[dict[str, Any]]:
  
  
  def enrich_outcomes_with_regime(outcomes: list[dict[str, Any]]) -> list[dict[str, Any]]:
@@ -959,7 +991,7 @@ index de4e3ab..845eab1 100644
  
  
  def append_outcome_with_regime(
-@@ -162,7 +248,7 @@ def append_outcome_with_regime(
+@@ -162,7 +259,7 @@ def append_outcome_with_regime(
          "pred": round(float(pred), 4),
          "actual": round(float(actual), 4),
          "node": node,
@@ -968,7 +1000,7 @@ index de4e3ab..845eab1 100644
          "date": pred_date,
          "recorded_at": _now_iso(),
      }
-@@ -202,6 +288,74 @@ def sync_outcomes_from_signal_audit() -> int:
+@@ -202,6 +299,83 @@ def sync_outcomes_from_signal_audit() -> int:
      return added
  
  
@@ -981,25 +1013,34 @@ index de4e3ab..845eab1 100644
 +    mae_baseline: float,
 +    dir_acc: float,
 +) -> tuple[float, str]:
-+    """Magnitude-scaling factor that minimises in-sample error, with guards.
++    """Magnitude-scaling factor that minimises in-sample error, regularised.
 +
-+    Replaces the dimensionally-incoherent ``1 - bias/12`` (an additive bias fed
-+    into a multiplicative factor). The optimal scalar ``m`` minimising
-+    ``sum((m*pred - actual)^2)`` is ``sum(pred*actual)/sum(pred^2)``. Two guards
-+    keep it from amplifying a broken sample:
-+      * if direction accuracy < threshold the sample is directionally unreliable
-+        (scaling would amplify wrong-signed predictions) -> hold at 1.0;
-+      * the clipped solution is only applied if it actually reduces in-sample MAE
-+        vs no correction; otherwise hold at 1.0.
++    The raw least-squares scalar ``sum(pred*actual)/sum(pred^2)`` overfits the
++    magnitude ratio: predictions are timid while actuals are volatile (binary
++    readouts), so even a tiny mean bias drives the scalar hard against a clip and
++    the multiplier ends pinned to the 0.7/1.3 rails instead of settling near 1.0.
++    Guards:
++      * direction accuracy < threshold -> directionally unreliable, hold at 1.0;
++      * tail actuals (|actual| > cap) are dropped from the regression so a few
++        unpredictable jumps cannot dominate the ratio;
++      * the OLS estimate is shrunk toward 1.0 with a ridge prior centred at 1.0
++        (``m = (m_ols + k) / (1 + k)``) so it reflects the modest real bias
++        rather than chasing volatility;
++      * the shrunk, clipped factor is applied only if it cuts in-sample MAE by a
++        material margin; otherwise hold at 1.0.
 +    """
 +    if dir_acc < REGIME_MIN_DIRECTION_ACC:
 +        return 1.0, "direction_unreliable"
-+    den = sum(p * p for p, _ in pairs)
++    fit = [(p, a) for p, a in pairs if abs(a) <= REGIME_OUTLIER_ACTUAL_PP]
++    den = sum(p * p for p, _ in fit)
 +    if den <= 1e-9:
 +        return 1.0, "no_improvement"
-+    m = sum(p * a for p, a in pairs) / den
++    m_ols = sum(p * a for p, a in fit) / den
++    m = (m_ols + REGIME_SHRINK_PRIOR) / (1.0 + REGIME_SHRINK_PRIOR)
 +    m = max(REGIME_MULT_FLOOR, min(REGIME_MULT_CEILING, m))
-+    if _pairs_mae(pairs, m) >= mae_baseline - 1e-9:
++    if abs(m - 1.0) < 1e-3:
++        return 1.0, "no_improvement"
++    if _pairs_mae(pairs, m) > mae_baseline * (1.0 - REGIME_MIN_REL_IMPROVEMENT) - 1e-9:
 +        return 1.0, "no_improvement"
 +    return m, "active"
 +
@@ -1043,7 +1084,7 @@ index de4e3ab..845eab1 100644
  def compute_regime_multipliers(
      outcomes: list[dict[str, Any]] | None = None,
      *,
-@@ -232,17 +386,23 @@ def compute_regime_multipliers(
+@@ -232,17 +406,23 @@ def compute_regime_multipliers(
          bias = sum(p - a for p, a in pairs) / len(pairs)
          mae = sum(abs(p - a) for p, a in pairs) / len(pairs)
          dir_acc = sum(1 for p, a in pairs if (p > 0) == (a > 0)) / len(pairs)
@@ -1504,14 +1545,18 @@ index 0000000..2edf835
 +    assert cb.value == 1.2
 diff --git a/tests/test_cluster_solver.py b/tests/test_cluster_solver.py
 new file mode 100644
-index 0000000..a5b67fd
+index 0000000..146f240
 --- /dev/null
 +++ b/tests/test_cluster_solver.py
-@@ -0,0 +1,31 @@
+@@ -0,0 +1,56 @@
 +"""Cluster cal_factor solver must not amplify directionless / overshooting cohorts."""
 +from __future__ import annotations
 +
-+from prediction.cluster_cal_factor import _pairs_mae, _solve_cluster_cal_factor
++from prediction.cluster_cal_factor import (
++    CLUSTER_CF_CEILING,
++    _pairs_mae,
++    _solve_cluster_cal_factor,
++)
 +
 +
 +def test_holds_when_direction_unreliable():
@@ -1536,6 +1581,27 @@ index 0000000..a5b67fd
 +def test_no_correction_when_already_calibrated():
 +    pairs = [(3.0, 3.0), (-2.0, -2.0), (4.0, 4.0), (-1.0, -1.0)]
 +    dir_acc = 1.0
++    factor, status = _solve_cluster_cal_factor(pairs, _pairs_mae(pairs, 1.0), dir_acc)
++    assert factor == 1.0
++    assert status == "no_improvement"
++
++
++def test_modest_undershoot_is_not_pinned_to_the_ceiling():
++    # OLS magnitude ratio ~1.4 would clip to the 1.3 ceiling; the ridge prior
++    # shrinks it toward 1.0 so the cohort settles off the rail.
++    pairs = [(5.0, 7.0), (4.0, 5.6), (3.0, 4.2), (6.0, 8.4), (2.0, 2.8), (4.5, 6.3)]
++    dir_acc = 1.0
++    factor, status = _solve_cluster_cal_factor(pairs, _pairs_mae(pairs, 1.0), dir_acc)
++    assert status == "active"
++    assert 1.0 < factor < CLUSTER_CF_CEILING
++
++
++def test_tail_actual_is_trimmed_from_the_regression():
++    # A calibrated core (pred==actual) plus one unpredictable 80pp readout. The
++    # tail would otherwise drag the factor toward the ceiling; it is dropped
++    # (|actual| > cap) so the core wins and no spurious correction is made.
++    pairs = [(3.0, 3.0)] * 8 + [(1.0, 80.0)]
++    dir_acc = sum(1 for p, a in pairs if (p > 0) == (a > 0)) / len(pairs)
 +    factor, status = _solve_cluster_cal_factor(pairs, _pairs_mae(pairs, 1.0), dir_acc)
 +    assert factor == 1.0
 +    assert status == "no_improvement"
@@ -1778,10 +1844,10 @@ index 0000000..9fda0b0
 +    assert summary["data_outliers"] == ["KALA"]
 diff --git a/tests/test_regime_calibration_fix.py b/tests/test_regime_calibration_fix.py
 new file mode 100644
-index 0000000..e9b8d40
+index 0000000..680d2ad
 --- /dev/null
 +++ b/tests/test_regime_calibration_fix.py
-@@ -0,0 +1,92 @@
+@@ -0,0 +1,111 @@
 +"""Tests for the RISK_ON regime-multiplier fix.
 +
 +Covers the three root causes:
@@ -1842,6 +1908,25 @@ index 0000000..e9b8d40
 +    m, status = rc._solve_regime_multiplier(pairs, 0.0, 1.0)
 +    assert status == "no_improvement"
 +    assert m == 1.0
++
++
++def test_solver_shrinks_off_the_rail_instead_of_pinning():
++    # OLS magnitude ratio ~1.4 would clip to the ceiling; the ridge prior shrinks
++    # it toward 1.0 so the multiplier settles off the rail.
++    pairs = [(5.0, 7.0), (4.0, 5.6), (3.0, 4.2), (6.0, 8.4), (2.0, 2.8), (4.5, 6.3)]
++    mae = rc._pairs_mae(pairs, 1.0)
++    m, status = rc._solve_regime_multiplier(pairs, mae, 1.0)
++    assert status == "active"
++    assert 1.0 < m < rc.REGIME_MULT_CEILING
++
++
++def test_solver_trims_tail_actual_from_regression():
++    pairs = [(3.0, 3.0)] * 8 + [(1.0, 80.0)]
++    mae = rc._pairs_mae(pairs, 1.0)
++    dir_acc = sum(1 for p, a in pairs if (p > 0) == (a > 0)) / len(pairs)
++    m, status = rc._solve_regime_multiplier(pairs, mae, dir_acc)
++    assert m == 1.0
++    assert status == "no_improvement"
 +
 +
 +def test_compute_neutralizes_broken_risk_on_sample(monkeypatch, tmp_path):

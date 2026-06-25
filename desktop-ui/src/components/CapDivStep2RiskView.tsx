@@ -1,4 +1,4 @@
-﻿import { useMemo, useState } from "react";
+import { useMemo, useState } from "react";
 import {
   CartesianGrid,
   ReferenceLine,
@@ -65,7 +65,7 @@ export function CapDivStep2RiskView({
   const { lang } = useLang();
   const it = lang === "it";
 
-  // â”€â”€ Phase A screening (memo on outcomes) â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+  // ── Phase A screening (memo on outcomes) ─────────────────────────────────
   const phaseA = useMemo(
     () => runUnivariateScreening(closedRows, { simTable, sdsRows }),
     [closedRows, simTable, sdsRows],
@@ -529,7 +529,7 @@ function PatternProposalQueue({
   );
 }
 
-// â”€â”€ Errors scatter (protagonist of the simplified flow) â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+// ── Errors scatter (protagonist of the simplified flow) ───────────────────
 
 type ScatterPoint = {
   ticker: string;
@@ -563,7 +563,7 @@ function ScatterTooltip({ active, payload, it }: { active?: boolean; payload?: A
         {it ? "P&L" : "P&L"}: <span className={`font-semibold ${p.isLoss ? "text-rose-700" : "text-emerald-700"}`}>{sign}{p.pnlPct.toFixed(1)}%</span>
       </p>
       <p className="text-ink-muted tabular-nums">
-        {it ? "Capitale" : "Capital"}: â‚¬{p.capitalEur.toFixed(0)}
+        {it ? "Capitale" : "Capital"}: €{p.capitalEur.toFixed(0)}
         {p.matchAuto ? (
           <> · <span className="text-rose-700 font-semibold">{it ? "matcha pattern auto" : "matches auto pattern"}</span></>
         ) : null}
@@ -625,7 +625,7 @@ function LossErrorsScatter({
             <>
               {" "}
               <span className="text-rose-700 dark:text-rose-300 font-semibold">
-                â—
+                ●
               </span>{" "}
               {it ? "anello rosa = trade che matchano il pattern auto-rilevato" : "rose ring = trades matching the auto-detected pattern"}{" "}
               <span className="font-mono">({autoPatternConditionsLabel})</span>.
@@ -740,7 +740,7 @@ function LossErrorsScatter({
   );
 }
 
-// â”€â”€ Auto-detected pattern card with 1-click apply â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+// ── Auto-detected pattern card with 1-click apply ─────────────────────────
 
 function AutoPatternCard({
   result,
@@ -894,7 +894,7 @@ function AutoPatternCard({
   );
 }
 
-// â”€â”€ No-pattern fallback hint â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+// ── No-pattern fallback hint ─────────────────────────────────────────────
 
 function NoEmpiricalPatternHint({
   totalTrades,

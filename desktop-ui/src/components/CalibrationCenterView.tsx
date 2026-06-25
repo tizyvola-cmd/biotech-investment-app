@@ -22,7 +22,11 @@ import {
 import { listSnapshots, appendPcseSnapshot } from "../sheet/patternSearchHistory";
 import { loadSchedulerState, markRunCompleted } from "../sheet/patternSearchScheduler";
 import { loadDecisionSimState } from "../sheet/investDecisionSimStorage";
-import { proposeFromPCSE, listProposals as listPatternProposals } from "../riskPattern/patternProposalStore";
+import {
+  proposeFromPCSE,
+  listProposals as listPatternProposals,
+  SHOW_APPROVED_PATTERN_EVENT,
+} from "../riskPattern/patternProposalStore";
 import {
   approvePatternProposal,
   rejectPatternProposal,
@@ -290,6 +294,7 @@ export function CalibrationCenterView({
   const it = lang === "it";
 
   const [tab, setTab] = useState<Tab>("queue");
+  const rootRef = useRef<HTMLDivElement>(null);
   const [proposals, setProposals] = useState<CalibrationProposal[]>(() =>
     listProposals(),
   );
@@ -351,6 +356,17 @@ export function CalibrationCenterView({
     }
     window.addEventListener(PCSE_SEARCH_REQUESTED_EVENT, executePcseRun);
     return () => window.removeEventListener(PCSE_SEARCH_REQUESTED_EVENT, executePcseRun);
+  }, []);
+
+  // Deep-link from other panels (e.g. the Step-3 synthesizer): switch to the
+  // "Approved weights" tab and scroll this view into view.
+  useEffect(() => {
+    function showApproved() {
+      setTab("frozen");
+      rootRef.current?.scrollIntoView({ behavior: "smooth", block: "start" });
+    }
+    window.addEventListener(SHOW_APPROVED_PATTERN_EVENT, showApproved);
+    return () => window.removeEventListener(SHOW_APPROVED_PATTERN_EVENT, showApproved);
   }, []);
 
   function onPromotePcse(result: CombinationResult) {
@@ -437,7 +453,7 @@ export function CalibrationCenterView({
   const history = proposals.filter((p) => p.status !== "pending");
 
   return (
-    <div className="space-y-4">
+    <div className="space-y-4" ref={rootRef}>
       <div className="invest-trend-chart-panel rounded-xl border p-4">
         <div className="flex items-start gap-3">
           <div className="text-2xl shrink-0">⚖️</div>

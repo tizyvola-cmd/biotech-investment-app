@@ -163,8 +163,8 @@ const DICT = {
     it: "Aggiorna i grafici Curve dallo snapshot Simulation.",
   },
   "refresh.page.decisionLab.tooltip": {
-    en: "Reload Pick stocks: Simulation snapshot, charts, Top Opps store, and all tabs (Opportunities · SuperNova · Ticker focus). Live signals run in background if API is online.",
-    it: "Ricarica Scegli titoli: snapshot Simulation, grafici, store Top Opps e tutte le tab (Opportunità · SuperNova · Ticker focus). Live signals in background se l'API è online.",
+    en: "Reload Pick stocks: Simulation snapshot, charts, Top Opps store, and all tabs (Opportunities · SuperNova). Live signals run in background if API is online.",
+    it: "Ricarica Scegli titoli: snapshot Simulation, grafici, store Top Opps e tutte le tab (Opportunità · SuperNova). Live signals in background se l'API è online.",
   },
   "refresh.page.simulation.tooltip": {
     en: "Refresh Simulation: re-read snapshot, reload charts and recalculate P&L (~1s). New CD studies arrive via morning server job.",

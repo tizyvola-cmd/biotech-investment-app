@@ -281,18 +281,6 @@ export default function App() {
     navigateTo("secK8");
   }, [navigateTo]);
 
-  const handleNavigateToSimulation = useCallback(
-    (ticker: string, action: "buy" | "sell", cd?: string) => {
-      setDecisionLabMonitorFocus({
-        ticker: ticker.trim().toUpperCase(),
-        action,
-        cd: cd?.trim() || undefined,
-      });
-      navigateTo("decisionLab");
-    },
-    [navigateTo],
-  );
-
   const handleOpenSimulationRow = useCallback((focus: {
     ticker: string;
     cd?: string;
@@ -307,12 +295,6 @@ export default function App() {
       view: "snapshotBar",
     });
     navigateTo("simulation");
-  }, [navigateTo]);
-
-  const handleOpenPatternScreen = useCallback((ticker?: string) => {
-    void ticker;
-    setDecisionLabInitialTab("patterns");
-    navigateTo("decisionLab");
   }, [navigateTo]);
 
   const handleOpenSupernovaTab = useCallback((ticker?: string) => {
@@ -1460,7 +1442,6 @@ export default function App() {
                 }}
                 onOpenDecisionLabScreen={() => navigateTo("decisionLab")}
                 onOpenSupernovaScreen={handleOpenSupernovaTab}
-                onOpenPatternScreen={handleOpenPatternScreen}
                 onOpenSlopeCharts={openSlopeErrorCharts}
                 focusTicker={simulationFocus}
                 onFocusConsumed={() => setSimulationFocus(null)}
@@ -1477,12 +1458,7 @@ export default function App() {
                 simLoading={simLoading}
                 simError={simError}
                 onReloadSimulation={reloadSimulation}
-                onNavigateToSimulation={handleNavigateToSimulation}
                 onOpenCatalystFeed={() => navigateTo("catalystFeed")}
-                onOpenClinicalFeed={(ticker) => {
-                  setClinicalFeedFocusTicker(ticker.trim().toUpperCase() || null);
-                  navigateTo("catalystFeed");
-                }}
                 onOpenSlopeErrorCharts={openSlopeErrorCharts}
                 onOpenPredictionCharts={openPredictionCharts}
                 focusSignal={decisionLabFocus}

@@ -35,9 +35,6 @@ import { RefreshControls } from "./RefreshControls";
 import { SupernovaDistanceScoreView } from "./SupernovaDistanceScoreView";
 import { publishDashboardRecommendationsFromSimulation } from "../sheet/topOppsFromSimulation";
 
-const CdPatternRecommendationView = lazy(() =>
-  import("./CdPatternRecommendationView").then((m) => ({ default: m.CdPatternRecommendationView })),
-);
 const PortfolioBuilderLabView = lazy(() =>
   import("./PortfolioBuilderLabView").then((m) => ({ default: m.PortfolioBuilderLabView })),
 );
@@ -46,7 +43,7 @@ import { markSaturdayAutostartDone } from "../shared/sundayRefreshSchedule";
 import { AntiqueClockIcon } from "./AntiqueClockIcon";
 import { useLang, useT } from "../shared/i18n";
 
-type LabTab = "monitor" | "sds" | "patterns" | "builder";
+type LabTab = "monitor" | "sds" | "builder";
 export type DecisionLabTab = LabTab;
 // RefreshDataModal — "Refresh data" button that launches the server-side refresh
 // (exported to be reused in other tabs — e.g. Simulation — so buttons and
@@ -1018,9 +1015,7 @@ export type InvestmentDecisionLabViewProps = {
   simLoading: boolean;
   simError?: string | null;
   onReloadSimulation?: () => void | Promise<SheetTable | null | undefined>;
-  onNavigateToSimulation?: (ticker: string, action: "buy" | "sell", cd?: string) => void;
   onOpenCatalystFeed?: () => void;
-  onOpenClinicalFeed?: (ticker: string) => void;
   onOpenSlopeErrorCharts?: (ticker?: string) => void;
   onOpenPredictionCharts?: (focus: { seriesKey: string | null; ticker: string }) => void;
   focusSignal?: { ticker: string; cd?: string } | null;
@@ -1041,9 +1036,7 @@ export function InvestmentDecisionLabView({
   simLoading,
   simError,
   onReloadSimulation,
-  onNavigateToSimulation,
   onOpenCatalystFeed: _onOpenCatalystFeed,
-  onOpenClinicalFeed,
   onOpenSlopeErrorCharts,
   onOpenPredictionCharts,
   focusSignal,
@@ -1061,7 +1054,6 @@ export function InvestmentDecisionLabView({
   const [labTab, setLabTab] = useState<LabTab>("monitor");
   const [sdsMonitorFocus, setSdsMonitorFocus] = useState<SimulationNavFocus | null>(null);
   const [sdsTabFocusTicker, setSdsTabFocusTicker] = useState<string | null>(null);
-  const [patternTabFocusTicker, setPatternTabFocusTicker] = useState<string | null>(null);
   const [signalsReloadToken, setSignalsReloadToken] = useState(0);
   const [labReloadToken, setLabReloadToken] = useState(0);
   const [labRefreshing, setLabRefreshing] = useState(false);
@@ -1126,12 +1118,6 @@ export function InvestmentDecisionLabView({
     setLabTab("sds");
     const tk = ticker?.trim().toUpperCase();
     setSdsTabFocusTicker(tk || null);
-  }, []);
-
-  const handleOpenPatternScreen = useCallback((ticker?: string) => {
-    setLabTab("patterns");
-    const tk = ticker?.trim().toUpperCase();
-    setPatternTabFocusTicker(tk || null);
   }, []);
 
   useEffect(() => {
@@ -1205,11 +1191,9 @@ export function InvestmentDecisionLabView({
           <p className="text-xs text-ink-muted">
             {labTab === "sds"
               ? t("decisionLab.subtitle.sds")
-              : labTab === "patterns"
-                ? t("decisionLab.subtitle.patterns")
-                : labTab === "builder"
-                  ? "Build optimal portfolios with rebalancing & simulation"
-                  : t("decisionLab.subtitle.monitor")}
+              : labTab === "builder"
+                ? "Build optimal portfolios with rebalancing & simulation"
+                : t("decisionLab.subtitle.monitor")}
           </p>
         </div>
         {labTab !== "monitor" ? (
@@ -1227,7 +1211,6 @@ export function InvestmentDecisionLabView({
             [
               ["monitor", t("decisionLab.tab.monitor")],
               ["sds", t("decisionLab.tab.sds")],
-              ["patterns", t("decisionLab.tab.patterns")],
               ["builder", "Portfolio Builder"],
             ] as const
           ).map(([id, label]) => (
@@ -1274,30 +1257,6 @@ export function InvestmentDecisionLabView({
             </ViewErrorBoundary>
           </div>
         ) : null}
-        {labTab === "patterns" ? (
-          <div className="flex flex-col flex-1 bg-[rgb(var(--panel-lab-shell-bg))]">
-            <ViewErrorBoundary label="CD Pattern">
-              <Suspense
-                fallback={
-                  <p className="px-4 py-8 text-sm text-ink-muted">{t("decisionLab.pattern.loading")}</p>
-                }
-              >
-                <CdPatternRecommendationView
-                  simTable={simTable}
-                  chartsBySeriesKey={labChartsBySeriesKey}
-                  chartsBundle={labChartsBundle}
-                  investInputs={investInputs}
-                  focusTicker={patternTabFocusTicker}
-                  onFocusTickerConsumed={() => setPatternTabFocusTicker(null)}
-                  onOpenClinicalFeed={onOpenClinicalFeed}
-                  onNavigateToSimulation={onNavigateToSimulation}
-                  onOpenSimulationRow={handleOpenSimulationTabRow}
-                  parentReloadToken={labReloadToken}
-                />
-              </Suspense>
-            </ViewErrorBoundary>
-          </div>
-        ) : null}
         {labTab === "monitor" ? (
           <div className="flex flex-col flex-1 bg-[rgb(var(--panel-lab-shell-bg))]">
             <ViewErrorBoundary label="CD opportunities">
@@ -1318,7 +1277,6 @@ export function InvestmentDecisionLabView({
                 }}
                 onOpenSimulationRow={handleOpenSimulationTabRow}
                 onOpenSupernovaScreen={handleOpenSupernovaScreen}
-                onOpenPatternScreen={handleOpenPatternScreen}
               />
             </ViewErrorBoundary>
           </div>

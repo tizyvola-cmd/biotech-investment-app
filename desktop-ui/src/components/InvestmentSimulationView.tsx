@@ -776,8 +776,6 @@ export type InvestmentSimulationViewProps = {
   onOpenDecisionLabScreen?: () => void;
   /** Decision Lab → SuperNova (SDS) tab; optional ticker focus. */
   onOpenSupernovaScreen?: (ticker?: string) => void;
-  /** Decision Lab → CD Pattern recommendation tab; optional ticker focus. */
-  onOpenPatternScreen?: (ticker?: string) => void;
   /** Parent Pick stocks refresh — sync embedded tables/charts with snapshot reload. */
   parentReloadToken?: number;
 };
@@ -797,7 +795,6 @@ export function InvestmentSimulationView({
   onOpenSimulationRow,
   onOpenDecisionLabScreen,
   onOpenSupernovaScreen,
-  onOpenPatternScreen,
   parentReloadToken = 0,
 }: InvestmentSimulationViewProps) {
   const isDecisionLabEmbed = embedMode === "decisionLab";
@@ -3356,16 +3353,6 @@ export function InvestmentSimulationView({
               onClick={() => onOpenSupernovaScreen()}
             >
               {t("sim.workspace.openSupernova")}
-            </button>
-          ) : null}
-          {onOpenPatternScreen ? (
-            <button
-              type="button"
-              className="btn-ghost text-[11px] font-semibold border border-[rgb(var(--border))]/50"
-              title={t("sim.workspace.openPatternTip")}
-              onClick={() => onOpenPatternScreen()}
-            >
-              {t("sim.workspace.openPattern")}
             </button>
           ) : null}
           {!isDecisionLabEmbed && onOpenDecisionLabScreen ? (

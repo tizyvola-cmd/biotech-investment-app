@@ -117,10 +117,10 @@ export function ModelTargetPriceCell({
           </div>
         ) : null}
         <span className="inline-flex flex-col items-start gap-0.5 min-w-0">
-          <span className="inline-block text-[10px] font-semibold tabular-nums text-[rgb(var(--signal-up))] leading-tight max-w-[3.75rem] truncate">
+          <span className="inline-block text-[11px] font-semibold tabular-nums text-[rgb(var(--signal-up))] leading-tight max-w-[3.75rem] truncate">
             {usdLabel}
           </span>
-          <span className="text-[9px] tabular-nums text-[rgb(var(--signal-up))]/90 leading-none font-medium">
+          <span className="text-[11px] tabular-nums text-[rgb(var(--signal-up))]/90 leading-none font-medium">
             {pctLabel}
           </span>
         </span>
@@ -129,7 +129,7 @@ export function ModelTargetPriceCell({
   }
 
   if (!simRow) {
-    return <span className="text-ink-muted/35 text-[10px]">·</span>;
+    return <span className="text-ink-muted/35 text-[11px]">·</span>;
   }
 
   const display = resolveModelTargetDisplay(
@@ -140,7 +140,7 @@ export function ModelTargetPriceCell({
   );
 
   if (!display) {
-    return <span className="text-ink-muted/35 text-[10px]">·</span>;
+    return <span className="text-ink-muted/35 text-[11px]">·</span>;
   }
 
   const tooltipBase = it ? display.tooltipIt : display.tooltipEn;
@@ -171,22 +171,22 @@ export function ModelTargetPriceCell({
   const priceNode =
     display.mode === "fall" ? (
       <span
-        className="inline-flex items-center justify-center text-[rgb(var(--signal-down))] font-bold text-sm leading-none"
+        className="inline-flex items-center justify-center text-[rgb(var(--signal-down))] font-bold text-[11px] leading-none"
         aria-hidden
       >
         ↓
       </span>
     ) : display.mode === "rise" && display.targetPriceUsd != null ? (
-      <span className="inline-block text-[10px] font-semibold tabular-nums text-[rgb(var(--signal-up))] leading-tight max-w-[3.25rem] truncate">
+      <span className="inline-block text-[11px] font-semibold tabular-nums text-[rgb(var(--signal-up))] leading-tight max-w-[3.25rem] truncate">
         {fmtCompactUsd(display.targetPriceUsd)}
       </span>
     ) : (
-      <span className="text-ink-muted/45 text-[10px] font-medium">~</span>
+      <span className="text-ink-muted/45 text-[11px] font-medium">~</span>
     );
 
   const daysNode =
     daysToTarget != null && daysToTarget > 0 ? (
-      <span className="text-[9px] tabular-nums text-ink-muted/75 leading-none">
+      <span className="text-[11px] tabular-nums text-ink-muted/75 leading-none">
         {daysToTarget}d
       </span>
     ) : null;

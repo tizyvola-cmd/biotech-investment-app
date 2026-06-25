@@ -4134,7 +4134,7 @@ export function InvestmentSimulationView({
                     return (
                       <td className={sheetGridTdClass("cd")} data-col="cd">
                         <span
-                          className="text-[10px] whitespace-nowrap"
+                          className="text-[11px] whitespace-nowrap"
                           style={cdExtras?.style}
                           title={cdLabel !== "—" ? cdLabel : undefined}
                         >
@@ -4269,7 +4269,7 @@ export function InvestmentSimulationView({
                   <td className={sheetGridTdClass("px")} data-col="px">
                     <div>{fmtUsd(p.currPrice)}</div>
                     {priceSnapshotAt ? (
-                      <div className="text-[10px] text-ink-muted/65 font-normal leading-tight">
+                      <div className="text-[11px] text-ink-muted/65 font-normal leading-tight">
                         {fmtSnapshotPriceLabel(priceSnapshotAt)}
                       </div>
                     ) : null}
@@ -4306,7 +4306,7 @@ export function InvestmentSimulationView({
                         return dailyPct != null ? (
                           <>
                             <span
-                              className={`text-[10px] font-semibold tabular-nums ${
+                              className={`text-[11px] font-semibold tabular-nums ${
                                 dailyPct > 0
                                   ? "text-[rgb(var(--signal-up))]"
                                   : dailyPct < 0
@@ -4318,13 +4318,13 @@ export function InvestmentSimulationView({
                               {dailyPct.toFixed(2)}%
                             </span>
                             {priceSnapshotAt && (
-                              <span className="text-[10px] text-ink-muted/70 whitespace-nowrap">
+                              <span className="text-[11px] text-ink-muted/70 whitespace-nowrap">
                                 {fmtSnapshotPriceLabel(priceSnapshotAt)}
                               </span>
                             )}
                           </>
                         ) : (
-                          <span className="text-[10px] text-ink-muted/80 font-normal">
+                          <span className="text-[11px] text-ink-muted/80 font-normal">
                             {priceSnapshotAt ? fmtSnapshotPriceLabel(priceSnapshotAt) : "—"}
                           </span>
                         );
@@ -4335,7 +4335,7 @@ export function InvestmentSimulationView({
                     <div className="flex items-center gap-1.5">
                       {inPortfolio && entryPct != null && (
                         <span
-                          className={`text-xs font-bold leading-none ${
+                          className={`text-[11px] font-bold leading-none ${
                             entryPct > 0
                               ? "text-[rgb(var(--signal-up))]"
                               : "text-[rgb(var(--signal-down))]"
@@ -4350,7 +4350,7 @@ export function InvestmentSimulationView({
                         </span>
                       )}
                       <DecimalTextInput
-                        className="input w-full py-0.5 text-xs tabular-nums"
+                        className="input w-full py-0.5 text-[11px] tabular-nums"
                         value={inp.buyPrice > 0 ? inp.buyPrice : 0}
                         placeholder={
                           localEntry || inp.ignoreSheet
@@ -4375,7 +4375,7 @@ export function InvestmentSimulationView({
                             ? String(p.capital)
                             : undefined
                       }
-                      inputClassName="input w-full py-0.5 text-xs tabular-nums"
+                      inputClassName="input w-full py-0.5 text-[11px] tabular-nums"
                       onCommit={(n) => setInput(p.key, "capital", n)}
                     />
                   </td>
@@ -4408,7 +4408,7 @@ export function InvestmentSimulationView({
                   <td className={sheetGridTdClass("px")} data-col="px">
                     <div>{fmtUsd(p.currPrice)}</div>
                     {priceSnapshotAt ? (
-                      <div className="text-[10px] text-ink-muted/65 font-normal leading-tight">
+                      <div className="text-[11px] text-ink-muted/65 font-normal leading-tight">
                         {fmtSnapshotPriceLabel(priceSnapshotAt)}
                       </div>
                     ) : null}
@@ -4444,7 +4444,7 @@ export function InvestmentSimulationView({
                     <div className="flex items-center gap-1.5">
                       {inPortfolio && entryPct != null && (
                         <span
-                          className={`text-sm font-bold leading-none ${
+                          className={`text-[11px] font-bold leading-none ${
                             entryPct > 0
                               ? "text-[rgb(var(--signal-up))]"
                               : "text-[rgb(var(--signal-down))]"
@@ -4459,7 +4459,7 @@ export function InvestmentSimulationView({
                         </span>
                       )}
                       <DecimalTextInput
-                        className="input w-full max-w-[7.5rem] py-0.5 text-xs tabular-nums"
+                        className="input w-full max-w-[7.5rem] py-0.5 text-[11px] tabular-nums"
                         value={inp.buyPrice > 0 ? inp.buyPrice : 0}
                         placeholder={
                           localEntry || inp.ignoreSheet
@@ -4484,7 +4484,7 @@ export function InvestmentSimulationView({
                             ? String(p.capital)
                             : undefined
                       }
-                      inputClassName="input w-full max-w-[7.5rem] py-0.5 text-xs tabular-nums"
+                      inputClassName="input w-full max-w-[7.5rem] py-0.5 text-[11px] tabular-nums"
                       wrapperClassName="flex flex-col gap-0.5 min-w-0"
                       onCommit={(n) => setInput(p.key, "capital", n)}
                     />
@@ -4522,7 +4522,7 @@ export function InvestmentSimulationView({
                     {canBuy ? (
                       <button
                         type="button"
-                        className="btn-ghost text-[10px] px-1 text-positive font-semibold"
+                        className="btn-ghost text-[11px] px-1 text-positive font-semibold"
                         title={`Open position · €${DEFAULT_SIM_BUY_CAPITAL_EUR} at current price`}
                         onClick={() => buyRowSimulation(p.key)}
                       >
@@ -4532,7 +4532,7 @@ export function InvestmentSimulationView({
                       <button
                         type="button"
                         disabled
-                        className="btn-ghost text-[10px] px-1 text-ink-muted opacity-60 cursor-not-allowed"
+                        className="btn-ghost text-[11px] px-1 text-ink-muted opacity-60 cursor-not-allowed"
                         title={buyBlockReason}
                       >
                         Buy
@@ -4540,7 +4540,7 @@ export function InvestmentSimulationView({
                     ) : null}
                     {inPortfolio && exitTone && exitV && exitV.verdict !== "n/d" && (
                       <span
-                        className={`inline-block px-1.5 py-0.5 rounded text-[9px] font-bold ${exitTone.color} ${exitTone.bg}`}
+                        className={`inline-block px-1.5 py-0.5 rounded text-[11px] font-bold ${exitTone.color} ${exitTone.bg}`}
                         title={exitV.reason}
                       >
                         {exitTone.label}
@@ -4549,7 +4549,7 @@ export function InvestmentSimulationView({
                     {inPortfolio && (
                       <button
                         type="button"
-                        className="btn-ghost text-[10px] px-1 text-positive"
+                        className="btn-ghost text-[11px] px-1 text-positive"
                         title={
                           p.currPrice != null
                             ? `Sell ${p.ticker} at $${p.currPrice.toFixed(2)}`
@@ -4683,7 +4683,7 @@ function renderSynthCapSuggestion(
   lang: "it" | "en",
 ): React.ReactNode {
   if (share == null || totalCapitalEur <= 0) {
-    return <span className="text-ink-muted text-[10px]">—</span>;
+    return <span className="text-ink-muted text-[11px]">—</span>;
   }
   const eur = share * totalCapitalEur;
   const pct = share * 100;
@@ -4698,8 +4698,8 @@ function renderSynthCapSuggestion(
           : `Actionable synth (max 25%/deal): ${eurLabel} (${pct.toFixed(1)}% of pot). Underwater positions are never upsized — only reduced toward target.`
       }
     >
-      <span className="text-xs font-semibold">{eurLabel}</span>
-      <span className="text-[10px] text-ink-muted/75">({pct.toFixed(1)}%)</span>
+      <span className="text-[11px] font-semibold">{eurLabel}</span>
+      <span className="text-[11px] text-ink-muted/75">({pct.toFixed(1)}%)</span>
     </div>
   );
 }

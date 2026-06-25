@@ -9888,6 +9888,10 @@ const DICT = {
     en: "Sim portfolio",
     it: "Portafoglio sim",
   },
+  "modelLab.tab.sells": {
+    en: "Sells",
+    it: "Vendite",
+  },
   "modelLab.page.title": {
     en: "Model quality",
     it: "Qualità modello",
@@ -9895,6 +9899,10 @@ const DICT = {
   "modelLab.subtitle.portfolio": {
     en: "Your portfolio = decision tracking · capital invested/divested · curve slope + reliability vs P&L",
     it: "Tuo portafoglio = tracciamento decisioni · capitale investito/disinvestito · pendenza curva + affidabilità vs P&L",
+  },
+  "modelLab.subtitle.sells": {
+    en: "Sells = exit-error taxonomy (premature / missed) · open-gain impact · recommendation adherence",
+    it: "Vendite = tassonomia errori di uscita (precoci / mancate) · impatto sul gain open · adesione alle raccomandazioni",
   },
   "modelLab.subtitle.qc": {
     en: "Quality & control — validation, learnings and pre-CD signal audit",

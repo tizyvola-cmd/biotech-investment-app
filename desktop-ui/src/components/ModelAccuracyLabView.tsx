@@ -14,13 +14,14 @@ import { InvestmentSimOutcomesPanel } from "./InvestmentSimOutcomesPanel";
 import { LearningLabView } from "./LearningLabView";
 import { EisSignalImpactPanel } from "./EisSignalImpactPanel";
 import { QcTodayDashboard } from "./QcTodayDashboard";
+import { SellsQualityTab } from "./SellsQualityPanel";
 import { SdsPredictionAccuracyPanel } from "./SdsPredictionAccuracyPanel";
 import { INVEST_SIM_INPUTS_CHANGED_EVENT } from "../sheet/investSimStorage";
 import { loadModelLearningsBundle } from "../data/modelLearningsData";
 import { buildModelLearningsView } from "../sheet/modelLearningsTimeline";
 import { fetchDesktopManifest, invalidateProjectJsonCache } from "../data/projectData";
 
-type ModelsTab = "performance" | "portfolio" | "distribution";
+type ModelsTab = "performance" | "portfolio" | "distribution" | "sells";
 type PerformanceSubview = "dashboard" | "learning" | "sds-accuracy" | "eis-analysis";
 
 /** Legacy route aliases → top-level tab. */
@@ -67,7 +68,8 @@ function resolveInitialTab(initialTab: ModelsTabId | undefined): ModelsTab {
   if (
     initialTab === "performance" ||
     initialTab === "portfolio" ||
-    initialTab === "distribution"
+    initialTab === "distribution" ||
+    initialTab === "sells"
   ) {
     return initialTab;
   }
@@ -291,7 +293,9 @@ export function ModelAccuracyLabView({
             : t("modelLab.subtitle.performance")
       : tab === "portfolio"
         ? t("modelLab.subtitle.portfolio")
-        : t("modelLab.subtitle.distribution");
+        : tab === "sells"
+          ? t("modelLab.subtitle.sells")
+          : t("modelLab.subtitle.distribution");
 
   const curveErrors = useMemo(() => {
     const errs: string[] = [];
@@ -334,6 +338,13 @@ export function ModelAccuracyLabView({
             onClick={() => setTab("portfolio")}
           >
             {t("modelLab.tab.portfolio")}
+          </button>
+          <button
+            type="button"
+            className={tabBtn(tab === "sells")}
+            onClick={() => setTab("sells")}
+          >
+            {t("modelLab.tab.sells")}
           </button>
           <button
             type="button"
@@ -454,6 +465,15 @@ export function ModelAccuracyLabView({
                 onOpenDailyPnlLedger={onOpenDailyPnlLedger}
               />
             </ViewErrorBoundary>
+          </div>
+        )}
+
+        {tab === "sells" && (
+          <div className="flex flex-col flex-1 pr-1">
+            <SellsQualityTab
+              simTable={simTable ?? null}
+              reloadToken={portfolioReloadToken + signalsReloadToken}
+            />
           </div>
         )}
       </div>

@@ -822,7 +822,12 @@ export function MainDashboardView({
 
   useEffect(() => {
     if (simLoading || !simTable?.rows?.length) return;
-    publishDashboardRecommendationsFromSimulation(simTable, inputs, top2ChartPointsByKey);
+    // Opening/refreshing the Dashboard is the recompute action the staleness
+    // alert points users to — force the store timestamp so the age resets even
+    // when the recomputed picks are identical to the stored ones.
+    publishDashboardRecommendationsFromSimulation(simTable, inputs, top2ChartPointsByKey, {
+      forceTimestamp: true,
+    });
   }, [simTable, inputs, simLoading, top2ChartPointsByKey, sdsGateTick]);
 
   const feedScopeTickers = useMemo(() => {

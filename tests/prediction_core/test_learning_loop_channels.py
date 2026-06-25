@@ -88,6 +88,28 @@ def test_prediction_channel_reports_max_min_nodes(monkeypatch):
     assert pred["worst_node"]["label"] == "T-60" and pred["worst_node"]["sign_hit_pct"] == 44.0
     offsets = [r["offset"] for r in pred["reliability_by_cd"]]
     assert offsets == [-60, -5]  # ordered far -> near, post-CD dropped
+    # reliable window is relative to the peak (78% @ T-5): threshold 68%, so only
+    # T-5 is in-window (5 stars) while T-60 (44%) is flagged not reliable.
+    win = pred["reliability_window"]
+    assert win["peak_pct"] == 78.0 and win["peak_offset"] == -5
+    assert win["threshold_pct"] == 68.0
+    by = {r["offset"]: r for r in pred["reliability_by_cd"]}
+    assert by[-5]["reliable"] is True and by[-5]["stars"] == 5
+    assert by[-60]["reliable"] is False and by[-60]["stars"] is None
+
+
+def test_prediction_channel_reports_reliability_bands(monkeypatch):
+    monkeypatch.setattr(llc, "_load_outcomes", lambda: [_outcome(5.0, 4.0, "2026-06-01")])
+    monkeypatch.setattr(llc, "_load_positions", lambda: [])
+    monkeypatch.setattr(llc, "_load_sign_curve", _sign_curve)
+    pred = llc.compute_channel_impact()["prediction"]
+    bands = {b["key"]: b for b in pred["reliability_bands"]}
+    # CD-4m -> -2m has no node (curve starts at CD-60d) -> no estimate
+    assert bands["cd_m4_m2"]["mean_pct"] is None and bands["cd_m4_m2"]["n"] == 0
+    # the other bands carry the n-weighted mean of the nodes inside them
+    assert bands["cd_m2_d10"]["mean_pct"] == 44.0 and bands["cd_m2_d10"]["n"] == 50
+    assert bands["cd_d10_d0"]["mean_pct"] == 78.0 and bands["cd_d10_d0"]["n"] == 60
+    assert bands["cd_d0_p7"]["mean_pct"] == 90.0 and bands["cd_d0_p7"]["n"] == 20
 
 
 def test_prediction_channel_unavailable_without_sign_curve(monkeypatch):
@@ -197,6 +219,29 @@ def test_recommendation_sell_directional_by_reason(monkeypatch):
     assert by_reason["stop_loss"]["down_hit_pct"] == 50.0
     assert by_reason["pre_cd_exit"]["down_hit_pct"] == 100.0
     assert by_reason["sds_below_40"]["graded_n"] == 0
+
+
+def test_recommendation_sell_counts_every_exit_not_only_rule_reasons(monkeypatch):
+    # Every closed position is a sale: exits without a rule reason (exit_reason
+    # None -> "capital_removed") still count toward SELL -> P(down). Only rows
+    # never exited (not_applicable) are excluded. Regression for SELL n=0.
+    positions = [
+        _pos(80.0, -20.0, exit_reason="stop_loss", sell_signal_result="success"),
+        _pos(70.0, 12.0, exit_reason=None, sell_signal_result="success"),  # CD exit, price fell after
+        _pos(60.0, 8.0, exit_reason=None, sell_signal_result="failure"),   # CD exit, price rose after
+        _pos(90.0, 3.0, exit_reason=None, sell_signal_result="not_applicable"),  # still open -> not a sale
+    ]
+    monkeypatch.setattr(llc, "_load_outcomes", lambda: [])
+    monkeypatch.setattr(llc, "_load_sign_curve", lambda: {})
+    monkeypatch.setattr(llc, "_load_positions", lambda: positions)
+    sell = llc.compute_channel_impact()["recommendation"]["sell"]
+    assert sell["n"] == 3  # the not_applicable row is excluded
+    assert sell["graded_n"] == 3
+    assert sell["down_hit_pct"] == 66.7  # 2 of 3 fell after the sale
+    by_reason = {b["reason"]: b for b in sell["by_reason"]}
+    assert by_reason["stop_loss"]["n"] == 1
+    assert by_reason["capital_removed"]["n"] == 2
+    assert by_reason["capital_removed"]["down_hit_pct"] == 50.0
 
 
 def test_opened_position_counts_as_buy_regardless_of_regime(monkeypatch):

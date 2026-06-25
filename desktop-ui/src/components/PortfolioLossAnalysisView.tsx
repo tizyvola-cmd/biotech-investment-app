@@ -1738,6 +1738,10 @@ export function PortfolioLossAnalysisView({
             </div>
           ) : visibleItems.length > 0 ? (
             <>
+          {/* KPI snapshot eliminata per il portafoglio (consolidata nella
+              tabella Pick stocks). Resta per le opportunità fuori portafoglio,
+              dove non è ridondante. */}
+          {profile === "opportunities" ? (
           <LossAnalysisSummaryTable
             items={visibleItems}
             patternRecByKey={patternRecByKey}
@@ -1758,6 +1762,7 @@ export function PortfolioLossAnalysisView({
             onOpenRiskModal={setRiskModalEntry}
             highlightedKey={highlightedKey}
           />
+          ) : null}
 
           <div className="panel-summary-strip">
             <span className="font-semibold tabular-nums shrink-0">

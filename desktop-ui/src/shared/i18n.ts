@@ -163,8 +163,8 @@ const DICT = {
     it: "Aggiorna i grafici Curve dallo snapshot Simulation.",
   },
   "refresh.page.decisionLab.tooltip": {
-    en: "Reload Pick stocks: Simulation snapshot, charts, Top Opps store, and all tabs (Opportunities · SuperNova · Ticker focus). Live signals run in background if API is online.",
-    it: "Ricarica Scegli titoli: snapshot Simulation, grafici, store Top Opps e tutte le tab (Opportunità · SuperNova · Ticker focus). Live signals in background se l'API è online.",
+    en: "Reload Pick stocks: Simulation snapshot, charts, Top Opps store, and all tabs (Opportunities · SuperNova). Live signals run in background if API is online.",
+    it: "Ricarica Scegli titoli: snapshot Simulation, grafici, store Top Opps e tutte le tab (Opportunità · SuperNova). Live signals in background se l'API è online.",
   },
   "refresh.page.simulation.tooltip": {
     en: "Refresh Simulation: re-read snapshot, reload charts and recalculate P&L (~1s). New CD studies arrive via morning server job.",
@@ -3191,6 +3191,14 @@ const DICT = {
   "decisionLab.sds.size": {
     en: "Size",
     it: "Size",
+  },
+  "decisionLab.sds.reliability": {
+    en: "Reliability",
+    it: "Affidabilità",
+  },
+  "decisionLab.sds.notReliable": {
+    en: "not reliable — outside the window, no estimate",
+    it: "non affidabile — fuori finestra, nessuna stima",
   },
   "decisionLab.sds.missingData": {
     en: "Missing data estimate: {pct}%",
@@ -9880,6 +9888,10 @@ const DICT = {
     en: "Sim portfolio",
     it: "Portafoglio sim",
   },
+  "modelLab.tab.sells": {
+    en: "Sells",
+    it: "Vendite",
+  },
   "modelLab.page.title": {
     en: "Model quality",
     it: "Qualità modello",
@@ -9887,6 +9899,10 @@ const DICT = {
   "modelLab.subtitle.portfolio": {
     en: "Your portfolio = decision tracking · capital invested/divested · curve slope + reliability vs P&L",
     it: "Tuo portafoglio = tracciamento decisioni · capitale investito/disinvestito · pendenza curva + affidabilità vs P&L",
+  },
+  "modelLab.subtitle.sells": {
+    en: "Sells = exit-error taxonomy (premature / missed) · open-gain impact · recommendation adherence",
+    it: "Vendite = tassonomia errori di uscita (precoci / mancate) · impatto sul gain open · adesione alle raccomandazioni",
   },
   "modelLab.subtitle.qc": {
     en: "Quality & control — validation, learnings and pre-CD signal audit",
@@ -11519,6 +11535,10 @@ const DICT = {
   "simOutcomes.open.openPnlTab": {
     en: "P&L tab →",
     it: "Tab P&L →",
+  },
+  "simOutcomes.open.movedNote": {
+    en: "The per-position exit verdict (EXIT / HOLD / WATCH) now lives in the unified Pick stocks portfolio table, next to the Sell button — no longer duplicated here. Use the P&L tab for the curve deep-dive.",
+    it: "Il verdetto d'uscita per posizione (EXIT / HOLD / WATCH) è ora nella tabella portafoglio unica di Pick stocks, accanto al pulsante Sell — non più duplicato qui. Usa la tab P&L per l'analisi della curva.",
   },
   "simOutcomes.closed.title": {
     en: "Closed positions — what worked",

@@ -115,6 +115,7 @@ import {
 } from "./sheet/crossTabCoherenceHealth";
 import { ackCoherenceAlert, isCoherenceAlertAcked } from "./sheet/coherenceAlertDismiss";
 import { subscribeTopOpps } from "./sheet/topOppsStore";
+import { publishDashboardRecommendationsFromSimulation } from "./sheet/topOppsFromSimulation";
 import { loadPredictions } from "./data/predictions";
 import { loadLocalSheet } from "./data/localSheets";
 import { probeApiReachable, fetchNewBioIpoStatus } from "./api/supernova";
@@ -280,18 +281,6 @@ export default function App() {
     navigateTo("secK8");
   }, [navigateTo]);
 
-  const handleNavigateToSimulation = useCallback(
-    (ticker: string, action: "buy" | "sell", cd?: string) => {
-      setDecisionLabMonitorFocus({
-        ticker: ticker.trim().toUpperCase(),
-        action,
-        cd: cd?.trim() || undefined,
-      });
-      navigateTo("decisionLab");
-    },
-    [navigateTo],
-  );
-
   const handleOpenSimulationRow = useCallback((focus: {
     ticker: string;
     cd?: string;
@@ -306,12 +295,6 @@ export default function App() {
       view: "snapshotBar",
     });
     navigateTo("simulation");
-  }, [navigateTo]);
-
-  const handleOpenPatternScreen = useCallback((ticker?: string) => {
-    void ticker;
-    setDecisionLabInitialTab("patterns");
-    navigateTo("decisionLab");
   }, [navigateTo]);
 
   const handleOpenSupernovaTab = useCallback((ticker?: string) => {
@@ -845,6 +828,22 @@ export default function App() {
     if (coherenceAlertSigRef.current) ackCoherenceAlert(coherenceAlertSigRef.current);
     setCoherenceAlertOpen(false);
   }, []);
+
+  const handleCoherenceRefreshTopOpps = useCallback(() => {
+    // Recompute and republish Top Opps from the current sim data, forcing the
+    // store timestamp so the staleness clears even when the user is already on
+    // the dashboard (where navigation alone would be a no-op).
+    if (simTable?.rows?.length) {
+      publishDashboardRecommendationsFromSimulation(
+        simTable,
+        investSimInputs,
+        coherenceChartMap.size > 0 ? coherenceChartMap : undefined,
+        { forceTimestamp: true },
+      );
+    }
+    navigateTo("main");
+    setCoherenceAlertOpen(false);
+  }, [simTable, investSimInputs, coherenceChartMap, navigateTo]);
 
   const capturePortfolioBeforeRefreshCb = useCallback(() => {
     capturePortfolioBeforeRefresh(simTable);
@@ -1443,7 +1442,6 @@ export default function App() {
                 }}
                 onOpenDecisionLabScreen={() => navigateTo("decisionLab")}
                 onOpenSupernovaScreen={handleOpenSupernovaTab}
-                onOpenPatternScreen={handleOpenPatternScreen}
                 onOpenSlopeCharts={openSlopeErrorCharts}
                 focusTicker={simulationFocus}
                 onFocusConsumed={() => setSimulationFocus(null)}
@@ -1460,12 +1458,7 @@ export default function App() {
                 simLoading={simLoading}
                 simError={simError}
                 onReloadSimulation={reloadSimulation}
-                onNavigateToSimulation={handleNavigateToSimulation}
                 onOpenCatalystFeed={() => navigateTo("catalystFeed")}
-                onOpenClinicalFeed={(ticker) => {
-                  setClinicalFeedFocusTicker(ticker.trim().toUpperCase() || null);
-                  navigateTo("catalystFeed");
-                }}
                 onOpenSlopeErrorCharts={openSlopeErrorCharts}
                 onOpenPredictionCharts={openPredictionCharts}
                 focusSignal={decisionLabFocus}
@@ -1500,7 +1493,6 @@ export default function App() {
                 error={accError}
                 onReload={() => void reloadAccuracy()}
                 onReloadSimulation={() => void reloadSimulation()}
-                onOpenPredictionCharts={openPredictionCharts}
                 onOpenSimulationPnl={handleNavigateToSimulationPnl}
                 onOpenDailyPnlLedger={handleNavigateToDailyPnlLedger}
                 initialTab={modelsInitialTab ?? undefined}
@@ -1629,7 +1621,7 @@ export default function App() {
         open={coherenceAlertOpen}
         issues={coherenceCriticalIssues}
         onClose={handleCoherenceAlertClose}
-        onOpenDashboard={() => navigateTo("main")}
+        onOpenDashboard={handleCoherenceRefreshTopOpps}
         onOpenSimulation={() => navigateTo("simulation")}
         onOpenSystem={() => {
           navigateTo("system");

@@ -1072,6 +1072,11 @@ export type SdsInvestmentDecision = {
   stop_loss?: string;
   sds_score?: number;
   sds_zone?: string;
+  pred_reliability_pct?: number | null;
+  pred_reliable?: boolean | null;
+  pred_stars?: number | null;
+  pred_peak_pct?: number | null;
+  pred_effective?: number | null;
 };
 
 export type SdsRow = {
@@ -1551,6 +1556,29 @@ export type PredictionReliabilityNode = {
   label: string;
   sign_hit_pct: number | null;
   n: number;
+  reliable?: boolean;
+  stars?: number | null;
+};
+
+export type ReliabilityWindow = {
+  peak_pct: number;
+  peak_offset: number;
+  threshold_pct: number;
+  gap_pp: number;
+  lo_offset: number;
+  hi_offset: number;
+  offsets: number[];
+};
+
+export type ReliabilityBand = {
+  key: string;
+  label_it: string;
+  label_en: string;
+  lo_offset: number;
+  hi_offset: number;
+  mean_pct: number | null;
+  n: number;
+  n_nodes: number;
 };
 
 export type RecommendationWeek = {
@@ -1599,6 +1627,8 @@ export type ChannelImpact = {
     best_node?: PredictionReliabilityNode | null;
     worst_node?: PredictionReliabilityNode | null;
     reliability_by_cd?: PredictionReliabilityNode[];
+    reliability_window?: ReliabilityWindow | null;
+    reliability_bands?: ReliabilityBand[] | null;
     weekly_delta_pp: number | null;
     weekly_significant?: boolean;
     loops: ChannelLoopEffect[];
@@ -1729,7 +1759,7 @@ let learningLabOverviewInflight: Promise<LearningLabOverview> | null = null;
 export function fetchLearningLabOverview(opts?: { force?: boolean }) {
   if (!opts?.force && learningLabOverviewInflight) return learningLabOverviewInflight;
   learningLabOverviewInflight = api<LearningLabOverview>(
-    "/api/models/learning-lab/overview",
+    opts?.force ? "/api/models/learning-lab/overview?force=1" : "/api/models/learning-lab/overview",
     undefined,
     { timeoutMs: 120_000 },
   ).finally(() => {

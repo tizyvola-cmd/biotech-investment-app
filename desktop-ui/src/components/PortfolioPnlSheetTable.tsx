@@ -17,7 +17,7 @@ import {
   portfolioPnlValueClass,
   portfolioTableOutlookClass,
   portfolioTotalDisplayValues,
-  resolvePortfolioTableOutlook,
+  resolvePnlRowOutlook,
   fmtSignedEurPnl,
   type PortfolioTableOutlook,
 } from "../sheet/portfolioGainLossStyle";
@@ -149,15 +149,14 @@ export function PortfolioPnlSheetTable({
               row.targetGainPct ??
               row.expectedGainPct ??
               (gainPlan ? primaryReturnPctFromGainPlan(gainPlan) : null);
-            const rowOutlook: PortfolioTableOutlook = resolvePortfolioTableOutlook({
+            // Colore riga = P&L corrente (verde gain / rosso loss),
+            // armonizzato con la tabella Pick stocks. Non più la traiettoria
+            // forward verso la CD.
+            const rowOutlook: PortfolioTableOutlook = resolvePnlRowOutlook({
               inPortfolio: true,
+              pnlUnavailable: row.pnlUnavailable,
               pnlEur: row.pnlUnavailable ? null : row.pnlEur,
               pnlPct: row.pnlUnavailable ? null : row.pnlPct,
-              planReturnPct,
-              slope5d: curvesForTone?.slope5d ?? null,
-              slope20d: curvesForTone?.slope20d ?? null,
-              simRow: simRow ?? null,
-              chartPoints: chartPts,
             });
             const totalTone = portfolioPnlTone(row.pnlEur, row.pnlPct);
             const rankIcon = pnlTableRankIcon(rankIndex, rankTotal, totalTone);

@@ -720,3 +720,174 @@ def reliability_index_for_days_to_cd(
             except (TypeError, ValueError):
                 return None
     return None
+
+
+# Reliable window is defined relative to the curve's own peak: a node is reliable
+# when its sign-hit is within this many points of the maximum. The same span is
+# split into 5 equal bands for the star rating (2pp per star).
+RELIABILITY_PEAK_GAP_PP = 10.0
+RELIABILITY_STAR_BAND_PP = RELIABILITY_PEAK_GAP_PP / 5.0
+
+
+def _pre_cd_sign_hits(snapshot: dict[str, Any], cohort: str) -> list[tuple[int, float]]:
+    """``(offset, sign_hit_pct)`` for graded pre-CD nodes, ascending by offset."""
+    coh = (snapshot.get("cohorts") or {}).get(cohort) or {}
+    out: list[tuple[int, float]] = []
+    for row in coh.get("by_offset") or []:
+        if not isinstance(row, dict):
+            continue
+        off = row.get("offset")
+        v = row.get("sign_hit_pct")
+        if off is None or v is None:
+            continue
+        try:
+            o = int(off)
+            if o >= 0:
+                continue
+            out.append((o, float(v)))
+        except (TypeError, ValueError):
+            continue
+    out.sort(key=lambda t: t[0])
+    return out
+
+
+def reliability_window(
+    *,
+    cohort: str = "simulation",
+    snapshot: dict[str, Any] | None = None,
+) -> dict[str, Any] | None:
+    """The reliable window relative to the curve's peak: the pre-CD nodes whose
+    sign-hit is within ``RELIABILITY_PEAK_GAP_PP`` of the maximum. A prediction
+    made outside this window is treated as not reliable (no estimate). Returns
+    ``None`` when there is no graded pre-CD curve."""
+    snap = snapshot if snapshot is not None else _load_sign_curve_snapshot()
+    if not isinstance(snap, dict):
+        return None
+    nodes = _pre_cd_sign_hits(snap, cohort)
+    if not nodes:
+        return None
+    peak_pct = max(v for _, v in nodes)
+    peak_offset = max(o for o, v in nodes if v == peak_pct)  # nearest-to-CD peak
+    threshold = peak_pct - RELIABILITY_PEAK_GAP_PP
+    offsets = [o for o, v in nodes if v >= threshold]
+    return {
+        "peak_pct": round(peak_pct, 2),
+        "peak_offset": peak_offset,
+        "threshold_pct": round(threshold, 2),
+        "gap_pp": RELIABILITY_PEAK_GAP_PP,
+        "lo_offset": min(offsets),  # farthest-from-CD reliable node
+        "hi_offset": max(offsets),  # nearest-to-CD reliable node
+        "offsets": offsets,
+    }
+
+
+def reliability_stars(reliability_pct: float | None, peak_pct: float | None) -> int | None:
+    """1..5 stars by distance from the peak (``RELIABILITY_STAR_BAND_PP`` per
+    star): within 2pp of the peak -> 5 stars, 8-10pp below -> 1 star."""
+    if reliability_pct is None or peak_pct is None:
+        return None
+    gap = max(0.0, float(peak_pct) - float(reliability_pct))
+    star = 5 - int(gap // RELIABILITY_STAR_BAND_PP)
+    return max(1, min(5, star))
+
+
+def reliability_rating_for_days_to_cd(
+    days_to_cd: int | None,
+    *,
+    cohort: str = "simulation",
+    snapshot: dict[str, Any] | None = None,
+) -> dict[str, Any]:
+    """Classify a live prediction at ``days_to_cd``: whether it falls in the
+    reliable window (within ``RELIABILITY_PEAK_GAP_PP`` of the peak) and its 1..5
+    star rating. ``reliable`` is ``None`` when there is no curve to judge against
+    (caller applies no gate); ``False`` => caller suppresses the estimate."""
+    snap = snapshot if snapshot is not None else _load_sign_curve_snapshot()
+    win = reliability_window(cohort=cohort, snapshot=snap)
+    r = reliability_index_for_days_to_cd(days_to_cd, cohort=cohort, snapshot=snap)
+    if win is None or r is None:
+        return {
+            "reliable": None,
+            "reliability_pct": round(r, 2) if r is not None else None,
+            "stars": None,
+            "peak_pct": win["peak_pct"] if win else None,
+            "threshold_pct": win["threshold_pct"] if win else None,
+            "window": win,
+        }
+    reliable = r >= win["threshold_pct"]
+    return {
+        "reliable": reliable,
+        "reliability_pct": round(r, 2),
+        "stars": reliability_stars(r, win["peak_pct"]) if reliable else None,
+        "peak_pct": win["peak_pct"],
+        "threshold_pct": win["threshold_pct"],
+        "window": win,
+    }
+
+
+# Average-reliability bands relative to the CD, in calendar-day offsets. The pre-CD
+# curve only spans CD-60d -> CD+7d (see PRE_CD_CALENDAR_DAYS), so the CD-4m -> -2m
+# band has no nodes and reports mean=None until the model window is widened.
+RELIABILITY_BANDS: tuple[dict[str, Any], ...] = (
+    {"key": "cd_m4_m2", "label_it": "CD−4m→−2m", "label_en": "CD−4m→−2m", "lo": -120, "hi": -61},
+    {"key": "cd_m2_d10", "label_it": "CD−2m→−10g", "label_en": "CD−2m→−10d", "lo": -60, "hi": -11},
+    {"key": "cd_d10_d0", "label_it": "CD−10g→0", "label_en": "CD−10d→0", "lo": -10, "hi": -1},
+    {"key": "cd_d0_p7", "label_it": "CD0→+7g", "label_en": "CD0→+7d", "lo": 1, "hi": 7},
+)
+
+
+def _all_sign_hits_with_n(
+    snapshot: dict[str, Any], cohort: str
+) -> list[tuple[int, float, int]]:
+    """``(offset, sign_hit_pct, n)`` for every graded node (pre and post CD)."""
+    coh = (snapshot.get("cohorts") or {}).get(cohort) or {}
+    out: list[tuple[int, float, int]] = []
+    for row in coh.get("by_offset") or []:
+        if not isinstance(row, dict):
+            continue
+        off = row.get("offset")
+        v = row.get("sign_hit_pct")
+        if off is None or v is None:
+            continue
+        try:
+            out.append((int(off), float(v), int(row.get("n") or 0)))
+        except (TypeError, ValueError):
+            continue
+    return out
+
+
+def reliability_bands(
+    *,
+    cohort: str = "simulation",
+    snapshot: dict[str, Any] | None = None,
+) -> list[dict[str, Any]] | None:
+    """Average reliability (sign-hit, n-weighted) over fixed CD-relative bands
+    (``RELIABILITY_BANDS``), instead of a single peak. Bands with no graded node
+    report ``mean_pct=None``. Returns ``None`` when there is no curve at all."""
+    snap = snapshot if snapshot is not None else _load_sign_curve_snapshot()
+    if not isinstance(snap, dict):
+        return None
+    nodes = _all_sign_hits_with_n(snap, cohort)
+    if not nodes:
+        return None
+    bands: list[dict[str, Any]] = []
+    for spec in RELIABILITY_BANDS:
+        lo, hi = spec["lo"], spec["hi"]
+        pts = [(v, n) for off, v, n in nodes if lo <= off <= hi]
+        tot_n = sum(n for _, n in pts)
+        if pts and tot_n > 0:
+            mean_pct = round(sum(v * n for v, n in pts) / tot_n, 2)
+        elif pts:  # nodes present but no per-node sample size -> simple mean
+            mean_pct = round(sum(v for v, _ in pts) / len(pts), 2)
+        else:
+            mean_pct = None
+        bands.append({
+            "key": spec["key"],
+            "label_it": spec["label_it"],
+            "label_en": spec["label_en"],
+            "lo_offset": lo,
+            "hi_offset": hi,
+            "mean_pct": mean_pct,
+            "n": tot_n,
+            "n_nodes": len(pts),
+        })
+    return bands

@@ -19,7 +19,22 @@ from prediction.sign_curve_daily import (  # noqa: E402
     _sign_hit_daily,
     _x_label,
     reliability_index_for_days_to_cd,
+    reliability_rating_for_days_to_cd,
+    reliability_stars,
+    reliability_window,
 )
+
+
+def _sim_snap(pairs):
+    return {
+        "cohorts": {
+            "simulation": {
+                "by_offset": [
+                    {"offset": o, "sign_hit_pct": v, "n": 12} for (o, v) in pairs
+                ]
+            }
+        }
+    }
 
 
 def test_sign_hit_daily_up_down():
@@ -91,3 +106,47 @@ def test_reliability_index_none_cases():
     assert reliability_index_for_days_to_cd(None, snapshot=snap) is None
     assert reliability_index_for_days_to_cd(-3, snapshot=snap) is None  # post-CD
     assert reliability_index_for_days_to_cd(20, snapshot=snap) is None  # no bin in snapshot
+
+
+def test_reliability_window_relative_to_peak():
+    snap = _sim_snap([(-60, 55.0), (-30, 70.0), (-10, 80.0), (-5, 84.0), (-3, 76.0)])
+    win = reliability_window(snapshot=snap)
+    assert win["peak_pct"] == 84.0
+    assert win["peak_offset"] == -5
+    assert win["threshold_pct"] == 74.0  # peak - 10pp
+    # nodes within 10pp of the peak: -10 (80), -5 (84), -3 (76)
+    assert win["lo_offset"] == -10
+    assert win["hi_offset"] == -3
+    assert set(win["offsets"]) == {-10, -5, -3}
+
+
+def test_reliability_window_none_without_curve():
+    assert reliability_window(snapshot={}) is None
+    assert reliability_window(snapshot=_sim_snap([])) is None
+
+
+def test_reliability_stars_bands_relative_to_peak():
+    assert reliability_stars(84.0, 84.0) == 5  # at the peak
+    assert reliability_stars(83.0, 84.0) == 5  # gap 1pp -> [0,2) -> 5
+    assert reliability_stars(82.0, 84.0) == 4  # gap 2pp -> [2,4) -> 4
+    assert reliability_stars(78.0, 84.0) == 2  # gap 6pp -> [6,8) -> 2
+    assert reliability_stars(74.0, 84.0) == 1  # gap 10pp -> clamped to 1
+    assert reliability_stars(None, 84.0) is None
+
+
+def test_reliability_rating_gates_outside_window():
+    snap = _sim_snap([(-60, 55.0), (-30, 70.0), (-10, 80.0), (-5, 84.0), (-3, 76.0)])
+    # T-60 -> R 55 < threshold 74 -> not reliable, no stars (no estimate)
+    out = reliability_rating_for_days_to_cd(60, snapshot=snap)
+    assert out["reliable"] is False
+    assert out["stars"] is None
+    # T-5 -> R 84 (the peak) -> reliable, 5 stars
+    inside = reliability_rating_for_days_to_cd(5, snapshot=snap)
+    assert inside["reliable"] is True
+    assert inside["stars"] == 5
+
+
+def test_reliability_rating_no_curve_applies_no_gate():
+    out = reliability_rating_for_days_to_cd(30, snapshot={})
+    assert out["reliable"] is None
+    assert out["stars"] is None

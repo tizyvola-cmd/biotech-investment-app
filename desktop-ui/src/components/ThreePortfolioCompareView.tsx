@@ -48,6 +48,8 @@ import {
   summarizeThreeScenarioGainTotals,
 } from "../sheet/portfolioScenarioGain";
 import { loadDecisionSimState } from "../sheet/investDecisionSimStorage";
+import { DEFAULT_PLAN_CAPITAL_EUR } from "../sheet/expectedRoiDisplay";
+import { SIM_TABLE_SYNTH_MAX_SHARE } from "../sheet/approvedWeightPortfolioShares";
 import { SynthGainImpactPanel, type PortfolioBalancingSuccessRow } from "./SynthGainImpactPanel";
 import { computeRealizedSuccessForDeals } from "../sheet/portfolioSuccessBridge";
 import {
@@ -97,6 +99,122 @@ function fmtEurNoSign(v: number | null | undefined): string {
 function fmtPct01(v: number | null | undefined, d = 1): string {
   if (v == null || !Number.isFinite(v)) return "—";
   return `${(v * 100).toFixed(d)}%`;
+}
+
+type GroupSummary = {
+  mineN: number;
+  mineEmployedEur: number;
+  simLoopN: number;
+  simLoopEmployedEur: number;
+  synthEmployedEur: number;
+  perTradeEur: number;
+  capPct: number;
+};
+
+/** "3 experiments at a glance" — explains what each group does, when it accepts
+ *  a recommendation (threshold) and how it deploys capital, plus the real
+ *  capital employed (vs the apples-to-apples shared pot used by the charts). */
+function ThreeGroupExplainer({
+  summary,
+  it,
+  fmtEur,
+}: {
+  summary: GroupSummary;
+  it: boolean;
+  fmtEur: (v: number | null | undefined) => string;
+}) {
+  const groups = [
+    {
+      key: "mine",
+      name: it ? "Portfolio reale" : "Real portfolio",
+      dot: "#2563eb",
+      what: it
+        ? "Le tue posizioni reali: decidi tu quali raccomandazioni seguire."
+        : "Your real positions: you decide which recommendations to follow.",
+      threshold: it ? "a tua discrezione" : "your discretion",
+      capitalRule: it ? "il tuo capitale reale" : "your real capital",
+      employed: summary.mineEmployedEur > 0 ? fmtEur(summary.mineEmployedEur) : "—",
+      n: summary.mineN,
+    },
+    {
+      key: "simLoop",
+      name: it ? "Sim loop (uniforme)" : "Sim loop (uniform)",
+      dot: "#9333ea",
+      what: it
+        ? "Entra su ogni raccomandazione sopra la soglia, importo fisso uguale per tutte."
+        : "Enters every recommendation above the threshold, equal fixed amount each.",
+      threshold: it ? "verdetto SÌ + gain atteso > 0 (o P ≥ 40–45%)" : "YES verdict + expected gain > 0 (or P ≥ 40–45%)",
+      capitalRule: it
+        ? `${fmtEur(summary.perTradeEur)} fissi a company`
+        : `${fmtEur(summary.perTradeEur)} flat per company`,
+      employed: fmtEur(summary.simLoopEmployedEur),
+      n: summary.simLoopN,
+    },
+    {
+      key: "synth",
+      name: it ? "Sim synth loop (pesato)" : "Sim synth loop (weighted)",
+      dot: "#db2777",
+      what: it
+        ? "Stessa soglia e stesso universo del sim loop, ma capitale pesato sul pattern approvato."
+        : "Same threshold and universe as the sim loop, but capital weighted by the approved pattern.",
+      threshold: it ? "verdetto SÌ + gain atteso > 0 (o P ≥ 40–45%)" : "YES verdict + expected gain > 0 (or P ≥ 40–45%)",
+      capitalRule: it
+        ? `pesato sui pesi approvati (max ${summary.capPct}%/deal)`
+        : `weighted by approved weights (max ${summary.capPct}%/deal)`,
+      employed: fmtEur(summary.synthEmployedEur),
+      n: summary.simLoopN,
+    },
+  ];
+  return (
+    <div className="rounded-xl border border-indigo-200/50 dark:border-indigo-800/40 bg-indigo-50/30 dark:bg-indigo-950/15 px-3 py-2.5">
+      <p className="text-[11px] font-semibold text-indigo-900 dark:text-indigo-100 mb-1.5">
+        {it ? "I 3 esperimenti a confronto" : "The 3 experiments at a glance"}
+      </p>
+      <div className="overflow-x-auto">
+        <table className="w-full text-[10px] tabular-nums">
+          <thead>
+            <tr className="text-ink-muted border-b border-indigo-200/40 dark:border-indigo-800/30">
+              <th className="text-left font-semibold py-1 pr-2">{it ? "Gruppo" : "Group"}</th>
+              <th className="text-left font-semibold py-1 px-2">{it ? "Cosa fa" : "What it does"}</th>
+              <th className="text-left font-semibold py-1 px-2">
+                {it ? "Soglia ingresso" : "Entry threshold"}
+              </th>
+              <th className="text-left font-semibold py-1 px-2">
+                {it ? "Regola capitale" : "Capital rule"}
+              </th>
+              <th className="text-right font-semibold py-1 pl-2 whitespace-nowrap">
+                {it ? "Capitale reale impiegato" : "Real capital employed"}
+              </th>
+            </tr>
+          </thead>
+          <tbody>
+            {groups.map((g) => (
+              <tr key={g.key} className="border-b border-indigo-200/20 dark:border-indigo-800/15 align-top">
+                <td className="py-1 pr-2 whitespace-nowrap">
+                  <span className="inline-flex items-center gap-1 font-semibold text-ink">
+                    <span className="inline-block w-2 h-2 rounded-full" style={{ backgroundColor: g.dot }} />
+                    {g.name}
+                  </span>
+                </td>
+                <td className="py-1 px-2 text-ink-muted max-w-[220px]">{g.what}</td>
+                <td className="py-1 px-2 text-ink-muted whitespace-nowrap">{g.threshold}</td>
+                <td className="py-1 px-2 text-ink-muted">{g.capitalRule}</td>
+                <td className="py-1 pl-2 text-right font-semibold text-ink whitespace-nowrap">
+                  {g.employed}
+                  <span className="font-normal text-ink-muted"> · n={g.n}</span>
+                </td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
+      <p className="text-[9px] text-ink-muted/80 mt-1.5 leading-relaxed">
+        {it
+          ? "I grafici e la tabella qui sotto sono a parità di capitale (stesso pot per tutti e 3) per confrontare solo il metodo di sizing — non i capitali reali sopra."
+          : "The charts and table below use the same capital pot for all 3 to compare only the sizing method — not the real capital employed above."}
+      </p>
+    </div>
+  );
 }
 
 /** Pearson correlation; null when fewer than 3 finite pairs or zero variance. */
@@ -1077,6 +1195,30 @@ export function ThreePortfolioCompareView({
     [comparison, mineApprovedAllocation, mineSynthAllocation, simLoopSynthAllocation, simLoopApprovedAllocation, it],
   );
 
+  /** "Real capital employed" per experiment group — how each one actually
+   *  deploys money (independent of the apples-to-apples shared pot used by the
+   *  charts below). */
+  const groupSummary = useMemo(() => {
+    const mineN = comparison.mine.positionsCount;
+    const mineEmployedEur = comparison.mineDeals.reduce((sum, d) => {
+      const cap = investInputs?.[d.rowKey]?.capital ?? 0;
+      return sum + (Number.isFinite(cap) && cap > 0 ? cap : 0);
+    }, 0);
+    const simLoopN = comparison.simLoopEqual.positionsCount;
+    const simLoopEmployedEur = DEFAULT_PLAN_CAPITAL_EUR * simLoopN;
+    return {
+      mineN,
+      mineEmployedEur,
+      simLoopN,
+      simLoopEmployedEur,
+      // The synth loop deploys the same total as the uniform loop; it only
+      // redistributes the per-company share by approved-pattern weight.
+      synthEmployedEur: simLoopEmployedEur,
+      perTradeEur: DEFAULT_PLAN_CAPITAL_EUR,
+      capPct: Math.round(SIM_TABLE_SYNTH_MAX_SHARE * 100),
+    };
+  }, [comparison, investInputs]);
+
   /** X-axis sort mode for the cumulative chart.
    *  - "chrono": each deal added on the day it was actually bought (real
    *    portfolio) or, falling back, on its completion date (sim-loop-only
@@ -1804,6 +1946,8 @@ export function ThreePortfolioCompareView({
           </span>
         ) : null}
       </p>
+
+      <ThreeGroupExplainer summary={groupSummary} it={it} fmtEur={fmtEurNoSign} />
 
       <WeightedSizingGateBanner gate={weightedGate} lang={lang} compact />
 

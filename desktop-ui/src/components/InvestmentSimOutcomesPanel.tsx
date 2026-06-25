@@ -15,52 +15,24 @@ import {
   type SimOutcomesDoc,
   type SimOutcomeRow,
 } from "../data/investmentSimOutcomesData";
-import { PortfolioTickerMark } from "./PortfolioScopeToggle";
 import { PortfolioTrendLegend } from "./PortfolioPnlTrendIcon";
 import { DailyLedgerIcon } from "./PortfolioDailyPnlDrawer";
 import { useInvestSimInputs } from "../hooks/useInvestSimInputs";
 import { useInvestSimPortfolioHistory } from "../hooks/useInvestSimPortfolioHistory";
-import type { InvestSimHistoryPoint, InvestSimInputs } from "../sheet/investSimStorage";
-import { simulationRowSeriesKey } from "../data/simulationCharts";
 import { useT } from "../shared/i18n";
 import { buildSimRowByKeyMap, normalizedRowKey } from "../sheet/investSimKeys";
 import {
   aggregateOpenPortfolioPnl,
   buildActivePortfolioPositions,
-  positionPnlForOpenRow,
   currentPriceFromRow,
-  portfolioDailyPnlFromRow,
   rowHasActivePortfolio,
-  SIM_PNL_NA_TOOLTIP,
-  type SimulationPosition,
 } from "../sheet/simulationPosition";
 import {
   realizedPnlEurFromOutcome,
   realizedPnlPctFromOutcome,
 } from "../sheet/outcomePnlDisplay";
-import {
-  fmtPortfolioPnlPct,
-  fmtPortfolioPnlUsd,
-  portfolioTableRowClass,
-  portfolioTotalDisplayValues,
-  positionPnlToneClass,
-  resolvePnlTabCardTone,
-} from "../sheet/portfolioGainLossStyle";
 import { detectPortfolioLossAlerts } from "../sheet/portfolioLossUrgent";
 import { summarizeRealPortfolioSignalAccuracy } from "../sheet/realPortfolioAccuracy";
-import { resolveExpectedGainPlan } from "../sheet/simulationPlanGain";
-import {
-  buildSlopeAwareTargetStop,
-} from "../sheet/dynamicTargetStop";
-import {
-  classifyRegime,
-  extractCurveInputs,
-} from "../sheet/precatCurve";
-import {
-  computeSlopeStability,
-  stabilityVerdict,
-} from "../sheet/slopeStability";
-import { SIM_MONITOR_HORIZON_DAYS } from "../sheet/cdHorizons";
 import { saveInvestSimInputsPersisted } from "../api/investSim";
 import { reconcileInvestSimInputs } from "../sheet/investSimKeys";
 import {
@@ -68,8 +40,6 @@ import {
   INVEST_SIM_INPUTS_CHANGED_EVENT,
   investSimInputsUpdatedAtIso,
 } from "../sheet/investSimStorage";
-import { SHEET_GRID_TABLE_CLASS, gridTd, gridTh } from "../sheet/sheetGridTable";
-import { SheetGridColgroup } from "../sheet/SheetGridColgroup";
 import { PlanProbLearningPanel } from "./PlanProbLearningPanel";
 import { SelectionChip } from "./SelectionChip";
 
@@ -106,17 +76,6 @@ function fmtUsd(v: number | null | undefined): string {
   return `${sign}$${Math.abs(v).toLocaleString("en-US", { maximumFractionDigits: 0 })}`;
 }
 
-function fmtPct(v: number | null | undefined, digits = 1): string {
-  if (v == null || !Number.isFinite(v)) return "—";
-  const sign = v > 0 ? "+" : "";
-  return `${sign}${v.toFixed(digits)}%`;
-}
-
-function fmtSlope(v: number | null | undefined): string {
-  if (v == null || !Number.isFinite(v)) return "—";
-  const sign = v > 0 ? "+" : "";
-  return `${sign}${v.toFixed(2)} pp/d`;
-}
 
 function KpiCard({
   label,
@@ -162,42 +121,6 @@ function fmtGeneratedAt(iso: string | undefined): string {
   }
 }
 
-function fmtUsDate(raw: string | null | undefined): string {
-  if (!raw) return "—";
-  const d = parseYmdOrDmy(raw);
-  if (!d) return "—";
-  return d.toLocaleDateString("en-US", {
-    month: "2-digit",
-    day: "2-digit",
-    year: "numeric",
-  });
-}
-
-function parseYmdOrDmy(raw: string | null | undefined): Date | null {
-  if (!raw) return null;
-  const s = String(raw).trim();
-  if (!s) return null;
-  const dmy = /^(\d{1,2})\/(\d{1,2})\/(\d{4})$/.exec(s);
-  if (dmy) {
-    const d = new Date(Number(dmy[3]), Number(dmy[2]) - 1, Number(dmy[1]));
-    return Number.isFinite(d.getTime()) ? d : null;
-  }
-  const ymd = /^(\d{4})-(\d{2})-(\d{2})/.exec(s);
-  if (ymd) {
-    const d = new Date(Number(ymd[1]), Number(ymd[2]) - 1, Number(ymd[3]));
-    return Number.isFinite(d.getTime()) ? d : null;
-  }
-  const d = new Date(s);
-  return Number.isFinite(d.getTime()) ? d : null;
-}
-
-function daysFromEntryToNow(r: SimOutcomeRow): number | null {
-  const entry = parseYmdOrDmy(r.entry_ts ?? null);
-  if (!entry) return null;
-  const now = new Date();
-  const days = Math.round((now.getTime() - entry.getTime()) / 86400000);
-  return Math.max(0, days);
-}
 
 /** One row per position key — keep latest exit when the log has duplicate closes. */
 function dedupeClosedOutcomeRows(rows: SimOutcomeRow[]): SimOutcomeRow[] {
@@ -228,214 +151,6 @@ function isOpenPosition(r: SimOutcomeRow): boolean {
   return false;
 }
 
-// ── "When to exit" verdict ──────────────────────────────────────────────────
-//
-// Combines slope_20d + P&L + pre-CD gain plan (same engine as Decision Lab cards).
-// EXIT on negative slope only when there is no active pre-CD upside thesis.
-
-// Combines current slope (slope_20d) + P&L + tesi pre-CD (gain atteso verso CD):
-//   EXIT  → slope ≤ −0.3 pp/d AND P&L < +10%, salvo tesi pre-CD attiva
-//   WATCH → flat / incerta slope
-//   HOLD  → slope positiva, profitto ≥ +10%, o pre-CD con upside material
-
-type ExitVerdict = "hold" | "watch" | "exit" | "n/d";
-
-type ExitVerdictContext = {
-  daysToCd?: number | null;
-  daysToTarget?: number | null;
-  targetReturnPct?: number | null;
-  /** ROI→CD — solo informativo se target assente. */
-  expectedReturnPct?: number | null;
-  sellTriggerPct?: number | null;
-  /** BTR + CD ≤15g → non forzare hold pre-CD */
-  btrLateRisk?: boolean;
-  rotationFlag?: 0 | 1;
-};
-
-const PRECD_MIN_EXPECTED_PCT = 8;
-const PRECD_MAX_DRAWDOWN_PCT = -10;
-const PRECD_MIN_DAYS_TO_CD = 6;
-
-function buildExitVerdictContext(
-  simRow: Record<string, unknown> | undefined,
-  capital: number,
-): ExitVerdictContext {
-  if (!simRow || capital <= 0) return {};
-  const gainPlan = resolveExpectedGainPlan(simRow, capital);
-  const { slope5d, slope20d, slope45d, runUp30d } = extractCurveInputs(simRow);
-  const stab = computeSlopeStability(slope5d, slope20d, slope45d);
-  const effSlope =
-    slope20d != null && Number.isFinite(slope20d) ? slope20d : slope5d ?? null;
-  const dynamic = buildSlopeAwareTargetStop({
-    slope5d,
-    slope20d,
-    slope45d,
-    runUp30d,
-    days: gainPlan.daysToCd,
-    isLong: true,
-    stabilityVerdict: stabilityVerdict(stab, effSlope),
-    rotationFlag: stab.rotationFlag,
-  });
-  const regime = classifyRegime(runUp30d);
-  const days = gainPlan.daysToCd;
-  return {
-    daysToCd: days,
-    daysToTarget: gainPlan.daysToTarget,
-    targetReturnPct: gainPlan.targetReturnPct,
-    expectedReturnPct: gainPlan.expectedReturnPct,
-    sellTriggerPct: dynamic?.sellTriggerPct ?? null,
-    btrLateRisk: regime === "btr" && days != null && days <= 15,
-    rotationFlag: stab.rotationFlag,
-  };
-}
-
-function preCdHoldThesis(ctx: ExitVerdictContext, pnlPct: number | null): boolean {
-  const days = ctx.daysToTarget ?? ctx.daysToCd;
-  const exp = ctx.targetReturnPct ?? ctx.expectedReturnPct;
-  if (days == null || days < PRECD_MIN_DAYS_TO_CD || days > SIM_MONITOR_HORIZON_DAYS) {
-    return false;
-  }
-  if (exp == null || exp < PRECD_MIN_EXPECTED_PCT) return false;
-  if (ctx.btrLateRisk) return false;
-  if (ctx.rotationFlag === 1) return false;
-  if (pnlPct != null && pnlPct <= PRECD_MAX_DRAWDOWN_PCT) return false;
-  if (
-    ctx.sellTriggerPct != null &&
-    pnlPct != null &&
-    pnlPct < ctx.sellTriggerPct
-  ) {
-    return false;
-  }
-  return true;
-}
-
-function exitVerdict(
-  slope20d: number | null,
-  pnlPct: number | null,
-  ctx: ExitVerdictContext = {},
-): { verdict: ExitVerdict; reason: string } {
-  if (slope20d == null) {
-    if (pnlPct == null) return { verdict: "n/d", reason: "Slope data unavailable" };
-    return { verdict: "n/d", reason: "Curve slope unavailable (register T-60..T-1)" };
-  }
-  // Dynamic stop / deep loss — always exit
-  if (
-    ctx.sellTriggerPct != null &&
-    pnlPct != null &&
-    pnlPct < ctx.sellTriggerPct
-  ) {
-    return {
-      verdict: "exit",
-      reason: `P&L ${fmtPct(pnlPct)} below dynamic stop (${ctx.sellTriggerPct.toFixed(1)}%)`,
-    };
-  }
-  if (pnlPct != null && pnlPct <= PRECD_MAX_DRAWDOWN_PCT) {
-    return {
-      verdict: "exit",
-      reason: `P&L ${fmtPct(pnlPct)} beyond max drawdown (${PRECD_MAX_DRAWDOWN_PCT}%)`,
-    };
-  }
-  
-  // Target reached (within 1% tolerance) — EXIT to capture gain
-  const targetReached = 
-    ctx.targetReturnPct != null && 
-    pnlPct != null && 
-    pnlPct >= (ctx.targetReturnPct - 1);
-  
-  if (targetReached) {
-    return {
-      verdict: "exit",
-      reason: `Target ${fmtPct(ctx.targetReturnPct!)} reached (P&L ${fmtPct(pnlPct!)}) — capture gain`,
-    };
-  }
-  
-  // Strong curve reversal with rotation flag — EXIT even with profit
-  if (ctx.rotationFlag && slope20d <= -0.2 && pnlPct != null && pnlPct < 8) {
-    return {
-      verdict: "exit",
-      reason: `Curve rotation + negative slope ${fmtSlope(slope20d)} — exit before erosion`,
-    };
-  }
-  
-  // Consolidated profit: let it run only if slope still favorable
-  if (pnlPct != null && pnlPct >= 10) {
-    if (slope20d <= -0.4) {
-      return {
-        verdict: "exit",
-        reason: `P&L +${pnlPct.toFixed(1)}% but strong reversal ${fmtSlope(slope20d)} — secure profit`,
-      };
-    }
-    return {
-      verdict: "hold",
-      reason: `P&L +${pnlPct.toFixed(1)}% consolidated — let it run, manage with trailing stop`,
-    };
-  }
-  
-  // Target thesis: upside verso fine tratto in salita — non uscire solo per pendenza
-  if (preCdHoldThesis(ctx, pnlPct)) {
-    const exp = (ctx.targetReturnPct ?? ctx.expectedReturnPct)!;
-    const days = (ctx.daysToTarget ?? ctx.daysToCd)!;
-    
-    // Se la curva si è invertita FORTE anche con pre-CD thesis → EXIT
-    if (slope20d <= -0.5 || (ctx.rotationFlag && slope20d <= -0.3)) {
-      return {
-        verdict: "exit",
-        reason: `Strong curve reversal ${fmtSlope(slope20d)} — exit despite pre-CD thesis`,
-      };
-    }
-    
-    if (slope20d <= -0.3) {
-      return {
-        verdict: "watch",
-        reason: `Pre-CD thesis (+${exp.toFixed(0)}% expected in ${days}d): temporary drawdown (slope ${fmtSlope(slope20d)}) — monitor closely`,
-      };
-    }
-    if (slope20d < 0.1) {
-      return {
-        verdict: "hold",
-        reason: `Pre-CD thesis (+${exp.toFixed(0)}% in ${days}d) — hold toward CD, monitor slope`,
-      };
-    }
-    return {
-      verdict: "hold",
-      reason: `Pre-CD +${exp.toFixed(0)}% in ${days}d — favorable hold toward CD`,
-    };
-  }
-  
-  // Clearly negative slope = exit suggested (no pre-CD thesis)
-  if (slope20d <= -0.3) {
-    return {
-      verdict: "exit",
-      reason: `Slope 20d ${fmtSlope(slope20d)} (negative) — divestment signal`,
-    };
-  }
-  // Flat or slightly negative slope = watch
-  if (slope20d < 0.1) {
-    return {
-      verdict: "watch",
-      reason: `Slope 20d ${fmtSlope(slope20d)} (flat/uncertain) — await direction confirmation`,
-    };
-  }
-  // Positive slope = hold
-  return {
-    verdict: "hold",
-    reason: `Slope 20d ${fmtSlope(slope20d)} (positive) — favorable momentum, hold`,
-  };
-}
-
-function verdictTone(v: ExitVerdict): { label: string; color: string; bg: string } {
-  switch (v) {
-    case "hold":
-      return { label: "HOLD", color: "text-[rgb(var(--signal-up))]", bg: "bg-[rgb(var(--signal-up))]/15" };
-    case "watch":
-      return { label: "WATCH", color: "text-[rgb(var(--warn))]", bg: "bg-[rgb(var(--warn))]/15" };
-    case "exit":
-      return { label: "EXIT", color: "text-[rgb(var(--signal-down))]", bg: "bg-[rgb(var(--signal-down))]/15" };
-    case "n/d":
-    default:
-      return { label: "N/A", color: "text-ink-muted", bg: "bg-surface/40" };
-  }
-}
 
 // ── Helper: slope per row (priority entry > pre_cd > latest) ────────────────
 //
@@ -455,45 +170,6 @@ function getEffectiveSlope20d(r: SimOutcomeRow): number | null {
   return null;
 }
 
-function slope20dForOpenPosition(
-  outcome: SimOutcomeRow | undefined,
-  simRow: Record<string, unknown> | undefined,
-): number | null {
-  if (outcome) {
-    const s = getEffectiveSlope20d(outcome);
-    if (s != null) return s;
-  }
-  if (simRow) {
-    const { slope20d } = extractCurveInputs(simRow);
-    if (slope20d != null && Number.isFinite(slope20d)) return slope20d;
-  }
-  return null;
-}
-
-function slopeSourceForOpen(
-  outcome: SimOutcomeRow | undefined,
-  simRow: Record<string, unknown> | undefined,
-): string {
-  if (outcome) return getSlopeSourceLabel(outcome);
-  if (simRow) return "Simulation row · slope 20d";
-  return "n/a";
-}
-
-function getSlopeSourceLabel(r: SimOutcomeRow): string {
-  if (r.entry_slope_20d != null) {
-    if (r.entry_was_existing) {
-      return r.entry_ts ? `entry log · retroactive ${r.entry_ts.slice(0, 10)}` : "entry log · retroactive";
-    }
-    return r.entry_ts ? `entry log · ${r.entry_ts.slice(0, 10)}` : "entry log";
-  }
-  if (r.pre_cd_slope_20d != null) {
-    return r.pre_cd_slope_offset ? `histlib · pre-CD (${r.pre_cd_slope_offset})` : "histlib · pre-CD";
-  }
-  if (r.latest_slope_20d != null) {
-    return r.latest_slope_asof ? `histlib · at ${r.latest_slope_asof}` : "histlib · latest";
-  }
-  return "n/a";
-}
 
 // ── Correlazione semplice (sign concordance + Pearson r) ────────────────────
 function pearsonR(pts: { x: number; y: number }[]): number | null {
@@ -708,186 +384,10 @@ function simulationPriceSignature(
   return parts.join("|");
 }
 
-function OpenPositionsExitPanel({
-  activePositions,
-  outcomeByKey,
-  simRowByKey,
-  inputs,
-  portfolioHistory,
-  onOpenPredictionCharts,
-}: {
-  activePositions: SimulationPosition[];
-  outcomeByKey: Map<string, SimOutcomeRow>;
-  simRowByKey: Map<string, Record<string, unknown>>;
-  inputs: InvestSimInputs;
-  portfolioHistory: InvestSimHistoryPoint[];
-  onOpenPredictionCharts?: (focus: { seriesKey: string | null; ticker: string }) => void;
-}) {
-  const t = useT();
-  if (!activePositions.length) {
-    return (
-      <p className="text-xs text-ink-muted py-4 text-center">
-        {t("simOutcomes.open.empty")}
-      </p>
-    );
-  }
-  // P&L allineato al tab Simulation → P&L (positionPnlForOpenRow + resolvePnlTabCardTone).
-  const enriched = activePositions.map((pos) => {
-    const outcome = outcomeByKey.get(pos.key);
-    const simRow = simRowByKey.get(pos.key);
-    const slope20d = slope20dForOpenPosition(outcome, simRow);
-    const capital = pos.capital;
-    const metrics =
-      simRow && !pos.pnlUnavailable
-        ? positionPnlForOpenRow(simRow, inputs, portfolioHistory)
-        : null;
-    const pnlEur =
-      metrics?.pnlEur ?? (pos.pnlUnavailable ? null : pos.pnlEur);
-    const pnlPct =
-      metrics?.pnlPct ?? (pos.pnlUnavailable ? null : pos.pnlPct);
-    const ctx = buildExitVerdictContext(simRow, capital);
-    const v = exitVerdict(slope20d, pnlPct, ctx);
-    const cardTone = resolvePnlTabCardTone(pnlEur, pnlPct);
-    return {
-      pos,
-      outcome,
-      simRow,
-      slope20d,
-      slopeSource: slopeSourceForOpen(outcome, simRow),
-      pnlPct,
-      pnlEur,
-      metrics,
-      cardTone,
-      ...v,
-    };
-  });
-  const order: Record<ExitVerdict, number> = { exit: 0, watch: 1, "n/d": 2, hold: 3 };
-  const toneOrder = (t: ReturnType<typeof resolvePnlTabCardTone>) =>
-    t === "loss" ? 0 : t === "flat" ? 1 : 2;
-  enriched.sort(
-    (a, b) =>
-      toneOrder(a.cardTone) - toneOrder(b.cardTone) ||
-      order[a.verdict] - order[b.verdict] ||
-      (a.pnlPct ?? 0) - (b.pnlPct ?? 0),
-  );
-
-  return (
-    <div className="overflow-auto">
-      <table className={`${SHEET_GRID_TABLE_CLASS} text-xs border-collapse`}>
-        <SheetGridColgroup columnCount={7} />
-        <thead className="sticky top-0 bg-surface-elevated">
-          <tr className="text-[10px] uppercase text-ink-muted">
-            <th className={gridTh("left")}>Ticker</th>
-            <th className={gridTh("left")} title="Data di acquisto / ingresso (decision log o prima allocazione capitale)">Buy date</th>
-            <th className={gridTh("center")}>Capital</th>
-            <th className={gridTh("center")} title="P&L corrente (mark-to-market) o realizzato se già venduto">P&L</th>
-            <th className={gridTh("center")} title="Days the investment has been held">Hold days</th>
-            <th className={gridTh("center")}>Slope 20d</th>
-            <th className={gridTh("center")}>Verdict</th>
-          </tr>
-        </thead>
-        <tbody>
-          {enriched.map((e) => {
-            const tone = verdictTone(e.verdict);
-            const simRow = e.simRow;
-            const pos = e.pos;
-            const metrics = e.metrics;
-            const daily =
-              metrics?.pnlEur24h != null || metrics?.pnlPct24h != null
-                ? {
-                    pnlEur24h: metrics.pnlEur24h,
-                    pnlPct24h: metrics.pnlPct24h,
-                  }
-                : !pos.pnlUnavailable
-                  ? portfolioDailyPnlFromRow(pos, simRow)
-                  : { pnlEur24h: null as number | null, pnlPct24h: null as number | null };
-            const totalDisp = portfolioTotalDisplayValues(e.pnlEur, e.pnlPct);
-            const pnlColor =
-              e.pnlEur != null || e.pnlPct != null
-                ? positionPnlToneClass(e.cardTone)
-                : "text-ink-muted";
-            const portRowCls = portfolioTableRowClass(e.cardTone);
-            const slopeColor =
-              e.slope20d == null ? "text-ink-muted" :
-              e.slope20d > 0 ? "text-[rgb(var(--signal-up))]" :
-              e.slope20d < -0.1 ? "text-[rgb(var(--signal-down))]" : "text-[rgb(var(--warn))]";
-            const holdDays =
-              e.outcome?.holding_days ??
-              (e.outcome?.entry_ts ? daysFromEntryToNow(e.outcome) : null);
-            return (
-              <tr
-                key={e.pos.key}
-                className={`border-t border-[rgb(var(--border))]/30 ${portRowCls}`}
-              >
-                <td className={`${gridTd("left")} ${portRowCls}`}>
-                  <PortfolioTickerMark
-                    ticker={pos.ticker}
-                    inPortfolio
-                    pnlPct={e.pnlPct}
-                    pnlEur={e.pnlEur}
-                    pnlEur24h={daily.pnlEur24h}
-                    pnlPct24h={daily.pnlPct24h}
-                    onTickerClick={
-                      onOpenPredictionCharts
-                        ? () =>
-                            onOpenPredictionCharts({
-                              ticker: pos.ticker,
-                              seriesKey: simRow
-                                ? simulationRowSeriesKey(simRow) ?? null
-                                : null,
-                            })
-                        : undefined
-                    }
-                    tickerTitle={t("signals.priority.openChartsTitle")}
-                  />
-                </td>
-                <td className={`${gridTd("left")} text-ink-muted`}>
-                  {e.outcome?.entry_ts ? fmtUsDate(e.outcome.entry_ts) : "—"}
-                </td>
-                <td className={gridTd("center")}>{fmtUsd(pos.capital)}</td>
-                <td className={`${gridTd("center")} font-medium ${pnlColor} ${portRowCls}`}>
-                  {totalDisp.eur != null || totalDisp.pct != null ? (
-                    <>
-                      {fmtPortfolioPnlUsd(totalDisp.eur)}
-                      {totalDisp.pct != null ? (
-                        <span className="block text-[10px] opacity-80">
-                          ({fmtPortfolioPnlPct(totalDisp.pct)})
-                        </span>
-                      ) : null}
-                    </>
-                  ) : (
-                    <span title={SIM_PNL_NA_TOOLTIP}>—</span>
-                  )}
-                </td>
-                <td className={`${gridTd("center")} text-ink-muted`}>
-                  {holdDays != null ? `${holdDays}d` : "—"}
-                </td>
-                <td className={`${gridTd("center")} ${slopeColor}`} title={e.slopeSource}>
-                  {fmtSlope(e.slope20d)}
-                  <span className="block text-[9px] opacity-70">{e.slopeSource}</span>
-                </td>
-                <td className={gridTd("center")}>
-                  <span
-                    className={`inline-block px-1.5 py-0.5 rounded text-[10px] font-bold ${tone.color} ${tone.bg}`}
-                    title={e.reason}
-                  >
-                    {tone.label}
-                  </span>
-                </td>
-              </tr>
-            );
-          })}
-        </tbody>
-      </table>
-    </div>
-  );
-}
-
 // ── Main panel ──────────────────────────────────────────────────────────────
 export function InvestmentSimOutcomesPanel({
   reloadToken = 0,
   simTable = null,
-  onOpenPredictionCharts,
   onOpenSimulationPnl,
   onOpenDailyPnlLedger,
 }: {
@@ -895,7 +395,6 @@ export function InvestmentSimOutcomesPanel({
   // simTable serve solo per ricostruire invest_sim_inputs reconcile; la slope
   // arriva da SimOutcomeRow.latest_slope_* / pre_cd_slope_* (popolati da Python).
   simTable?: import("../types").SheetTable | null;
-  onOpenPredictionCharts?: (focus: { seriesKey: string | null; ticker: string }) => void;
   /** Apre Simulation → tab P&L (stesso motore colori righe). */
   onOpenSimulationPnl?: () => void;
   /** Apre Simulation → P&L → Daily detail (ledger). */
@@ -993,12 +492,6 @@ export function InvestmentSimOutcomesPanel({
 
   const rows = doc?.rows ?? [];
   const closedRows = useMemo(() => dedupeClosedOutcomeRows(rows), [rows]);
-
-  const outcomeByKey = useMemo(() => {
-    const m = new Map<string, SimOutcomeRow>();
-    for (const r of rows) m.set(r.row_key, r);
-    return m;
-  }, [rows]);
 
   const activePortfolio = useMemo(
     () =>
@@ -1388,7 +881,7 @@ export function InvestmentSimOutcomesPanel({
         </div>
       </div>
 
-      {/* ── Open positions — when to exit ──────────────────────────────────── */}
+      {/* ── Open positions — when to exit (consolidated) ───────────────────── */}
       <div className="rounded-lg border border-[rgb(var(--border))]/50 p-3 space-y-2">
         <div className="flex items-baseline justify-between flex-wrap gap-2">
           <div>
@@ -1419,14 +912,9 @@ export function InvestmentSimOutcomesPanel({
             ) : null}
           </div>
         </div>
-        <OpenPositionsExitPanel
-          activePositions={activePortfolio}
-          outcomeByKey={outcomeByKey}
-          simRowByKey={simRowByKey}
-          inputs={inputs}
-          portfolioHistory={portfolioHistory}
-          onOpenPredictionCharts={onOpenPredictionCharts}
-        />
+        <p className="text-[11px] text-ink-muted leading-relaxed">
+          {t("simOutcomes.open.movedNote")}
+        </p>
       </div>
 
       {/* ── Closed positions: scatter (no duplicate table) ─────────────────── */}

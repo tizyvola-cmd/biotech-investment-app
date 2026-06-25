@@ -28,9 +28,6 @@ import { LearningLabAuditLogPanel } from "./LearningLabAuditLogPanel";
 import { LearningLabUnifiedView } from "./LearningLabUnifiedView";
 import { LearningEffectivenessStrip } from "./LearningEffectivenessStrip";
 import { ChannelImpactPanels } from "./ChannelImpactPanels";
-import { ValidationFeedbackSection } from "./ValidationFeedbackSection";
-import { SignalCalibrationLearningSection } from "./SignalCalibrationLearningSection";
-import { CurveImpactLearningSection } from "./CurveImpactLearningSection";
 import { ExpectedMoveSection } from "./ExpectedMoveSection";
 import { GlobalCalFactorReadOnly, LearningPipelinePanel } from "./LearningPipelinePanel";
 import { LearningLabPortfolioTab } from "./LearningLabPortfolioTab";
@@ -38,6 +35,7 @@ import { seedCdPatternPolygonOverviewFromLab } from "../sheet/useCdPatternPolygo
 import { loadInvestSimHistory, loadInvestSimInputs } from "../sheet/investSimStorage";
 import { computeEisFeedWindowScore } from "../sheet/lossRescueEngine";
 import { analyzeRescueRebound, type RescueReboundAnalysis } from "../sheet/recommendationRescue";
+import { analyzeSellTiming, type SellTimingAnalysis } from "../sheet/recommendationSellTiming";
 
 const REFRESH_MS = 5 * 60_000;
 const OVERVIEW_SESSION_KEY = "learningLab.overview.v1";
@@ -74,7 +72,7 @@ function formatLearningLabLoadError(raw: string, it: boolean): string {
   return raw;
 }
 
-type LabTopTab = "model" | "signals" | "portfolio" | "monitor";
+type LabTopTab = "model" | "portfolio" | "monitor";
 type WeekRow = Record<string, unknown>;
 
 const MIN_LEARNING_WEEK_N = 15;
@@ -814,8 +812,27 @@ export function LearningLabView({
   const [previewOpen, setPreviewOpen] = useState(false);
   const [preview, setPreview] = useState<Awaited<ReturnType<typeof previewLearningCycle>> | null>(null);
   const [busy, setBusy] = useState(false);
+  const [reestimating, setReestimating] = useState(false);
   const hasDataRef = useRef(false);
   hasDataRef.current = data != null;
+
+  // Re-estimate the per-channel impact: force a backend recompute (bypassing the
+  // 5-min overview cache) and swap in the fresh values. The ChannelImpactPanels
+  // diffs the new values against the snapshot it took right before this call.
+  const handleReestimateChannels = useCallback(async () => {
+    setReestimating(true);
+    setError(null);
+    try {
+      const doc = await fetchLearningLabOverview({ force: true });
+      setData(doc);
+      saveSessionOverview(doc);
+      seedCdPatternPolygonOverviewFromLab(doc);
+    } catch (e) {
+      setError(e instanceof Error ? e.message : String(e));
+    } finally {
+      setReestimating(false);
+    }
+  }, []);
 
   const weeks = useMemo(() => parseWeeks(data?.history), [data?.history]);
 
@@ -826,6 +843,23 @@ export function LearningLabView({
     try {
       const history = loadInvestSimHistory();
       return analyzeRescueRebound({
+        history,
+        inputs: loadInvestSimInputs(),
+        eisScoreForKey: (ticker) => computeEisFeedWindowScore(ticker, lang, null, history),
+      });
+    } catch {
+      return null;
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [reloadToken, lang]);
+
+  // Predictive SELL timing (MII↓ + EIS≤0 + low rescue) — walk-forward graded on
+  // the daily PnL path, same UI-sheet data as the rescue analysis.
+  const sellTiming = useMemo<SellTimingAnalysis | null>(() => {
+    if (typeof window === "undefined") return null;
+    try {
+      const history = loadInvestSimHistory();
+      return analyzeSellTiming({
         history,
         inputs: loadInvestSimInputs(),
         eisScoreForKey: (ticker) => computeEisFeedWindowScore(ticker, lang, null, history),
@@ -1017,7 +1051,6 @@ export function LearningLabView({
 
         <div className="flex gap-1 flex-wrap shrink-0">
           {topTabBtn("model", it ? "Calibrazione modello" : "Model calibration")}
-          {topTabBtn("signals", it ? "Segnali e pattern" : "Signals & patterns")}
           {topTabBtn("portfolio", it ? "Portfolio e advice" : "Portfolio & advice")}
           {topTabBtn("monitor", it ? "Monitor loop" : "Loop monitor")}
         </div>
@@ -1026,7 +1059,14 @@ export function LearningLabView({
           <div className="space-y-4">
             <LearningDataMissingBanner data={data} it={it} />
             <LearningLivePoolBanner data={data} it={it} />
-            <ChannelImpactPanels data={data.channel_impact} it={it} rescue={rescueRebound} />
+            <ChannelImpactPanels
+              data={data.channel_impact}
+              it={it}
+              rescue={rescueRebound}
+              sellTiming={sellTiming}
+              onReestimate={handleReestimateChannels}
+              reestimating={reestimating}
+            />
             <ExpectedMoveSection data={data.expected_move} it={it} />
             <details className="rounded-xl border border-[rgb(var(--border))]/40 bg-surface/10">
               <summary className="cursor-pointer select-none px-3 py-2 text-[11px] font-medium text-ink-muted hover:text-ink">
@@ -1043,22 +1083,6 @@ export function LearningLabView({
             </details>
             <LearningPipelinePanel pipeline={pipeline} it={it} />
             <GlobalCalFactorReadOnly value={globalCfFromPipeline} updatedAt={globalCfUpdatedAt} it={it} />
-          </div>
-        ) : null}
-
-        {data && topTab === "signals" ? (
-          <div className="space-y-4">
-            <ValidationFeedbackSection
-              data={data.validation_feedback}
-              active={topTab === "signals"}
-              onReload={load}
-            />
-            <SignalCalibrationLearningSection
-              data={data.signal_calibration}
-              active={topTab === "signals"}
-              onReload={load}
-            />
-            <CurveImpactLearningSection data={data.curve_impact} />
           </div>
         ) : null}
 

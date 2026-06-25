@@ -25,6 +25,7 @@ import {
   PROMOTION_MIN_LIFT,
 } from "../sheet/patternCombinationSearch";
 import { liftHistoryForLabel } from "../sheet/patternSearchHistory";
+import { loadApprovedPattern, listPendingProposals } from "../riskPattern/patternProposalStore";
 import { useLang } from "../shared/i18n";
 
 // ── Helpers ────────────────────────────────────────────────────────────────
@@ -61,17 +62,30 @@ const LINE_COLORS = [
   "#8b5cf6", // violet
 ];
 
+// Role-based curves shown by default: approved pattern, new pending compute,
+// and the best combination of the current run. Each keeps a fixed colour so
+// the legend stays stable across runs.
+type LiftRole = "approved" | "new" | "best" | "custom";
+
+const ROLE_COLOR: Record<LiftRole, string> = {
+  approved: "#10b981", // emerald
+  new: "#f59e0b", // amber
+  best: "#6366f1", // indigo
+  custom: "#8b5cf6", // violet (only used as a fallback)
+};
+
+type LiftSeriesSpec = { label: string; role: LiftRole; color: string };
+
 // ── Sub-components ─────────────────────────────────────────────────────────
 
-function LiftEvolutionChart({ topResults }: { topResults: CombinationResult[] }) {
-  const top5 = topResults.slice(0, 5);
-
+function LiftEvolutionChart({ series }: { series: LiftSeriesSpec[] }) {
   const seriesData = useMemo(() => {
-    return top5.map((r) => ({
-      label: r.label,
-      points: liftHistoryForLabel(r.label),
+    return series.map((s) => ({
+      label: s.label,
+      color: s.color,
+      points: liftHistoryForLabel(s.label),
     }));
-  }, [top5]);
+  }, [series]);
 
   // Merge all timestamps into a unified X-axis
   const allTs = useMemo(() => {
@@ -129,12 +143,12 @@ function LiftEvolutionChart({ topResults }: { topResults: CombinationResult[] })
             strokeDasharray="4 2"
             label={{ value: "promo", fontSize: 8, fill: "#6366f1" }}
           />
-          {seriesData.map((_, i) => (
+          {seriesData.map((s, i) => (
             <Line
               key={i}
               type="monotone"
               dataKey={`lift_${i}`}
-              stroke={LINE_COLORS[i % LINE_COLORS.length]}
+              stroke={s.color}
               dot={false}
               strokeWidth={1.5}
               connectNulls
@@ -186,6 +200,42 @@ export function PatternSearchMonitorPanel({
     return runResult.results;
   }, [runResult]);
 
+  // Label of the pattern currently approved (active in the score).
+  const approvedLabel = useMemo(
+    () => loadApprovedPattern().current?.name ?? null,
+    [runResult?.computedAt],
+  );
+  // Label of the newest pending PCSE proposal — the "new compute", when present.
+  const newComputeLabel = useMemo(() => {
+    const pending = listPendingProposals()
+      .filter((p) => p.proposedPattern?.pattern.name)
+      .sort((a, b) => b.createdAt.localeCompare(a.createdAt));
+    return pending[0]?.proposedPattern?.pattern.name ?? null;
+  }, [runResult?.computedAt]);
+
+  // Default chart curves: approved · new compute (when present) · best combination
+  // of the current run. A manual table selection overrides this with the picked rows.
+  const chartSeries = useMemo<LiftSeriesSpec[]>(() => {
+    if (selectedLabels.size > 0) {
+      return [...selectedLabels].map((label, i) => ({
+        label,
+        role: "custom" as const,
+        color: LINE_COLORS[i % LINE_COLORS.length]!,
+      }));
+    }
+    const out: LiftSeriesSpec[] = [];
+    const seen = new Set<string>();
+    const add = (label: string | null, role: LiftRole) => {
+      if (!label || seen.has(label)) return;
+      seen.add(label);
+      out.push({ label, role, color: ROLE_COLOR[role] });
+    };
+    add(approvedLabel, "approved");
+    add(newComputeLabel, "new");
+    add(filteredResults[0]?.label ?? null, "best");
+    return out;
+  }, [selectedLabels, approvedLabel, newComputeLabel, filteredResults]);
+
   const displayResults = showAll ? filteredResults : filteredResults.slice(0, 15);
 
   if (!runResult) {
@@ -233,7 +283,7 @@ export function PatternSearchMonitorPanel({
         </div>
       </div>
 
-      {/* Lift evolution chart — selected combinations, or top-5 by default */}
+      {/* Lift evolution chart — approved · new compute · best, or manual selection */}
       <div className="rounded-xl border border-slate-200/40 dark:border-slate-700/30 bg-white/40 dark:bg-surface/40 px-3 pt-3 pb-2">
         <div className="flex items-center justify-between gap-2 mb-0.5">
           <p className="text-[10px] text-ink-muted uppercase tracking-wide">
@@ -242,8 +292,8 @@ export function PatternSearchMonitorPanel({
                 ? `Confronto (${selectedLabels.size} selezionate)`
                 : `Comparison (${selectedLabels.size} selected)`
               : it
-                ? "Evoluzione lift (top 5 combinazioni)"
-                : "Lift evolution (top 5 combinations)"}
+                ? "Evoluzione lift (approvato · nuova · migliore)"
+                : "Lift evolution (approved · new · best)"}
           </p>
           {selectedLabels.size > 0 && (
             <button
@@ -254,6 +304,35 @@ export function PatternSearchMonitorPanel({
             </button>
           )}
         </div>
+        {/* Legend for the 3 role-based curves (hidden during manual comparison). */}
+        {selectedLabels.size === 0 && chartSeries.length > 0 && (
+          <div className="flex flex-wrap items-center gap-x-3 gap-y-1 mb-1.5">
+            {chartSeries.map((s) => {
+              const roleName =
+                s.role === "approved"
+                  ? it
+                    ? "approvato"
+                    : "approved"
+                  : s.role === "new"
+                    ? it
+                      ? "nuova compute"
+                      : "new compute"
+                    : it
+                      ? "migliore"
+                      : "best";
+              return (
+                <span key={s.label} className="inline-flex items-center gap-1 text-[10px] text-ink-muted">
+                  <span
+                    className="inline-block w-3 h-[2px] rounded-full"
+                    style={{ backgroundColor: s.color }}
+                  />
+                  <span className="font-semibold text-ink">{roleName}</span>
+                  <span className="text-ink-muted/70 truncate max-w-[220px]">· {s.label}</span>
+                </span>
+              );
+            })}
+          </div>
+        )}
         <p className="text-[10px] text-ink-muted/70 mb-2 leading-relaxed">
           {it
             ? `Il lift misura quanto un pattern è discriminante: 1.5× significa che i deal che lo matchano perdono 1.5 volte più spesso della media (${runResult.globalLossRate.toFixed(1)}%). ` +
@@ -263,13 +342,7 @@ export function PatternSearchMonitorPanel({
               `A declining curve is normal: lift stabilises as more data accumulates. The dashed line is the minimum threshold to promote the pattern to the score. ` +
               `Click up to ${MAX_COMPARE} rows in the table below to compare their curves directly.`}
         </p>
-        <LiftEvolutionChart
-          topResults={
-            selectedLabels.size > 0
-              ? filteredResults.filter((r) => selectedLabels.has(r.label))
-              : filteredResults
-          }
-        />
+        <LiftEvolutionChart series={chartSeries} />
       </div>
 
       {/* Results table */}

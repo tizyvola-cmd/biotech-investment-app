@@ -52,7 +52,7 @@ export function SignalScoreBar({
         {num}
         {showLabel ? (
           <span
-            className={`text-[8px] font-semibold uppercase tracking-wide leading-none ${rel.textClass}`}
+            className={`text-[11px] font-semibold uppercase tracking-wide leading-none ${rel.textClass}`}
           >
             {tierLabel}
           </span>

@@ -438,6 +438,23 @@ export function portfolioTableOutlookClass(
   return PORTFOLIO_TABLE_OUTLOOK_CLS[outlook];
 }
 
+/**
+ * Colore riga basato sul P&L corrente (convenzione classica):
+ * verde se la posizione è in profitto (Entry P&L ≥ 0), rosso se in perdita.
+ * Le righe non in portafoglio (nessuna posizione) restano neutre.
+ */
+export function resolvePnlRowOutlook(outlook: {
+  inPortfolio?: boolean;
+  pnlUnavailable?: boolean;
+  pnlEur?: number | null;
+  pnlPct?: number | null;
+}): PortfolioTableOutlook {
+  if (!outlook.inPortfolio || outlook.pnlUnavailable) return "flat";
+  return portfolioPnlTone(outlook.pnlEur ?? null, outlook.pnlPct) === "loss"
+    ? "loss"
+    : "gain";
+}
+
 /** Colore ticker allineato allo sfondo riga (non al P&L mark-to-market). */
 export function portfolioTickerOutlookColor(
   outlook: PortfolioTableOutlook | null | undefined,

@@ -18,7 +18,6 @@ import type { InvestSimInputs } from "../sheet/investSimStorage";
 import { hydrateUiPrefsFromDisk, loadUiPrefsLocal, saveUiPrefs } from "../sheet/uiPrefs";
 import { CapDivStep2RiskView } from "./CapDivStep2RiskView";
 import { CapDivStep3BreakevenView } from "./CapDivStep3BreakevenView";
-import { CapDivStep3BreakevenWidget } from "./CapDivStep3BreakevenWidget";
 import { ThreePortfolioCompareView } from "./ThreePortfolioCompareView";
 import { useLang } from "../shared/i18n";
 
@@ -97,22 +96,20 @@ export function PortfolioDiversificationLabPanel({
     if (!isCapitalUserSetRef.current) return;
     saveUiPrefs({ topCapital });
   }, [topCapital]);
-  const TOP_TARGET_POSITIONS = 6;
-  const topBreakevenTarget = Math.max(50, Math.round(topCapital * 0.02));
 
   return (
     <div className="space-y-4">
-      {/* TOP — Interactive breakeven widget (hero) */}
+      {/* TOP — Capital pot control (drives the three-portfolio comparison below) */}
       <div className="rounded-2xl border border-indigo-200/50 dark:border-indigo-800/40 bg-white/60 dark:bg-surface/60 p-3 space-y-3">
         <div className="flex flex-wrap items-end justify-between gap-3 px-1">
           <div>
             <p className="text-[10px] uppercase font-semibold text-indigo-700 dark:text-indigo-300 tracking-wider">
-              {it ? "Sopra ogni cosa — modula il sizing live" : "Above everything — modulate sizing live"}
+              {it ? "Capitale del portafoglio" : "Portfolio capital pot"}
             </p>
             <p className="text-[11px] text-ink-muted max-w-2xl mt-0.5">
               {it
-                ? "Slider per opportunità con EV aggiornato in tempo reale. Per il calcolo dell'EV usiamo win rate dal Calibration Center e payoff dallo Step 1 (fallback se mancante). Read-only: non scrive sul portfolio reale."
-                : "Per-opportunity sliders with live EV. Win rate from the Calibration Center, payoff from Step 1 (fallback if missing). Read-only: nothing is written to the real portfolio."}
+                ? "Imposta il capitale: il confronto qui sotto (mio · sim equal · sim pesato) si aggiorna di conseguenza."
+                : "Set the capital pot: the comparison below (mine · sim equal · sim weighted) updates accordingly."}
             </p>
           </div>
           <label className="flex items-center gap-2 text-[11px]">
@@ -134,17 +131,6 @@ export function PortfolioDiversificationLabPanel({
             />
           </label>
         </div>
-        <CapDivStep3BreakevenWidget
-          closedRows={closedRows}
-          simTable={simTable}
-          sdsRows={sdsRows}
-          investInputs={investInputs}
-          pointsBySeriesKey={pointsBySeriesKey}
-          totalCapitalEur={topCapital}
-          breakevenTargetEur={topBreakevenTarget}
-          targetPositions={TOP_TARGET_POSITIONS}
-          patternStoreVersion={patternVersion}
-        />
       </div>
 
       {/* TOP — Three-portfolio comparison (mine / sim equal / sim weighted) */}

@@ -11536,6 +11536,10 @@ const DICT = {
     en: "P&L tab →",
     it: "Tab P&L →",
   },
+  "simOutcomes.open.movedNote": {
+    en: "The per-position exit verdict (EXIT / HOLD / WATCH) now lives in the unified Pick stocks portfolio table, next to the Sell button — no longer duplicated here. Use the P&L tab for the curve deep-dive.",
+    it: "Il verdetto d'uscita per posizione (EXIT / HOLD / WATCH) è ora nella tabella portafoglio unica di Pick stocks, accanto al pulsante Sell — non più duplicato qui. Usa la tab P&L per l'analisi della curva.",
+  },
   "simOutcomes.closed.title": {
     en: "Closed positions — what worked",
     it: "Posizioni chiuse — cosa ha funzionato",

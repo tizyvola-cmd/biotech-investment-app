@@ -1517,7 +1517,6 @@ export default function App() {
                 error={accError}
                 onReload={() => void reloadAccuracy()}
                 onReloadSimulation={() => void reloadSimulation()}
-                onOpenPredictionCharts={openPredictionCharts}
                 onOpenSimulationPnl={handleNavigateToSimulationPnl}
                 onOpenDailyPnlLedger={handleNavigateToDailyPnlLedger}
                 initialTab={modelsInitialTab ?? undefined}

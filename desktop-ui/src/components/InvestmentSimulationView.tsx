@@ -130,6 +130,11 @@ import {
   fmtSignedEurPnl,
   summarizePortfolioWinRate,
 } from "../sheet/portfolioGainLossStyle";
+import {
+  exitVerdict,
+  buildExitVerdictContext,
+  verdictTone,
+} from "../sheet/exitVerdict";
 import { auditSimulationBuyPrice } from "../sheet/simulationBuyPriceAudit";
 import { useInvestSimInputsMutable } from "../hooks/useInvestSimInputs";
 import { CapitalNumberInput } from "./CapitalNumberInput";
@@ -3945,6 +3950,16 @@ export function InvestmentSimulationView({
                 !isFocused && TABLE_COLORS_ENABLED
                   ? portfolioTableOutlookClass(rowOutlook)
                   : "";
+              // Verdetto d'uscita unificato (stesso motore della ex tab
+              // "Open positions → when to exit"): mostrato accanto a Sell.
+              const exitV = inPortfolio
+                ? exitVerdict(
+                    curvesForTone?.slope20d ?? null,
+                    pnlAligned?.pnlPct ?? p.pnlPct ?? null,
+                    buildExitVerdictContext(simRowForTone, p.capital),
+                  )
+                : null;
+              const exitTone = exitV ? verdictTone(exitV.verdict) : null;
               const planReturnTone =
                 gainPlan?.targetReturnPct ?? planReturnByKey.get(p.key) ?? null;
               const entryBuyPrice =
@@ -4523,6 +4538,14 @@ export function InvestmentSimulationView({
                         Buy
                       </button>
                     ) : null}
+                    {inPortfolio && exitTone && exitV && exitV.verdict !== "n/d" && (
+                      <span
+                        className={`inline-block px-1.5 py-0.5 rounded text-[9px] font-bold ${exitTone.color} ${exitTone.bg}`}
+                        title={exitV.reason}
+                      >
+                        {exitTone.label}
+                      </span>
+                    )}
                     {inPortfolio && (
                       <button
                         type="button"

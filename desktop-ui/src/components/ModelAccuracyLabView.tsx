@@ -98,7 +98,6 @@ export function ModelAccuracyLabView({
   error: sheetError,
   onReload,
   onReloadSimulation,
-  onOpenPredictionCharts,
   onOpenSimulationPnl,
   onOpenDailyPnlLedger,
   accuracyDataStale,
@@ -113,7 +112,6 @@ export function ModelAccuracyLabView({
   error: string | null;
   onReload: () => void;
   onReloadSimulation?: () => void;
-  onOpenPredictionCharts?: (focus: { seriesKey: string | null; ticker: string }) => void;
   onOpenSimulationPnl?: () => void;
   onOpenDailyPnlLedger?: () => void;
   accuracyDataStale?: boolean;
@@ -460,7 +458,6 @@ export function ModelAccuracyLabView({
               <InvestmentSimOutcomesPanel
                 reloadToken={portfolioReloadToken + signalsReloadToken}
                 simTable={simTable ?? null}
-                onOpenPredictionCharts={onOpenPredictionCharts}
                 onOpenSimulationPnl={onOpenSimulationPnl}
                 onOpenDailyPnlLedger={onOpenDailyPnlLedger}
               />

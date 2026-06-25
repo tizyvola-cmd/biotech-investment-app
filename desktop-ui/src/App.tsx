@@ -115,6 +115,7 @@ import {
 } from "./sheet/crossTabCoherenceHealth";
 import { ackCoherenceAlert, isCoherenceAlertAcked } from "./sheet/coherenceAlertDismiss";
 import { subscribeTopOpps } from "./sheet/topOppsStore";
+import { publishDashboardRecommendationsFromSimulation } from "./sheet/topOppsFromSimulation";
 import { loadPredictions } from "./data/predictions";
 import { loadLocalSheet } from "./data/localSheets";
 import { probeApiReachable, fetchNewBioIpoStatus } from "./api/supernova";
@@ -845,6 +846,22 @@ export default function App() {
     if (coherenceAlertSigRef.current) ackCoherenceAlert(coherenceAlertSigRef.current);
     setCoherenceAlertOpen(false);
   }, []);
+
+  const handleCoherenceRefreshTopOpps = useCallback(() => {
+    // Recompute and republish Top Opps from the current sim data, forcing the
+    // store timestamp so the staleness clears even when the user is already on
+    // the dashboard (where navigation alone would be a no-op).
+    if (simTable?.rows?.length) {
+      publishDashboardRecommendationsFromSimulation(
+        simTable,
+        investSimInputs,
+        coherenceChartMap.size > 0 ? coherenceChartMap : undefined,
+        { forceTimestamp: true },
+      );
+    }
+    navigateTo("main");
+    setCoherenceAlertOpen(false);
+  }, [simTable, investSimInputs, coherenceChartMap, navigateTo]);
 
   const capturePortfolioBeforeRefreshCb = useCallback(() => {
     capturePortfolioBeforeRefresh(simTable);
@@ -1629,7 +1646,7 @@ export default function App() {
         open={coherenceAlertOpen}
         issues={coherenceCriticalIssues}
         onClose={handleCoherenceAlertClose}
-        onOpenDashboard={() => navigateTo("main")}
+        onOpenDashboard={handleCoherenceRefreshTopOpps}
         onOpenSimulation={() => navigateTo("simulation")}
         onOpenSystem={() => {
           navigateTo("system");

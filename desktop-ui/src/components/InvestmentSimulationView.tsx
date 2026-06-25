@@ -122,7 +122,7 @@ import {
   ptfBlockDayClassName,
   ptfBlockDaySecondaryClassName,
   portfolioTableOutlookClass,
-  resolvePortfolioTableOutlook,
+  resolvePnlRowOutlook,
   type PortfolioTableOutlook,
   portfolioPtfBlockTheme,
   portfolioPtfDayBlockTheme,
@@ -3934,15 +3934,11 @@ export function InvestmentSimulationView({
                 inPortfolio && simRow
                   ? positionPnlForOpenRow(simRow, inputs, history)
                   : null;
-              const rowOutlook: PortfolioTableOutlook = resolvePortfolioTableOutlook({
+              const rowOutlook: PortfolioTableOutlook = resolvePnlRowOutlook({
                 inPortfolio,
+                pnlUnavailable: p.pnlUnavailable,
                 pnlEur: pnlAligned?.pnlEur ?? (inPortfolio ? p.pnlEur : null),
                 pnlPct: pnlAligned?.pnlPct ?? (inPortfolio ? p.pnlPct : null),
-                planReturnPct: gainPlan ? primaryReturnPctFromGainPlan(gainPlan) : null,
-                slope5d: curvesForTone?.slope5d ?? null,
-                slope20d: curvesForTone?.slope20d ?? null,
-                simRow: simRowForTone ?? null,
-                chartPoints: chartPtsForRow,
               });
               const rowStyle: React.CSSProperties | undefined = focusStyle;
               const portfolioRowCls =

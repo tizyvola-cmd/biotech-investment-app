@@ -2,7 +2,7 @@
 @tailwind components;
 @tailwind utilities;
 
-/* ── Light mode ─────────────────────────────────────────── */
+/* ?? Light mode ??????????????????????????????????????????? */
 :root {
   --surface: 255 255 255;
   --surface-elevated: 255 255 255;
@@ -18,7 +18,7 @@
   --signal-down: 220 38 38;
   --signal-neutral: 100 116 139;
   --warn: 245 158 11;
-  /* Pre-CD chart zones: watch (blu tenue) · hot (porpora-rosso, non acceso) · post (giallo ocra) */
+  /* Pre-CD chart zones: watch (blu tenue) � hot (porpora-rosso, non acceso) � post (giallo ocra) */
   --cd-watch-zone: 99 102 241;
   --cd-hot-zone: 112 58 86;
   --cd-post-zone: 234 179 8;
@@ -30,7 +30,7 @@
   --sidebar-w: 220px;
 
   /*
-   * Panel tokens — mint (Clinical / legacy), feed (Financial + Catalyst),
+   * Panel tokens � mint (Clinical / legacy), feed (Financial + Catalyst),
    * lab (Decision Lab), warn banners. Charts: chart-dark-*.
    */
   --panel-mint-bg: 236 253 245;
@@ -75,11 +75,11 @@
   --panel-pending-bg: 254 243 199;
   --panel-pending-ink: 180 83 9;
 
-  /* Clinical Trials tab — Chiaro: lavanda/violetto (allineato a Catalyst Feed) */
+  /* Clinical Trials tab � Chiaro: lavanda/violetto (allineato a Catalyst Feed) */
   --clinical-panel: 243 244 252;
   --clinical-panel-border: 199 210 254;
 
-  /* Monitor tester — Chiaro: lavanda (leggibile su bg-deep scuro) */
+  /* Monitor tester � Chiaro: lavanda (leggibile su bg-deep scuro) */
   --tester-monitor-panel: 255 255 255;
   --tester-monitor-panel-soft: 245 243 255;
   --tester-monitor-border: 199 210 254;
@@ -88,7 +88,7 @@
   --tester-monitor-thead: 237 233 254;
   --tester-monitor-row-hover: 238 242 255;
 
-  /* Portfolio simulation — gain / loss / flat row & card surfaces */
+  /* Portfolio simulation � gain / loss / flat row & card surfaces */
   --panel-rose-bg: 255 241 242;
   --panel-rose-bg-soft: 255 228 230;
   --panel-rose-border: 254 202 202;
@@ -96,13 +96,13 @@
   --panel-portfolio-flat-border: 203 213 225;
 }
 
-/* ── Dark glass mode ────────────────────────────────────── */
+/* ?? Dark glass mode ?????????????????????????????????????? */
 /*
  * Palette calibrata per astigmatismo:
  * - ink: bianco leggermente freddo invece di bianco puro (riduce halation)
  * - signal-up: teal-verde invece di verde puro (meno aberrazione cromatica con il rosso)
  * - signal-down: corallo morbido invece di rosso puro (meno aggressivo)
- * - signal-neutral: più chiaro per essere visibile senza affidarsi al colore
+ * - signal-neutral: pi� chiaro per essere visibile senza affidarsi al colore
  */
 .dark {
   --surface: 28 33 65;
@@ -127,7 +127,7 @@
   --cd-hot-zone-label: 188 128 158;
   --cd-post-zone-label: 220 170 50;
   --purple-soft: 180 156 252;
-  /* Clinical tab shell (tema Blu) — allineato a surface / accent */
+  /* Clinical tab shell (tema Blu) � allineato a surface / accent */
   --clinical-panel: 28 33 65;
   --clinical-panel-border: 129 140 248;
 
@@ -188,7 +188,7 @@
   --tester-monitor-row-hover: 55 65 110;
 }
 
-/* ── Base ────────────────────────────────────────────────── */
+/* ?? Base ?????????????????????????????????????????????????? */
 body {
   margin: 0;
   min-height: 100vh;
@@ -202,10 +202,16 @@ body {
     radial-gradient(ellipse 80% 50% at 20% 0%, rgba(99, 102, 241, 0.18) 0%, transparent 60%),
     radial-gradient(ellipse 60% 40% at 80% 100%, rgba(139, 92, 246, 0.12) 0%, transparent 60%),
     linear-gradient(160deg, #07080f 0%, #0b1025 45%, #0d0820 100%);
-  background-attachment: fixed;
+  /*
+   * Perf: ``background-attachment: fixed`` forces a fullscreen repaint on
+   * every scroll frame (the browser must rasterize the gradient behind the
+   * scrolling content). The scroll container is nested (App.tsx), so the
+   * body gradient never visibly moves anyway � dropping ``fixed`` removes
+   * per-frame repaint cost with zero visual difference for the user.
+   */
 }
 
-/* ── Components ─────────────────────────────────────────── */
+/* ?? Components ??????????????????????????????????????????? */
 @layer components {
   /* Light card */
   .card {
@@ -215,11 +221,20 @@ body {
       0 4px 16px rgb(0 0 0 / 0.07);
   }
 
-  /* Glass card (Blu / dark mode) */
+  /* Glass card (Blu / dark mode)
+   *
+   * Perf: ``backdrop-filter: blur(22px) saturate(1.6)`` on ``.card`` was the
+   * single largest source of scroll jank � every visible card forced the
+   * compositor to rasterize the content behind it on each scroll frame, and
+   * pages routinely have 15-40 cards visible. We swap the live blur for an
+   * opaque tinted background that visually reads the same on the dark
+   * gradient (see ``.dark body``) without the per-frame paint cost.
+   *
+   * If the visual difference is ever noticeable, promote a single top-level
+   * wrapper to ``backdrop-filter`` and keep individual cards opaque.
+   */
   .dark .card {
-    background: rgba(255, 255, 255, 0.062) !important;
-    backdrop-filter: blur(22px) saturate(1.6);
-    -webkit-backdrop-filter: blur(22px) saturate(1.6);
+    background: rgba(23, 26, 46, 0.82) !important;
     border: 1px solid rgba(255, 255, 255, 0.10) !important;
     box-shadow:
       0 8px 40px rgba(0, 0, 0, 0.5),
@@ -250,7 +265,7 @@ body {
   }
 
   /*
-   * Segmented / tab pills — selected state MUST stay readable in every theme.
+   * Segmented / tab pills � selected state MUST stay readable in every theme.
    * Avoid pairing ``--surface-3`` (dark navy even in light mode) with ``--ink``
    * (dark text): that yields dark-on-dark selected buttons.
    * Active = solid accent fill + white label.
@@ -286,7 +301,7 @@ body {
     border: 1px solid rgb(var(--panel-feed-border) / 0.45);
   }
 
-  /* Chip toggles — white/surface pill with border (Simulation Analysis sidebar, etc.) */
+  /* Chip toggles � white/surface pill with border (Simulation Analysis sidebar, etc.) */
   .chip-btn {
     @apply rounded-md border border-[rgb(var(--border))]/60 px-2 py-0.5 text-[10px] font-medium
       text-[rgb(var(--ink-muted))] bg-[rgb(var(--surface))]
@@ -302,7 +317,7 @@ body {
     box-shadow: 0 0 8px rgb(var(--accent) / 0.3);
   }
 
-  /* Simulation / Decision Lab — toolbar tabs + filter chips allineati */
+  /* Simulation / Decision Lab � toolbar tabs + filter chips allineati */
   .sim-workspace-toolbar {
     @apply flex flex-wrap items-center gap-x-2 gap-y-1.5;
   }
@@ -316,24 +331,50 @@ body {
   }
 
   /*
-   * Panel stack — toolbar / snapshot table sticky, detail cards flow below.
-   * The whole page scrolls as one unit (no internal scroll).
+   * Panel stack � toolbar / snapshot table sticky, detail cards scroll below.
    */
   .panel-stack {
-    @apply flex flex-col flex-1;
+    @apply flex flex-col flex-1 min-h-0;
   }
   .panel-stack-pin {
     @apply shrink-0;
   }
   .panel-stack-scroll {
-    @apply flex-1;
+    @apply flex-1 min-h-0 overflow-y-auto overscroll-y-contain;
   }
   .panel-table-scroll {
-    /* No internal scroll — full content flows in the page */
+    /* No internal scroll � full content flows in the page */
     overflow: visible;
   }
   .panel-table-scroll::-webkit-scrollbar {
     display: none;
+  }
+  /** Top KPI snapshot � document flow, no inner scroll window. */
+  .kpi-summary-table-scroll,
+  .loss-kpi-page-table {
+    overflow: visible !important;
+    max-height: none !important;
+    height: auto !important;
+    width: 100%;
+    min-width: 0;
+  }
+  /** Top KPI � match Catalyst Days desk cell padding / type (px-1 py-0.5, 10px body). */
+  .kpi-summary-table {
+    width: 100%;
+    border-collapse: collapse;
+    font-size: 10px;
+  }
+  .kpi-summary-table th,
+  .kpi-summary-table td {
+    padding: 0.125rem 0.25rem; /* py-0.5 px-1 � same as Catalyst DESK_CELL */
+    line-height: 1.25;
+    vertical-align: middle;
+    box-sizing: border-box;
+  }
+  .kpi-summary-table thead tr {
+    font-size: 9px;
+    letter-spacing: 0.05em;
+    text-transform: uppercase;
   }
   .panel-summary-strip {
     @apply rounded-lg border border-[rgb(var(--border))]/50 bg-surface/50 px-3 py-1.5
@@ -360,7 +401,7 @@ body {
     min-width: 0;
   }
 
-  /* Sell / exit — high-contrast destructive action (24h assessment, P&L, modals). */
+  /* Sell / exit � high-contrast destructive action (24h assessment, P&L, modals). */
   .btn-sell {
     @apply inline-flex items-center justify-center gap-1.5 rounded-lg px-4 py-2
       text-xs font-bold tracking-wide whitespace-nowrap min-h-[2rem] min-w-[4.75rem]
@@ -389,10 +430,10 @@ body {
      * (dark text on a dark deep backdrop in light mode).
      *
      * We now give the button its OWN surface fill so the contrast with the
-     * text is guaranteed in both themes — independently of what's behind:
+     * text is guaranteed in both themes � independently of what's behind:
      *
-     *  - light theme: surface ≈ slate-100 + ink ≈ slate-900 → dark on light
-     *  - dark theme:  surface ≈ deep navy + ink ≈ slate-200 → light on dark
+     *  - light theme: surface ? slate-100 + ink ? slate-900 ? dark on light
+     *  - dark theme:  surface ? deep navy + ink ? slate-200 ? light on dark
      */
     @apply btn text-[rgb(var(--ink))] border border-[rgb(var(--border))]
       hover:bg-[rgb(var(--surface-elevated))];
@@ -415,7 +456,7 @@ body {
 
   /*
    * Native <select> popups (esp. Windows/WebView2) use a light OS panel while
-   * .input inherits light --ink text → white-on-white. Force readable options.
+   * .input inherits light --ink text ? white-on-white. Force readable options.
    */
   select option,
   select optgroup {
@@ -443,7 +484,7 @@ body {
   }
 
   /*
-   * Signal badges — accessibili per astigmatismo:
+   * Signal badges � accessibili per astigmatismo:
    * bordo colorato + background tenue + icona nel testo = triplice ridondanza visiva
    * (non solo il colore comunica il significato)
    */
@@ -480,7 +521,7 @@ body {
     background: rgb(var(--warn) / 0.12);
     color: rgb(var(--warn));
   }
-  /* Quality dots — leggermente più grandi per visibilità */
+  /* Quality dots � leggermente pi� grandi per visibilit� */
   .quality-dot-green {
     @apply inline-block w-2.5 h-2.5 rounded-full bg-[rgb(var(--signal-up))];
     box-shadow: 0 0 0 2px rgb(var(--signal-up) / 0.25), 0 0 6px rgb(var(--signal-up) / 0.4);
@@ -494,7 +535,7 @@ body {
     box-shadow: 0 0 0 2px rgb(var(--signal-down) / 0.25), 0 0 6px rgb(var(--signal-down) / 0.4);
   }
 
-  /* Slope Verdict — banner a gradiente (verde / giallo / rosso) */
+  /* Slope Verdict � banner a gradiente (verde / giallo / rosso) */
   .sn-slope-verdict-banner {
     position: relative;
     overflow: hidden;
@@ -605,7 +646,7 @@ body {
   }
 }
 
-/* ── Portfolio simulation — righe/card gain · loss · flat (tabella + griglia) ── */
+/* ?? Portfolio simulation � righe/card gain � loss � flat (tabella + griglia) ?? */
 /* Barra verticale solo sulla prima <td> (box-shadow su <tr> non si disegna in HTML table). */
 .portfolio-row-gain > td {
   background: rgb(var(--panel-mint-bg-soft)) !important;
@@ -719,7 +760,7 @@ body {
   border-radius: 0.75rem;
 }
 
-/* ── Zebra table rows — riduce lo sforzo oculare nel seguire le righe ── */
+/* ?? Zebra table rows � riduce lo sforzo oculare nel seguire le righe ?? */
 /* Base background for all table cells - harmonized with chart background */
 table tbody tr {
   background: rgb(var(--cd-bg-light) / 0.08);
@@ -743,7 +784,7 @@ table thead th {
   background: rgb(var(--cd-bg-light) / 0.12);
 }
 
-/* Slope errors + feed-style tables — lavanda/violetto (allineato a Clinical / Catalyst Feed) */
+/* Slope errors + feed-style tables � lavanda/violetto (allineato a Clinical / Catalyst Feed) */
 .table-zebra-violet tbody tr:nth-child(odd) {
   background: rgb(var(--surface-elevated));
 }
@@ -763,7 +804,7 @@ table thead th {
   background: rgb(var(--panel-feed-row-hover) / 0.45) !important;
 }
 
-/* Slope errors overview — violetto dentro, verdino solo sul bordo esterno */
+/* Slope errors overview � violetto dentro, verdino solo sul bordo esterno */
 .slope-overview-table-wrap {
   background: rgb(var(--panel-feed-bg)) !important;
 }
@@ -801,13 +842,13 @@ table thead th {
   background: rgb(var(--panel-feed-row-hover) / 0.28);
 }
 
-/* ── Celle numeriche direzionali ─────────────────────────── */
+/* ?? Celle numeriche direzionali ??????????????????????????? */
 .cell-up   { color: rgb(var(--signal-up));   font-weight: 600; }
 .cell-down { color: rgb(var(--signal-down)); font-weight: 600; }
 .cell-warn { color: rgb(var(--warn));         font-weight: 600; }
 
 /*
- * Clinical Trials tab — Chiaro: violetto/indaco (feed-panel); Blu: glass; Nero: flat.
+ * Clinical Trials tab � Chiaro: violetto/indaco (feed-panel); Blu: glass; Nero: flat.
  */
 .clinical-view-shell,
 .clinical-list-panel {
@@ -902,11 +943,11 @@ table thead th {
   color: rgb(var(--panel-mint-ink-muted));
 }
 .dark:not(.theme-black) .clinical-card-surface {
-  background: rgba(255, 255, 255, 0.07);
+  /* Perf: dropped ``backdrop-filter: blur(14px) saturate(1.4)`` � clinical
+   * feed can show >100 cards; the live blur was a scroll-frame hotspot. */
+  background: rgba(24, 28, 48, 0.82);
   color: rgb(var(--ink));
   border-color: rgba(var(--clinical-panel-border) / 0.32);
-  backdrop-filter: blur(14px) saturate(1.4);
-  -webkit-backdrop-filter: blur(14px) saturate(1.4);
   box-shadow:
     0 4px 20px rgba(0, 0, 0, 0.25),
     inset 0 1px 0 rgba(255, 255, 255, 0.06);
@@ -939,7 +980,7 @@ table thead th {
   background: rgba(var(--accent) / 0.32);
 }
 
-/* AI Study Summary modal — Chiaro: bianco + accento violetto; Blu: glass */
+/* AI Study Summary modal � Chiaro: bianco + accento violetto; Blu: glass */
 .study-summary-modal {
   background: #ffffff;
   color: rgb(30 41 59);
@@ -1027,7 +1068,7 @@ table thead th {
 }
 
 /*
- * Decision Lab — shell bianco (no gradiente mint del .card), card e blocchi neutri.
+ * Decision Lab � shell bianco (no gradiente mint del .card), card e blocchi neutri.
  */
 .decision-lab-view.card {
   background: rgb(var(--panel-lab-shell-bg)) !important;
@@ -1079,11 +1120,10 @@ html[data-theme].dark:not(.theme-black) .decision-lab-view.card {
   box-shadow: 0 1px 3px rgb(15 23 42 / 0.06) !important;
 }
 .dark:not(.theme-black) .decision-lab-card {
-  background: rgba(255, 255, 255, 0.07) !important;
+  /* Perf: dropped blur(12px) � Decision Lab stacks many cards vertically. */
+  background: rgba(24, 28, 48, 0.85) !important;
   color: rgb(var(--ink)) !important;
   border-color: rgba(var(--blue-panel-border) / 0.3) !important;
-  backdrop-filter: blur(12px) saturate(1.35);
-  -webkit-backdrop-filter: blur(12px) saturate(1.35);
 }
 .dark:not(.theme-black) .decision-lab-block {
   background: rgba(255, 255, 255, 0.05) !important;
@@ -1128,7 +1168,7 @@ html[data-theme].dark:not(.theme-black) .decision-lab-view.card {
   border-color: rgb(var(--panel-lab-border));
 }
 
-/* Top Opportunity cards — gerarchia visiva */
+/* Top Opportunity cards � gerarchia visiva */
 .decision-lab-opp-meta-chip {
   display: inline-flex;
   align-items: center;
@@ -1194,7 +1234,7 @@ html[data-theme].dark:not(.theme-black) .decision-lab-view.card {
 }
 
 /*
- * Mint sheet tables (Financial) — stessi token del Decision Lab.
+ * Mint sheet tables (Financial) � stessi token del Decision Lab.
  */
 .sheet-mint-surface {
   background: rgb(var(--panel-mint-bg));
@@ -1288,7 +1328,7 @@ html[data-theme].dark:not(.theme-black) .decision-lab-view.card {
   border-color: rgb(var(--panel-mint-border-soft)) !important;
 }
 
-/* Financial sheet — righe morbide (card) con spaziatura */
+/* Financial sheet � righe morbide (card) con spaziatura */
 .sheet-mint-scroll .financial-sheet-table {
   font-size: 12px;
   border-collapse: separate;
@@ -1361,7 +1401,7 @@ html[data-theme].dark:not(.theme-black) .decision-lab-view.card {
 }
 
 /*
- * Dashboard — Upcoming Catalysts + Top AI feed (violetto feed, righe bianche).
+ * Dashboard � Upcoming Catalysts + Top AI feed (violetto feed, righe bianche).
  */
 .dashboard-feed-card.card {
   background: rgb(255 255 255) !important;
@@ -1397,14 +1437,14 @@ html[data-theme].dark:not(.theme-black) .decision-lab-view.card {
   box-shadow: 0 1px 8px rgb(99 102 241 / 0.1);
 }
 .dark:not(.theme-black) .dashboard-feed-card.card {
-  background: rgba(255, 255, 255, 0.062) !important;
+  /* Perf: dropped blur(22px) � dashboard feed rows repeat this card
+   * dozens of times and every one was compositing on scroll. */
+  background: rgba(23, 26, 46, 0.85) !important;
   border-color: rgba(255, 255, 255, 0.10) !important;
   box-shadow:
     0 8px 40px rgba(0, 0, 0, 0.5),
     0 0 0 1px rgba(255, 255, 255, 0.04),
     inset 0 1px 0 rgba(255, 255, 255, 0.10) !important;
-  backdrop-filter: blur(22px) saturate(1.6) !important;
-  -webkit-backdrop-filter: blur(22px) saturate(1.6) !important;
 }
 .dark:not(.theme-black) .dashboard-feed-card .dashboard-feed-card-head {
   background: rgb(255 255 255);
@@ -1449,7 +1489,7 @@ html[data-theme].dark:not(.theme-black) .decision-lab-view.card {
   border-color: rgb(var(--panel-feed-border) / 0.4);
 }
 
-/* Colonna destra dashboard — sfondo bianco, card violetto dentro */
+/* Colonna destra dashboard � sfondo bianco, card violetto dentro */
 .dashboard-feed-column {
   padding: 0.5rem 0.375rem 0.625rem;
   border-radius: 0.75rem;
@@ -1470,7 +1510,7 @@ html[data-theme].dark:not(.theme-black) .decision-lab-view.card {
 }
 
 /*
- * Financial sheet — stesso skin violetto del Catalyst Feed (--panel-feed-*).
+ * Financial sheet � stesso skin violetto del Catalyst Feed (--panel-feed-*).
  */
 .sheet-feed-surface {
   background: rgb(var(--panel-feed-bg));
@@ -1611,7 +1651,7 @@ html[data-theme].dark:not(.theme-black) .decision-lab-view.card {
   box-shadow: 0 2px 10px rgb(79 70 229 / 0.1);
 }
 
-/* Cross-tab coherence panel — bianco + violetto */
+/* Cross-tab coherence panel � bianco + violetto */
 .coherence-panel {
   background: rgb(255 255 255);
   border-color: rgb(var(--panel-feed-border));
@@ -1763,7 +1803,7 @@ html[data-theme].dark:not(.theme-black) .decision-lab-view.card {
 }
 
 /*
- * Simulation / Portfolio — tema Blu: mantieni verdino/bianco; solo remap testi slate.
+ * Simulation / Portfolio � tema Blu: mantieni verdino/bianco; solo remap testi slate.
  */
 .dark:not(.theme-black) .sim-harmonize [class*="border-slate-200"],
 .dark:not(.theme-black) .sim-harmonize [class*="border-slate"] {
@@ -1780,9 +1820,9 @@ html[data-theme].dark:not(.theme-black) .decision-lab-view.card {
 }
 
 /*
- * Tab P&L Simulation — TOTAL vs giornata: colori indipendenti.
+ * Tab P&L Simulation � TOTAL vs giornata: colori indipendenti.
  * Il totale segue solo P&L dall'ingresso; la giornata solo la var. 24h.
- * Specificità alta: non ereditare verde dalla card o da regole generiche emerald.
+ * Specificit� alta: non ereditare verde dalla card o da regole generiche emerald.
  */
 .sim-harmonize .ptf-block-total--gain {
   border-color: rgb(52 211 153 / 0.55) !important;
@@ -1831,7 +1871,12 @@ html[data-theme].dark:not(.theme-black) .decision-lab-view.card {
   border-color: rgba(241, 76, 76, 0.35) !important;
 }
 
-/* Intelligence chat (Catalyst Feed) — tema Blu */
+/* Intelligence chat (Catalyst Feed) � tema Blu.
+ * Height capped to the visible page (not the full company tab scroll length). */
+.catalyst-copilot {
+  height: calc(100dvh - 5rem);
+  max-height: calc(100dvh - 5rem);
+}
 .dark:not(.theme-black) .catalyst-copilot {
   border-color: rgba(var(--blue-panel-border) / 0.35) !important;
 }
@@ -1882,7 +1927,7 @@ html[data-theme].dark:not(.theme-black) .decision-lab-view.card {
   border-color: rgba(var(--blue-panel-border) / 0.25) !important;
 }
 
-/* Slope / chart lab — tema Blu */
+/* Slope / chart lab � tema Blu */
 .dark:not(.theme-black) .slope-charts-panel .decision-lab-text,
 .dark:not(.theme-black) .slope-charts-panel .decision-lab-label,
 .dark:not(.theme-black) .slope-charts-panel .chart-lab-title {
@@ -1910,7 +1955,7 @@ html[data-theme].dark:not(.theme-black) .decision-lab-view.card {
   color: rgb(203 213 225) !important;
 }
 
-/* Model analysis, Refresh inner panels — tema Blu */
+/* Model analysis, Refresh inner panels � tema Blu */
 .dark:not(.theme-black) .model-accuracy-tab [class*="bg-surface/"],
 .dark:not(.theme-black) .refresh-view-panel [class*="bg-surface/"] {
   background: rgba(255, 255, 255, 0.05) !important;
@@ -1918,7 +1963,7 @@ html[data-theme].dark:not(.theme-black) .decision-lab-view.card {
 }
 
 /*
- * Dashboard — Piggy Bank banner (Chiaro: bianco; Blu: glass navy + chip leggibili).
+ * Dashboard � Piggy Bank banner (Chiaro: bianco; Blu: glass navy + chip leggibili).
  */
 .piggy-bank-bar {
   background: rgb(255 255 255);
@@ -1947,7 +1992,7 @@ html[data-theme].dark:not(.theme-black) .decision-lab-view.card {
   background: rgb(var(--border) / 0.25);
 }
 
-/* Refresh trend arrow — small pulse on each value change so the user
+/* Refresh trend arrow � small pulse on each value change so the user
    notices that the piggy moved up or down since the previous reload. */
 .piggy-refresh-trend {
   animation: piggy-refresh-trend-pulse 1.4s ease-out;
@@ -2022,6 +2067,129 @@ html[data-theme].dark:not(.theme-black) .decision-lab-view.card {
   max-width: 22rem;
 }
 
+/* Home: do not use content-visibility here.
+ * ``contain-intrinsic-size: 420px`` on a wrapper whose child returns null still
+ * reserved ~420px of scroll height (�2 panels = ~840px of empty wheel travel)
+ * and jumped when CV skipped/unskipped. Pulse / what-if already opted out for
+ * the same reason. */
+
+/* Main content scroll � flex-1 bounded height; block flow children grow scroll height. */
+.app-page-scroll {
+  flex: 1 1 0;
+  min-height: 0;
+  overflow-x: hidden;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  -webkit-overflow-scrolling: touch;
+  scrollbar-gutter: stable;
+}
+
+/* EIS deep-dive: scrollbar inside the modal body (not the page / overlay). */
+.eis-detail-scrollport {
+  -webkit-overflow-scrolling: touch;
+  overscroll-behavior: contain;
+  scrollbar-gutter: stable;
+}
+.eis-detail-window {
+  /* contain layout so inner scroll does not thrash the overlay */
+  contain: layout style;
+}
+/* Competition / free-notes textareas: own scrollport when content exceeds max-height. */
+.eis-detail-scrollport textarea {
+  overscroll-behavior: contain;
+}
+
+/* Evaluation Lab 24h � one scrollport (page). Table grows with rows. */
+.app-page-scroll-xy {
+  overflow-x: auto;
+  overflow-y: auto;
+}
+
+/* Catalyst Days / Deep Dive — page owns the vertical scrollbar (not an inner panel). */
+.desk-page-scroll,
+.catalyst-days-page {
+  overscroll-behavior: contain;
+  scrollbar-gutter: stable;
+}
+.desk-page-scroll thead th,
+.catalyst-days-page thead th {
+  background: rgb(var(--surface));
+}
+
+/* Catalyst Days: ONE page scrollbar. News keep max-h + inner scroll; table grows
+ * with rows (no nested table scroll). overflow-x:clip avoids H-bar promotion. */
+[data-page="catalyst-days"].desk-page-scroll {
+  overflow-x: clip !important;
+  overflow-y: auto !important;
+  max-width: 100%;
+  width: 100%;
+  scrollbar-gutter: stable;
+}
+
+/* Deep Dive: same page-owned scrollbar. Content must not flex-shrink inside the
+ * absolute scroll shell (that made scrollHeight ≈ clientHeight → no scroll). */
+[data-page="deep-dive"].desk-page-scroll {
+  overflow-x: clip !important;
+  overflow-y: auto !important;
+  max-width: 100%;
+  width: 100%;
+  scrollbar-gutter: stable;
+}
+[data-page="deep-dive"] > * {
+  flex: 0 0 auto;
+  min-height: min-content;
+  max-width: 100%;
+}
+[data-page="deep-dive"] .deep-dive-body {
+  overflow: visible !important;
+}
+[data-page="catalyst-days"] .desk-signals-section {
+  flex: 0 0 auto;
+  min-width: 0;
+  max-width: 100%;
+  width: 100%;
+  display: flex;
+  flex-direction: column;
+  overflow: visible;
+}
+[data-page="catalyst-days"] .desk-signals-table-scroll {
+  flex: 0 0 auto !important;
+  min-height: 0 !important;
+  min-width: 0;
+  max-width: 100%;
+  width: 100%;
+  overflow-x: clip !important;
+  overflow-y: visible !important;
+  scrollbar-gutter: auto;
+  background: transparent !important;
+  border: none !important;
+  border-radius: 0 !important;
+}
+[data-page="catalyst-days"] .desk-signals-table-scroll > table {
+  width: 100% !important;
+  min-width: 0 !important;
+  max-width: 100% !important;
+  table-layout: fixed;
+}
+[data-page="catalyst-days"] .desk-signals-table-scroll th,
+[data-page="catalyst-days"] .desk-signals-table-scroll td {
+  max-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  word-break: break-word;
+}
+[data-page="catalyst-days"] .desk-signals-table-scroll::-webkit-scrollbar:horizontal,
+[data-page="catalyst-days"].desk-page-scroll::-webkit-scrollbar:horizontal {
+  height: 0 !important;
+  display: none !important;
+}
+
+.dashboard-home-page {
+  min-width: 0;
+  max-width: 100%;
+  /* Avoid `contain` here � it broke toolbar clicks on the what-if panel. */
+}
+
 .dashboard-pulse-table {
   background: rgb(255 255 255);
   border-color: rgb(var(--panel-lab-border) / 0.65);
@@ -2040,14 +2208,16 @@ html[data-theme].dark:not(.theme-black) .decision-lab-view.card {
 }
 
 .dark:not(.theme-black) .piggy-bank-bar {
-  background: rgba(255, 255, 255, 0.062) !important;
+  /* Perf: piggy-bank-bar is a sticky element with animated fill children �
+   * ``backdrop-filter`` on a sticky element causes the compositor to
+   * re-rasterize the entire bar on every scroll frame. Solid tint keeps the
+   * "glass" look without the paint cost. */
+  background: rgba(23, 26, 46, 0.85) !important;
   border: 1px solid rgba(255, 255, 255, 0.10) !important;
   box-shadow:
     0 8px 40px rgba(0, 0, 0, 0.5),
     0 0 0 1px rgba(255, 255, 255, 0.04),
     inset 0 1px 0 rgba(255, 255, 255, 0.10) !important;
-  backdrop-filter: blur(22px) saturate(1.6) !important;
-  -webkit-backdrop-filter: blur(22px) saturate(1.6) !important;
 }
 .dark:not(.theme-black) .piggy-bank-bar-label {
   color: rgb(var(--ink-muted) / 0.75) !important;
@@ -2090,7 +2260,7 @@ html[data-theme].dark:not(.theme-black) .decision-lab-view.card {
 }
 
 /*
- * Monitor tester — pannelli lavanda/viola (Chiaro) o navy glass (Blu); testo sempre contrastato.
+ * Monitor tester � pannelli lavanda/viola (Chiaro) o navy glass (Blu); testo sempre contrastato.
  */
 .tester-monitor-shell {
   color: rgb(var(--tester-monitor-ink));
@@ -2190,8 +2360,7 @@ html[data-theme].dark:not(.theme-black) .decision-lab-view.card {
 
 .dark:not(.theme-black) .tester-monitor-panel,
 .dark:not(.theme-black) .tester-monitor-kpi {
-  backdrop-filter: blur(12px) saturate(1.35);
-  -webkit-backdrop-filter: blur(12px) saturate(1.35);
+  /* Perf: dropped blur(12px) � panels/KPI tiles are numerous and stacked. */
   box-shadow:
     0 4px 20px rgba(0, 0, 0, 0.35),
     inset 0 1px 0 rgba(255, 255, 255, 0.06);
@@ -2218,7 +2387,7 @@ html[data-theme].dark:not(.theme-black) .decision-lab-view.card {
 }
 
 /*
- * Catalyst Feed / Intelligence — violet-indigo harmonized with --accent.
+ * Catalyst Feed / Intelligence � violet-indigo harmonized with --accent.
  */
 .feed-panel-shell {
   background: rgb(var(--bg-deep));
@@ -2266,6 +2435,23 @@ html[data-theme].dark:not(.theme-black) .decision-lab-view.card {
 }
 .feed-panel-table tbody tr:hover {
   background: rgb(var(--panel-feed-row-hover) / 0.45);
+}
+/* Date column � avoid clipping / overlap with TYPE badges in unified timeline */
+.feed-panel-table .feed-panel-date-col {
+  min-width: 6.75rem;
+  overflow: visible;
+  text-overflow: clip;
+  padding-right: 0.35rem;
+}
+.feed-panel-table .feed-panel-type-col {
+  min-width: 4.5rem;
+  overflow: hidden;
+}
+.feed-panel-brief-clamp {
+  display: -webkit-box;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 5;
+  overflow: hidden;
 }
 .feed-panel-chip-corp {
   background: rgb(var(--panel-chip-corp-bg));
@@ -2330,7 +2516,7 @@ html[data-theme].dark:not(.theme-black) .decision-lab-view.card {
   color: rgb(var(--panel-mint-ink));
 }
 
-/* Feed / Catalyst — solo tema Blu (Nero mantiene regole .dark generiche sotto) */
+/* Feed / Catalyst � solo tema Blu (Nero mantiene regole .dark generiche sotto) */
 .dark:not(.theme-black) .feed-panel-shell {
   background: rgb(var(--bg-deep));
   color: rgb(var(--ink));
@@ -2383,7 +2569,7 @@ html[data-theme].dark:not(.theme-black) .decision-lab-view.card {
   color: rgb(199 210 254);
 }
 
-/* Tema Nero — feed panel (invariato rispetto a prima) */
+/* Tema Nero � feed panel (invariato rispetto a prima) */
 .dark.theme-black .feed-panel-shell {
   color: rgb(var(--ink));
 }
@@ -2415,7 +2601,7 @@ html[data-theme].dark:not(.theme-black) .decision-lab-view.card {
 }
 
 /*
- * Slope-error charts — white / blue / yellow / ochre shell (white predominates).
+ * Slope-error charts � white / blue / yellow / ochre shell (white predominates).
  */
 .slope-charts-panel {
   background: linear-gradient(
@@ -2458,7 +2644,7 @@ html[data-theme].dark:not(.theme-black) .decision-lab-view.card {
   min-height: 0;
 }
 /*
- * Chart section shells — bianco → grigio neutro → lavanda tenue (no mint/verde piatto).
+ * Chart section shells � bianco ? grigio neutro ? lavanda tenue (no mint/verde piatto).
  */
 .sn-chart-section {
   background: linear-gradient(
@@ -2508,7 +2694,7 @@ html[data-theme="mint"] .sn-chart-section {
     0 6px 18px -8px rgba(30, 58, 138, 0.12),
     inset 0 1px 0 rgba(255, 255, 255, 0.85);
 }
-/* Recharts clips line dots at plot top — allow markers to render fully */
+/* Recharts clips line dots at plot top � allow markers to render fully */
 .slope-trajectory-chart .recharts-wrapper,
 .slope-trajectory-chart .recharts-surface {
   overflow: visible;
@@ -2532,7 +2718,7 @@ html[data-theme="mint"] .sn-chart-section {
 }
 
 /*
- * Chart panels — dark navy plot (Recharts + wrappers). Catalyst curves.
+ * Chart panels � dark navy plot (Recharts + wrappers). Catalyst curves.
  */
 .chart-dark-panel {
   background: linear-gradient(180deg, rgb(15 23 42) 0%, rgb(11 16 37) 100%);
@@ -2565,20 +2751,20 @@ html[data-theme="mint"] .sn-chart-section {
 }
 
 /*
- * Investment trend charts — professional blue gradient.
+ * Investment trend charts � professional blue gradient.
  * White-dominant background with a subtle dark-blue tint.
  * Standard layout for ALL charts: pre-CD = white/blue tint, post-CD = white/ochre tint.
  */
 :root {
-  /* Pre-CD vertical band (left of CD) — mostly white with a hint of dark blue */
+  /* Pre-CD vertical band (left of CD) � mostly white with a hint of dark blue */
   --chart-zone-pre-fill: #1e3a8a;
   --chart-zone-pre-opacity: 0.045;
-  /* Post-CD vertical band (right of CD) — mostly white with a hint of ochre/yellow */
+  /* Post-CD vertical band (right of CD) � mostly white with a hint of ochre/yellow */
   --chart-zone-post-fill: #ca8a04;
   --chart-zone-post-opacity: 0.06;
   /* Vertical separator at CD */
   --chart-zone-cd-stroke: rgba(15, 23, 42, 0.35);
-  /* Today / Now marker — red for high contrast against pre/post bands */
+  /* Today / Now marker � red for high contrast against pre/post bands */
   --chart-today: #dc2626;
 }
 .dark {
@@ -2591,22 +2777,38 @@ html[data-theme="mint"] .sn-chart-section {
 }
 
 .invest-trend-chart-panel {
-  background: linear-gradient(
-    168deg,
-    #ffffff 0%,
-    #f6f9ff 35%,
-    #eef3fb 65%,
-    #e2eaf6 100%
-  );
-  border-color: rgba(147, 197, 253, 0.55);
-  color: rgb(15 23 42);
+  isolation: isolate;
+  background-color: #ffffff;
+  background-image:
+    linear-gradient(
+      118deg,
+      rgba(255, 255, 255, 0.95) 0%,
+      rgba(255, 255, 255, 0.35) 38%,
+      rgba(255, 255, 255, 0) 62%
+    ),
+    linear-gradient(180deg, #ffffff 0%, #ffffff 58%, #f4f6fb 100%);
+  border-color: rgba(124, 108, 243, 0.28);
+  color: #0b0d17;
   box-shadow:
-    0 1px 2px rgba(15, 23, 42, 0.04),
-    0 6px 18px -8px rgba(30, 58, 138, 0.12),
-    inset 0 1px 0 rgba(255, 255, 255, 0.85);
+    inset 0 1.5px 0 rgba(255, 255, 255, 1),
+    0 1px 2px rgba(11, 13, 23, 0.04),
+    0 10px 24px -10px rgba(124, 108, 243, 0.18);
 }
 .invest-trend-chart-panel .chart-trend-muted {
-  color: rgb(100 116 139);
+  color: #5b6580;
+}
+.invest-trend-chart-panel .text-ink {
+  color: #0b0d17 !important;
+}
+.invest-trend-chart-panel .text-ink-muted,
+.invest-trend-chart-panel [class*="text-ink-muted"] {
+  color: #5b6580 !important;
+}
+.invest-trend-chart-panel .text-positive {
+  color: #059669 !important;
+}
+.invest-trend-chart-panel .text-negative {
+  color: #e11d48 !important;
 }
 .invest-trend-chart-panel .recharts-wrapper,
 .invest-trend-chart-panel .recharts-surface {
@@ -2614,19 +2816,19 @@ html[data-theme="mint"] .sn-chart-section {
 }
 .invest-trend-chart-panel .recharts-cartesian-grid-horizontal line,
 .invest-trend-chart-panel .recharts-cartesian-grid-vertical line {
-  stroke: rgba(59, 130, 246, 0.16);
+  stroke: rgba(124, 108, 243, 0.2);
 }
 .invest-trend-chart-panel .recharts-cartesian-axis-tick text,
 .invest-trend-chart-panel .recharts-label {
-  fill: rgb(100 116 139) !important;
+  fill: #334155 !important;
 }
 .invest-trend-chart-panel .recharts-legend-item-text {
-  color: rgb(51 65 85) !important;
+  color: #0b0d17 !important;
 }
 
 /*
- * Tema Nero — palette tipo Cursor IDE (nero piatto, grigi neutri, niente navy/violetto).
- * https://cursor.com — editor scuro: #000 / #181818, testo #CCC / #858585.
+ * Tema Nero � palette tipo Cursor IDE (nero piatto, grigi neutri, niente navy/violetto).
+ * https://cursor.com � editor scuro: #000 / #181818, testo #CCC / #858585.
  */
 .dark.theme-black {
   --surface: 0 0 0;
@@ -2765,7 +2967,7 @@ html[data-theme="mint"] .sn-chart-section {
   color: rgb(228 228 228) !important;
 }
 
-/* Tab / pannelli — niente mint o lavanda */
+/* Tab / pannelli � niente mint o lavanda */
 .dark.theme-black .clinical-view-shell,
 .dark.theme-black .clinical-list-panel,
 .dark.theme-black .clinical-view-panel,
@@ -2852,7 +3054,7 @@ html[data-theme="mint"] .sn-chart-section {
 .dark.theme-black .feed-panel-label {
   color: rgb(var(--ink-muted)) !important;
 }
-/* Primary CTA (Arricchisci, Summary …) — accent-strong è chiaro in Nero: non usarlo come fill */
+/* Primary CTA (Arricchisci, Summary �) � accent-strong � chiaro in Nero: non usarlo come fill */
 .dark.theme-black .feed-panel-btn-primary {
   background: rgb(55 55 55) !important;
   color: rgb(240 240 240) !important;
@@ -3010,7 +3212,7 @@ html[data-theme="mint"] .sn-chart-section {
   background: rgba(255, 255, 255, 0.28);
 }
 
-/* ── Header ──────────────────────────────────────────────── */
+/* ?? Header ???????????????????????????????????????????????? */
 header {
   background: linear-gradient(
     to bottom,
@@ -3048,49 +3250,43 @@ header {
   background: rgb(var(--accent) / 0.45);
 }
 
-/* ── Sidebar nav (verticale — non ereditare stili tab orizzontali) ── */
-@media (max-width: 1023px) {
-  .app-sidebar {
-    position: fixed;
-    top: 0;
-    left: 0;
-    bottom: 0;
-    z-index: 50;
-    max-width: min(85vw, 280px);
-    transform: translateX(-105%);
-    transition: transform 0.22s ease;
-    will-change: transform;
-  }
+/* ?? Platform rail (above main menu: Pharma / future Hi-Tech) ?? */
+.platform-rail {
+  contain: layout style;
+}
 
-  .app-sidebar.app-sidebar--open {
-    transform: translateX(0);
-    box-shadow: 8px 0 32px rgb(15 23 42 / 0.28);
-  }
+.dark.theme-black .platform-rail {
+  background: #050505 !important;
+  border-color: rgba(255, 255, 255, 0.1) !important;
+}
 
-  .app-sidebar-backdrop {
-    position: fixed;
-    inset: 0;
-    z-index: 40;
-    margin: 0;
-    padding: 0;
-    border: none;
-    background: rgb(15 23 42 / 0.42);
-    cursor: pointer;
-    -webkit-tap-highlight-color: transparent;
-  }
+.dark:not(.theme-black) .platform-rail {
+  background: rgb(var(--bg-deep)) !important;
+  border-color: rgb(var(--panel-feed-border) / 0.45) !important;
+}
 
-  .app-main {
-    width: 100%;
-  }
+/* ?? Top nav (Cursor-style horizontal) ?? */
+.app-sidebar {
+  pointer-events: auto;
+  z-index: 60;
+  isolation: isolate;
+  /* Isolate from heavy desk paint during scroll / virtualization. */
+  contain: layout style;
+  width: 100%;
+  height: 2.75rem;
+  min-height: 2.75rem;
+  overflow: hidden;
 }
 
 .app-sidebar-nav {
   display: flex;
-  flex-direction: column;
-  gap: 0;
+  flex-direction: row;
+  align-items: center;
+  gap: 0.125rem;
   padding: 0;
   background: transparent;
   border: none;
+  scrollbar-width: thin;
 }
 
 .dark .app-sidebar-nav {
@@ -3098,20 +3294,35 @@ header {
   border: none;
 }
 
+.app-sidebar-nav::-webkit-scrollbar {
+  height: 4px;
+  width: 0;
+}
+
 .app-sidebar-nav button {
-  width: 100%;
+  width: auto;
   text-align: left;
+  position: relative;
+  z-index: 1;
+  pointer-events: auto;
+  cursor: pointer;
+}
+
+.app-sidebar-nav button:active,
+.app-sidebar-nav-btn:active {
+  background: rgb(var(--accent) / 0.22);
+  color: rgb(var(--accent));
 }
 
 .app-sidebar-nav button[class*="bg-accent"] {
-  box-shadow: none;
+  box-shadow: inset 0 -2px 0 rgb(var(--accent) / 0.85);
 }
 
 .dark .app-sidebar-nav button[class*="bg-accent"] {
-  box-shadow: none;
+  box-shadow: inset 0 -2px 0 rgb(var(--accent) / 0.9);
 }
 
-/* ── Scrollbar (dark) ────────────────────────────────────── */
+/* ?? Scrollbar (dark) ?????????????????????????????????????? */
 .dark ::-webkit-scrollbar {
   width: 6px;
   height: 6px;
@@ -3125,7 +3336,7 @@ header {
   background: rgba(255, 255, 255, 0.25);
 }
 
-/* ── React Flow ──────────────────────────────────────────── */
+/* ?? React Flow ???????????????????????????????????????????? */
 .react-flow__controls button {
   background: rgb(var(--surface-elevated));
   border-color: rgb(var(--border));
@@ -3137,7 +3348,7 @@ header {
   stroke-width: 1.5;
 }
 
-/* Financial nodes view — React Flow needs explicit host height */
+/* Financial nodes view � React Flow needs explicit host height */
 .financial-flow-shell {
   width: 100%;
 }
@@ -3151,7 +3362,7 @@ header {
   background: rgb(var(--surface) / 0.35);
 }
 
-/* Sunday full refresh — antique clock badge tick */
+/* Sunday full refresh � antique clock badge tick */
 @keyframes clock-tick {
   0%, 100% { transform: rotate(-6deg); }
   50% { transform: rotate(6deg); }
@@ -3160,8 +3371,15 @@ header {
   animation: clock-tick 1.2s ease-in-out infinite;
 }
 
+/* Sidebar tab-switch progress indicator � sliding accent bar shown while
+   React is preparing the new tab tree (useDeferredValue transition). */
+@keyframes tabswitch-slide {
+  0%   { transform: translateX(-100%); }
+  100% { transform: translateX(400%); }
+}
+
 /*
- * Griglie foglio — colonne uniformi, header allineati ai dati.
+ * Griglie foglio � colonne uniformi, header allineati ai dati.
  * Usare: <table class="sheet-grid-table" data-layout="variations"> + colgroup da sheetGridTable.ts
  * Applicare sheetGridThClass / sheetGridTdClass su ogni th/td con data-col corrispondente.
  */
@@ -3204,21 +3422,29 @@ header {
   justify-content: center;
 }
 
-/* Simulation workspace — table flows in the page, only horizontal scroll if too wide */
+/* Simulation workspace � horizontal scroll if too wide; Decision Lab sets overflow-auto
+   (both axes) via utility classes so sticky thead sticks to this scroller. */
 .sim-workspace-table-scroll {
   overflow-x: auto;
   overflow-y: visible;
-  overscroll-behavior-x: contain;
+  overscroll-behavior: contain;
   -webkit-overflow-scrolling: touch;
   width: 100%;
   margin: 0;
   padding: 0;
   scrollbar-width: thin;
 }
+.sim-workspace-table-scroll[data-decision-lab="1"] {
+  overflow-y: auto;
+  touch-action: pan-x pan-y;
+}
+/* Do not use content-visibility on these rows: it swallowed Buy $/Capital $
+ * clicks and remounted the focused input mid-edit (same class of bug as Home chips). */
 .sim-workspace-table-scroll::-webkit-scrollbar {
   height: 8px;
+  width: 8px;
 }
-/* Simulation workspace — full width, height grows with content */
+/* Simulation workspace � full width, height grows with content */
 .sim-harmonize {
   width: 100%;
   max-width: 100%;
@@ -3250,11 +3476,19 @@ header {
 .sim-workspace-table-scroll .sim-workspace-table th.sheet-grid-th {
   overflow: visible;
   text-overflow: clip;
-  padding: 0.75rem 1.25rem;
-  font-size: 15px;
+  padding: 0.5rem 0.75rem;
+  font-size: 12px;
+}
+/* Ticker/CD must clip � otherwise symbols spill into neighboring cols. */
+.sim-workspace-table-scroll .sim-workspace-table td[data-col="ticker"],
+.sim-workspace-table-scroll .sim-workspace-table th[data-col="ticker"],
+.sim-workspace-table-scroll .sim-workspace-table td[data-col="cd"],
+.sim-workspace-table-scroll .sim-workspace-table th[data-col="cd"] {
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
 .sim-workspace-table-scroll .sim-workspace-table th.sheet-grid-th {
-  font-size: 15px;
+  font-size: 12px;
   font-weight: 600;
 }
 /* Allineamento verticale per colonna target */
@@ -3264,49 +3498,76 @@ header {
   text-align: center;
 }
 
-/* Decision Lab — colonne equidistanti, padding uniforme, contenuto centrato */
+/* Decision Lab � padding uniforme; ticker/CD left + clipped (no hole after ticker). */
 .sim-workspace-table[data-layout="decisionLab"] th.sheet-grid-th,
 .sim-workspace-table[data-layout="decisionLab"] td.sheet-grid-td {
-  padding: 0.5rem 0.65rem;
+  padding: 0.42rem 0.45rem;
   text-align: center;
   vertical-align: middle;
 }
-.sim-workspace-table[data-layout="decisionLab"] td[data-col="ticker"] button {
-  text-align: center;
-  justify-content: center;
+.sim-workspace-table[data-layout="decisionLab"] td[data-col="ticker"],
+.sim-workspace-table[data-layout="decisionLab"] th[data-col="ticker"],
+.sim-workspace-table[data-layout="decisionLab"] td[data-col="sel"],
+.sim-workspace-table[data-layout="decisionLab"] th[data-col="sel"],
+.sim-workspace-table[data-layout="decisionLab"] td[data-col="cd"],
+.sim-workspace-table[data-layout="decisionLab"] th[data-col="cd"] {
+  text-align: left;
+  overflow: hidden;
 }
-.sim-workspace-table[data-layout="decisionLab"] td[data-col="ticker"] .inline-flex {
-  justify-content: center;
+.sim-workspace-table[data-layout="decisionLab"] td[data-col="ticker"] {
+  padding-right: 0.28rem;
+}
+.sim-workspace-table[data-layout="decisionLab"] td[data-col="cd"],
+.sim-workspace-table[data-layout="decisionLab"] th[data-col="cd"] {
+  padding-left: 0.28rem;
+}
+.sim-workspace-table[data-layout="decisionLab"] td[data-col="ticker"] button {
+  display: block;
+  text-align: left;
   width: 100%;
+  max-width: 100%;
+  overflow: hidden;
+}
+.sim-workspace-table[data-layout="decisionLab"] td[data-col="ticker"] .sim-ticker-mark {
+  justify-content: flex-start;
+  align-items: flex-start;
+  width: 100%;
+  max-width: 100%;
 }
 .sim-workspace-table[data-layout="decisionLab"] .sheet-grid-col-left {
-  text-align: center;
-}
-.sim-workspace-table[data-layout="decisionLab"] td[data-col="var_spark"] {
-  padding-left: 0.42rem;
-  padding-right: 0.42rem;
-}
-.sim-workspace-table[data-layout="decisionLab"] td[data-col="var_spark"] svg {
-  max-width: 100%;
-  height: auto;
+  text-align: left;
 }
 .sim-workspace-table[data-layout="decisionLab"] td[data-col="buy"],
-.sim-workspace-table[data-layout="decisionLab"] td[data-col="cap"] {
+.sim-workspace-table[data-layout="decisionLab"] td[data-col="cap"],
+.sim-workspace-table[data-layout="decisionLab"] td[data-col="shares"],
+.sim-workspace-table[data-layout="decisionLab"] td[data-col="gain_loss"],
+.sim-workspace-table[data-layout="decisionLab"] td[data-col="stop5"],
+.sim-workspace-table[data-layout="decisionLab"] td[data-col="score"] {
   padding-left: 0.42rem;
   padding-right: 0.42rem;
+}
+.sim-workspace-table[data-layout="decisionLab"] td[data-col="score"] {
+  max-width: 3.5rem;
+}
+.sim-workspace-table[data-layout="decisionLab"] td[data-col="actions"] {
+  min-width: 8.5rem;
+  vertical-align: middle;
+}
+.sim-workspace-table[data-layout="decisionLab"] td[data-col="actions"] .sim-rec-actions {
+  min-width: 7.75rem;
 }
 .sim-workspace-table[data-layout="decisionLab"] td[data-col="cap"] > div {
   align-items: center;
   width: 100%;
 }
 
-/* Decision Lab Performance — input e contenuti riempiono la colonna (niente “buchi”) */
+/* Decision Lab Performance � input e contenuti riempiono la colonna (niente �buchi�) */
 .sim-workspace-table[data-layout="decisionLab"] td[data-col="score"] {
   padding-top: 0.32rem;
   padding-bottom: 0.32rem;
   vertical-align: middle;
 }
-/* P&L per ticker — tab Portfolio Simulation */
+/* P&L per ticker � tab Portfolio Simulation */
 .portfolio-pnl-sheet-table {
   -webkit-overflow-scrolling: touch;
 }
@@ -3357,13 +3618,21 @@ header {
   vertical-align: middle;
   text-align: center;
 }
-.sim-workspace-table[data-layout="decisionLab"] td[data-col="buy"] .input,
-.sim-workspace-table[data-layout="decisionLab"] td[data-col="cap"] .input {
+.sim-workspace-table td[data-col="buy"],
+.sim-workspace-table td[data-col="cap"] {
+  pointer-events: auto;
+}
+.sim-workspace-table td[data-col="buy"] .input,
+.sim-workspace-table td[data-col="cap"] .input {
   max-width: none;
   width: 100%;
+  min-height: 28px;
+  pointer-events: auto;
+  position: relative;
+  z-index: 2;
 }
 
-/* SuperNova SDS table — stessa griglia bilanciata del Performance workspace */
+/* SuperNova SDS table � stessa griglia bilanciata del Performance workspace */
 .sheet-grid-table.sds-score-table {
   table-layout: fixed;
   width: 100%;
@@ -3388,7 +3657,7 @@ header {
   background: rgb(var(--surface) / 0.92);
 }
 
-/* MII slope inclinometer — gradiente bianco / blu / giallo (allineato a invest-trend-chart-panel) */
+/* MII slope inclinometer � gradiente bianco / blu / giallo (allineato a invest-trend-chart-panel) */
 .slope-angle-glyph-bg {
   fill: #ffffff;
 }
@@ -3418,7 +3687,7 @@ header {
   vertical-align: middle;
 }
 
-/* SDS Legend — academic-style score tables (horizontal rules only) */
+/* SDS Legend � academic-style score tables (horizontal rules only) */
 .sds-legend-table {
   width: 100%;
   border-collapse: collapse;
@@ -3458,3 +3727,188 @@ header {
   border-bottom: none;
   padding-bottom: 0;
 }
+
+/* Decision chart � radar polygon + internal score bars (24h tab) */
+.decision-detail-head {
+  display: flex;
+  justify-content: space-between;
+  align-items: flex-start;
+  gap: 8px;
+}
+.decision-rec-logic {
+  font-variant-numeric: tabular-nums;
+}
+.recommendation-breakdown {
+  font-variant-numeric: tabular-nums;
+}
+.decision-bars {
+  flex: 1;
+  min-width: 0;
+  width: 100%;
+}
+.decision-bar-row {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin-bottom: 5px;
+  font-size: 10px;
+}
+.decision-bar-label {
+  width: 52px;
+  flex-shrink: 0;
+  color: rgb(var(--ink-muted));
+}
+.decision-bar-label--long {
+  width: 4.4rem;
+  font-size: 8px;
+  line-height: 1.12;
+  white-space: normal;
+}
+.decision-bar-track {
+  position: relative;
+  flex: 1;
+  height: 9px;
+  border-radius: 999px;
+  background: rgb(var(--surface-3));
+  overflow: visible;
+}
+.decision-bar-fill {
+  position: relative;
+  z-index: 1;
+  height: 100%;
+  border-radius: 999px;
+}
+.decision-bar-fill--polarity {
+  background-position: left center;
+  box-shadow: inset 0 0 0 1px rgb(0 0 0 / 0.06);
+}
+.decision-bar-zone-line {
+  position: absolute;
+  top: -3px;
+  bottom: -3px;
+  z-index: 2;
+  width: 0;
+  border-left: 1px dashed rgb(var(--ink-muted) / 0.45);
+  pointer-events: none;
+}
+.decision-bar-zone-line--b {
+  border-left-color: rgb(16 185 129 / 0.75);
+}
+.decision-bar-zone-line--s {
+  border-left-color: rgb(244 63 94 / 0.8);
+}
+.decision-bar-zone-letter {
+  position: absolute;
+  top: -11px;
+  left: 50%;
+  transform: translateX(-50%);
+  font-size: 7px;
+  font-weight: 800;
+  line-height: 1;
+  letter-spacing: 0.02em;
+}
+.decision-bar-zone-line--b .decision-bar-zone-letter {
+  color: rgb(5 150 105);
+}
+.decision-bar-zone-line--s .decision-bar-zone-letter {
+  color: rgb(225 29 72);
+}
+.decision-rec-timeline-track {
+  position: relative;
+  height: 2.25rem;
+  border-radius: 8px;
+  background: rgb(var(--surface-3) / 0.65);
+  border: 1px solid rgb(var(--border) / 0.35);
+}
+.decision-rec-timeline-mark {
+  position: absolute;
+  bottom: 0;
+  transform: translateX(-50%);
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  min-width: 1.25rem;
+}
+.decision-rec-timeline-letter {
+  font-size: 9px;
+  font-weight: 800;
+  line-height: 1;
+  padding: 1px 3px;
+  border-radius: 3px;
+  color: #fff;
+}
+.decision-rec-timeline-letter--buy {
+  background: rgb(5 150 105);
+}
+.decision-rec-timeline-letter--sell {
+  background: rgb(225 29 72);
+}
+.decision-rec-timeline-vline {
+  width: 0;
+  height: 14px;
+  border-left: 2px solid rgb(var(--ink-muted) / 0.55);
+}
+.decision-rec-timeline-date {
+  font-size: 7px;
+  color: rgb(var(--ink-muted));
+  line-height: 1.1;
+  margin-top: 1px;
+  white-space: nowrap;
+}
+.decision-bar-val {
+  width: 28px;
+  text-align: right;
+  font-weight: 800;
+  font-variant-numeric: tabular-nums;
+}
+.decision-bar-link {
+  width: 1.25rem;
+  flex-shrink: 0;
+  text-align: center;
+  font-size: 11px;
+  font-weight: 700;
+  color: rgb(var(--accent));
+  background: none;
+  border: none;
+  padding: 0;
+  cursor: pointer;
+}
+.decision-bar-link:hover {
+  text-decoration: underline;
+}
+
+/*
+ * ?? Performance utilities ????????????????????????????????
+ *
+ * ``.perf-contain-list``: apply to long lists of independent cards (loss
+ * analysis, clinical feed, tester monitor). ``contain: content`` scopes
+ * layout/paint/style to the element; ``content-visibility: auto`` tells the
+ * browser to skip render work for off-screen cards. Requires a size hint
+ * so the scrollbar doesn't jump � tune ``contain-intrinsic-size`` per
+ * usage (mind: it's an average card height, not exact).
+ *
+ * Do NOT put this on containers that host sticky headers, popovers/menus
+ * that anchor to card children, or tooltips whose portal targets live
+ * inside the card � ``content-visibility: auto`` can break their layout.
+ */
+.perf-contain-card {
+  contain: content;
+  content-visibility: auto;
+  contain-intrinsic-size: auto 320px;
+}
+.perf-contain-card-tall {
+  contain: content;
+  content-visibility: auto;
+  contain-intrinsic-size: auto 520px;
+}
+
+/*
+ * EIS Detail docks on the right (EisEventDetailModal). Shift centered AppModals
+ * (e.g. CD study) left so both panes stay visible side-by-side.
+ */
+html[data-eis-detail-dock="1"] [data-app-modal-align="center"] {
+  justify-content: flex-start;
+  padding-right: min(28rem + 1.25rem, 44vw);
+}
+
+

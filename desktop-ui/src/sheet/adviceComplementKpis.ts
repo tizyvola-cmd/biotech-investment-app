@@ -47,6 +47,38 @@ function roundEur(n: number): number {
   return Math.round(n);
 }
 
+/** Beyond this |capture%| the denominator is unreliable — hide from KPI/timeline. */
+export const CAPTURE_PCT_ABS_MAX = 200;
+
+/** Min positive potential (€) before capture ratio is meaningful. */
+const CAPTURE_PCT_MIN_POTENTIAL_EUR = 50;
+
+/**
+ * actual / potential × 100 — null when potential ≤ 0, too small, or ratio is extreme.
+ * Negative potential (bearish rec day) makes the ratio meaningless (e.g. −5523%).
+ */
+export function computeCapturePct(
+  actualEur: number,
+  potentialEur: number,
+): number | null {
+  const actual = roundEur(actualEur);
+  const potential = roundEur(potentialEur);
+  if (!Number.isFinite(actual) || !Number.isFinite(potential)) return null;
+  if (potential <= 0 || potential < CAPTURE_PCT_MIN_POTENTIAL_EUR) return null;
+  const pct = round1((actual / potential) * 100);
+  if (!Number.isFinite(pct) || Math.abs(pct) > CAPTURE_PCT_ABS_MAX) return null;
+  return pct;
+}
+
+/** Strip outlier capture values persisted before sanitization (timeline export). */
+export function sanitizeStoredCapturePct(
+  pct: number | null | undefined,
+): number | null {
+  if (pct == null || !Number.isFinite(pct)) return null;
+  if (Math.abs(pct) > CAPTURE_PCT_ABS_MAX) return null;
+  return pct;
+}
+
 /** P&L potenziale 24h su raccomandazioni eseguibili (BUY/SELL/paper) vs P&L paper reale. */
 export function computePaperRecCapture(args: {
   monitorRows: Array<{
@@ -69,17 +101,7 @@ export function computePaperRecCapture(args: {
   }
   const potentialEur = roundEur(potential);
   const actualEur = roundEur(args.actualPnlEur);
-  let capturePct =
-    potentialEur !== 0 ? round1((actualEur / potentialEur) * 100) : null;
-  if (
-    capturePct != null &&
-    potentialEur > 0 &&
-    potentialEur < 20_000 &&
-    Math.abs(capturePct) > 300 &&
-    Math.abs(actualEur) > potentialEur * 2.5
-  ) {
-    capturePct = null;
-  }
+  const capturePct = computeCapturePct(actualEur, potentialEur);
   return { capturePct, potentialEur, actualEur };
 }
 

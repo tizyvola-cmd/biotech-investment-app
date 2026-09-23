@@ -308,6 +308,7 @@ function RiskFlagsSection({ asset, it, onRefresh }: { asset: MonitoredAsset; it:
             <option value="governance">Governance</option>
             <option value="reputational">Reputational</option>
             <option value="financial">Financial</option>
+            <option value="regulatory">Regulatory (CRL / CMC)</option>
             <option value="other">Other</option>
           </select>
           <textarea className="w-full border border-slate-300 dark:border-slate-600 rounded px-2 py-1 bg-white dark:bg-surface text-ink text-[11px] resize-none h-14" placeholder={it ? "Descrizione flag..." : "Flag description..."} value={form.description} onChange={e => setForm(f => ({ ...f, description: e.target.value }))} />

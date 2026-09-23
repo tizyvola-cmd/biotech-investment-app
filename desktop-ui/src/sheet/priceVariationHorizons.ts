@@ -1,5 +1,5 @@
 /**
- * Variazioni % prezzo vs ieri / 7g / 1M — da foglio Simulation e/o bundle grafici.
+ * Variazioni % prezzo vs ieri / 7g / 1M / 3M / 6M — da foglio Simulation e/o bundle grafici.
  */
 import type { ChartPoint, ChartSeries } from "../types";
 import { completionDateToNowOffset, interpolateAtOffset } from "./chartNowOffset";
@@ -11,6 +11,16 @@ export type PriceVariationHorizons = {
   d1: number | null;
   d7: number | null;
   m1: number | null;
+  m3: number | null;
+  m6: number | null;
+};
+
+/** Horizons used by BUY recommendation quality gates (no 1M). */
+export type RecPriceHorizons = {
+  d1: number | null;
+  d7: number | null;
+  m3: number | null;
+  m6: number | null;
 };
 
 function parseNum(v: unknown): number | null {
@@ -78,7 +88,31 @@ export function resolvePriceVariationHorizons(
     d7 = pricePctChangeCalendarDaysAgo(r, chartPoints, 7);
   }
 
-  return { d1, d7, m1 };
+  let m3 =
+    varFromRow(r, "Var. 3M %", "Var. 3M%") ??
+    resolveVarHorizonPct(horizons, "3M");
+  if (m3 == null) {
+    m3 = pricePctChangeCalendarDaysAgo(r, chartPoints, 90);
+  }
+
+  let m6 =
+    varFromRow(r, "Var. 6M %", "Var. 6M%") ??
+    resolveVarHorizonPct(horizons, "6M");
+  if (m6 == null) {
+    m6 = pricePctChangeCalendarDaysAgo(r, chartPoints, 180);
+  }
+
+  return { d1, d7, m1, m3, m6 };
+}
+
+/** Slice used by recommendation momentum gate (24h · 7d · 3M · 6M). */
+export function resolveRecPriceHorizons(
+  row: Record<string, unknown> | null | undefined,
+  chartPoints?: ChartPoint[] | null,
+  seriesMeta?: Pick<ChartSeries, "var_horizons"> | null,
+): RecPriceHorizons {
+  const h = resolvePriceVariationHorizons(row, chartPoints, seriesMeta);
+  return { d1: h.d1, d7: h.d7, m3: h.m3, m6: h.m6 };
 }
 
 export function priceVariationTone(pct: number | null): "up" | "down" | "flat" | "muted" {
@@ -160,4 +194,19 @@ export function fmtStockUsdShort(v: number | null | undefined): string {
   if (v >= 100) return `$${v.toFixed(0)}`;
   if (v >= 10) return `$${v.toFixed(1)}`;
   return `$${v.toFixed(2)}`;
+}
+
+/**
+ * Format a $ delta with sign and adaptive precision. Examples:
+ *   +$0.51 · -$0.05 · +$1.23 · -$14 · —
+ * Kept in sync with `formatPriceVariationPct` (same "—" placeholder).
+ */
+export function formatSignedPriceVariationUsd(
+  v: number | null | undefined,
+): string {
+  if (v == null || !Number.isFinite(v)) return "—";
+  const sign = v > 0 ? "+" : v < 0 ? "-" : "";
+  const abs = Math.abs(v);
+  const magnitude = abs >= 100 ? abs.toFixed(0) : abs >= 10 ? abs.toFixed(1) : abs.toFixed(2);
+  return `${sign}$${magnitude}`;
 }

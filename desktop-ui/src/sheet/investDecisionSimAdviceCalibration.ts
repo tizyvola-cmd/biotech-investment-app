@@ -6,6 +6,7 @@ import type {
   TickerSimEvaluation,
 } from "./investDecisionSimLoop";
 import { miiGainScale } from "./recommendationGainIdea";
+import { liveAdviceSessionAnchor } from "./adviceSessionAnchor";
 
 /** Legacy open-position thresholds (experiment log). */
 export const ADVICE_CALIB_GOOD_PNL_PCT = 2;
@@ -17,6 +18,9 @@ export const ADVICE_CALIB_SELL_MIN_DOWN_PCT = -0.5;
 /** HOLD / review: |move| must stay within this band to count as correct. */
 export const ADVICE_CALIB_HOLD_FLAT_BAND_PCT = 2;
 export const ADVICE_CALIB_LOW_PROB_MAX = 59;
+/** Middle band shown on the learning timeline (Hold / borderline Buy zone). */
+export const ADVICE_CALIB_MID_PROB_MIN = 60;
+export const ADVICE_CALIB_MID_PROB_MAX = 69;
 export const ADVICE_CALIB_HIGH_PROB_MIN = 70;
 
 export const ADVICE_CALIB_MIN_SCORED_FOR_RATE = 3;
@@ -44,6 +48,9 @@ export const ADVICE_CALIB_BUCKETS: AdviceCalibBucketDef[] = [
 
 export type AdviceActionKind = "buy" | "sell" | "hold" | "review";
 
+/** Real portfolio vs sim-loop paper / monitor opportunities. */
+export type AdviceCalibrationUniverse = "portafoglio" | "sim loop";
+
 export type AdviceCalibrationPoint = {
   id: string;
   ticker: string;
@@ -64,7 +71,40 @@ export type AdviceCalibrationPoint = {
   at: string;
   /** Days to completion date at advice / entry (for peak-by-CD annotation). */
   daysToCdAtAdvice?: number | null;
+  /** Portfolio (invest_sim_inputs) vs sim-loop paper / opportunity monitor. */
+  universe?: AdviceCalibrationUniverse;
 };
+
+export type AdviceErrorUniverseView = "all" | "portfolio" | "simloop";
+
+/** Resolve universe for legacy points built before `universe` was persisted. */
+export function adviceCalibrationUniverse(p: AdviceCalibrationPoint): AdviceCalibrationUniverse {
+  if (p.universe) return p.universe;
+  if (
+    p.kind === "paper_open" ||
+    p.kind === "paper_buy_closed" ||
+    p.kind === "paper_sell" ||
+    p.kind === "deal_buy_closed" ||
+    p.kind === "deal_buy_open" ||
+    p.kind === "deal_sell" ||
+    p.id.startsWith("paper-") ||
+    p.id.startsWith("deal|")
+  ) {
+    return "sim loop";
+  }
+  if (p.source === "experiment") return "sim loop";
+  return "sim loop";
+}
+
+export function filterAdviceCalibrationByUniverse(
+  points: AdviceCalibrationPoint[],
+  view: AdviceErrorUniverseView,
+): AdviceCalibrationPoint[] {
+  if (view === "all") return points;
+  const target: AdviceCalibrationUniverse =
+    view === "portfolio" ? "portafoglio" : "sim loop";
+  return points.filter((p) => adviceCalibrationUniverse(p) === target);
+}
 
 export type AdviceCalibrationBucketRow = {
   bucketId: AdviceCalibBucketId;
@@ -82,6 +122,7 @@ export type AdviceCalibrationBucketRow = {
 
 export type AdviceCalibrationSummary = {
   lowProb: { count: number; good: number; bad: number; successRatePct: number | null };
+  midProb: { count: number; good: number; bad: number; successRatePct: number | null };
   highProb: { count: number; good: number; bad: number; successRatePct: number | null };
   scoredCount: number;
   pendingCount: number;
@@ -524,6 +565,35 @@ export function buildAdviceCalibrationFromLog(
 ): AdviceCalibrationPoint[] {
   const out: AdviceCalibrationPoint[] = [];
   for (const ev of adviceLog) {
+    if (ev.kind === "missed_buy") {
+      const probPct = resolveAdviceProbPct(ev, ticks);
+      if (probPct == null) continue;
+      const move = ev.pnlPct;
+      if (move == null || !Number.isFinite(move) || move < ADVICE_CALIB_BUY_MIN_UP_PCT) continue;
+      const bucket = probToAdviceBucket(probPct);
+      const expectedReturnPct = move;
+      out.push({
+        id: `${ev.tickId}|${ev.key}|missed_buy|${ev.at}`,
+        ticker: ev.ticker,
+        probPct,
+        bucketId: bucket.id,
+        bucketLabel: lang === "it" ? bucket.labelIt : bucket.labelEn,
+        outcome: "good",
+        pnlPct: move,
+        priceChangePct: move,
+        expectedReturnPct,
+        forecastErrorPct:
+          expectedReturnPct != null
+            ? Math.round((move - expectedReturnPct) * 10) / 10
+            : null,
+        suggestedAction: "buy",
+        source: "experiment",
+        kind: "missed_buy",
+        at: ev.at,
+        universe: "sim loop",
+      });
+      continue;
+    }
     if (!SCORED_KINDS.has(ev.kind)) continue;
     const outcome = adviceKindToOutcome(ev.kind);
     if (!outcome) continue;
@@ -552,6 +622,7 @@ export function buildAdviceCalibrationFromLog(
       source: "experiment",
       kind: ev.kind,
       at: ev.at,
+      universe: "sim loop",
     });
   }
   return out;
@@ -573,6 +644,8 @@ export type LiveAdviceCalibRow = {
   pnlPct24h?: number | null;
   priceChangePct?: number | null;
   daysToCdAtAdvice?: number | null;
+  /** Last sim-tick timestamp for this key — used for 24h/7d horizon filters. */
+  adviceAt?: string | null;
 };
 
 function resolveLiveCalibAction(row: LiveAdviceCalibRow): AdviceActionKind | null {
@@ -591,6 +664,12 @@ function isLiveAdviceScorable(row: LiveAdviceCalibRow, action: AdviceActionKind)
   if (action === "buy") return true;
   if (action === "sell") return Boolean(row.inPaperPortfolio || row.hasPosition);
   return Boolean(row.inPaperPortfolio || row.hasPosition);
+}
+
+function resolveLiveAdviceUniverse(row: LiveAdviceCalibRow): AdviceCalibrationUniverse {
+  if (row.inPaperPortfolio) return "sim loop";
+  if (row.hasPosition) return "portafoglio";
+  return "sim loop";
 }
 
 export function buildAdviceCalibrationFromLiveRows(
@@ -639,7 +718,9 @@ export function buildAdviceCalibrationFromLiveRows(
       suggestedAction: action,
       source: "live",
       kind: row.inPaperPortfolio ? "paper_open" : `${action}_rec`,
-      at: "",
+      at:
+        row.adviceAt && row.adviceAt.length >= 10 ? row.adviceAt : liveAdviceSessionAnchor(),
+      universe: resolveLiveAdviceUniverse(row),
       daysToCdAtAdvice:
         row.daysToCdAtAdvice != null && Number.isFinite(row.daysToCdAtAdvice)
           ? Math.round(row.daysToCdAtAdvice)
@@ -660,7 +741,7 @@ export function keysWithPaperSellExecution(ticks: DecisionSimTick[]): Set<string
   return keys;
 }
 
-function keyFromLiveAdviceCalibrationId(id: string): string | null {
+export function keyFromLiveAdviceCalibrationId(id: string): string | null {
   if (!id.startsWith("live|")) return null;
   const rest = id.slice(5);
   const actionSep = rest.lastIndexOf("|");
@@ -698,6 +779,73 @@ export function liveCalibRowsExcludingPaperSells(
     if (!paperSoldKeys.has(row.key)) return true;
     return resolveLiveCalibAction(row) !== "sell";
   });
+}
+
+/**
+ * Paper BUY chiusi — ogni round-trip (entry → exit del sim-loop) è valutato
+ * sul P&L realizzato del giro completo. Simmetrico a buildAdviceCalibrationFromPaperSells:
+ * quello scora "l'uscita" con Var. 24h post-sell, questo scora "l'entrata" con il P&L
+ * finale ottenuto dalla posizione. Usa le stesse soglie ±0.5% di classifyAdviceOutcome
+ * per omogeneità con l'altro lato.
+ */
+export function buildAdviceCalibrationFromPaperBuys(
+  ticks: DecisionSimTick[],
+  lang: "it" | "en",
+): AdviceCalibrationPoint[] {
+  const out: AdviceCalibrationPoint[] = [];
+  const seen = new Set<string>();
+  const sorted = [...ticks].sort((a, b) => a.at.localeCompare(b.at));
+
+  for (const tick of sorted) {
+    for (const tr of tick.trades) {
+      if (tr.side !== "sell") continue;
+      const dedupe = `${tr.key}|${tr.at}`;
+      if (seen.has(dedupe)) continue;
+      seen.add(dedupe);
+
+      const entryPos = tick.portfolioBefore.find((p) => p.key === tr.key);
+      const ev = tick.evaluations.find((e) => e.key === tr.key);
+      const probPct = entryPos?.entryProbPct ?? ev?.probPct ?? null;
+      if (probPct == null || !Number.isFinite(probPct)) continue;
+
+      const pnlPct = tr.pnlPctSimulated;
+      if (pnlPct == null || !Number.isFinite(pnlPct)) continue;
+
+      const planReturnPct =
+        entryPos?.entryPlanReturnPct ??
+        ev?.planReturnPct ??
+        ev?.readings?.planTargetPct ??
+        null;
+      const { expectedReturnPct, forecastErrorPct } = computeAdviceForecastErrorPct(
+        "buy",
+        planReturnPct,
+        pnlPct,
+        null,
+      );
+      const outcome = classifyAdviceOutcome("buy", pnlPct);
+      if (forecastErrorPct == null && outcome !== "good" && outcome !== "bad") continue;
+
+      const bucket = probToAdviceBucket(probPct);
+      out.push({
+        id: `paper-buy|${tr.key}|${tr.at}`,
+        ticker: tr.ticker,
+        probPct,
+        bucketId: bucket.id,
+        bucketLabel: lang === "it" ? bucket.labelIt : bucket.labelEn,
+        outcome: outcome ?? "pending",
+        pnlPct,
+        priceChangePct: pnlPct,
+        expectedReturnPct,
+        forecastErrorPct,
+      suggestedAction: "buy",
+      source: "experiment",
+      kind: "paper_buy_closed",
+      at: tr.at,
+      universe: "sim loop",
+    });
+    }
+  }
+  return out;
 }
 
 /** Paper SELL eseguiti — valutati con Var. 24h post-vendita (titolo scende = ✓, sale = ✗). */
@@ -755,11 +903,12 @@ export function buildAdviceCalibrationFromPaperSells(
         priceChangePct,
         expectedReturnPct,
         forecastErrorPct,
-        suggestedAction: "sell",
-        source: "live",
-        kind: "paper_sell",
-        at: tr.at,
-      });
+      suggestedAction: "sell",
+      source: "experiment",
+      kind: "paper_sell",
+      at: tr.at,
+      universe: "sim loop",
+    });
     }
   }
   return out;
@@ -874,6 +1023,7 @@ export function buildDealLevelCalibrationPoints(
         source: "experiment",
         kind: "deal_buy_closed",
         at: tr.at,
+        universe: "sim loop",
       });
     }
   }
@@ -890,7 +1040,7 @@ export function buildDealLevelCalibrationPoints(
   for (const ev of opts.liveEvaluations ?? []) {
     evByKey.set(ev.key, ev);
   }
-  const openAt = lastTick?.at ?? new Date().toISOString();
+  const openAt = lastTick?.at ?? liveAdviceSessionAnchor();
 
   for (const pos of openBook) {
     const ev = evByKey.get(pos.key);
@@ -929,6 +1079,7 @@ export function buildDealLevelCalibrationPoints(
       source: "experiment",
       kind: "deal_buy_open",
       at: openAt,
+      universe: "sim loop",
     });
   }
 
@@ -939,6 +1090,7 @@ export function buildDealLevelCalibrationPoints(
       id: `deal|sell|${p.id.replace(/^paper-sell\|/, "")}`,
       source: "experiment",
       kind: "deal_sell",
+      universe: "sim loop",
     });
   }
 
@@ -990,6 +1142,9 @@ export function summarizeAdviceCalibration(points: AdviceCalibrationPoint[]): Ad
   const pendingCount = points.filter((p) => p.outcome === "pending").length;
 
   const low = scored.filter((p) => p.probPct <= ADVICE_CALIB_LOW_PROB_MAX);
+  const mid = scored.filter(
+    (p) => p.probPct >= ADVICE_CALIB_MID_PROB_MIN && p.probPct <= ADVICE_CALIB_MID_PROB_MAX,
+  );
   const high = scored.filter((p) => p.probPct >= ADVICE_CALIB_HIGH_PROB_MIN);
 
   const rate = (rows: AdviceCalibrationPoint[]) => {
@@ -1005,6 +1160,12 @@ export function summarizeAdviceCalibration(points: AdviceCalibrationPoint[]): Ad
       good: low.filter((p) => p.outcome === "good").length,
       bad: low.filter((p) => p.outcome === "bad").length,
       successRatePct: rate(low),
+    },
+    midProb: {
+      count: mid.length,
+      good: mid.filter((p) => p.outcome === "good").length,
+      bad: mid.filter((p) => p.outcome === "bad").length,
+      successRatePct: rate(mid),
     },
     highProb: {
       count: high.length,
@@ -1055,6 +1216,74 @@ export function summarizeAdviceActionAccuracy(
     overallGood: summary.goodCount,
     overallBad: summary.badCount,
     avgForecastErrorPct,
+  };
+}
+
+export type AdviceActionPrecisionRow = {
+  action: AdviceActionKind;
+  good: number;
+  bad: number;
+  pending: number;
+  successRatePct: number | null;
+};
+
+/** Per-action precision (BUY / SELL / HOLD / review) from scored calibration points. */
+export function summarizeAdvicePrecisionByAction(
+  points: AdviceCalibrationPoint[],
+): AdviceActionPrecisionRow[] {
+  const actions: AdviceActionKind[] = ["buy", "sell", "hold", "review"];
+  return actions.map((action) => {
+    const rows = points.filter((p) => p.suggestedAction === action);
+    const good = rows.filter((p) => p.outcome === "good").length;
+    const bad = rows.filter((p) => p.outcome === "bad").length;
+    const pending = rows.filter((p) => p.outcome === "pending").length;
+    const n = good + bad;
+    return {
+      action,
+      good,
+      bad,
+      pending,
+      successRatePct: n > 0 ? Math.round((good / n) * 1000) / 10 : null,
+    };
+  });
+}
+
+/** BUY-only fields for advice-learning timeline snapshots. */
+export function buyAdviceSnapshotFields(points: AdviceCalibrationPoint[]): {
+  buySuccessRatePct: number | null;
+  buyScored: number;
+} {
+  const row = summarizeAdvicePrecisionByAction(points).find((r) => r.action === "buy");
+  const scored = (row?.good ?? 0) + (row?.bad ?? 0);
+  return {
+    buySuccessRatePct: scored > 0 ? row?.successRatePct ?? null : null,
+    buyScored: scored,
+  };
+}
+
+/** SELL-only fields — stock move 24h after sell rec (≤−0.5% = good). */
+export function sellAdviceSnapshotFields(points: AdviceCalibrationPoint[]): {
+  sellSuccessRatePct: number | null;
+  sellScored: number;
+} {
+  const row = summarizeAdvicePrecisionByAction(points).find((r) => r.action === "sell");
+  const scored = (row?.good ?? 0) + (row?.bad ?? 0);
+  return {
+    sellSuccessRatePct: scored > 0 ? row?.successRatePct ?? null : null,
+    sellScored: scored,
+  };
+}
+
+/** BUY + SELL operative success for learning timeline checkpoints. */
+export function buySellAdviceSnapshotFields(points: AdviceCalibrationPoint[]): {
+  buySuccessRatePct: number | null;
+  buyScored: number;
+  sellSuccessRatePct: number | null;
+  sellScored: number;
+} {
+  return {
+    ...buyAdviceSnapshotFields(points),
+    ...sellAdviceSnapshotFields(points),
   };
 }
 

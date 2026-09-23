@@ -8,6 +8,16 @@ import ai_provider
 import ai_secrets_store as mod
 
 
+def test_save_and_apply_gemini(tmp_path, monkeypatch):
+    secrets = tmp_path / "ai_secrets.json"
+    monkeypatch.setattr(mod, "_SECRETS_FILE", secrets)
+    monkeypatch.delenv("GEMINI_API_KEY", raising=False)
+    status = mod.save_secrets(gemini_api_key="AIzaSyTestGeminiKey123456")
+    assert status["providers"]["gemini"]["set"] is True
+    assert ai_provider.get_api_key("gemini") == "AIzaSyTestGeminiKey123456"
+    assert "gemini" in ai_provider.configured_providers()
+
+
 def test_save_and_apply_anthropic(tmp_path, monkeypatch):
     secrets = tmp_path / "ai_secrets.json"
     monkeypatch.setattr(mod, "_SECRETS_FILE", secrets)

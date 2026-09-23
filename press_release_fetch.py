@@ -81,6 +81,40 @@ def _save_cache(path: Path, items: list[dict]) -> None:
     )
 
 
+def _is_google_news_url(url: str) -> bool:
+    u = (url or "").lower()
+    return bool(
+        "news.google.com" in u
+        or "consent.google.com" in u
+        or "batchexecute" in u
+        or "/_/dotssplashui/" in u
+    )
+
+
+def _non_google_http_url(url: str) -> str:
+    u = (url or "").strip()
+    if not u.startswith(("http://", "https://")):
+        return ""
+    if _is_google_news_url(u):
+        return ""
+    return u
+
+
+def _looks_like_article_url(url: str) -> bool:
+    try:
+        from urllib.parse import urlparse
+
+        path = (urlparse(url).path or "").strip("/")
+    except Exception:
+        return False
+    if not path:
+        return False
+    leaf = path.split("/")[0].lower()
+    if leaf in {"news", "index.html", "home", "en", "us"} and "/" not in path:
+        return False
+    return "/" in path or len(path) > 16
+
+
 def _rss_items(xml_bytes: bytes) -> list[dict]:
     root = ET.fromstring(xml_bytes)
     out: list[dict] = []
@@ -89,6 +123,7 @@ def _rss_items(xml_bytes: bytes) -> list[dict]:
         link = ""
         pub = ""
         desc = ""
+        source_url = ""
         for child in item:
             tag = child.tag.split("}")[-1]
             if tag == "title":
@@ -100,30 +135,60 @@ def _rss_items(xml_bytes: bytes) -> list[dict]:
             elif tag == "description":
                 desc = re.sub(r"<[^>]+>", " ", "".join(child.itertext()))
                 desc = re.sub(r"\s+", " ", desc).strip()
+                raw_desc = "".join(child.itertext())
+                if not source_url:
+                    for href in re.findall(r'https?://[^\s<>"\']+', raw_desc):
+                        got = _non_google_http_url(href.rstrip(").,;"))
+                        if got:
+                            source_url = got
+                            break
+            elif tag == "source":
+                source_url = source_url or (child.attrib.get("url") or "").strip()
         if not title:
             continue
         event_d: str | None = None
+        published_at: str | None = None
         if pub:
             try:
                 from email.utils import parsedate_to_datetime
 
-                event_d = parsedate_to_datetime(pub).date().isoformat()
+                dt = parsedate_to_datetime(pub)
+                if dt.tzinfo is None:
+                    dt = dt.replace(tzinfo=timezone.utc)
+                event_d = dt.date().isoformat()
+                published_at = dt.isoformat()
             except Exception:
                 event_d = None
+        publisher = _non_google_http_url(source_url)
+        gnews = link if _is_google_news_url(link) else ""
+        article = publisher if _looks_like_article_url(publisher) else ""
+        if not article:
+            direct = _non_google_http_url(link)
+            article = direct if _looks_like_article_url(direct) else ""
         out.append(
             {
                 "title": title[:240],
-                "link": link[:500],
+                "link": (article or gnews or link)[:500],
+                "gnews_link": gnews[:500] if gnews else "",
+                "source_url": article[:500] if article else "",
                 "summary": (desc or title)[:600],
                 "event_date": event_d,
+                "published_at": published_at,
                 "source": "google_news_rss",
             }
         )
     return out
 
 
+_rss_circuit_until = 0.0
+_RSS_CIRCUIT_S = 5 * 60
+
+
 def _fetch_google_news_rss(query: str, *, max_items: int = 10) -> list[dict]:
+    global _rss_circuit_until
     if _env_truthy("PRESS_RELEASE_DISABLE_NETWORK"):
+        return []
+    if time.time() < _rss_circuit_until:
         return []
     q = urllib.parse.quote(query)
     url = (
@@ -135,10 +200,15 @@ def _fetch_google_news_rss(query: str, *, max_items: int = 10) -> list[dict]:
         headers={"User-Agent": "BiotechOrchestrator/1.0 (clinical feed)"},
     )
     try:
-        raw = urllib.request.urlopen(req, timeout=12).read()
+        # 4s cap: a desk full of tickers must not hold an API thread past
+        # Cloudflare's ~100s origin timeout when Google News returns 503.
+        raw = urllib.request.urlopen(req, timeout=4).read()
         time.sleep(0.2)
         return _rss_items(raw)[:max_items]
     except Exception as exc:
+        msg = str(exc).lower()
+        if any(s in msg for s in ("429", "503", "timed out", "timeout")):
+            _rss_circuit_until = time.time() + _RSS_CIRCUIT_S
         print(f"[PressRelease] Google News RSS failed: {exc}", flush=True)
         return []
 

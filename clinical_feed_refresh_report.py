@@ -122,10 +122,26 @@ def write_refresh_report(
     error: str | None = None,
 ) -> dict[str, Any]:
     ts = datetime.now(timezone.utc).isoformat()
+    success = error is None
+
+    # Preserve last_successful_update across failures
+    if success:
+        last_successful_update: str | None = ts
+    else:
+        prev = load_refresh_report()
+        if prev and prev.get("success"):
+            last_successful_update = prev.get("last_successful_update") or prev.get("finished_at")
+        elif prev:
+            last_successful_update = prev.get("last_successful_update")
+        else:
+            last_successful_update = None
+
     report: dict[str, Any] = {
         "finished_at": ts,
         "run_type": run_type,
-        "success": error is None,
+        "success": success,
+        "update_status": "ok" if success else "stale_due_to_error",
+        "last_successful_update": last_successful_update,
         "error": error,
         "stats": stats,
         "changes": changes,

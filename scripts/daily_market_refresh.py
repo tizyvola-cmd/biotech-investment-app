@@ -85,6 +85,11 @@ NYSE_HOLIDAYS = NYSE_HOLIDAYS_2026 | NYSE_HOLIDAYS_2027
 LOG_DIR  = _ROOT / "data" / "logs"
 LOCK_FILE = _ROOT / "data" / ".refresh_running.lock"
 
+try:
+    from orchestrator_io_paths import LAST_ORCH_LOG
+except ImportError:
+    LAST_ORCH_LOG = str(_ROOT / "data" / "last_orchestrator_log.txt")
+
 
 def setup_logging(verbose: bool = True, *, log_prefix: str = "daily_refresh") -> logging.Logger:
     """Configura logging su file + stdout."""
@@ -103,6 +108,13 @@ def setup_logging(verbose: bool = True, *, log_prefix: str = "daily_refresh") ->
     fh.setLevel(logging.DEBUG)
     fh.setFormatter(fmt)
     logger.addHandler(fh)
+
+    # WeeklyFull (cron/SSH/API): stesso file letto da GET /api/orchestrator/log
+    if log_prefix == "saturday_weekly_full":
+        orch_fh = logging.FileHandler(LAST_ORCH_LOG, mode="w", encoding="utf-8")
+        orch_fh.setLevel(logging.DEBUG)
+        orch_fh.setFormatter(fmt)
+        logger.addHandler(orch_fh)
 
     if verbose:
         sh = logging.StreamHandler(sys.stdout)

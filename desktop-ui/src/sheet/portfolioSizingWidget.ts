@@ -182,10 +182,16 @@ function dealBucketForDim(
  * Compute a per-deal loss-risk profile from Phase A screening + optional
  * approved Phase B pattern. Pure function — testable without UI.
  */
+export type ComputeDealLossRiskOptions = {
+  /** Correlation / diagnostics: include buckets with n < minNForSizing (low confidence). */
+  allowLowNBuckets?: boolean;
+};
+
 export function computeDealLossRisk(
   deal: WidgetDeal,
   phaseA: PhaseAResult | null,
   approvedPattern: RiskPattern | null,
+  opts?: ComputeDealLossRiskOptions,
 ): DealLossRisk {
   const contributions: DealLossRiskContribution[] = [];
   if (phaseA) {
@@ -195,7 +201,8 @@ export function computeDealLossRisk(
       if (!cellName) continue;
       const found = feature.buckets.find((b) => b.bucket === cellName);
       if (!found) continue;
-      if (!found.eligibleForPattern) continue;
+      if (!found.eligibleForPattern && !opts?.allowLowNBuckets) continue;
+      if (opts?.allowLowNBuckets && found.n <= 0) continue;
       contributions.push({
         dimension: feature.dimension,
         bucket: found.bucket,

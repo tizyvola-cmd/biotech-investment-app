@@ -1,7 +1,6 @@
 import type { ChartBundle, ChartPoint } from "../types";
 import { api, probeApiReachable } from "../api/supernova";
 import { desktopDataDirHint, fetchProjectJson } from "./projectData";
-import { isSecK8Node } from "../sheet/chartNodes";
 
 const CHARTS_FILE = "simulation_charts_snapshot.json";
 
@@ -15,18 +14,6 @@ let _chartsInflight: Promise<{
 /** Bundle già in memoria (evita flash UI in attesa del fetch). */
 export function peekSimulationChartsBundle(): ChartBundle | null {
   return _chartsCache;
-}
-
-/** Mappa serie → punti curva (stessa logica Dashboard Top Opps publish). */
-export function chartPointsMapFromBundle(
-  bundle: ChartBundle | null | undefined,
-): Map<string, ChartPoint[]> {
-  const m = new Map<string, ChartPoint[]>();
-  if (!bundle?.series) return m;
-  for (const [key, series] of Object.entries(bundle.series)) {
-    if (series.points?.length) m.set(key, series.points);
-  }
-  return m;
 }
 
 export function invalidateSimulationChartsCache(): void {
@@ -151,9 +138,8 @@ function parseSheetPct(raw: unknown): number | null {
       ? raw
       : Number(String(raw).replace(/%/g, "").replace(/,/g, ""));
   if (!Number.isFinite(n)) return null;
-  const scaled =
-    Math.abs(n) <= 1.5 && !String(raw).includes("%") ? n * 100 : n;
-  return Math.round(scaled * 100) / 100;
+  if (Math.abs(n) <= 1.5 && !String(raw).includes("%")) return n * 100;
+  return n;
 }
 
 /** Valore colonna Pred foglio Simulation (pp) per offset calendario. */
@@ -179,7 +165,7 @@ export function overlaySheetPredOnPoints(
       if (sheetPred == null) return p;
       return { ...p, pct_foglio: sheetPred };
     }
-    if (isSecK8Node(p) || nodo === "AI feed") {
+    if (nodo === "K-8" || nodo === "AI feed") {
       const rec = p.pct_curva ?? p.pct_reale;
       if (rec == null || rec !== rec) return p;
       return { ...p, pct_foglio: rec };

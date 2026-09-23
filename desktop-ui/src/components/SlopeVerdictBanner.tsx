@@ -9,6 +9,7 @@ import {
   type StabilityVerdict,
 } from "../sheet/slopeStability";
 import {
+  slopeExitOverriddenByFinalAction,
   slopeVerdictDisagreesWithFinalAction,
   suggestedActionDisplayLabel,
 } from "../sheet/slopeVerdictAction";
@@ -36,16 +37,21 @@ function SlopeVerdictSummaryLine({
   text,
   className,
   curveRisingHold = false,
+  emphasizeFinal = false,
 }: {
   verdict: StabilityVerdict;
   text: string;
   className?: string;
   curveRisingHold?: boolean;
+  /** When true, lead keyword is the final action (HOLD), not EXIT. */
+  emphasizeFinal?: boolean;
 }) {
   const split = text.split(" — ");
   const head = split[0]?.trim() ?? text;
   const tail = split.slice(1).join(" — ");
-  const kwCls = slopeVerdictKeywordClass(verdict, curveRisingHold);
+  const kwCls = emphasizeFinal
+    ? "sn-slope-verdict-kw--stay"
+    : slopeVerdictKeywordClass(verdict, curveRisingHold);
   if (!tail) {
     return (
       <p className={className}>
@@ -99,7 +105,18 @@ export function SlopeVerdictBanner({
   if (isFlat && !alwaysShow) return null;
 
   const risingFlat = isFlat && Boolean(ctx.curveRisingHold);
-  const tone = risingFlat ? "positive" : isFlat ? "neutral" : verdictTone(ctx.stabilityVerdict);
+  const exitOverridden = slopeExitOverriddenByFinalAction(
+    ctx.stabilityVerdict,
+    suggestedAction,
+    ctx.curveRisingHold,
+  );
+  const tone = exitOverridden
+    ? "warn"
+    : risingFlat
+      ? "positive"
+      : isFlat
+        ? "neutral"
+        : verdictTone(ctx.stabilityVerdict);
   const summaryLabel = isFlat
     ? risingFlat
       ? risingFlatSlopeVerdictSummary(it ? "it" : "en")
@@ -114,15 +131,23 @@ export function SlopeVerdictBanner({
       ctx.curveRisingHold,
     );
   const finalActionLabel =
-    suggestedAction != null ? suggestedActionDisplayLabel(suggestedAction, it ? "it" : "en") : null;
+    suggestedAction != null
+      ? suggestedActionDisplayLabel(suggestedAction, it ? "it" : "en")
+      : null;
   const showExitSignalSecondary =
     exitDecision === "exit" &&
     suggestedAction != null &&
     suggestedAction !== "sell" &&
     (suggestedAction === "hold" || suggestedAction === "review" || suggestedAction === "buy");
 
-  const contextNote =
-    slopeDisagrees && finalActionLabel
+  const primaryLabel =
+    exitOverridden && finalActionLabel
+      ? t("sim.lossAnalysis.slopeVerdict.overriddenPrimary", { final: finalActionLabel })
+      : summaryLabel;
+
+  const contextNote = exitOverridden
+    ? t("sim.lossAnalysis.slopeVerdict.overriddenSlopeNote", { slope: summaryLabel })
+    : slopeDisagrees && finalActionLabel
       ? t("sim.lossAnalysis.slopeVerdict.finalActionNote", {
           final: finalActionLabel,
         })
@@ -134,25 +159,42 @@ export function SlopeVerdictBanner({
     return (
       <span
         className={`inline-flex items-center gap-1 rounded-full border px-1 py-0.5 ${slopeVerdictToneClasses(tone)}`}
-        title={summaryLabel}
+        title={exitOverridden && finalActionLabel ? primaryLabel : summaryLabel}
       >
-        <SlopeVerdictPill
-          verdict={ctx.stabilityVerdict}
-          size="sm"
-          showFlatWhenNone={alwaysShow}
-          curveRisingHold={ctx.curveRisingHold}
-          lang={it ? "it" : "en"}
-        />
+        {exitOverridden && finalActionLabel ? (
+          <span
+            className={`inline-flex items-center rounded-full border font-bold tracking-wide px-2 py-0.5 text-[10px] ${slopeVerdictToneClasses("warn")}`}
+          >
+            → {finalActionLabel}
+          </span>
+        ) : (
+          <SlopeVerdictPill
+            verdict={ctx.stabilityVerdict}
+            size="sm"
+            showFlatWhenNone={alwaysShow}
+            curveRisingHold={ctx.curveRisingHold}
+            lang={it ? "it" : "en"}
+          />
+        )}
       </span>
     );
   }
 
+  // Never offer one-click sell when the arbiter kept hold/buy/review.
   const exitActionable =
+    !exitOverridden &&
     canExecuteExit &&
     onExecuteExit &&
     (ctx.stabilityVerdict === "exit" || ctx.stabilityVerdict === "avoid");
 
-  const pill = (
+  const pill = exitOverridden && finalActionLabel ? (
+    <span
+      className={`inline-flex items-center rounded-full border font-bold tracking-wide px-2.5 py-1 text-[11px] ${slopeVerdictToneClasses("warn")}`}
+      title={primaryLabel}
+    >
+      → {finalActionLabel}
+    </span>
+  ) : (
     <SlopeVerdictPill
       verdict={ctx.stabilityVerdict}
       size={variant === "hero" ? "md" : "sm"}
@@ -194,9 +236,10 @@ export function SlopeVerdictBanner({
             </span>
             <SlopeVerdictSummaryLine
               verdict={ctx.stabilityVerdict}
-              text={summaryLabel}
+              text={primaryLabel}
               className="text-[11px] font-semibold leading-snug line-clamp-2"
               curveRisingHold={risingFlat}
+              emphasizeFinal={exitOverridden}
             />
             {contextNote ? (
               <p className="text-[9px] text-ink-muted leading-snug mt-0.5">{contextNote}</p>
@@ -224,9 +267,10 @@ export function SlopeVerdictBanner({
       </div>
       <SlopeVerdictSummaryLine
         verdict={ctx.stabilityVerdict}
-        text={summaryLabel}
+        text={primaryLabel}
         className={`${textSize} font-semibold leading-snug mt-1.5`}
         curveRisingHold={risingFlat}
+        emphasizeFinal={exitOverridden}
       />
       {contextNote ? (
         <p className="text-[10px] text-ink-muted leading-snug mt-1">{contextNote}</p>

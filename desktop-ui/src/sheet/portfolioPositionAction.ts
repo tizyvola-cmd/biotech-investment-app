@@ -49,6 +49,26 @@ export function portfolioChipToneFromAction(
   return "flat";
 }
 
+export type PiggyRecAction = "buy" | "sell" | "hold" | "review" | "none";
+
+/**
+ * Chip color aligned with Evaluation Lab / Pulse REC.
+ * MTM>0 → always green; MTM loss + Hold/Uncertain → amber (not red);
+ * red only when REC is Sell (or fallback sell action).
+ */
+export function piggyChipToneFromRecAndPnl(
+  rec: PiggyRecAction | null | undefined,
+  pnl: { pnlEur?: number | null; pnlPct?: number | null },
+  fallbackAction: PortfolioPositionAction,
+): "gain" | "loss" | "flat" | "warn" {
+  const pnlTone = portfolioPnlTone(pnl.pnlEur, pnl.pnlPct);
+  if (pnlTone === "gain") return "gain";
+  if (pnlTone === "flat") return "flat";
+  if (rec === "sell") return "loss";
+  if (rec === "hold" || rec === "review" || rec === "buy") return "warn";
+  return portfolioChipToneFromAction(fallbackAction);
+}
+
 export function portfolioTableOutlookFromAction(
   action: PortfolioPositionAction,
 ): PortfolioTableOutlook {

@@ -183,6 +183,8 @@ function savePersisted(state: PersistedState): void {
 
 export function useSignalAlerts(simTable: SheetTable | null) {
   const inputs = useInvestSimInputs(simTable);
+  const inputsRef = useRef(inputs);
+  inputsRef.current = inputs;
   const [alerts, setAlerts] = useState<SignalAlert[]>(() => loadPersisted().alerts);
   const seenIdsRef = useRef<Set<string>>(new Set(loadPersisted().seenIds));
 
@@ -226,7 +228,7 @@ export function useSignalAlerts(simTable: SheetTable | null) {
       let pred5 = toNum(row[colPred5]);
       if (pred5 != null && Math.abs(pred5) <= 1.5 && !String(row[colPred5] ?? "").includes("%"))
         pred5 *= 100;
-      const hasPosition = rowHasActivePortfolio(row, inputs);
+      const hasPosition = rowHasActivePortfolio(row, inputsRef.current);
       let pnlPct: number | null = null;
       if (hasPosition) {
         const m = positionPnlForOpenRow(row, inputs, loadInvestSimHistory());
@@ -243,9 +245,9 @@ export function useSignalAlerts(simTable: SheetTable | null) {
       let kind: AlertKind | null = null;
       let message = "";
 
-      if (hasPosition && pnlPct != null && pnlPct < -8) {
+      if (hasPosition && pnlPct != null && pnlPct <= -5) {
         kind    = "stop";
-        message = `P&L ${fmtPct(pnlPct)} — below stop loss, consider immediate exit`;
+        message = `P&L ${fmtPct(pnlPct)} — reached −5% of position shares, review exit`;
       } else if (hasPosition && ((days != null && days <= 3) || (pnlPct != null && pnlPct > 8))) {
         kind = "exit";
         const why = pnlPct != null && pnlPct > 8
@@ -441,7 +443,7 @@ export function useSignalAlerts(simTable: SheetTable | null) {
       savePersisted({ seenIds: [...seenIdsRef.current], alerts: merged });
       return merged;
     });
-  }, [simTable, inputs, fireNotification]);
+  }, [simTable, fireNotification]); // inputs read via inputsRef — stable callback, no interval churn
 
   // Check on simTable load
   useEffect(() => { checkSignals(); }, [checkSignals]);

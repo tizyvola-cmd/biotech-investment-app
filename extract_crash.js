@@ -1,0 +1,11 @@
+const fs = require('fs');
+const path = require('path');
+const p = path.join(__dirname, 'desktop-ui', 'dist', 'assets', 'index-DGTEwDih.js');
+process.stdout.write('Reading: ' + p + '\n');
+const d = fs.readFileSync(p, 'utf8');
+const lines = d.split('\n');
+const line = lines[218] || '';
+const ctx = line.substring(537400, 537600);
+const out = path.join(__dirname, 'crash_ctx.txt');
+fs.writeFileSync(out, ctx);
+process.stdout.write('Written ' + ctx.length + ' chars to ' + out + '\n');

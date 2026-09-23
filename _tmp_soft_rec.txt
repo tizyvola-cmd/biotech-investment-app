@@ -1,0 +1,27 @@
+﻿{
+  "buys": [],
+  "sells": [
+    {
+      "ticker": "CCCC",
+      "action": "sell",
+      "rule": "Soft SELL G1: P&L -7.7% Γëñ ΓêÆ2.5% with riskΓëÑ40 / regΓëÑ45 / P(plan)<50",
+      "p": 60,
+      "sds": 59.3,
+      "pnl": -7.74,
+      "day": -5.49,
+      "softBuy": false,
+      "softSell": true,
+      "urgent": false
+    }
+  ],
+  "urgentHits": []
+}
+node.exe : BUY (0): ΓÇö
+In riga:1 car:1
++ & "C:\Program Files\nodejs/node.exe" "C:\Program Files\nodejs/node_mo ...
++ ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+    + CategoryInfo          : NotSpecified: (BUY (0): ΓÇö:String) [], RemoteException
+    + FullyQualifiedErrorId : NativeCommandError
+ 
+SELL (1): CCCC
+Urgent G2: ΓÇö ┬╖ budget Γé¼0

@@ -13,13 +13,10 @@ import { SlopeTrendDiagram } from "./SlopeTrendDiagram";
 export function SlopeAlertBanner({
   alerts,
   onOpenSlopeErrorCharts,
-  onNavigateToSimulation,
   compact = false,
 }: {
   alerts: SlopeAlertRow[];
   onOpenSlopeErrorCharts?: (ticker?: string) => void;
-  /** Simulation → riga ticker (sell per uscita / errori pendenza). */
-  onNavigateToSimulation?: (ticker: string, action: "buy" | "sell", cd?: string) => void;
   /** Header Decision Lab: compatto sotto il sottotitolo. */
   compact?: boolean;
 }) {
@@ -81,8 +78,6 @@ export function SlopeAlertBanner({
           ? t("signals.slope.action.acceleration")
           : t("signals.slope.action.keepMonitoring");
 
-    const showConsiderExitLink = !!onNavigateToSimulation && !isAcc;
-
     const diagramTitle = `${a.ticker}: 20d ${fmt(a.slope20d)} → 5d ${fmt(a.slope5d)} pp/d`;
 
     return (
@@ -123,23 +118,8 @@ export function SlopeAlertBanner({
                 </span>
               </>
             ) : null}
-            {showConsiderExitLink ? (
-              <>
-                {" · "}
-                <button
-                  type="button"
-                  onClick={() =>
-                    onNavigateToSimulation!(a.ticker, "sell", a.cd)
-                  }
-                  className="font-semibold text-[rgb(var(--signal-down))] hover:underline underline-offset-2"
-                  title={t("signals.slope.link.considerExitTip")}
-                >
-                  ↩ {t("signals.card.considerExit")}
-                </button>
-              </>
-            ) : (
-              action
-            )}
+            {" · "}
+            {action}
           </span>
         </div>
         <SlopeTrendDiagram

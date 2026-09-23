@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import {
   auditAssessmentChartHarmony,
   curveValuesVsToday,
+  lossAnalysisAlignedXDomain,
 } from "./assessmentChartHarmony";
 import { calendarOffsetsForValueCount } from "./chartNodes";
 import { predPctVsTodayByOffset } from "./precatCurve";
@@ -88,5 +89,11 @@ describe("assessmentChartHarmony", () => {
     });
     expect(audit.aligned).toBe(true);
     expect(audit.maxPredGapPp).toBe(0);
+  });
+
+  it("lossAnalysisAlignedXDomain always frames CD=0, today, and ±90d window", () => {
+    expect(lossAnalysisAlignedXDomain(-45, [-20, 30])).toEqual([-90, 90]);
+    expect(lossAnalysisAlignedXDomain(-90, [-90])).toEqual([-90, 90]);
+    expect(lossAnalysisAlignedXDomain(-20, [])).toEqual([-90, 90]);
   });
 });

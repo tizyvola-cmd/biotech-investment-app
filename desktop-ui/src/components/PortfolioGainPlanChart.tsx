@@ -11,6 +11,7 @@ import {
   YAxis,
 } from "recharts";
 import { renderCdZones } from "../sheet/chartCdZones";
+import { SafeRechartsMount } from "./SafeRechartsMount";
 import type { InvestSimHistoryPoint, InvestSimInputs } from "../sheet/investSimStorage";
 import {
   holdingDayFractionFromInvestedAt,
@@ -27,6 +28,79 @@ import { completionDateToNowOffset, interpolateAtOffset } from "../sheet/chartNo
 import { buildMtmBackfillActualAnchors } from "../sheet/pulseMtmBackfill";
 import { SelectionChip, SelectionChipGroup } from "./SelectionChip";
 import { useLang, useT } from "../shared/i18n";
+import { formatSlopeTrajectoryAxisTick } from "../sheet/slopeErrorCharts";
+import {
+  isLossAnalysisAlignedTile,
+  LOSS_ANALYSIS_ALIGNED_CHART_MARGIN,
+  LOSS_ANALYSIS_ALIGNED_X_AXIS_HEIGHT,
+  LOSS_ANALYSIS_ALIGNED_Y_AXIS_WIDTH,
+  LOSS_ANALYSIS_CHART_SYNC_ID,
+  lossAnalysisChartOffsetGrid,
+} from "../sheet/lossAnalysisChartLayout";
+
+export type GainPlanCalendarXAxis = {
+  todayOffset: number;
+  xDomain: [number, number];
+  xTicks: number[];
+};
+
+function gainPlanDayToCalendarOffset(
+  day: number,
+  row: PortfolioGainChartRow,
+  todayOffset: number,
+): number {
+  const investedAtIso = row.investedAt?.trim() || null;
+  const todayDay =
+    (investedAtIso ? holdingDayFractionFromInvestedAt(investedAtIso) : null) ??
+    row.holdDaysElapsed ??
+    0;
+  if (!investedAtIso) {
+    return todayOffset + day;
+  }
+  return todayOffset - todayDay + day;
+}
+
+type GainPlanCalendarPoint = GainPlanPoint & { offset: number };
+
+function toGainPlanCalendarSeries(
+  series: GainPlanPoint[],
+  row: PortfolioGainChartRow,
+  todayOffset: number,
+  xDomain?: [number, number],
+): GainPlanCalendarPoint[] {
+  const mapped = series
+    .map((p) => ({
+      ...p,
+      offset: gainPlanDayToCalendarOffset(p.day, row, todayOffset),
+    }))
+    .sort((a, b) => a.offset - b.offset);
+
+  if (!xDomain) return mapped;
+
+  const fieldAt = (field: "planned" | "actual" | "historical", off: number): number | null => {
+    const pts = mapped
+      .filter((p) => p[field] != null && Number.isFinite(p[field] as number))
+      .map((p) => ({ offset: p.offset, y: p[field] as number }));
+    if (!pts.length) return null;
+    return interpolateAtOffset(pts, off, { extrapolate: field === "planned" });
+  };
+
+  const out: GainPlanCalendarPoint[] = [];
+  for (const off of lossAnalysisChartOffsetGrid()) {
+    if (off < xDomain[0] || off > xDomain[1]) continue;
+    const exact = mapped.find((p) => Math.abs(p.offset - off) < 0.01);
+    out.push(
+      exact ?? {
+        day: off,
+        offset: off,
+        planned: fieldAt("planned", off),
+        actual: fieldAt("actual", off),
+        historical: fieldAt("historical", off),
+      },
+    );
+  }
+  return out;
+}
 
 export type PortfolioGainChartRow = {
   key: string;
@@ -369,6 +443,7 @@ export function PortfolioGainPlanSingleChart({
   height,
   hideLegend = false,
   planMarkerLabel,
+  calendarXAxis,
 }: {
   row: PortfolioGainChartRow;
   history: InvestSimHistoryPoint[];
@@ -380,6 +455,8 @@ export function PortfolioGainPlanSingleChart({
   hideLegend?: boolean;
   /** Override «Planned exit» marker (e.g. recovery horizon). */
   planMarkerLabel?: string;
+  /** Loss-analysis tile: calendar offsets (CD=0) aligned with pred / slope charts. */
+  calendarXAxis?: GainPlanCalendarXAxis;
 }) {
   const t = useT();
   const { lang } = useLang();
@@ -387,21 +464,34 @@ export function PortfolioGainPlanSingleChart({
   const cardTile = embedded || compact;
 
   const series = useMemo(() => buildGainPlanSeries(row, history), [row, history]);
+  const calendarMode = Boolean(calendarXAxis);
+  const alignedTile = isLossAnalysisAlignedTile({ calendarMode, chartOnly: embedded && hideLegend });
+  const chartSeries = useMemo((): GainPlanPoint[] | GainPlanCalendarPoint[] => {
+    if (!calendarXAxis) return series;
+    return toGainPlanCalendarSeries(
+      series,
+      row,
+      calendarXAxis.todayOffset,
+      calendarXAxis.xDomain,
+    );
+  }, [series, row, calendarXAxis]);
   const isHypothetical = !row.investedAt?.trim();
   const hasHistorical = useMemo(
-    () => series.some((p) => p.historical != null && Number.isFinite(p.historical)),
-    [series],
+    () => chartSeries.some((p) => p.historical != null && Number.isFinite(p.historical)),
+    [chartSeries],
   );
   const minDay = useMemo(() => {
+    if (calendarMode) return calendarXAxis!.xDomain[0];
     let m = 0;
     for (const p of series) m = Math.min(m, p.day);
     return m;
-  }, [series]);
+  }, [calendarMode, calendarXAxis, series]);
   const maxDay = useMemo(() => {
+    if (calendarMode) return calendarXAxis!.xDomain[1];
     let m = 0;
     for (const p of series) m = Math.max(m, p.day);
     return m;
-  }, [series]);
+  }, [calendarMode, calendarXAxis, series]);
 
   const yDomain = useMemo((): [number, number] => {
     let min = 0;
@@ -434,6 +524,43 @@ export function PortfolioGainPlanSingleChart({
   const planDays = row.daysToTarget ?? row.expectedHoldDays ?? null;
   const chartHeight = height ?? (embedded ? 200 : compact ? 220 : 320);
   const tileMode = embedded && hideLegend;
+  const plannedExitOffset =
+    calendarXAxis && planDays != null && planDays > 0
+      ? gainPlanDayToCalendarOffset(planDays, row, calendarXAxis.todayOffset)
+      : null;
+
+  const chartMargin = useMemo(() => {
+    if (alignedTile) return { ...LOSS_ANALYSIS_ALIGNED_CHART_MARGIN };
+    if (tileMode) {
+      return { top: 12, right: 8, left: 22, bottom: 4 };
+    }
+    return {
+      top: embedded ? 10 : compact ? 8 : 12,
+      right: embedded ? 8 : compact ? 12 : 20,
+      left: embedded ? 18 : 4,
+      bottom: embedded ? 0 : compact ? 4 : 8,
+    };
+  }, [alignedTile, tileMode, embedded, compact]);
+
+  const yAxisLabel = useMemo(() => {
+    if (compact && !embedded) return undefined;
+    if (tileMode || embedded) {
+      return {
+        value: it ? "Guadagno €" : "Gain €",
+        angle: -90,
+        position: "left" as const,
+        offset: 2,
+        style: { textAnchor: "middle", fontSize: 9, fill: "#64748b", fontWeight: 600 },
+      };
+    }
+    return {
+      value: it ? "Capitale guadagnato €" : "Capital gained €",
+      angle: -90,
+      position: "left" as const,
+      offset: 4,
+      style: { textAnchor: "middle", fontSize: 10, fill: "#64748b" },
+    };
+  }, [compact, embedded, tileMode, it]);
 
   return (
     <div className={tileMode ? "h-full w-full min-h-0" : cardTile ? "space-y-1.5" : "space-y-3"}>
@@ -513,26 +640,45 @@ export function PortfolioGainPlanSingleChart({
       ) : null}
 
       <div className={tileMode ? "h-full w-full" : "w-full"} style={tileMode ? undefined : { height: chartHeight }}>
-        <ResponsiveContainer width="100%" height={tileMode ? "100%" : chartHeight}>
+        <SafeRechartsMount label="gain-plan" className="h-full w-full">
+        <ResponsiveContainer width="100%" height={tileMode ? "100%" : chartHeight} debounce={50}>
           <LineChart
-            data={series}
-            margin={{
-              top: embedded ? 10 : compact ? 8 : 12,
-              right: embedded ? 8 : compact ? 12 : 20,
-              left: embedded ? 0 : 4,
-              bottom: embedded ? 0 : compact ? 4 : 8,
-            }}
+            data={chartSeries}
+            syncId={alignedTile ? LOSS_ANALYSIS_CHART_SYNC_ID : undefined}
+            margin={chartMargin}
           >
             <CartesianGrid strokeDasharray="3 3" className="opacity-25" />
-            {planDays != null && planDays > 0 && maxDay > planDays
-              ? renderCdZones({ cdX: planDays, xMin: minDay, xMax: maxDay })
-              : null}
+            {calendarMode ? (
+              renderCdZones({
+                cdX: 0,
+                xMin: calendarXAxis!.xDomain[0],
+                xMax: calendarXAxis!.xDomain[1],
+                todayX: calendarXAxis!.todayOffset,
+                hideBadges: alignedTile,
+              })
+            ) : planDays != null && planDays > 0 && maxDay > planDays ? (
+              renderCdZones({ cdX: planDays, xMin: minDay, xMax: maxDay })
+            ) : null}
             <XAxis
-              dataKey="day"
+              dataKey={calendarMode ? "offset" : "day"}
               type="number"
-              domain={[minDay, "dataMax"]}
+              domain={calendarMode ? calendarXAxis!.xDomain : [minDay, "dataMax"]}
+              ticks={calendarMode ? calendarXAxis!.xTicks : undefined}
               tick={{ fontSize: embedded ? 9 : compact ? 10 : 11 }}
-              tickCount={embedded ? 5 : undefined}
+              tickCount={embedded && !calendarMode ? 5 : undefined}
+              interval={calendarMode ? 0 : undefined}
+              height={alignedTile ? LOSS_ANALYSIS_ALIGNED_X_AXIS_HEIGHT : undefined}
+              padding={alignedTile ? { left: 0, right: 0 } : undefined}
+              tickFormatter={
+                calendarMode
+                  ? (d) =>
+                      formatSlopeTrajectoryAxisTick(
+                        Number(d),
+                        calendarXAxis!.todayOffset,
+                        lang,
+                      )
+                  : undefined
+              }
               label={
                 compact && !embedded
                   ? undefined
@@ -542,7 +688,11 @@ export function PortfolioGainPlanSingleChart({
                           ? it
                             ? "Giorni (negativo = prima dell'ingresso)"
                             : "Days (negative = before entry)"
-                          : "Days since entry",
+                          : calendarMode
+                            ? it
+                              ? "Giorni vs CD"
+                              : "Days vs CD"
+                            : "Days since entry",
                         position: "insideBottom",
                         offset: -2,
                         fontSize: 10,
@@ -553,7 +703,7 @@ export function PortfolioGainPlanSingleChart({
             <YAxis
               tick={{ fontSize: embedded ? 9 : compact ? 10 : 11 }}
               domain={yDomain}
-              width={embedded ? 42 : compact ? 48 : 56}
+              width={alignedTile ? LOSS_ANALYSIS_ALIGNED_Y_AXIS_WIDTH : tileMode ? 48 : embedded ? 46 : compact ? 48 : 56}
               tickFormatter={(v) => {
                 const n = Number(v);
                 if (embedded && Math.abs(n) >= 1000) {
@@ -561,22 +711,12 @@ export function PortfolioGainPlanSingleChart({
                 }
                 return `€${n.toLocaleString("en-US", { maximumFractionDigits: 0 })}`;
               }}
-              label={
-                compact
-                  ? undefined
-                  : {
-                      value: "Capital gained €",
-                      angle: -90,
-                      position: "insideLeft",
-                      offset: 12,
-                      fontSize: 10,
-                    }
-              }
+              label={yAxisLabel}
             />
             <Tooltip content={<GainTooltip />} />
             {!cardTile ? <Legend /> : null}
             <ReferenceLine y={0} stroke="rgba(120,120,120,0.45)" strokeDasharray="4 4" />
-            {isHypothetical && hasHistorical ? (
+            {!calendarMode && isHypothetical && hasHistorical ? (
               <ReferenceLine
                 x={0}
                 stroke="rgb(var(--accent))"
@@ -589,7 +729,23 @@ export function PortfolioGainPlanSingleChart({
                 }}
               />
             ) : null}
-            {todayDayCal != null && todayDayCal > 0 ? (
+            {calendarMode && calendarXAxis && !alignedTile ? (
+              <ReferenceLine
+                x={calendarXAxis.todayOffset}
+                stroke="#dc2626"
+                strokeWidth={1.75}
+                strokeDasharray="5 3"
+                label={{
+                  value: "TODAY",
+                  position: "top",
+                  fontSize: 10,
+                  fontWeight: 800,
+                  fill: "#dc2626",
+                  letterSpacing: "0.06em",
+                  offset: 4,
+                }}
+              />
+            ) : !calendarMode && todayDayCal != null && todayDayCal > 0 ? (
               <ReferenceLine
                 x={todayDay ?? todayDayCal}
                 stroke="#dc2626"
@@ -606,7 +762,19 @@ export function PortfolioGainPlanSingleChart({
                 }}
               />
             ) : null}
-            {planDays != null && planDays > 0 && planDays !== todayDayCal ? (
+            {calendarMode && plannedExitOffset != null && plannedExitOffset !== calendarXAxis?.todayOffset ? (
+              <ReferenceLine
+                x={plannedExitOffset}
+                stroke="rgba(120,120,120,0.5)"
+                strokeDasharray="2 4"
+                label={{
+                  value: planMarkerLabel ?? (compact ? "Plan" : "Planned exit"),
+                  position: "insideTopLeft",
+                  fontSize: 9,
+                  fill: "rgb(var(--ink-muted))",
+                }}
+              />
+            ) : !calendarMode && planDays != null && planDays > 0 && planDays !== todayDayCal ? (
               <ReferenceLine
                 x={planDays}
                 stroke="rgba(120,120,120,0.5)"
@@ -620,7 +788,7 @@ export function PortfolioGainPlanSingleChart({
               />
             ) : null}
             <Line
-              type="monotone"
+              type="linear"
               dataKey="planned"
               name={
                 it
@@ -628,30 +796,32 @@ export function PortfolioGainPlanSingleChart({
                   : "Planned gain (recalibrated curve)"
               }
               stroke={GAIN_PLANNED_COLOR}
-              strokeWidth={embedded ? 1.75 : 2}
-              strokeDasharray="6 4"
+              strokeWidth={alignedTile ? 2.5 : embedded ? 1.75 : 2}
+              strokeDasharray={alignedTile ? undefined : "6 4"}
               dot={false}
               connectNulls
+              isAnimationActive={false}
             />
             {hasHistorical ? (
               <Line
-                type="monotone"
+                type="linear"
                 dataKey="historical"
                 name={t("sim.gainPlan.historicalCurve")}
                 stroke={GAIN_HISTORICAL_COLOR}
-                strokeWidth={embedded ? 2 : 2.5}
+                strokeWidth={alignedTile ? 2.5 : embedded ? 2 : 2.5}
                 dot={false}
                 connectNulls
+                isAnimationActive={false}
               />
             ) : null}
             {!isHypothetical || !hasHistorical ? (
               <Line
-                type="monotone"
+                type="linear"
                 dataKey="actual"
                 name={it ? "Gain reale" : "Actual gain"}
                 stroke={GAIN_ACTUAL_COLOR}
-                strokeWidth={embedded ? 2 : 2.5}
-                dot={(props) => {
+                strokeWidth={alignedTile ? 2.75 : embedded ? 2 : 2.5}
+                dot={alignedTile ? false : (props) => {
                   const { cx, cy, index, payload } = props as {
                     cx?: number;
                     cy?: number;
@@ -663,7 +833,8 @@ export function PortfolioGainPlanSingleChart({
                   }
                   const isEnd =
                     index != null &&
-                    (index === series.length - 1 || series[index + 1]?.actual == null);
+                    (index === chartSeries.length - 1 ||
+                      chartSeries[index + 1]?.actual == null);
                   const isStart = index === 0;
                   if (!isStart && !isEnd && (todayDay == null || todayDay > 3)) {
                     return <g key={`actual-dot-skip-${index}`} />;
@@ -681,11 +852,13 @@ export function PortfolioGainPlanSingleChart({
                   );
                 }}
                 activeDot={{ r: 5, fill: GAIN_ACTUAL_COLOR }}
-                connectNulls={false}
+                connectNulls
+                isAnimationActive={false}
               />
             ) : null}
           </LineChart>
         </ResponsiveContainer>
+        </SafeRechartsMount>
       </div>
       {embedded && !hideLegend ? (
         <div className="flex flex-wrap gap-x-3 gap-y-0.5 text-[9px] text-ink-muted">

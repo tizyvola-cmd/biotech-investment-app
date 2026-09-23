@@ -33,6 +33,8 @@ type Props = {
   hasPosition: boolean;
   completionDate: string | null;
   onClose: () => void;
+  /** Scroll carousel to this slide id when opened (e.g. marketSlope, pred, market). */
+  initialSlideId?: string | null;
 };
 
 function ChartSheetErrorBoundary({
@@ -120,6 +122,7 @@ export function MobileCurveChartsSheet({
   hasPosition,
   completionDate,
   onClose,
+  initialSlideId = null,
 }: Props) {
   const { t } = useMobileLang();
   const [charts, setCharts] = useState<MobileCurveChartsPayload | null>(chartsProp ?? null);
@@ -321,11 +324,23 @@ export function MobileCurveChartsSheet({
   }, [charts, t]);
 
   useEffect(() => {
-    if (open) {
-      setActiveIndex(0);
-      carouselRef.current?.scrollTo({ left: 0, behavior: "auto" });
-    }
-  }, [open, rowKey]);
+    if (!open) return;
+    const alias: Record<string, string> = {
+      slope: "marketSlope",
+      slopes: "marketSlope",
+      mii: "market",
+      curves: "pred",
+    };
+    const targetId = initialSlideId ? (alias[initialSlideId] ?? initialSlideId) : null;
+    const idx = targetId ? slides.findIndex((s) => s.id === targetId) : 0;
+    const safeIdx = idx >= 0 ? idx : 0;
+    setActiveIndex(safeIdx);
+    requestAnimationFrame(() => {
+      const el = carouselRef.current;
+      if (!el) return;
+      el.scrollTo({ left: safeIdx * el.clientWidth, behavior: "auto" });
+    });
+  }, [open, rowKey, initialSlideId, slides]);
 
   useEffect(() => {
     if (slides.length > 0 && activeIndex >= slides.length) setActiveIndex(0);

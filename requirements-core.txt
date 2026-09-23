@@ -4,9 +4,25 @@ pandas>=2.0.0
 numpy>=1.24.0
 openpyxl>=3.1.0
 yfinance>=0.2.0
+tqdm>=4.66.0
 scikit-learn>=1.3.0
 matplotlib>=3.7.0
 
 anthropic>=0.40.0
 openai>=1.40.0
+google-genai>=1.0.0
 pdfplumber>=0.11.0
+python-multipart>=0.0.9
+pypdf>=4.0.0
+
+# Mobile PWA Web Push (Soft BUY/SELL lock-screen banners)
+pywebpush>=2.0.0
+
+# Dashboard Google Trends (display-only search-interest; SUPERNOVA_TRENDS=0 to disable)
+pytrends>=4.9.2
+
+# Scale: Postgres tester store + multi-worker (VPS)
+psycopg[binary]>=3.2.0
+gunicorn>=23.0.0
+# Optional R2/S3 CDN publish (scripts/publish_cdn_snapshots.py --upload)
+boto3>=1.34.0

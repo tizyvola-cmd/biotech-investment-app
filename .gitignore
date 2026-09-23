@@ -52,6 +52,7 @@ cik_tickers.json
 *.png
 !assets/supernova_mobile_icon_source.png
 .env
+config/profiles/desktop_web_host.local.env
 
 # Build artifacts / scratch (untracked)
 *.tsbuildinfo

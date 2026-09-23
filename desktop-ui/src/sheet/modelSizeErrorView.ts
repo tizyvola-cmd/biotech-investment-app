@@ -17,6 +17,7 @@ export type ModelSizeErrorView = {
   weekPoints: ModelSizeErrorWeekPoint[];
   hasChart: boolean;
   horizonLabel: string;
+  lastSnapshotIso: string | null;
 };
 
 function linearSlope(ys: number[]): number {
@@ -68,6 +69,9 @@ export function buildModelSizeErrorView(entries: MonitorEntry[]): ModelSizeError
   const deltaVsPrevWeek =
     current && prev ? Math.round((current.maePp - prev.maePp) * 10) / 10 : null;
 
+  const lastSnapshotIso =
+    [...valid].sort((a, b) => Date.parse(a.runIso) - Date.parse(b.runIso)).at(-1)?.runIso ?? null;
+
   const recent = weekPoints.slice(-4).map((p) => p.maePp);
   let trend: ModelSizeErrorTrend = "unknown";
   if (recent.length >= 3) {
@@ -84,6 +88,7 @@ export function buildModelSizeErrorView(entries: MonitorEntry[]): ModelSizeError
     weekPoints,
     hasChart: weekPoints.length >= 2,
     horizonLabel: "T+7",
+    lastSnapshotIso,
   };
 }
 

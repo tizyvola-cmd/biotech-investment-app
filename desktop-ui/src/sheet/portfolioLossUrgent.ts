@@ -7,11 +7,57 @@ import { simulationRowSeriesKey } from "../data/simulationCharts";
 import { buildSimRowByKeyMap } from "./investSimKeys";
 import {
   buildPositions,
+  currentPriceFromRow,
+  isLivePriceDeadFromRow,
   positionPnlForOpenRow,
+  resolveInvestSimEntryForRow,
   rowHasActivePortfolio,
   resolvePortfolioHistory,
 } from "./simulationPosition";
+import { isDiscoverySidecarRow } from "./simCdHorizonScope";
 import { portfolioPnlTone } from "./portfolioGainLossStyle";
+
+/**
+ * Hype / Guidance Calendar / manual sidecars belong in Off Book or Reg
+ * Opportunities. They enter Portfolio Top KPI only after a real book buy
+ * (capital + investedAt) — sheet leftover numbers must not invent a holding.
+ */
+export function sidecarCountsAsPortfolioHolding(
+  row: Record<string, unknown>,
+  inputs: InvestSimInputs,
+): boolean {
+  if (!isDiscoverySidecarRow(row)) return true;
+  const entry = resolveInvestSimEntryForRow(row, inputs);
+  return (
+    !entry.ignoreSheet &&
+    entry.capital > 0 &&
+    Boolean(String(entry.investedAt ?? "").trim())
+  );
+}
+
+/** Last history mark for an open book key — used when live quote is dead. */
+function lastHistoryMarkForKey(
+  hist: InvestSimHistoryPoint[],
+  key: string,
+  capital: number,
+): { valueNow: number; pnlEur: number; pnlPct: number } | null {
+  if (!(capital > 0) || !key) return null;
+  for (let i = hist.length - 1; i >= 0; i--) {
+    const snap = hist[i]?.byTicker?.[key];
+    if (!snap || !(snap.value > 0)) continue;
+    const pnlEur =
+      snap.pnl != null && Number.isFinite(snap.pnl)
+        ? Math.round(snap.pnl * 100) / 100
+        : Math.round((snap.value - capital) * 100) / 100;
+    const pnlPct = Math.round((pnlEur / capital) * 10000) / 100;
+    return {
+      valueNow: Math.round(snap.value * 100) / 100,
+      pnlEur,
+      pnlPct,
+    };
+  }
+  return null;
+}
 
 const DISMISS_KEY = "supernova_portfolio_loss_urgent_dismiss_v1";
 const BATCH_ACK_KEY = "supernova_portfolio_loss_modal_batch_v1";
@@ -77,6 +123,11 @@ export type PortfolioLossAlert = {
   valueNow: number;
   buyPrice: number;
   seriesKey: string | null;
+  /**
+   * Live feed marked the quote dead/stale (typical for expired/illiquid warrants
+   * like JSPRW). Row must stay in Evaluation — P&L may be history/cost fallback.
+   */
+  livePriceDead?: boolean;
 };
 
 type DismissEntry = {
@@ -145,6 +196,7 @@ export function detectPortfolioLossAlerts(
     if (p.capital <= 0 || p.buyPrice <= 0) continue;
     const row = rowByKey.get(p.key);
     if (!row || !rowHasActivePortfolio(row, inputs)) continue;
+    if (!sidecarCountsAsPortfolioHolding(row, inputs)) continue;
 
     const metrics = positionPnlForOpenRow(row, inputs, hist);
     const pnlEur = metrics.pnlEur;
@@ -181,14 +233,45 @@ export function detectPortfolioPositionAlerts(
   const out: PortfolioLossAlert[] = [];
 
   for (const p of positions) {
-    if (p.capital <= 0 || p.buyPrice <= 0) continue;
+    if (p.capital <= 0) continue;
     const row = rowByKey.get(p.key);
     if (!row || !rowHasActivePortfolio(row, inputs)) continue;
+    if (!sidecarCountsAsPortfolioHolding(row, inputs)) continue;
+
+    const rawBuy = inputs[p.key]?.buyPrice ?? 0;
+    const buyPrice = p.buyPrice > 0 ? p.buyPrice : rawBuy > 0 ? rawBuy : 0;
+    if (buyPrice <= 0) continue;
 
     const metrics = positionPnlForOpenRow(row, inputs, hist);
-    const pnlEur = metrics.pnlEur;
-    const pnlPct = metrics.pnlPct;
-    if (pnlEur == null || pnlPct == null) continue;
+    let pnlEur = metrics.pnlEur;
+    let pnlPct = metrics.pnlPct;
+    let valueNow = p.valueNow > 0 ? p.valueNow : 0;
+    const livePx = currentPriceFromRow(row);
+    const livePriceDead =
+      isLivePriceDeadFromRow(row) || !(livePx != null && livePx > 0);
+    // Fallback MTM so restored opens (sparse history / transient pnlUnavailable)
+    // still enter the recommendation engine instead of showing "—" in Pulse.
+    if ((pnlEur == null || pnlPct == null) && p.currPrice != null && p.currPrice > 0) {
+      valueNow = Math.round((p.capital / buyPrice) * p.currPrice * 100) / 100;
+      pnlEur = Math.round((valueNow - p.capital) * 100) / 100;
+      pnlPct = Math.round(((p.currPrice - buyPrice) / buyPrice) * 10000) / 100;
+    }
+    // Dead/stale warrants (JSPRW…): live refresh nulls price — keep the open
+    // book visible in Evaluation with history mark, else flat at cost.
+    if (pnlEur == null || pnlPct == null) {
+      const fromHist = lastHistoryMarkForKey(hist, p.key, p.capital);
+      if (fromHist) {
+        valueNow = fromHist.valueNow;
+        pnlEur = fromHist.pnlEur;
+        pnlPct = fromHist.pnlPct;
+      } else if (buyPrice > 0 && p.capital > 0) {
+        valueNow = p.capital;
+        pnlEur = 0;
+        pnlPct = 0;
+      } else {
+        continue;
+      }
+    }
 
     out.push({
       key: p.key,
@@ -197,9 +280,10 @@ export function detectPortfolioPositionAlerts(
       pnlEur,
       pnlPct,
       capital: p.capital,
-      valueNow: p.valueNow,
-      buyPrice: p.buyPrice,
+      valueNow: valueNow > 0 ? valueNow : p.valueNow,
+      buyPrice,
       seriesKey: simulationRowSeriesKey(row),
+      livePriceDead: livePriceDead || undefined,
     });
   }
 

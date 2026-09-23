@@ -7,6 +7,7 @@
 import { fetchProjectJson } from "../data/projectData";
 import { api } from "./supernova";
 import { eisCdDistanceFactor } from "../sheet/cdPatternHorizons";
+import type { EisSuperScoreOverview } from "../sheet/eisSuperScoreLearningView";
 
 export type EisSuperScoreWindowState = {
   cal_factor?: number;
@@ -29,6 +30,16 @@ export function parseEisSuperScoreState(raw: unknown): EisSuperScoreState | null
 export async function loadEisSuperScoreState(): Promise<EisSuperScoreState | null> {
   const { data } = await fetchProjectJson<Record<string, unknown>>("eis_super_score_learning.json");
   return parseEisSuperScoreState(data);
+}
+
+export function parseEisSuperScoreOverview(raw: unknown): EisSuperScoreOverview | null {
+  if (!raw || typeof raw !== "object") return null;
+  return raw as EisSuperScoreOverview;
+}
+
+export async function loadEisSuperScoreOverview(): Promise<EisSuperScoreOverview | null> {
+  const { data } = await fetchProjectJson<Record<string, unknown>>("eis_super_score_learning.json");
+  return parseEisSuperScoreOverview(data);
 }
 
 /** Compute super score using backend Python (source of truth). */

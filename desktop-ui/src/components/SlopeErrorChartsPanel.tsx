@@ -1390,7 +1390,7 @@ export function SlopeErrorChartsPanel({
         </div>
       ) : (
         <>
-          <div className="sticky top-0 z-20 shrink-0 rounded-xl border border-[rgb(var(--panel-feed-border))]/55 bg-[rgb(var(--panel-feed-header-bg))]/95 backdrop-blur-sm px-3 py-2.5 shadow-[0_2px_10px_rgb(99_102_241/0.08)]">
+          <div className="sticky top-0 z-20 shrink-0 rounded-xl border border-[rgb(var(--panel-feed-border))]/55 bg-[rgb(var(--panel-feed-header-bg))] px-3 py-2.5 shadow-[0_2px_10px_rgb(99_102_241/0.08)]">
             <p className="text-[9px] text-ink-muted leading-snug mb-2">
               {t("signals.slopeCharts.nav.hint")}
             </p>

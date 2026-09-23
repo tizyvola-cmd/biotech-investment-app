@@ -1,31 +1,47 @@
-import type { ReactNode } from "react";
 import type { AppScreen } from "../types";
 import { SCREEN_LABEL_KEYS } from "./AppSidebar";
-import { RefreshLiveBadge } from "./InvestmentDecisionLabView";
-import { setRefreshModalOpen, useRefreshStatus } from "../shared/refreshStatusStore";
+import { RefreshLiveBadge } from "./RefreshDataModal";
+import {
+  setRefreshModalOpen,
+  setWeeklyFullServerRunningOpen,
+  useRefreshStatus,
+} from "../shared/refreshStatusStore";
 import { useLang, useT } from "../shared/i18n";
 import { getRemoteApiBase, isRemoteDataMode } from "../shared/remoteHost";
+import { CatalystTopRefresh } from "./CatalystTopRefresh";
+import { DESK_CALENDAR_HORIZON_DAYS } from "../sheet/deskCalendarEvents";
 
 export function AppTopBar({
   screen,
   desktopManifest: _desktopManifest,
   apiOk,
   status: _status,
-  notificationBell,
   canGoBack = false,
   previousScreen = null,
   onGoBack,
-  onMenuOpen,
+  accountEmail: _accountEmail = null,
+  onSwitchAccount: _onSwitchAccount,
+  onSignOutAccount: _onSignOutAccount,
+  showApiOffline = false,
 }: {
   screen: AppScreen;
   desktopManifest: string | null;
   apiOk: boolean | null;
   status: { workbook_mtime?: string | null } | null;
-  notificationBell?: ReactNode;
   canGoBack?: boolean;
   previousScreen?: AppScreen | null;
   onGoBack?: () => void;
+  /** @deprecated Top nav replaced the hamburger menu. */
   onMenuOpen?: () => void;
+  /**
+   * Email still required at login and stored in the tester registry —
+   * intentionally not shown in the top bar (server / shared UI).
+   */
+  accountEmail?: string | null;
+  onSwitchAccount?: () => void;
+  onSignOutAccount?: () => void;
+  /** Owner/admin only — testers must not see operational «API offline» signals. */
+  showApiOffline?: boolean;
 }) {
   const t = useT();
   const { lang } = useLang();
@@ -40,6 +56,7 @@ export function AppTopBar({
     month: "short",
     year: "numeric",
   });
+  const catalystTopRefresh = screen === "catalystDesk";
 
   const backTitle =
     previousScreen != null
@@ -47,20 +64,8 @@ export function AppTopBar({
       : t("topbar.back");
 
   return (
-    <header className="h-[52px] shrink-0 flex items-center gap-3 px-4 sm:px-5 border-b border-[rgb(var(--border))]/60 bg-[rgb(var(--surface))]">
+    <header className="h-[48px] shrink-0 flex items-center gap-3 px-4 sm:px-5 bg-[rgb(var(--bg-deep))]">
       <div className="flex items-center gap-2 min-w-0">
-        {onMenuOpen ? (
-          <button
-            type="button"
-            className="lg:hidden shrink-0 inline-flex items-center justify-center w-9 h-9 rounded-lg border border-[rgb(var(--border))]/60 bg-[rgb(var(--surface-2))]/80 text-ink hover:border-[rgb(var(--accent))]/40 hover:bg-[rgb(var(--accent))]/8 transition-colors"
-            onClick={onMenuOpen}
-            aria-label={t("topbar.openMenu")}
-          >
-            <span className="text-lg leading-none" aria-hidden>
-              ☰
-            </span>
-          </button>
-        ) : null}
         {canGoBack && onGoBack ? (
           <button
             type="button"
@@ -75,10 +80,14 @@ export function AppTopBar({
           </button>
         ) : null}
         <div className="flex items-baseline gap-3 min-w-0">
-          <h1 className="text-[15px] font-bold tracking-tight truncate">
-            {t(SCREEN_LABEL_KEYS[screen])}
+          <h1 className="text-[18px] font-semibold tracking-tight truncate text-ink">
+            {screen === "catalystDesk"
+              ? lang === "it"
+                ? `Prossimi ${DESK_CALENDAR_HORIZON_DAYS} Catalyst Days`
+                : `Next ${DESK_CALENDAR_HORIZON_DAYS} Catalyst Days`
+              : t(SCREEN_LABEL_KEYS[screen])}
           </h1>
-          <span className="text-[11px] text-ink-muted hidden sm:inline">{today}</span>
+          <span className="text-[12px] text-ink-muted hidden sm:inline">{today}</span>
         </div>
       </div>
 
@@ -95,20 +104,20 @@ export function AppTopBar({
           <RefreshLiveBadge
             info={life}
             finishedAt={finishedAt}
-            onOpenModal={() => setRefreshModalOpen(true)}
+            onOpenModal={() => {
+              if (life.fromServerWeeklyFull && life.state === "running") {
+                setWeeklyFullServerRunningOpen(true);
+                return;
+              }
+              setRefreshModalOpen(true);
+            }}
           />
         )}
-        {apiOk === false && (
+        {apiOk === false && showApiOffline && (
           <span className="text-[10px] text-[rgb(var(--signal-down))] font-medium">{t("topbar.apiOffline")}</span>
         )}
-        {notificationBell}
-        <div
-          className="w-7 h-7 rounded-full flex items-center justify-center text-[11px] font-bold text-white"
-          style={{ background: "linear-gradient(135deg, rgb(var(--accent)), rgb(var(--purple-soft)))" }}
-          title="User"
-        >
-          TR
-        </div>
+        {/* Catalyst: Refresh top-right. Signal bell removed. Zoom lives bottom-right. */}
+        {catalystTopRefresh ? <CatalystTopRefresh /> : null}
       </div>
     </header>
   );

@@ -11,12 +11,10 @@ import {
 import type { SimLoopSizingVariant } from "../sheet/simLoopSizingVariant";
 import { SimLoopSizingVariantToggle } from "./SimLoopSizingVariantToggle";
 import { TradePortfolioChart } from "./TradePortfolioChart";
-import { DECISION_SIM_PAIR_CHART_HEIGHT } from "./decisionSimChartLayout";
+import { DECISION_SIM_PAIR_CHART_HEIGHT, DECISION_SIM_EXPERIMENT_CHART_HEIGHT } from "./decisionSimChartLayout";
 import { buildSimRowByKeyMap } from "../sheet/investSimKeys";
 import {
   lastTradingSessionCutoffIso,
-  lastUsEquitySessionDayKey,
-  formatSessionDayKey,
 } from "../sheet/marketSession";
 
 export function DecisionSimPnlCharts({
@@ -39,6 +37,8 @@ export function DecisionSimPnlCharts({
   simLoopSizedTotalCapitalEur: _simLoopSizedTotalCapitalEur,
   sizingVariant = "equal",
   onSizingVariantChange,
+  stripMode = false,
+  experimentChartHeight,
 }: {
   ticks: DecisionSimTick[];
   livePiggy: ExperimentPiggyBank;
@@ -63,13 +63,16 @@ export function DecisionSimPnlCharts({
   simLoopSizedTotalCapitalEur?: number;
   sizingVariant?: SimLoopSizingVariant;
   onSizingVariantChange?: (v: SimLoopSizingVariant) => void;
+  /** Compact single card for 4-across chart strip. */
+  stripMode?: boolean;
+  /** Override chart height in strip / experiment row. */
+  experimentChartHeight?: number;
 }) {
   const t = useT();
   const { lang } = useLang();
   const [timeWindow, setTimeWindow] = useState<"all" | "24h">("24h");
 
   const sessionCutoffIso = useMemo(() => lastTradingSessionCutoffIso(), []);
-  const sessionDayKey = useMemo(() => lastUsEquitySessionDayKey(), []);
 
   const visibleTicks = useMemo(
     () =>
@@ -168,18 +171,24 @@ export function DecisionSimPnlCharts({
   if (!hasTradeData) {
     return (
       <div
-        className={`tester-monitor-panel rounded-xl flex items-center justify-center ${compact ? "p-2 min-h-[260px]" : "p-3"} ${className ?? ""}`}
+        className={`tester-monitor-panel rounded-xl flex items-center justify-center ${
+          stripMode ? "p-2 h-full" : compact ? "p-2 min-h-[260px]" : "p-3"
+        } ${className ?? ""}`}
       >
-        <p className="tester-monitor-muted text-[10px] text-center leading-relaxed px-2">
+        <p className="tester-monitor-muted text-[9px] text-center leading-relaxed px-2">
           {t("testerMonitor.decisionSim.chart.pnlEmpty")}
         </p>
       </div>
     );
   }
 
+  const stripChartH = experimentChartHeight ?? DECISION_SIM_EXPERIMENT_CHART_HEIGHT;
+
   return (
     <div
-      className={`tester-monitor-panel rounded-xl flex flex-col h-full min-h-0 ${compact ? "p-2" : "p-3 shrink-0"} ${className ?? ""}`}
+      className={`tester-monitor-panel rounded-xl flex flex-col min-h-0 ${
+        stripMode ? "p-2 h-full overflow-hidden" : `h-full ${compact ? "p-2" : "p-3 shrink-0"}`
+      } ${className ?? ""}`}
     >
       <TradePortfolioChart
         trades={tradePortfolio.trades}
@@ -195,25 +204,31 @@ export function DecisionSimPnlCharts({
             sizingVariant !== "equal",
         )}
         compact
-        pairLayout={compact}
-        pairPreChartHeight={pairPreChartHeight}
-        chartHeight={compact ? DECISION_SIM_PAIR_CHART_HEIGHT : 280}
+        pairLayout={compact && !stripMode}
+        pairPreChartHeight={stripMode ? null : pairPreChartHeight}
+        chartHeight={stripMode ? stripChartH : compact ? DECISION_SIM_PAIR_CHART_HEIGHT : 280}
         headerSlot={
-          <div className="flex flex-wrap items-center justify-between gap-1.5 min-w-0">
+          <div className="flex flex-wrap items-center justify-between gap-1 min-w-0">
             <p
               className={`tester-monitor-text font-semibold min-w-0 truncate ${
-                compact ? "text-[10px]" : "text-[11px]"
+                stripMode || compact ? "text-[10px]" : "text-[11px]"
               }`}
               title={chartTitle}
             >
-              {chartTitle}
+              {stripMode
+                ? lang === "it"
+                  ? "P&L 24h"
+                  : "Daily 24h P&L"
+                : chartTitle}
             </p>
-            <div className="flex flex-wrap items-center gap-1 shrink-0">
-              <SimLoopSizingVariantToggle
-                value={sizingVariant}
-                onChange={(v) => onSizingVariantChange?.(v)}
-                compact
-              />
+            <div className="flex flex-wrap items-center gap-0.5 shrink-0">
+              {!stripMode ? (
+                <SimLoopSizingVariantToggle
+                  value={sizingVariant}
+                  onChange={(v) => onSizingVariantChange?.(v)}
+                  compact
+                />
+              ) : null}
               <button
                 type="button"
                 onClick={() => setTimeWindow((v) => (v === "all" ? "24h" : "all"))}
@@ -221,28 +236,27 @@ export function DecisionSimPnlCharts({
                   timeWindow === "24h"
                     ? "border-indigo-300/70 bg-indigo-50/90 text-indigo-800 dark:border-indigo-700/50 dark:bg-indigo-950/30 dark:text-indigo-200"
                     : "border-[rgb(var(--panel-feed-border))]/60 bg-white/90 text-[rgb(var(--panel-feed-accent-strong))] hover:bg-[rgb(var(--panel-feed-row-hover))]/45"
-                } ${compact ? "text-[9px] px-2 py-0.5" : "text-[10px] px-2.5 py-1"}`}
+                } text-[8px] px-1.5 py-0.5`}
                 title={
                   timeWindow === "all"
-                    ? (lang === "it" ? `Zoom sull'ultima sessione (${formatSessionDayKey(sessionDayKey, "it")})` : `Zoom last session (${formatSessionDayKey(sessionDayKey, "en")})`)
-                    : (lang === "it" ? "Mostra storico completo" : "Show full history")
+                    ? (lang === "it" ? `Zoom sessione` : `Session zoom`)
+                    : (lang === "it" ? "Storico completo" : "Full history")
                 }
               >
-                {timeWindow === "all"
-                  ? (lang === "it" ? `📅 24h borsa` : `📅 Last session`)
-                  : (lang === "it" ? `↔ Tutto` : `↔ All`)}
+                {timeWindow === "all" ? "24h" : "All"}
               </button>
             </div>
           </div>
         }
       />
 
-      {/* Open positions still maturing in the sim loop */}
-      <OpenSimLoopPositionsTable
-        paperPortfolio={paperPortfolio}
-        liveEvaluations={liveEvaluations}
-        simTable={simTable}
-      />
+      {!stripMode ? (
+        <OpenSimLoopPositionsTable
+          paperPortfolio={paperPortfolio}
+          liveEvaluations={liveEvaluations}
+          simTable={simTable}
+        />
+      ) : null}
     </div>
   );
 }
@@ -295,7 +309,7 @@ function actionBadge(action: TickerSimEvaluation["suggestedAction"]): {
       };
     case "review":
       return {
-        label: "REVIEW",
+        label: "UNCERTAIN",
         cls: "bg-amber-100 text-amber-800 dark:bg-amber-900/40 dark:text-amber-200",
       };
     default:

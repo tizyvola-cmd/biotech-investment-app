@@ -198,11 +198,20 @@ export function fmtPred7Pct(v: number | null): string | null {
   return `${sign}${pct.toFixed(1)}%`;
 }
 
+/** "T−12d" / "today" / "T+3d" for upcoming CD chips. */
+export function fmtDaysToCd(days: number | null | undefined, lang: "it" | "en" = "en"): string {
+  if (days == null || !Number.isFinite(days)) return "—";
+  const d = Math.round(days);
+  if (d === 0) return lang === "it" ? "oggi" : "today";
+  if (d > 0) return `T−${d}${lang === "it" ? "g" : "d"}`;
+  return `T+${Math.abs(d)}${lang === "it" ? "g" : "d"}`;
+}
+
 export function recActionTone(action: string): "up" | "down" | "warn" | "neutral" {
   const a = action.toUpperCase();
   if (a === "BUY") return "up";
   if (a === "SELL") return "down";
-  if (a === "REVIEW" || a === "MANTIENI" || a === "HOLD") return "warn";
+  if (a === "REVIEW" || a === "UNCERTAIN" || a === "INCERTO" || a === "MANTIENI" || a === "HOLD") return "warn";
   return "neutral";
 }
 
@@ -220,6 +229,18 @@ export function fmtFeedDate(iso: string, lang: MobileLang = "en"): string {
   });
 }
 
+export const SNAPSHOT_STALE_MINUTES = 30;
+
+export function isSnapshotStale(
+  updatedAt: string | null | undefined,
+  maxAgeMin = SNAPSHOT_STALE_MINUTES,
+): boolean {
+  if (!updatedAt) return true;
+  const d = new Date(updatedAt);
+  if (Number.isNaN(d.getTime())) return true;
+  return Date.now() - d.getTime() > maxAgeMin * 60_000;
+}
+
 export function snapshotAgeLabel(
   updatedAt: string | null | undefined,
   lang: MobileLang = "en",
@@ -228,8 +249,10 @@ export function snapshotAgeLabel(
   const d = new Date(updatedAt);
   if (Number.isNaN(d.getTime())) return null;
   const diffMin = Math.round((Date.now() - d.getTime()) / 60000);
-  if (diffMin < 2) return t("sync.now", lang);
-  if (diffMin < 60) return t("sync.minAgo", lang, { n: diffMin });
-  const h = Math.round(diffMin / 60);
-  return t("sync.hAgo", lang, { n: h });
+  let age: string;
+  if (diffMin < 2) age = t("sync.now", lang);
+  else if (diffMin < 60) age = t("sync.minAgo", lang, { n: diffMin });
+  else age = t("sync.hAgo", lang, { n: Math.round(diffMin / 60) });
+  if (isSnapshotStale(updatedAt)) return t("sync.stale", lang, { age });
+  return age;
 }

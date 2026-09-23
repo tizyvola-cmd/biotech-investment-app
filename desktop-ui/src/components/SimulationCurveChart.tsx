@@ -1,10 +1,12 @@
 import {
+  Bar,
+  BarChart,
   CartesianGrid,
+  Cell,
   ComposedChart,
   ErrorBar,
   Legend,
   Line,
-  LineChart,
   ReferenceDot,
   ReferenceLine,
   ResponsiveContainer,
@@ -52,6 +54,7 @@ import {
   CHART_CURVES_TOOLTIP_TITLE,
   chartCurvesLegendStyle,
 } from "../sheet/chartTheme";
+import { useLang } from "../shared/i18n";
 
 export type { NowOffsetMarker } from "../sheet/chartNowOffset";
 
@@ -497,6 +500,8 @@ function CurveTooltipBody({
   payload?: { dataKey?: string; value?: number; payload?: Record<string, unknown> }[];
   onOpenSecK8?: (ticker: string) => void;
 }) {
+  const { lang } = useLang();
+  const it = lang === "it";
   if (!payload?.length) return null;
   const aiFeed = payload.find((p) => {
     const pl = p.payload as AiFeedChartMarker | undefined;
@@ -508,21 +513,21 @@ function CurveTooltipBody({
       <div className={`${CHART_CURVES_TOOLTIP} max-w-[260px]`}>
         <p className={CHART_CURVES_TOOLTIP_TITLE}>{aiFeed.ticker} · {aiFeed.label}</p>
         <p className={`${CHART_CURVES_TOOLTIP_MUTED} mt-0.5 text-[10px] leading-snug`}>{aiFeed.eventTitle}</p>
-        <p className={`${CHART_CURVES_TOOLTIP_MUTED} mt-0.5`}>Days from CD: {aiFeed.offset > 0 ? `+${aiFeed.offset}` : aiFeed.offset}</p>
-        <p className="tabular-nums mt-1">Δ% at publication: {fmtPctAxis(aiFeed.y)}%</p>
+        <p className={`${CHART_CURVES_TOOLTIP_MUTED} mt-0.5`}>{it ? "Giorni dal CD:" : "Days from CD:"} {aiFeed.offset > 0 ? `+${aiFeed.offset}` : aiFeed.offset}</p>
+        <p className="tabular-nums mt-1">{it ? "Δ% alla pubblicazione:" : "Δ% at publication:"} {fmtPctAxis(aiFeed.y)}%</p>
         {aiFeed.verified && (
           <p className="text-[10px] font-semibold mt-1" style={{ color: "#16a34a" }}>
             ✓ {referenceMatchLabel(aiFeed.referenceMatch, false)}
           </p>
         )}
-        {aiFeed.eventDate && <p className={`text-[10px] ${CHART_CURVES_TOOLTIP_MUTED} mt-0.5`}>Event: {aiFeed.eventDate}</p>}
+        {aiFeed.eventDate && <p className={`text-[10px] ${CHART_CURVES_TOOLTIP_MUTED} mt-0.5`}>{it ? "Evento:" : "Event:"} {aiFeed.eventDate}</p>}
         {aiFeed.link && (
           <button
             type="button"
             className="text-accent hover:underline text-[10px] mt-2 block"
             onClick={(e) => openExternalUrl(aiFeed.link!, e)}
           >
-            Source →
+            {it ? "Fonte →" : "Source →"}
           </button>
         )}
       </div>
@@ -538,9 +543,9 @@ function CurveTooltipBody({
     return (
       <div className={`${CHART_CURVES_TOOLTIP} max-w-[240px]`}>
         <p className={CHART_CURVES_TOOLTIP_TITLE}>{k8.ticker} · {k8.label}</p>
-        <p className={`${CHART_CURVES_TOOLTIP_MUTED} mt-0.5`}>Days from CD: {k8.offset > 0 ? `+${k8.offset}` : k8.offset}</p>
-        <p className="tabular-nums mt-1">Δ% historical: {fmtPctAxis(k8.y)}%</p>
-        {k8.filingDate && <p className={`text-[10px] ${CHART_CURVES_TOOLTIP_MUTED} mt-0.5`}>Filing: {k8.filingDate}</p>}
+        <p className={`${CHART_CURVES_TOOLTIP_MUTED} mt-0.5`}>{it ? "Giorni dal CD:" : "Days from CD:"} {k8.offset > 0 ? `+${k8.offset}` : k8.offset}</p>
+        <p className="tabular-nums mt-1">{it ? "Δ% storico:" : "Δ% historical:"} {fmtPctAxis(k8.y)}%</p>
+        {k8.filingDate && <p className={`text-[10px] ${CHART_CURVES_TOOLTIP_MUTED} mt-0.5`}>{it ? "Filing:" : "Filing:"} {k8.filingDate}</p>}
         <div className="flex flex-wrap gap-2 mt-2">
           {k8.edgarHref && (
             <button
@@ -548,7 +553,7 @@ function CurveTooltipBody({
               className="text-accent hover:underline text-[10px]"
               onClick={(e) => openExternalUrl(k8.edgarHref!, e)}
             >
-              Read SEC filing →
+              {it ? "Leggi filing SEC →" : "Read SEC filing →"}
             </button>
           )}
           {k8.browseHref && (
@@ -557,7 +562,7 @@ function CurveTooltipBody({
               className="text-accent hover:underline text-[10px]"
               onClick={(e) => openExternalUrl(k8.browseHref!, e)}
             >
-              8-K list →
+              {it ? "Elenco 8-K →" : "8-K list →"}
             </button>
           )}
           {onOpenSecK8 && (
@@ -569,7 +574,7 @@ function CurveTooltipBody({
                 onOpenSecK8(k8.ticker);
               }}
             >
-              SEC 8-K sheet →
+              {it ? "Foglio SEC 8-K →" : "SEC 8-K sheet →"}
             </button>
           )}
         </div>
@@ -579,7 +584,7 @@ function CurveTooltipBody({
 
   return (
     <div className={CHART_CURVES_TOOLTIP}>
-      <p className={`${CHART_CURVES_TOOLTIP_MUTED} mb-1`}>Days from CD: {label}</p>
+      <p className={`${CHART_CURVES_TOOLTIP_MUTED} mb-1`}>{it ? "Giorni dal CD:" : "Days from CD:"} {label}</p>
       {payload.map((p) => (
         <p key={String(p.dataKey)} className="tabular-nums">
           <span style={{ color: (p as { color?: string }).color }}>{p.dataKey}: </span>
@@ -658,6 +663,8 @@ export function SimulationCurveChart({
   /** Include standard grid + K-8 +1/+2/+3 + AI pub +1/+2/+3 in % line paths (not only scatter). */
   includeRecalibExtrasInCurves?: boolean;
 }) {
+  const { lang } = useLang();
+  const it = lang === "it";
   const active = lines.filter((l) => l.points?.length);
   const data = mergeRows(active, includeRecalibExtrasInCurves);
   const k8Active = k8Markers.filter((m) => Number.isFinite(m.y));
@@ -671,13 +678,13 @@ export function SimulationCurveChart({
       id: spec.id,
     })),
     ...(nowDots.length
-      ? [{ value: "📍 Today on curve", type: "circle" as const, color: NOW_MARKER_FILL, id: "now-legend" }]
+      ? [{ value: it ? "📍 Oggi sulla curva" : "📍 Today on curve", type: "circle" as const, color: NOW_MARKER_FILL, id: "now-legend" }]
       : []),
     ...(k8Active.length
-      ? [{ value: "8-K post-filing (historical Δ%)", type: "diamond" as const, color: "#f59e0b", id: "k8-legend" }]
+      ? [{ value: it ? "8-K post-filing (Δ% storico)" : "8-K post-filing (historical Δ%)", type: "diamond" as const, color: "#f59e0b", id: "k8-legend" }]
       : []),
     ...(aiFeedActive.length
-      ? [{ value: "AI feed · ref. verificata (▲✓)", type: "triangle" as const, color: AI_FEED_MARKER_COLOR, id: "aifeed-legend" }]
+      ? [{ value: it ? "AI feed · ref. verificata (▲✓)" : "AI feed · verified ref. (▲✓)", type: "triangle" as const, color: AI_FEED_MARKER_COLOR, id: "aifeed-legend" }]
       : []),
   ];
   const allOffsets = [
@@ -699,7 +706,9 @@ export function SimulationCurveChart({
       <div className={CHART_CURVES_PANEL_EMPTY}>
         <h3 className={CHART_CURVES_TITLE_SIMPLE}>{title}</h3>
         <p className={CHART_CURVES_EMPTY_MSG}>
-          Not enough data for the chart (at least 2 nodes are required).
+          {it
+            ? "Dati insufficienti per il grafico (servono almeno 2 nodi)."
+            : "Not enough data for the chart (at least 2 nodes are required)."}
         </p>
       </div>
     );
@@ -777,7 +786,7 @@ export function SimulationCurveChart({
               <Scatter
                 data={k8Active}
                 dataKey="y"
-                name="8-K post-filing (historical Δ%)"
+                name={it ? "8-K post-filing (Δ% storico)" : "8-K post-filing (historical Δ%)"}
                 legendType="none"
                 shape={(props: { cx?: number; cy?: number; payload?: K8ChartMarker }) => (
                   <K8DiamondShape cx={props.cx} cy={props.cy} payload={props.payload} />
@@ -788,7 +797,7 @@ export function SimulationCurveChart({
               <Scatter
                 data={aiFeedActive}
                 dataKey="y"
-                name="AI feed publication (recalibration)"
+                name={it ? "Pubblicazione AI feed (ricalibrazione)" : "AI feed publication (recalibration)"}
                 legendType="none"
                 shape={(props: { cx?: number; cy?: number; payload?: AiFeedChartMarker }) => (
                   <AiFeedTriangleShape cx={props.cx} cy={props.cy} payload={props.payload} />
@@ -801,13 +810,19 @@ export function SimulationCurveChart({
       <p className={CHART_CURVES_FOOTER}>
         {yLabel}
         {nowMarkers.length > 0
-          ? " · 📍 pin = today on the CD calendar · value on the visible curve at today"
+          ? (it
+              ? " · 📍 pin = oggi sul calendario CD · valore sulla curva visibile a oggi"
+              : " · 📍 pin = today on the CD calendar · value on the visible curve at today")
           : ""}
         {k8Active.length > 0
-          ? " · ◆ = historical Δ% post 8-K (color = ticker pred curve · tooltip → SEC)"
+          ? (it
+              ? " · ◆ = Δ% storico post 8-K (colore = curva pred ticker · tooltip → SEC)"
+              : " · ◆ = historical Δ% post 8-K (color = ticker pred curve · tooltip → SEC)")
           : ""}
         {aiFeedActive.length > 0
-          ? " · ▲ viola + ✓ verde = pubblicazione clinica con referenza verificata (società/farmaco)"
+          ? (it
+              ? " · ▲ viola + ✓ verde = pubblicazione clinica con referenza verificata (società/farmaco)"
+              : " · ▲ purple + ✓ green = clinical publication with verified reference (company/drug)")
           : ""}
       </p>
     </div>
@@ -818,6 +833,7 @@ export function VariationHorizonChart({
   title,
   series,
   height = 180,
+  hideTitle = false,
 }: {
   title: string;
   series: {
@@ -827,7 +843,10 @@ export function VariationHorizonChart({
     horizons: { label: string; pct: number | null }[];
   }[];
   height?: number;
+  hideTitle?: boolean;
 }) {
+  const { lang } = useLang();
+  const it = lang === "it";
   const labels = [...SIM_VAR_HORIZON_LABELS];
   const data = labels.map((lab, i) => {
     const row: Record<string, string | number> = { horizon: lab, idx: i };
@@ -851,24 +870,31 @@ export function VariationHorizonChart({
   if (!hasData) {
     return (
       <div className={CHART_CURVES_PANEL_EMPTY}>
-        <h3 className={CHART_CURVES_TITLE_SIMPLE}>{title}</h3>
+        {!hideTitle ? <h3 className={CHART_CURVES_TITLE_SIMPLE}>{title}</h3> : null}
         <p className={`${CHART_CURVES_EMPTY_MSG} py-4`}>
-          Variations not available (6M / 3M / 1M / 1d empty in Simulation — run
-          fetch_variations or refresh data).
+          {it
+            ? "Variazioni non disponibili (6M / 3M / 1M / 1g vuoti in Simulation — esegui fetch_variations o aggiorna i dati)."
+            : "Variations not available (6M / 3M / 1M / 1d empty in Simulation — run fetch_variations or refresh data)."}
         </p>
       </div>
     );
   }
 
   return (
-    <div className={CHART_CURVES_PANEL}>
-      <h3 className={CHART_CURVES_TITLE_SIMPLE}>{title}</h3>
+    <div className={hideTitle ? "min-h-0" : CHART_CURVES_PANEL}>
+      {!hideTitle ? <h3 className={CHART_CURVES_TITLE_SIMPLE}>{title}</h3> : null}
       <div style={{ height }}>
         <ResponsiveContainer width="100%" height="100%">
-          <LineChart data={data} margin={{ top: 8, right: 12, left: 4, bottom: 4 }}>
-            <CartesianGrid {...CHART_CURVES_GRID} />
+          <BarChart
+            data={data}
+            margin={{ top: 8, right: 12, left: 4, bottom: 4 }}
+            barCategoryGap="18%"
+            barGap={series.length > 1 ? 2 : 0}
+          >
+            <CartesianGrid {...CHART_CURVES_GRID} vertical={false} />
             <XAxis dataKey="horizon" tick={CHART_CURVES_AXIS_TICK} />
             <YAxis tick={CHART_CURVES_AXIS_TICK} tickFormatter={(v) => `${fmtAxisPctTick(v)}%`} width={44} />
+            <ReferenceLine y={0} stroke="rgb(var(--ink-muted) / 0.35)" strokeWidth={1.5} />
             <Tooltip formatter={(v: number) => [`${v.toFixed(2)}%`, ""]} />
             <Legend
               {...chartCurvesLegendStyle({
@@ -877,24 +903,36 @@ export function VariationHorizonChart({
               })}
             />
             {series.map((s) => (
-              <Line
+              <Bar
                 key={s.id}
-                type="monotone"
                 dataKey={s.id}
                 name={s.label}
-                stroke={s.color}
-                strokeWidth={2}
-                dot={{ r: 4 }}
-                connectNulls
-              />
+                maxBarSize={40}
+                radius={[4, 4, 0, 0]}
+                minPointSize={2}
+              >
+                {data.map((entry, i) => {
+                  const v = entry[s.id] as number | undefined;
+                  const fill =
+                    series.length === 1
+                      ? v == null || !Number.isFinite(v)
+                        ? "rgb(var(--signal-neutral) / 0.45)"
+                        : v >= 0
+                          ? "rgb(var(--signal-up) / 0.88)"
+                          : "rgb(var(--signal-down) / 0.88)"
+                      : s.color;
+                  return <Cell key={`${s.id}-${i}`} fill={fill} />;
+                })}
+              </Bar>
             ))}
-          </LineChart>
+          </BarChart>
         </ResponsiveContainer>
       </div>
-      {longHorizonsMissing ? (
+      {longHorizonsMissing && !hideTitle ? (
         <p className={CHART_CURVES_FOOTER}>
-          6M · 3M · 1M missing — often no Yahoo price history in variations.json;
-          only daily % may appear after refresh.
+          {it
+            ? "6M · 3M · 1M mancanti — spesso nessuna cronologia prezzi Yahoo in variations.json; dopo il refresh può apparire solo la % giornaliera."
+            : "6M · 3M · 1M missing — often no Yahoo price history in variations.json; only daily % may appear after refresh."}
         </p>
       ) : null}
     </div>
@@ -999,6 +1037,8 @@ export function PricePathChart({
    */
   overlayColorOverride?: string;
 }) {
+  const { lang } = useLang();
+  const it = lang === "it";
   // Include K-8 nodes (SEC filings with real price at filing) also for the
   // historical curve: tickers with a future CD often only have the T-60 standard
   // node before "today", and without the K-8 we would end up with 1 single
@@ -1046,7 +1086,9 @@ export function PricePathChart({
     ? [
         {
           id: "portfolio_mean",
-          label: `Portfolio mean (n=${lines.length})`,
+          label: it
+            ? `Media portfolio (n=${lines.length})`
+            : `Portfolio mean (n=${lines.length})`,
           color: "#00dc96",
           points: [],
           rows: portfolioMeanRows(lines, field, { standardOnly: true }),
@@ -1091,8 +1133,12 @@ export function PricePathChart({
           label: s.label,
           reason:
             s.rows.length === 0
-              ? "no historical price available"
-              : "only 1 historical point (≥ 2 required to draw a line)",
+              ? (it
+                  ? "nessun prezzo storico disponibile"
+                  : "no historical price available")
+              : (it
+                  ? "solo 1 punto storico (≥ 2 richiesti per tracciare una linea)"
+                  : "only 1 historical point (≥ 2 required to draw a line)"),
         }));
   const allX = [
     ...active.flatMap((s) => s.rows.map((r) => r.x)),
@@ -1107,7 +1153,9 @@ export function PricePathChart({
     return (
       <div className={CHART_CURVES_PANEL_EMPTY}>
         <h3 className={CHART_CURVES_TITLE_SIMPLE}>{title}</h3>
-        <p className={`${CHART_CURVES_EMPTY_MSG} py-4`}>Prices not available.</p>
+        <p className={`${CHART_CURVES_EMPTY_MSG} py-4`}>
+          {it ? "Prezzi non disponibili." : "Prices not available."}
+        </p>
       </div>
     );
   }
@@ -1122,7 +1170,7 @@ export function PricePathChart({
       id: s.id,
     })),
     ...(nowDots.length
-      ? [{ value: "📍 Today", type: "circle" as const, color: NOW_MARKER_FILL, id: "now-legend" }]
+      ? [{ value: it ? "📍 Oggi" : "📍 Today", type: "circle" as const, color: NOW_MARKER_FILL, id: "now-legend" }]
       : []),
   ];
   const allPriceRows: PriceChartRow[] = [
@@ -1207,7 +1255,7 @@ export function PricePathChart({
                 const row = payload?.[0]?.payload as PriceChartRow | undefined;
                 if (!row) return "";
                 const nNote = row.n && row.n > 1 ? ` · n=${row.n}` : "";
-                return `Days from CD: ${row.xLabel}${nNote}`;
+                return `${it ? "Giorni dal CD" : "Days from CD"}: ${row.xLabel}${nNote}`;
               }}
             />
             <Legend
@@ -1269,43 +1317,60 @@ export function PricePathChart({
       </div>
       {nowMarkers.length > 0 && (
         <p className={CHART_CURVES_FOOTER}>
-          📍 Orange pin = today's position on the CD calendar (days from Completion Date).
+          {it
+            ? "📍 Pin arancione = posizione di oggi sul calendario CD (giorni dalla Completion Date)."
+            : "📍 Orange pin = today's position on the CD calendar (days from Completion Date)."}
         </p>
       )}
       {usePortfolio && (
         <p className={CHART_CURVES_FOOTER}>
-          Index T−60 = 100 for each ticker; line = portfolio mean on recalibration nodes (bars = ±1 σ).
+          {it
+            ? "Indice T−60 = 100 per ogni ticker; linea = media portfolio sui nodi di ricalibrazione (barre = ±1 σ)."
+            : "Index T−60 = 100 for each ticker; line = portfolio mean on recalibration nodes (bars = ±1 σ)."}
         </p>
       )}
       {doIndex && !usePortfolio && (
         <p className={CHART_CURVES_FOOTER}>
-          Index T−60 = 100 for each ticker — prices normalized for comparison on a common scale (single Y axis).
+          {it
+            ? "Indice T−60 = 100 per ogni ticker — prezzi normalizzati per confronto su scala comune (asse Y singolo)."
+            : "Index T−60 = 100 for each ticker — prices normalized for comparison on a common scale (single Y axis)."}
         </p>
       )}
       {allFlat && (
         <p className={CHART_CURVES_FOOTER}>
-          $ curve nearly flat: variation &lt;0.75% across nodes — the Δ% vs T−60 are very small or
-          the historical price is constant. Use the % chart above to see relative movement.
+          {it
+            ? "Curva $ quasi piatta: variazione <0,75% tra nodi — le Δ% vs T−60 sono molto piccole o il prezzo storico è costante. Usa il grafico % sopra per vedere il movimento relativo."
+            : "$ curve nearly flat: variation <0.75% across nodes — the Δ% vs T−60 are very small or the historical price is constant. Use the % chart above to see relative movement."}
         </p>
       )}
       {(includeK8Primary || includeK8Overlay) && !usePortfolio && (
         <p className={CHART_CURVES_FOOTER}>
-          8-K nodes aggregated by offset (mean ± σ if multiple filings on the same day).
-          AI feed nodes = verified publication sessions (T…T+3) on the recalibrated path.
+          {it
+            ? "Nodi 8-K aggregati per offset (media ± σ se più filing nello stesso giorno). Nodi AI feed = sessioni di pubblicazione verificate (T…T+3) sul percorso ricalibrato."
+            : "8-K nodes aggregated by offset (mean ± σ if multiple filings on the same day). AI feed nodes = verified publication sessions (T…T+3) on the recalibrated path."}
         </p>
       )}
       {hasOverlay && (
         <p className={CHART_CURVES_FOOTER}>
-          Solid line = <span className="font-medium">{primaryLabel ?? field}</span>; dashed line = <span className="font-medium">{overlayLabel ?? overlayField}</span> (same ticker, contrasting color).
+          {it ? "Linea continua = " : "Solid line = "}
+          <span className="font-medium">{primaryLabel ?? field}</span>
+          {it ? "; linea tratteggiata = " : "; dashed line = "}
+          <span className="font-medium">{overlayLabel ?? overlayField}</span>
+          {it ? " (stesso ticker, colore in contrasto)." : " (same ticker, contrasting color)."}
         </p>
       )}
       {excluded.length > 0 && (
         <p className="text-[10px] text-warn mt-1">
-          ⚠ {active.length}/{active.length + excluded.length} tickers drawn. Excluded:{" "}
+          ⚠ {active.length}/{active.length + excluded.length}{" "}
+          {it ? "ticker disegnati. Esclusi: " : "tickers drawn. Excluded: "}
           {excluded.map((e) => `${e.label.split(" · ")[0]} (${e.reason})`).join(", ")}
           {field === "price_storico_usd" && (
-            <> · For tickers with a future CD and no recent 8-K filing the historical
-            prices may be insufficient.</>
+            <>
+              {" "}·{" "}
+              {it
+                ? "Per i ticker con CD futuro e nessun filing 8-K recente i prezzi storici possono essere insufficienti."
+                : "For tickers with a future CD and no recent 8-K filing the historical prices may be insufficient."}
+            </>
           )}
         </p>
       )}

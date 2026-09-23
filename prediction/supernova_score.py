@@ -84,6 +84,7 @@ class SdsResult:
     cluster_c: dict[str, Any] = field(default_factory=dict)
     cluster_d: dict[str, Any] = field(default_factory=dict)
     cluster_e: dict[str, Any] = field(default_factory=dict)
+    cause_attribution: dict[str, Any] | None = None
 
     def to_dict(self) -> dict[str, Any]:
         return asdict(self)
@@ -1640,6 +1641,16 @@ def compute_sds(inp: SdsTickerInput) -> SdsResult:
     veto: VetoCode = None
     recommendation: str | None = None
 
+    # Cause attribution diagnostics (Phase 1+2 — does NOT affect SDS score)
+    from prediction.rescue_cause_attribution import compute_cause_attribution as _cause_attr
+    cause_attr = _cause_attr(
+        inp.closes,
+        inp.volumes,
+        inp.xbi_closes,
+        cash_runway_months=inp.cash_runway_months,
+        cluster_d_breakdown=cluster_d_breakdown,
+    )
+
     merged_missing = dict(cluster_c_missing)
     merged_missing.update(cluster_d_missing)
 
@@ -1668,6 +1679,7 @@ def compute_sds(inp: SdsTickerInput) -> SdsResult:
             cluster_c=cluster_c_breakdown,
             cluster_d=cluster_d_breakdown,
             cluster_e=cluster_e_breakdown,
+            cause_attribution=cause_attr,
         )
 
     regime = str(inp.market_regime or "NEUTRAL").upper()
@@ -1696,6 +1708,7 @@ def compute_sds(inp: SdsTickerInput) -> SdsResult:
             cluster_c=cluster_c_breakdown,
             cluster_d=cluster_d_breakdown,
             cluster_e=cluster_e_breakdown,
+            cause_attribution=cause_attr,
         )
 
     e_flags = cluster_e_breakdown.get("flags") or {}
@@ -1731,4 +1744,5 @@ def compute_sds(inp: SdsTickerInput) -> SdsResult:
         cluster_c=cluster_c_breakdown,
         cluster_d=cluster_d_breakdown,
         cluster_e=cluster_e_breakdown,
+        cause_attribution=cause_attr,
     )

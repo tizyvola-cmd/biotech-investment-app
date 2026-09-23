@@ -84,7 +84,45 @@ def should_skip_enrichment_refresh(
         pass
     if not prev.get("ai_ok"):
         return False
+    if study_clinical_profile_is_sparse(prev.get("ai") if isinstance(prev.get("ai"), dict) else None):
+        # Sparse MoA / disease_soc (Note-only) must re-run — cache age alone is not enough.
+        return False
     return is_cache_fresh(prev)
+
+
+def _is_blank_clinical_value(val: Any) -> bool:
+    if val is True or val is False:
+        return False
+    if val is None:
+        return True
+    s = str(val).strip().upper()
+    return s in ("", "N/D", "ND", "NONE", "NULL", "UNKNOWN", "—", "-")
+
+
+def study_clinical_profile_is_sparse(ai: dict[str, Any] | None) -> bool:
+    """True when MoA / disease_soc structured slots are mostly empty (prose Note alone is not enough)."""
+    if not isinstance(ai, dict):
+        return True
+    prof = ai.get("study_clinical_profile")
+    if not isinstance(prof, dict):
+        return True
+    filled = 0
+    if not _is_blank_clinical_value(prof.get("mechanism_of_action")):
+        filled += 1
+    soc = prof.get("disease_soc") if isinstance(prof.get("disease_soc"), dict) else {}
+    if soc.get("soc_is_none") is True:
+        filled += 1
+    for key in (
+        "usa_prevalence",
+        "five_year_survival",
+        "soc_name",
+        "soc_efficacy_benchmark",
+        "life_expectancy",
+        "symptoms",
+    ):
+        if not _is_blank_clinical_value(soc.get(key)):
+            filled += 1
+    return filled < 3
 
 
 def needs_scheduled_deep_refresh(prev: dict[str, Any] | None) -> bool:

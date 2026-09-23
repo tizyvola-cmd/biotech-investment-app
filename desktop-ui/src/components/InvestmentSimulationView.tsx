@@ -6,30 +6,14 @@ import React, {
   useState,
 } from "react";
 import {
-  Area,
-  CartesianGrid,
-  ComposedChart,
-  Line,
-  ReferenceArea,
-  ReferenceLine,
-  ResponsiveContainer,
-  Tooltip,
-  XAxis,
-  YAxis,
-} from "recharts";
-import {
   loadSimulationChartsBundle,
   invalidateSimulationChartsCache,
   simulationRowSeriesKey,
 } from "../data/simulationCharts";
 import {
   appendHistoryPoint,
-  clearInvestSimHistory,
-  holdingDaysFromInvestedAt,
   loadInvestSimHistory,
   persistInvestSimHistoryNow,
-  resolveInvestedAt,
-  inferInvestedAt,
   loadInvestSimUi,
   saveInvestSimUi,
   type InvestSimHistoryPoint,
@@ -46,9 +30,6 @@ import {
   buildPositions,
   currentPriceFromRow,
   dailyChangePctFromRow,
-  positionCapitalPnlPct,
-  resolvePositionPnlBreakdown,
-  pnlTabNeedsPriorLegNote,
   rowHasActivePortfolio,
   positionPnlForOpenRow,
   sheetBuyPriceFromRow,
@@ -68,25 +49,18 @@ import { loadSignCurveDailyDoc } from "../data/signCurveDailyData";
 import { buildSignAccuracyCurveView, type SignAccuracyCurveView } from "../sheet/signAccuracyCurve";
 import { SignalScoreBar } from "./SignalScoreBar";
 import { ScoreAnalysisDrawer } from "./ScoreAnalysisDrawer";
-import { PortfolioDailyPnlDrawer, DailyLedgerIcon } from "./PortfolioDailyPnlDrawer";
+import { PortfolioDailyPnlDrawer } from "./PortfolioDailyPnlDrawer";
+import { DeskPageScroll } from "./DeskPageScroll";
 import {
   buildPortfolioGainAuditExport,
   downloadPortfolioGainAuditExcel,
 } from "../sheet/portfolioGainAuditExport";
-import { ClosedPiggyBankBeerGlass } from "./ClosedPiggyBankBeerGlass";
-import { useClosedPiggyBank } from "../hooks/useClosedPiggyBank";
 import type { ScoreDetailSignal } from "./SignalScoreDetailPanel";
 import { RefreshControls } from "./RefreshControls";
 import { useRefreshStatus } from "../shared/refreshStatusStore";
 import { useInvestSimPortfolioHistory } from "../hooks/useInvestSimPortfolioHistory";
 import { SelectionChip, SelectionChipGroup } from "./SelectionChip";
 import { PortfolioTickerMark } from "./PortfolioScopeToggle";
-import { PortfolioPnlTrendIcon } from "./PortfolioPnlTrendIcon";
-import { PortfolioGainPlanChart } from "./PortfolioGainPlanChart";
-import { PortfolioPnlBarChart } from "./PortfolioPnlBarChart";
-import { PortfolioPnlSheetTable } from "./PortfolioPnlSheetTable";
-import { PnlTabRankIcon, RankAnimalIcon } from "./DealRankBadge";
-import { buildPnlRankIndexMap, dealRankVisual, sortByPnlRank, WORST_RANK_EMOJI } from "../sheet/dealRankIcon";
 import { sortByPipelineReturnPct } from "../sheet/pipelineOpportunity";
 import { ModelTargetPriceCell } from "./ModelTargetPriceCell";
 import { isPlanTargetReached } from "./PortfolioPlanTargetChip";
@@ -100,9 +74,7 @@ import {
 } from "./RiskBenefitScaleIcon";
 import { useLossRiskCatalog, lookupLossRisk } from "../hooks/useLossRiskCatalog";
 import {
-  resolveEntryGainPlan,
   resolveExpectedGainPlan,
-  sortRowsByExpectedGain,
 } from "../sheet/simulationPlanGain";
 import { primaryReturnPctFromGainPlan } from "../sheet/canonicalRoi";
 import { extractCurveInputs } from "../sheet/precatCurve";
@@ -112,25 +84,16 @@ import {
   TargetRoiCell,
 } from "../sheet/expectedRoiDisplay";
 import {
-  portfolioDailyChangeLabel,
-  portfolioPnlTabShellClass,
-  portfolioPnlAccentClass,
   portfolioPnlTone,
-  portfolioPnlValueClass,
-  type PortfolioPnlTone,
-  ptfBlockTotalClassName,
-  ptfBlockDayClassName,
-  ptfBlockDaySecondaryClassName,
   portfolioTableOutlookClass,
-  resolvePortfolioTableOutlook,
+  resolvePnlRowOutlook,
   type PortfolioTableOutlook,
-  portfolioPtfBlockTheme,
-  portfolioPtfDayBlockTheme,
-  portfolioRowArticleClass,
-  fmtSignedEurPnl,
-  summarizePortfolioWinRate,
 } from "../sheet/portfolioGainLossStyle";
-import { auditSimulationBuyPrice } from "../sheet/simulationBuyPriceAudit";
+import {
+  exitVerdict,
+  buildExitVerdictContext,
+  verdictTone,
+} from "../sheet/exitVerdict";
 import { useInvestSimInputsMutable } from "../hooks/useInvestSimInputs";
 import { CapitalNumberInput } from "./CapitalNumberInput";
 import { hydrateUiPrefsFromDisk, loadUiPrefsLocal, saveUiPrefs } from "../sheet/uiPrefs";
@@ -140,19 +103,6 @@ import { resolveSimTableSynthShare } from "../sheet/synthCapitalSyncLog";
 import { SimTableCapitalCell } from "./SimTableCapitalCell";
 import { DecimalTextInput } from "./DecimalTextInput";
 import { formatDecimalInput } from "../sheet/decimalInput";
-import {
-  fmtAxisEurTick,
-  fmtAxisPctTick,
-  paddedEurDomain,
-  paddedPctDomain,
-} from "../sheet/chartAxisFormat";
-import {
-  compressInvestTrendHistory,
-  investTrendEurDomain,
-  investTrendPnlDomain,
-  resolveInvestTrendOutlook,
-  type InvestTrendOutlook,
-} from "../sheet/investTrendOutlook";
 import { EntrySolidityModal } from "./EntrySolidityModal";
 import { pickSignalFromSimRow } from "../sheet/top2FromSimulation";
 import { pickScoreBreakdown } from "../sheet/entrySolidityReliability";
@@ -170,8 +120,6 @@ import {
   subscribeTopOpps,
   type TopOppsSnapshot,
 } from "../sheet/topOppsStore";
-import { recommendationTierForKey } from "../sheet/recommendationTiers";
-import { loadTopOppMinAffidPct } from "../sheet/topOppQuality";
 import {
   getTop2BuySell,
   subscribeTop2BuySell,
@@ -261,435 +209,7 @@ export { buildPositions } from "../sheet/simulationPosition";
 
 type Position = SimulationPosition;
 
-/** Blocchi 1–2 neutri; giornata e totale seguono gain/loss. */
-const PTF_BLK_NEUTRAL = portfolioPtfBlockTheme("flat");
-
-/** Block-card layout (colori da portfolioPtfBlockTheme / DayBlockTheme). */
-const PTF_CARD = {
-  list: "flex flex-col gap-2.5",
-  rowTotal: "rounded-xl border-2 p-3 shadow-sm",
-  grid: "grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-4 gap-2",
-  blockTitle: "text-[10px] uppercase tracking-wide text-slate-600 font-semibold mb-1.5",
-  blockTitleTotal: "text-[10px] uppercase tracking-wide font-semibold mb-1.5",
-  metricGrid: "grid grid-cols-2 sm:grid-cols-3 gap-x-2 gap-y-1.5",
-  metricGrid2: "grid grid-cols-2 gap-x-2 gap-y-1",
-  field: "text-[10px] text-slate-600 font-medium leading-tight",
-  value: "text-[11px] font-semibold text-slate-900 tabular-nums leading-tight",
-  sub: "text-[10px] text-slate-600 tabular-nums mt-0.5",
-} as const;
-
-function ptfPnlToneFromDisplay(tone: PortfolioPnlTone): string {
-  if (!TABLE_COLORS_ENABLED) return "text-slate-900";
-  return portfolioPnlValueClass(tone);
-}
-
-function PtfField({
-  label,
-  value,
-  sub,
-  tone,
-  title,
-}: {
-  label: string;
-  value: React.ReactNode;
-  sub?: React.ReactNode;
-  tone?: string;
-  title?: string;
-}) {
-  return (
-    <div className="min-w-0" title={title}>
-      <p className={`ptf-field-label ${PTF_CARD.field}`}>{label}</p>
-      <p className={`ptf-field-value ${PTF_CARD.value} ${tone ?? ""}`}>{value}</p>
-      {sub ? <p className={`ptf-field-sub ${PTF_CARD.sub}`}>{sub}</p> : null}
-    </div>
-  );
-}
-
-function formatHistoryTsLabel(iso: string): string {
-  const d = new Date(iso);
-  if (!Number.isFinite(d.getTime())) return iso;
-  return d.toLocaleString("en-US", {
-    day: "2-digit",
-    month: "2-digit",
-    hour: "2-digit",
-    minute: "2-digit",
-    hour12: false,
-  });
-}
-
-function formatHistoryDayLabel(iso: string): string {
-  const d = new Date(iso);
-  if (!Number.isFinite(d.getTime())) return iso;
-  return d.toLocaleDateString("en-US", { day: "2-digit", month: "2-digit" });
-}
-
-/** Find the X axis label closest to the investment moment. */
-function investedAtToChartLabel(
-  investedAt: string,
-  history: InvestSimHistoryPoint[]
-): string | null {
-  if (!history.length) return null;
-  const targetMs = Date.parse(investedAt);
-  if (!Number.isFinite(targetMs)) return formatHistoryTsLabel(investedAt);
-
-  let best = history[0];
-  let bestDiff = Infinity;
-  for (const h of history) {
-    const ms = Date.parse(h.ts);
-    if (!Number.isFinite(ms)) continue;
-    const diff = Math.abs(ms - targetMs);
-    if (diff < bestDiff) {
-      bestDiff = diff;
-      best = h;
-    }
-  }
-  return formatHistoryTsLabel(best.ts);
-}
-
-type InvestTrendMarker = {
-  ts: string;
-  tickers: string[];
-  investedAt: string;
-};
-
-function buildInvestTrendMarkers(
-  positions: Position[],
-  inputs: InvestSimInputs,
-  history: InvestSimHistoryPoint[],
-  selectedKey: string | null
-): InvestTrendMarker[] {
-  const byTs = new Map<string, InvestTrendMarker>();
-
-  for (const p of positions.filter(isActiveSimPosition)) {
-    const investedAt = resolveInvestedAt(p.key, inputs[p.key], history);
-    if (!investedAt) continue;
-    const ts = investedAtToChartLabel(investedAt, history);
-    if (!ts) continue;
-    const prev = byTs.get(ts);
-    if (prev) {
-      if (!prev.tickers.includes(p.ticker)) prev.tickers.push(p.ticker);
-      if (Date.parse(investedAt) < Date.parse(prev.investedAt)) prev.investedAt = investedAt;
-    } else {
-      byTs.set(ts, { ts, tickers: [p.ticker], investedAt });
-    }
-  }
-
-  const markers = [...byTs.values()].sort(
-    (a, b) => Date.parse(a.investedAt) - Date.parse(b.investedAt)
-  );
-
-  if (selectedKey) {
-    const sel = positions.find((p) => p.key === selectedKey);
-    if (sel) {
-      const selAt = inferInvestedAt(sel.key, inputs[sel.key], history);
-      const selTs = selAt ? investedAtToChartLabel(selAt, history) : null;
-      if (selTs && !markers.some((m) => m.ts === selTs)) {
-        markers.push({ ts: selTs, tickers: [sel.ticker], investedAt: selAt! });
-        markers.sort((a, b) => Date.parse(a.investedAt) - Date.parse(b.investedAt));
-      }
-    }
-  }
-
-  return markers;
-}
-
-function InvestTrendMarkersLayer({
-  markers,
-  selectedTicker,
-}: {
-  markers: InvestTrendMarker[];
-  selectedTicker?: string | null;
-}) {
-  if (!markers.length) return null;
-  return (
-    <>
-      {markers.map((m) => {
-        const isSelected = selectedTicker != null && m.tickers.includes(selectedTicker);
-        const label =
-          m.tickers.length === 1
-            ? m.tickers[0]
-            : `${m.tickers.slice(0, 2).join(" · ")}${m.tickers.length > 2 ? " +" + (m.tickers.length - 2) : ""}`;
-        return (
-          <ReferenceLine
-            key={`inv-${m.ts}-${m.tickers.join("-")}`}
-            x={m.ts}
-            stroke={isSelected ? "#2563eb" : "#93c5fd"}
-            strokeWidth={isSelected ? 1.5 : 1}
-            strokeDasharray="3 4"
-            strokeOpacity={isSelected ? 0.85 : 0.5}
-            ifOverflow="extendDomain"
-            label={{
-              value: label,
-              position: "insideTopLeft",
-              fontSize: 9,
-              fontWeight: 600,
-              fill: isSelected ? "#1d4ed8" : "#64748b",
-            }}
-          />
-        );
-      })}
-    </>
-  );
-}
-
-const TREND_AXIS_TICK = { fontSize: 10, fill: "#64748b" };
-const TREND_GRID = {
-  strokeDasharray: "4 6",
-  vertical: false as const,
-  stroke: "#93c5fd",
-  strokeOpacity: 0.38,
-};
-const TREND_PANEL_CLASS = "invest-trend-chart-panel rounded-xl border p-3 shadow-sm";
-
-function InvestTrendBreakevenLayers({
-  yDomain,
-  breakevenLabel,
-}: {
-  yDomain: [number, number];
-  breakevenLabel: string;
-}) {
-  return (
-    <>
-      <ReferenceArea
-        y1={0}
-        y2={yDomain[1]}
-        fill="#dbeafe"
-        fillOpacity={0.55}
-        ifOverflow="extendDomain"
-      />
-      <ReferenceArea
-        y1={yDomain[0]}
-        y2={0}
-        fill="#fef9c3"
-        fillOpacity={0.45}
-        ifOverflow="extendDomain"
-      />
-      <ReferenceLine
-        y={0}
-        stroke="#2563eb"
-        strokeOpacity={0.55}
-        strokeDasharray="5 4"
-        label={{
-          value: breakevenLabel,
-          position: "right",
-          fontSize: 9,
-          fill: "#1d4ed8",
-        }}
-      />
-    </>
-  );
-}
-
-function InvestTrendChartTooltip({
-  active,
-  label,
-  payload,
-  valueMode,
-}: {
-  active?: boolean;
-  label?: string;
-  payload?: { dataKey: string; value: number; name: string; color: string }[];
-  valueMode: "eur" | "pct";
-}) {
-  if (!active || !payload?.length) return null;
-  const fmt = (v: number) =>
-    valueMode === "eur"
-      ? `€ ${v.toLocaleString("en-US", { maximumFractionDigits: 2 })}`
-      : `${v >= 0 ? "+" : ""}${v.toFixed(2)}%`;
-  return (
-    <div className="rounded-lg border border-[rgb(var(--border))]/70 bg-[rgb(var(--surface-elevated))]/95 backdrop-blur-sm px-3 py-2 text-xs shadow-lg min-w-[9rem]">
-      <p className="text-[10px] font-semibold uppercase tracking-wide text-ink-muted mb-1.5">
-        {label}
-      </p>
-      <div className="space-y-1">
-        {payload
-          .filter((p) => p.value != null && Number.isFinite(Number(p.value)))
-          .map((p) => (
-            <div key={p.dataKey} className="flex items-center justify-between gap-4 tabular-nums">
-              <span className="flex items-center gap-1.5 text-ink-muted">
-                <span
-                  className="inline-block w-2 h-2 rounded-full shrink-0"
-                  style={{ background: p.color }}
-                />
-                {p.name}
-              </span>
-              <span className="font-semibold text-ink">{fmt(Number(p.value))}</span>
-            </div>
-          ))}
-      </div>
-    </div>
-  );
-}
-
-function InvestTrendLegend({
-  items,
-}: {
-  items: { key: string; label: string; color: string; dashed?: boolean }[];
-}) {
-  return (
-    <div className="flex flex-wrap gap-x-4 gap-y-1.5 mt-2 px-1">
-      {items.map((it) => (
-        <span key={it.key} className="inline-flex items-center gap-1.5 text-[10px] text-ink-muted">
-          <span
-            className="w-4 shrink-0"
-            style={
-              it.dashed
-                ? { borderTop: `2px dashed ${it.color}`, height: 0, marginTop: 1 }
-                : { height: 2, borderRadius: 9999, background: it.color }
-            }
-          />
-          {it.label}
-        </span>
-      ))}
-    </div>
-  );
-}
-
-function InvestTrendMessageBanner({
-  outlook,
-  pnlPct,
-  pnlEur,
-  pnlUnavailable,
-}: {
-  outlook: InvestTrendOutlook;
-  pnlPct: number;
-  pnlEur: number;
-  pnlUnavailable: boolean;
-}) {
-  const pnlAccent = pnlUnavailable
-    ? "text-ink-muted"
-    : portfolioPnlAccentClass(pnlEur, pnlPct);
-  const pnlLabel = pnlUnavailable
-    ? "—"
-    : `${pnlPct >= 0 ? "+" : ""}${pnlPct.toFixed(2)}%`;
-  return (
-    <div
-      className={`rounded-xl border px-4 py-3.5 shadow-sm shrink-0 ${outlook.bannerShell}`}
-    >
-      <div className="flex flex-wrap items-start gap-3">
-        <span className="text-2xl leading-none shrink-0" aria-hidden>
-          {outlook.icon}
-        </span>
-        <div className="min-w-0 flex-1">
-          <h3 className={`text-base font-bold leading-snug ${outlook.bannerTitle}`}>
-            {outlook.title}
-          </h3>
-          <p className={`text-sm mt-1 leading-snug ${outlook.bannerBody}`}>{outlook.body}</p>
-        </div>
-        <div className="shrink-0 text-right">
-          <p className="text-[10px] uppercase tracking-wide text-ink-muted font-semibold">
-            P&amp;L totale
-          </p>
-          <p className={`text-2xl font-bold tabular-nums ${pnlAccent}`}>{pnlLabel}</p>
-          {!pnlUnavailable ? (
-            <p className={`text-xs tabular-nums mt-0.5 ${pnlAccent}`}>
-              {pnlEur >= 0 ? "+" : ""}€ {Math.abs(pnlEur).toLocaleString("en-US", { maximumFractionDigits: 0 })}
-            </p>
-          ) : null}
-        </div>
-      </div>
-    </div>
-  );
-}
-
-function InvestTrendCapitalGap({
-  capital,
-  valueNow,
-  outlook,
-}: {
-  capital: number;
-  valueNow: number;
-  outlook: InvestTrendOutlook;
-}) {
-  const gap = valueNow - capital;
-  const gapPct = capital > 0 ? (gap / capital) * 100 : 0;
-  const maxVal = Math.max(capital, valueNow, 1);
-  const capitalPct = (capital / maxVal) * 100;
-  const valuePct = (valueNow / maxVal) * 100;
-  return (
-    <div className="rounded-lg border border-[rgb(var(--border))]/40 bg-[rgb(var(--surface-elevated))]/40 px-3 py-2.5 space-y-2">
-      <div className="flex flex-wrap items-center justify-between gap-2 text-[11px]">
-        <span className="text-ink-muted">Capitale investito → Valore oggi</span>
-        <span className="font-semibold tabular-nums" style={{ color: outlook.lineColor }}>
-          {gap >= 0 ? "+" : ""}€ {gap.toLocaleString("en-US", { maximumFractionDigits: 0 })}
-          <span className="text-ink-muted font-normal ml-1">
-            ({gapPct >= 0 ? "+" : ""}{gapPct.toFixed(2)}%)
-          </span>
-        </span>
-      </div>
-      <div className="relative h-3 rounded-full bg-[rgb(var(--border))]/20 overflow-hidden">
-        <div
-          className="absolute inset-y-0 left-0 rounded-full bg-[rgb(var(--border))]/45"
-          style={{ width: `${capitalPct}%` }}
-          title="Capitale investito"
-        />
-        <div
-          className="absolute inset-y-0 left-0 rounded-full transition-all"
-          style={{
-            width: `${valuePct}%`,
-            background: outlook.lineColor,
-            opacity: 0.9,
-          }}
-          title="Valore oggi"
-        />
-      </div>
-      <div className="flex justify-between text-[10px] text-ink-muted tabular-nums">
-        <span>€ {capital.toLocaleString("en-US", { maximumFractionDigits: 0 })}</span>
-        <span>€ {valueNow.toLocaleString("en-US", { maximumFractionDigits: 0 })}</span>
-      </div>
-    </div>
-  );
-}
-
 const DEFAULT_SIM_BUY_CAPITAL_EUR = DEFAULT_PLAN_CAPITAL_EUR;
-
-function parseSimDate(raw: string | null | undefined): Date | null {
-  if (!raw) return null;
-  const s = String(raw).trim();
-  if (!s) return null;
-  // dd/mm/yyyy
-  const mIt = /^(\d{1,2})\/(\d{1,2})\/(\d{4})$/.exec(s);
-  if (mIt) {
-    const d = Number(mIt[1]);
-    const m = Number(mIt[2]);
-    const y = Number(mIt[3]);
-    const out = new Date(y, m - 1, d);
-    return Number.isFinite(out.getTime()) ? out : null;
-  }
-  // yyyy-mm-dd
-  const mIso = /^(\d{4})-(\d{2})-(\d{2})/.exec(s);
-  if (mIso) {
-    const y = Number(mIso[1]);
-    const m = Number(mIso[2]);
-    const d = Number(mIso[3]);
-    const out = new Date(y, m - 1, d);
-    return Number.isFinite(out.getTime()) ? out : null;
-  }
-  const out = new Date(s);
-  return Number.isFinite(out.getTime()) ? out : null;
-}
-
-function fmtDdMmYyyy(raw: string | null | undefined): string {
-  const d = parseSimDate(raw);
-  if (!d) return raw && String(raw).trim() ? String(raw).trim() : "—";
-  return d.toLocaleDateString("it-IT", { day: "2-digit", month: "2-digit", year: "numeric" });
-}
-
-/** Data ingresso per card P&L: purchaseDate utente, altrimenti investedAt. */
-function resolvePurchaseDateLabel(
-  entry: InvestSimInputEntry | undefined,
-  investedAt: string | null,
-): string | null {
-  if (entry?.purchaseDate?.trim()) {
-    const d = fmtDdMmYyyy(entry.purchaseDate);
-    if (d !== "—") return d;
-  }
-  if (investedAt?.trim()) {
-    const d = fmtDdMmYyyy(investedAt);
-    if (d !== "—") return d;
-  }
-  return null;
-}
 
 function fmtSnapshotPriceLabel(iso: string | null | undefined): string {
   if (!iso) return "";
@@ -765,16 +285,20 @@ export type InvestmentSimulationViewProps = {
   onFocusConsumed?: () => void;
   /** Embedded in Decision Lab: Price Δ% table only (variations layout). */
   embedMode?: "full" | "decisionLab";
-  /** Decision Lab Performance → Simulation workspace row. */
-  onOpenSimulationRow?: (focus: { ticker: string; cd?: string }) => void;
   /** Full Decision Lab sidebar screen. */
   onOpenDecisionLabScreen?: () => void;
   /** Decision Lab → SuperNova (SDS) tab; optional ticker focus. */
   onOpenSupernovaScreen?: (ticker?: string) => void;
-  /** Decision Lab → CD Pattern recommendation tab; optional ticker focus. */
-  onOpenPatternScreen?: (ticker?: string) => void;
   /** Parent Pick stocks refresh — sync embedded tables/charts with snapshot reload. */
   parentReloadToken?: number;
+  /** Deep-link tab (Evaluation Lab). */
+  initialView?: InvestSimView;
+  /** Close Deep Dive (×) → Catalyst Days — Top KPI table removed. */
+  onExitDeepDive?: () => void;
+  /** App-level shared loss-risk catalog — skip duplicate build. */
+  sharedLossRiskCatalog?: import("../hooks/useLossRiskCatalog").LossRiskCatalog | null;
+  sharedLossRiskByRowKey?: Map<string, LossRiskEntry> | null;
+  sharedChartBundle?: ChartBundle | null;
 };
 
 export function InvestmentSimulationView({
@@ -789,11 +313,14 @@ export function InvestmentSimulationView({
   focusTicker,
   onFocusConsumed,
   embedMode = "full",
-  onOpenSimulationRow,
   onOpenDecisionLabScreen,
   onOpenSupernovaScreen,
-  onOpenPatternScreen,
   parentReloadToken = 0,
+  initialView,
+  onExitDeepDive,
+  sharedLossRiskCatalog = null,
+  sharedLossRiskByRowKey: _sharedLossRiskByRowKey = null,
+  sharedChartBundle: sharedChartBundleProp = null,
 }: InvestmentSimulationViewProps) {
   const isDecisionLabEmbed = embedMode === "decisionLab";
   const [simTableLayout, setSimTableLayout] = useState<SimTableLayoutId>(() =>
@@ -902,6 +429,17 @@ export function InvestmentSimulationView({
   const [topOpps, setTopOpps] = useState<TopOppsSnapshot>(() => getActiveTopOpps());
   const [top2BuySell, setTop2BuySell] = useState<Top2BuySellSnapshot>(() => getTop2BuySell());
   const [lastRecalcAt, setLastRecalcAt] = useState(() => Date.now());
+  const [heldDeepDive, setHeldDeepDive] = useState<{ ticker: string | null; rowKey: string | null }>(
+    () => ({
+      ticker: focusTicker?.ticker?.trim().toUpperCase() || null,
+      rowKey: focusTicker?.rowKey?.trim() || null,
+    }),
+  );
+  useEffect(() => {
+    const ticker = focusTicker?.ticker?.trim().toUpperCase() || null;
+    const rowKey = focusTicker?.rowKey?.trim() || null;
+    if (ticker || rowKey) setHeldDeepDive({ ticker, rowKey });
+  }, [focusTicker?.ticker, focusTicker?.rowKey]);
   const [cdScanBusy, setCdScanBusy] = useState(false);
   const [cdScanPhase, setCdScanPhase] = useState<string | null>(null);
   const [cdScanError, setCdScanError] = useState<string | null>(null);
@@ -910,7 +448,7 @@ export function InvestmentSimulationView({
   inputsRef.current = inputs;
   const t = useT();
   const { lang } = useLang();
-  const { apiOk: refreshApiOk, dataUpdatedAt, life: refreshLife, finishedAt: refreshFinishedAt } =
+  const { apiOk: _refreshApiOk, dataUpdatedAt, life: refreshLife, finishedAt: refreshFinishedAt } =
     useRefreshStatus();
 
   useEffect(() => {
@@ -923,8 +461,8 @@ export function InvestmentSimulationView({
   }, []);
 
   const simTableVersion = useMemo(
-    () => buildSimTablePriceVersion(simTable, inputs),
-    [simTable, inputs],
+    () => buildSimTablePriceVersion(simTable),
+    [simTable],
   );
 
   const refreshPriceManifest = useCallback(() => {
@@ -1028,8 +566,14 @@ export function InvestmentSimulationView({
       if (view !== "workspace") applyView("workspace");
       return;
     }
-    if (view === "workspace" || (view as string) === "curves") applyView("lossAnalysis");
-  }, [isDecisionLabEmbed, view, applyView]);
+    if (initialView && view !== initialView) {
+      applyView(initialView);
+      return;
+    }
+    if (view === "workspace" || view === "snapshotBar" || view === "trendChart" || (view as string) === "curves") {
+      applyView("lossAnalysis");
+    }
+  }, [isDecisionLabEmbed, initialView, view, applyView]);
 
   const setSelectedKey = useCallback((key: string | null) => {
     setUi((prev) => {
@@ -1042,11 +586,6 @@ export function InvestmentSimulationView({
   const positions = useMemo(
     () => buildPositions(simTable, inputs, history),
     [simTable, inputs, history]
-  );
-
-  const selectedPosition = useMemo(
-    () => positions.find((p) => p.key === selectedKey) ?? null,
-    [positions, selectedKey]
   );
 
   const simRowByKey = useMemo(
@@ -1113,12 +652,13 @@ export function InvestmentSimulationView({
    * "Rischio" poop-emoji cell. Drives the new Risk column inserted right
    * after the Ticker column in the Pick stocks (decisionLab) table.
    */
-  const { catalog: lossRiskCatalog } = useLossRiskCatalog({
-    simTable,
+  const { catalog: localLossRiskCatalog } = useLossRiskCatalog({
+    simTable: sharedLossRiskCatalog ? null : simTable,
     sdsRows: sdsRowsForMig,
-    chartBundle,
+    chartBundle: sharedChartBundleProp ?? chartBundle,
     reloadToken: simInputsReloadToken + parentReloadToken,
   });
+  const lossRiskCatalog = sharedLossRiskCatalog ?? localLossRiskCatalog;
   const [riskModalEntry, setRiskModalEntry] = useState<LossRiskEntry | null>(null);
 
   // Decision Lab / Dashboard «→ Simulation»: tab P&L o workspace + filtro All + scroll riga.
@@ -1127,7 +667,7 @@ export function InvestmentSimulationView({
   useEffect(() => {
     if (focusTicker?.openDailyLedger && !dailyLedgerFocusRef.current) {
       dailyLedgerFocusRef.current = true;
-      applyView("snapshotBar");
+      applyView("lossAnalysis");
       setDailyPnlLedgerOpen(true);
       onFocusConsumed?.();
     }
@@ -1149,12 +689,17 @@ export function InvestmentSimulationView({
       action: focusTicker.action ?? "",
       syncToSynth: focusTicker.syncToSynth ?? false,
       rowKey: focusTicker.rowKey ?? "",
+      focusNonce: focusTicker.focusNonce ?? 0,
+      preferTopKpi: Boolean(focusTicker.preferTopKpi),
+      openDeepDive: Boolean(focusTicker.openDeepDive),
     });
     const isNewFocus = focusHandledSigRef.current !== sig;
     if (isNewFocus) {
       focusHandledSigRef.current = sig;
       if (focusTicker.view && (focusTicker.view as string) !== "curves") {
-        applyView(focusTicker.view);
+        const targetView =
+          focusTicker.view === "snapshotBar" ? "lossAnalysis" : focusTicker.view;
+        applyView(targetView);
       } else if (!isDecisionLabEmbed) {
         applyView("lossAnalysis");
       }
@@ -1706,150 +1251,6 @@ export function InvestmentSimulationView({
     );
   }, [portfolio.cap, portfolio.val, portfolio.pnl, portfolio.pct, portfolio.byTicker, portfolio.n]);
 
-  const chartData = useMemo(
-    () =>
-      positions.filter(isActiveSimPosition).map((p) => {
-        const investedAt = resolveInvestedAt(p.key, inputs[p.key], history);
-        const investedAtDate = parseSimDate(investedAt ?? null);
-        const expectedExitDate = p.completionDate;
-        const expectedExit = parseSimDate(expectedExitDate);
-        const expectedHoldDays =
-          investedAtDate && expectedExit
-            ? Math.max(0, Math.round((expectedExit.getTime() - investedAtDate.getTime()) / 86400000))
-            : null;
-        const holdDaysElapsed = investedAt
-          ? holdingDaysFromInvestedAt(investedAt)
-          : null;
-        const simRow = simRowByKey.get(p.key);
-        const chartPts = simRow
-          ? pointsBySeriesKey.get(simulationRowSeriesKey(simRow) ?? "") ?? null
-          : null;
-        const gainPlan = resolveEntryGainPlan(
-          simRow,
-          p.capital,
-          expectedHoldDays,
-          holdDaysElapsed,
-          { chartPoints: chartPts },
-        );
-        const forwardPlan = resolveExpectedGainPlan(simRow, p.capital, { chartPoints: chartPts });
-        const targetGainPct = forwardPlan.targetReturnPct;
-        const expectedGainPct = gainPlan.expectedReturnPct;
-        const expectedGainEur = gainPlan.expectedGainEur;
-        const expectedGainSource = gainPlan.source;
-        const forwardGainPct = forwardPlan.expectedReturnPct;
-        const seriesKey = simRow ? simulationRowSeriesKey(simRow) : null;
-        const topStatus = evaluateTopStatus(
-          simRow,
-          p.capital > 0,
-          targetGainPct ?? expectedGainPct,
-          seriesKey,
-          topOpps,
-        );
-        const pnlBreakdown = resolvePositionPnlBreakdown(p, simRow, investedAt, history, inputs);
-        const pnlEurToday = pnlBreakdown.pnlEurToday;
-        const pnlPctToday = pnlBreakdown.pnlPctToday;
-        const hasToday = pnlBreakdown.hasToday;
-        const dailyPnlSource = pnlBreakdown.todaySource;
-        const priorLegEur = pnlBreakdown.priorLegEur;
-        const pnlEurSinceReading = pnlBreakdown.pnlEurSinceReading;
-        const pnlPctSinceReading = pnlBreakdown.pnlPctSinceReading;
-        const hasReadingDelta = pnlBreakdown.hasReadingDelta;
-        const priorReadingTs = pnlBreakdown.priorReadingTs;
-        const showPriorLegNote = pnlTabNeedsPriorLegNote(pnlBreakdown, holdDaysElapsed);
-        const buyAudit = auditSimulationBuyPrice(
-          simRow ?? { Ticker: p.ticker, "Completion Date": p.completionDate },
-          inputs[p.key],
-          p,
-          history,
-        );
-
-        return {
-          key: p.key,
-          name:
-            p.completionDate && p.completionDate !== "—"
-              ? `${p.ticker} · ${p.completionDate}`
-              : p.ticker,
-          ticker: p.ticker,
-          completionDate: p.completionDate,
-          holdDaysElapsed,
-          currentPriceUsd: p.currPrice,
-          buyPriceUsd: p.buyPrice > 0 ? p.buyPrice : null,
-          buyPriceAuditNote: buyAudit.note,
-          buyPriceDrift: buyAudit.driftFromLocal,
-          shares: p.shares > 0 ? p.shares : null,
-          capital: p.capital,
-          valueNow: p.valueNow,
-          pnlUnavailable: p.pnlUnavailable,
-          // Total (MTM) — % su capitale, allineato alla card Σ€
-          pnlPct: p.pnlUnavailable
-            ? null
-            : positionCapitalPnlPct(p.pnlEur, p.capital) ?? p.pnlPct,
-          pnlEur: p.pnlUnavailable ? null : p.pnlEur,
-          // Today (vs prior trading day)
-          pnlPctToday,
-          pnlEurToday,
-          hasToday,
-          pnlPctSinceReading,
-          pnlEurSinceReading,
-          hasReadingDelta,
-          priorReadingTs,
-          dailyPnlSource,
-          priorLegEur,
-          showPriorLegNote,
-          investedAt,
-          purchaseDateLabel: resolvePurchaseDateLabel(inputs[p.key], investedAt),
-          expectedExitDate,
-          expectedHoldDays,
-          daysToTarget: forwardPlan.daysToTarget ?? gainPlan.daysToTarget ?? null,
-          expectedGainPct,
-          targetGainPct,
-          expectedGainEur,
-          expectedGainSource,
-          forwardGainPct,
-          daysToCd: gainPlan.daysToCd,
-          topStatus,
-          simRow: simRow ?? undefined,
-          chartPoints: chartPts,
-          seriesKey: simRow ? simulationRowSeriesKey(simRow) : null,
-        };
-      }),
-    [positions, inputs, history, simRowByKey, topOpps, pointsBySeriesKey]
-  );
-
-  // ── snapshotBar: scope (total vs trading day) + metric (% / €) ─────────────
-  const [snapshotMetric, setSnapshotMetric] = useState<"pct" | "eur">("pct");
-  const [snapshotScope, setSnapshotScope] = useState<"total" | "today" | "reading">("today");
-
-  /** Card «Plan at entry» e curva gain: ordinati per gain atteso (come Top Opps). */
-  const chartDataByExpectedGain = useMemo(
-    () => sortRowsByExpectedGain(chartData),
-    [chartData],
-  );
-
-  const chartDataSorted = useMemo(
-    () => sortByPnlRank(chartData, snapshotScope),
-    [chartData, snapshotScope],
-  );
-
-  const pnlCardRankScope = snapshotScope;
-  const pnlCardRank = useMemo(
-    () => buildPnlRankIndexMap(chartData, pnlCardRankScope, (r) => r.key),
-    [chartData, pnlCardRankScope],
-  );
-
-  /** Gain vs loss tra posizioni attive — sfondo area blocchi P&L (>50% / <50%). */
-  const pnlWinRate = useMemo(
-    () => summarizePortfolioWinRate(chartDataSorted),
-    [chartDataSorted],
-  );
-  const pnlBlocksShellClass = portfolioPnlTabShellClass(pnlWinRate.winPct);
-
-  // Net totals across the whole portfolio (sum of all active tickers).
-  const snapshotTotals = useMemo(
-    () => aggregateOpenPortfolioPnl(simTable, inputs, history),
-    [simTable, inputs, history],
-  );
-
   const dailyPnlLedger = useMemo(
     () => buildPortfolioDailyPnlLedger(simTable, inputs, history),
     [simTable, inputs, history],
@@ -1869,209 +1270,9 @@ export function InvestmentSimulationView({
     downloadPortfolioGainAuditExcel(exp, lang === "it" ? "it" : "en");
   }, [simTable, inputs, history, simTableFilter, lang, t]);
 
-  const { display: closedPiggyDisplay, reset: resetClosedPiggy } =
-    useClosedPiggyBank(dailyPnlLedger);
-
-  const portfolioPriorLegEur = useMemo(
-    () => (snapshotTotals.todayCovered > 0 ? snapshotTotals.priorLegEur : null),
-    [snapshotTotals],
-  );
-
-  const ptfSumTotalTone = portfolioPnlTone(snapshotTotals.pnlEur, snapshotTotals.pnlPct);
-  const ptfSumDayTone: PortfolioPnlTone =
-    snapshotTotals.todayCovered > 0
-      ? portfolioPnlTone(snapshotTotals.pnlEurToday, snapshotTotals.pnlPctToday)
-      : "flat";
-  const ptfSumBlkDay = portfolioPtfDayBlockTheme(ptfSumDayTone);
-  const ptfSumBlkTotal = portfolioPtfBlockTheme(ptfSumTotalTone);
-
-  useEffect(() => {
-    if (ui.view !== "snapshotBar") return;
-    const cleanup = refreshPriceManifest();
-    return cleanup;
-  }, [ui.view, refreshPriceManifest]);
-
-  const pnlPctDomain = useMemo(
-    (): [number, number] =>
-      paddedPctDomain(
-        chartData.map((d) => d.pnlPct),
-        [-5, 5]
-      ),
-    [chartData]
-  );
-
-  const pnlEurDomain = useMemo(
-    (): [number, number] =>
-      paddedEurDomain(
-        chartData.map((d) => d.pnlEur),
-        [-100, 100]
-      ),
-    [chartData]
-  );
-
-  const pnlPctTodayDomain = useMemo(
-    (): [number, number] =>
-      paddedPctDomain(
-        chartData.map((d) => d.pnlPctToday),
-        [-3, 3]
-      ),
-    [chartData]
-  );
-
-  const pnlEurTodayDomain = useMemo(
-    (): [number, number] =>
-      paddedEurDomain(
-        chartData.map((d) => d.pnlEurToday),
-        [-50, 50]
-      ),
-    [chartData]
-  );
-
-  const pnlPctReadingDomain = useMemo(
-    (): [number, number] =>
-      paddedPctDomain(
-        chartData.map((d) => d.pnlPctSinceReading),
-        [-3, 3]
-      ),
-    [chartData]
-  );
-
-  const pnlEurReadingDomain = useMemo(
-    (): [number, number] =>
-      paddedEurDomain(
-        chartData.map((d) => d.pnlEurSinceReading),
-        [-50, 50]
-      ),
-    [chartData]
-  );
-
   const hasActivePositions = useMemo(
     () => positions.some(isActiveSimPosition),
     [positions]
-  );
-
-  const trendActivePositions = useMemo(
-    () =>
-      positions
-        .filter(isActiveSimPosition)
-        .sort((a, b) => a.ticker.localeCompare(b.ticker)),
-    [positions]
-  );
-
-  const trendCompressedHistory = useMemo(
-    () => compressInvestTrendHistory(history),
-    [history],
-  );
-
-  const trendChartData = useMemo(() => {
-    const useDayLabels = trendCompressedHistory.length < history.length;
-    return trendCompressedHistory.map((h) => {
-      const label = useDayLabels ? formatHistoryDayLabel(h.ts) : formatHistoryTsLabel(h.ts);
-      const row: Record<string, string | number> = {
-        ts: label,
-        valore: Math.round(h.value * 100) / 100,
-        capitale: Math.round(h.capital * 100) / 100,
-        pnl: Math.round(h.pnl * 100) / 100,
-        pnlPct: Math.round(h.pnlPct * 100) / 100,
-      };
-      if (selectedKey && h.byTicker[selectedKey]) {
-        const snap = h.byTicker[selectedKey];
-        row.valoreSel = Math.round(snap.value * 100) / 100;
-        row.pnlPctSel = Math.round(snap.pnlPct * 100) / 100;
-        row.pnlSel = Math.round(snap.pnl * 100) / 100;
-        row.capitaleSel = Math.round((snap.value - snap.pnl) * 100) / 100;
-      }
-      return row;
-    });
-  }, [history.length, trendCompressedHistory, selectedKey]);
-
-  const trendPnlPctDomain = useMemo(
-    (): [number, number] =>
-      investTrendPnlDomain(
-        trendChartData.flatMap((r) => {
-          const vals = [Number(r.pnlPct)];
-          if (selectedKey) vals.push(Number(r.pnlPctSel));
-          return vals;
-        }),
-        [-3, 3],
-      ),
-    [trendChartData, selectedKey],
-  );
-
-  const trendPnlEurDomain = useMemo(
-    (): [number, number] =>
-      investTrendEurDomain(
-        trendChartData.flatMap((r) => {
-          const vals = [Number(r.pnl)];
-          if (selectedKey) vals.push(Number(r.pnlSel));
-          return vals;
-        }),
-        [-100, 100],
-      ),
-    [trendChartData, selectedKey],
-  );
-
-  const trendOutlookContext = useMemo(() => {
-    if (selectedPosition && selectedKey) {
-      const row = simRowByKey.get(selectedKey) ?? null;
-      const sk = row ? simulationRowSeriesKey(row) : null;
-      const pts = sk ? chartBundle?.series?.[sk]?.points ?? null : null;
-      return {
-        simRow: row,
-        chartPts: pts,
-        capital: selectedPosition.capital,
-        completionDate: selectedPosition.completionDate,
-      };
-    }
-    return { simRow: null, chartPts: null, capital: 0, completionDate: "" };
-  }, [selectedPosition, selectedKey, simRowByKey, chartBundle]);
-
-  const trendDisplayMetrics = useMemo(() => {
-    if (selectedPosition) {
-      return {
-        label: selectedPosition.ticker,
-        capital: selectedPosition.capital,
-        valueNow: selectedPosition.valueNow,
-        pnl: selectedPosition.pnlEur,
-        pct: selectedPosition.pnlPct,
-        pnlUnavailable: selectedPosition.pnlUnavailable,
-      };
-    }
-    return {
-      label: "Portfolio",
-      capital: portfolio.cap,
-      valueNow: portfolio.val,
-      pnl: portfolio.pnl,
-      pct: portfolio.pct,
-      pnlUnavailable: false,
-    };
-  }, [selectedPosition, portfolio]);
-
-  const trendOutlook = useMemo(
-    () =>
-      resolveInvestTrendOutlook({
-        scopeLabel:
-          trendDisplayMetrics.label === "Portfolio"
-            ? lang === "it"
-              ? "Portafoglio"
-              : "Portfolio"
-            : trendDisplayMetrics.label,
-        pnlEur: trendDisplayMetrics.pnl,
-        pnlPct: trendDisplayMetrics.pct,
-        pnlUnavailable: trendDisplayMetrics.pnlUnavailable,
-        simRow: trendOutlookContext.simRow,
-        chartPts: trendOutlookContext.chartPts,
-        capital: trendOutlookContext.capital,
-        completionDate: trendOutlookContext.completionDate,
-        lang: lang === "it" ? "it" : "en",
-        aggregateScope: !selectedKey,
-      }),
-    [trendDisplayMetrics, trendOutlookContext, lang, selectedKey],
-  );
-
-  const investTrendMarkers = useMemo(
-    () => buildInvestTrendMarkers(positions, inputs, history, selectedKey),
-    [positions, inputs, history, selectedKey]
   );
 
   const setInput = useCallback(
@@ -2239,16 +1440,6 @@ export function InvestmentSimulationView({
     [onOpenDecisionLabBlock]
   );
 
-  const openSimulationRowFor = useCallback(
-    (p: Position) => {
-      onOpenSimulationRow?.({
-        ticker: p.ticker,
-        cd: p.completionDate,
-      });
-    },
-    [onOpenSimulationRow]
-  );
-
   const pnlReloadInFlightRef = useRef(false);
 
   const handleReload = useCallback(async () => {
@@ -2364,8 +1555,6 @@ export function InvestmentSimulationView({
                 !hasActivePositions,
                 t("sim.workspace.tab.lossAnalysisTip"),
               ],
-              ["snapshotBar", t("sim.workspace.tab.pnl"), !hasActivePositions, t("sim.workspace.tab.pnlTip")],
-              ["trendChart", t("sim.workspace.tab.chart"), portfolio.n === 0, t("sim.workspace.tab.chartTip")],
             ] as const
           ).map(([id, label, disabled, tip]) => {
             const active = view === id;
@@ -2380,14 +1569,11 @@ export function InvestmentSimulationView({
                 }`}
                 onClick={() => setView(id as InvestSimView)}
               >
-                {id === "lossAnalysis" ? (
-                  <span className="opacity-80" aria-hidden>
-                    ⏱
-                  </span>
-                ) : null}
-                {id === "snapshotBar" ? <PnlTabRankIcon active={active} /> : null}
+                <span className="opacity-80" aria-hidden>
+                  ⏱
+                </span>
                 {label}
-                {id === "lossAnalysis" && totalAssessmentCount > 0 ? (
+                {totalAssessmentCount > 0 ? (
                   <span className="tabular-nums opacity-80">({totalAssessmentCount})</span>
                 ) : null}
               </button>
@@ -2407,899 +1593,70 @@ export function InvestmentSimulationView({
     ],
   );
 
-  if (!isDecisionLabEmbed && view === "trendChart") {
-    return (
-      <section className="card sim-harmonize flex flex-col flex-1">
-        {renderWorkspaceViewTabs({
-          trailing: (
-            <div className="ml-auto shrink-0 flex items-center gap-2">
-              {renderSimulationRefreshControls(
-                history.length ? `${history.length} history pts` : undefined,
-              )}
-            </div>
-          ),
-        })}
-        <div className="flex flex-wrap items-center gap-2 border-b border-[rgb(var(--border))] px-4 py-3 shrink-0">
-          <h2 className="text-lg font-semibold">
-            {lang === "it" ? "Andamento investimento" : "Investment trend"}
-          </h2>
-          <p className="text-xs text-ink-muted w-full sm:w-auto">
-            {lang === "it"
-              ? `${history.length} letture · snapshot automatico dopo refresh prezzi`
-              : `${history.length} readings · auto snapshot after price refresh`}
-          </p>
-          <div className="flex gap-2 ml-auto">
-            <button
-              type="button"
-              className="btn-ghost text-xs"
-              onClick={() => {
-                if (window.confirm("Clear all chart history?")) {
-                  clearInvestSimHistory();
-                  lastPriceSigRef.current = "";
-                }
-              }}
-            >
-              Clear history
-            </button>
-          </div>
-        </div>
-        <div className="p-4 pb-6 flex-1 flex flex-col gap-4">
-          {trendChartData.length < 2 ? (
-            <p className="text-sm text-ink-muted text-center py-8">
-              {lang === "it"
-                ? "Servono almeno 2 letture. Inserisci capitale sulle righe, poi «Aggiorna dati» o Reload — lo snapshot è automatico."
-                : "At least 2 readings are needed. Enter capital on rows, then Refresh data or Reload — snapshots are automatic."}
-            </p>
-          ) : (
-            <>
-              {trendActivePositions.length > 0 ? (
-                <div className="space-y-1.5 shrink-0">
-                  <p className="text-[10px] uppercase tracking-wide text-ink-muted font-semibold">
-                    Company in portfolio
-                  </p>
-                  <SelectionChipGroup>
-                    <SelectionChip
-                      active={!selectedKey}
-                      onClick={() => setSelectedKey(null)}
-                      title="Aggregate portfolio (all positions)"
-                    >
-                      All portfolio
-                    </SelectionChip>
-                    {trendActivePositions.map((p) => {
-                      const row = simRowByKey.get(p.key);
-                      const company = row
-                        ? String(row["Società"] ?? row["Societa"] ?? "").trim()
-                        : "";
-                      return (
-                        <SelectionChip
-                          key={p.key}
-                          active={selectedKey === p.key}
-                          onClick={() => setSelectedKey(p.key)}
-                          title={company ? `${p.ticker} — ${company}` : p.ticker}
-                        >
-                          <span className="inline-flex items-center gap-1 tabular-nums">
-                            <PortfolioPnlTrendIcon
-                              pnlPct={p.pnlUnavailable ? null : p.pnlPct}
-                              pnlEur={p.pnlUnavailable ? null : p.pnlEur}
-                              size="sm"
-                            />
-                            {p.ticker}
-                          </span>
-                        </SelectionChip>
-                      );
-                    })}
-                  </SelectionChipGroup>
-                </div>
-              ) : null}
-              <InvestTrendMessageBanner
-                outlook={trendOutlook}
-                pnlPct={trendDisplayMetrics.pct}
-                pnlEur={trendDisplayMetrics.pnl}
-                pnlUnavailable={trendDisplayMetrics.pnlUnavailable}
-              />
-              {!trendDisplayMetrics.pnlUnavailable ? (
-                <InvestTrendCapitalGap
-                  capital={trendDisplayMetrics.capital}
-                  valueNow={trendDisplayMetrics.valueNow}
-                  outlook={trendOutlook}
-                />
-              ) : null}
-              <div className="flex flex-col gap-4 shrink-0">
-              <div
-                className={`${TREND_PANEL_CLASS} border-t-[3px] ${trendOutlook.panelAccent}`}
-              >
-                <p className="text-[10px] uppercase tracking-wide chart-trend-muted font-semibold mb-0.5">
-                  P&amp;L % — {lang === "it" ? "rendimento sul capitale" : "return on capital"}
-                </p>
-                <p className="text-[11px] chart-trend-muted mb-3">
-                  {lang === "it"
-                    ? "Sopra 0% = guadagno · sotto 0% = perdita · linea tratteggiata = pareggio"
-                    : "Above 0% = gain · below 0% = loss · dashed line = breakeven"}
-                </p>
-                <div className="h-[min(40vh,360px)] min-h-[260px] w-full">
-                <ResponsiveContainer width="100%" height="100%">
-                  <ComposedChart
-                    data={trendChartData}
-                    margin={{ top: investTrendMarkers.length ? 20 : 10, right: 12, left: 0, bottom: 4 }}
-                  >
-                    <defs>
-                      <linearGradient id="investTrendPnlFill" x1="0" y1="0" x2="0" y2="1">
-                        <stop offset="0%" stopColor={trendOutlook.fillColor} stopOpacity={0.22} />
-                        <stop offset="100%" stopColor={trendOutlook.fillColor} stopOpacity={0.02} />
-                      </linearGradient>
-                    </defs>
-                    <CartesianGrid {...TREND_GRID} />
-                    <XAxis
-                      dataKey="ts"
-                      tick={TREND_AXIS_TICK}
-                      tickLine={false}
-                      axisLine={{ stroke: "#93c5fd", strokeOpacity: 0.35 }}
-                      interval="preserveStartEnd"
-                      minTickGap={48}
-                      height={32}
-                    />
-                    <YAxis
-                      tick={TREND_AXIS_TICK}
-                      tickLine={false}
-                      axisLine={false}
-                      width={44}
-                      domain={trendPnlPctDomain}
-                      tickFormatter={(v) => `${fmtAxisPctTick(v)}%`}
-                    />
-                    <InvestTrendBreakevenLayers
-                      yDomain={trendPnlPctDomain}
-                      breakevenLabel={lang === "it" ? "Pareggio" : "Breakeven"}
-                    />
-                    <InvestTrendMarkersLayer
-                      markers={investTrendMarkers}
-                      selectedTicker={selectedPosition?.ticker}
-                    />
-                    <Tooltip content={<InvestTrendChartTooltip valueMode="pct" />} />
-                    {!selectedKey && (
-                      <Area
-                        type="monotone"
-                        dataKey="pnlPct"
-                        fill="url(#investTrendPnlFill)"
-                        stroke="none"
-                        isAnimationActive={false}
-                      />
-                    )}
-                    <Line
-                      type="monotone"
-                      dataKey="pnlPct"
-                      name={lang === "it" ? "P&L portafoglio %" : "Portfolio P&L %"}
-                      stroke={trendOutlook.lineColor}
-                      strokeWidth={selectedKey ? 1.75 : 2.5}
-                      strokeOpacity={selectedKey ? 0.4 : 1}
-                      dot={false}
-                      activeDot={{
-                        r: 4,
-                        strokeWidth: 2,
-                        stroke: "#fff",
-                        fill: trendOutlook.lineColor,
-                      }}
-                    />
-                    {selectedKey && (
-                      <Line
-                        type="monotone"
-                        dataKey="pnlPctSel"
-                        name={selectedPosition?.ticker ?? "Selection"}
-                        stroke={trendOutlook.lineColor}
-                        strokeWidth={2.5}
-                        dot={false}
-                        activeDot={{
-                          r: 4,
-                          strokeWidth: 2,
-                          stroke: "#fff",
-                          fill: trendOutlook.lineColor,
-                        }}
-                      />
-                    )}
-                  </ComposedChart>
-                </ResponsiveContainer>
-                </div>
-                <InvestTrendLegend
-                  items={[
-                    {
-                      key: "pnl",
-                      label: lang === "it" ? "P&L %" : "P&L %",
-                      color: trendOutlook.lineColor,
-                    },
-                    {
-                      key: "be",
-                      label: lang === "it" ? "Pareggio (0%)" : "Breakeven (0%)",
-                      color: "#2563eb",
-                      dashed: true,
-                    },
-                    ...(selectedKey
-                      ? [
-                          {
-                            key: "selPnl",
-                            label: selectedPosition?.ticker ?? "Selection",
-                            color: trendOutlook.lineColor,
-                          },
-                        ]
-                      : []),
-                  ]}
-                />
-              </div>
-              <div
-                className={`${TREND_PANEL_CLASS} border-t-[3px] ${trendOutlook.panelAccent}`}
-              >
-                <p className="text-[10px] uppercase tracking-wide chart-trend-muted font-semibold mb-0.5">
-                  P&amp;L €
-                </p>
-                <p className="text-[11px] chart-trend-muted mb-3">
-                  {lang === "it"
-                    ? "Sopra €0 = guadagno · sotto €0 = perdita · linea tratteggiata = pareggio"
-                    : "Above €0 = gain · below €0 = loss · dashed line = breakeven"}
-                </p>
-                <div className="h-[min(28vh,260px)] min-h-[180px] w-full">
-                <ResponsiveContainer width="100%" height="100%">
-                  <ComposedChart
-                    data={trendChartData}
-                    margin={{ top: investTrendMarkers.length ? 20 : 10, right: 12, left: 0, bottom: 4 }}
-                  >
-                    <defs>
-                      <linearGradient id="investTrendPnlEurFill" x1="0" y1="0" x2="0" y2="1">
-                        <stop offset="0%" stopColor={trendOutlook.fillColor} stopOpacity={0.18} />
-                        <stop offset="100%" stopColor={trendOutlook.fillColor} stopOpacity={0.02} />
-                      </linearGradient>
-                    </defs>
-                    <CartesianGrid {...TREND_GRID} />
-                    <XAxis
-                      dataKey="ts"
-                      tick={TREND_AXIS_TICK}
-                      tickLine={false}
-                      axisLine={{ stroke: "#93c5fd", strokeOpacity: 0.35 }}
-                      interval="preserveStartEnd"
-                      minTickGap={48}
-                      height={32}
-                    />
-                    <YAxis
-                      tick={TREND_AXIS_TICK}
-                      tickLine={false}
-                      axisLine={false}
-                      width={52}
-                      domain={trendPnlEurDomain}
-                      tickFormatter={(v) => `€${fmtAxisEurTick(v)}`}
-                    />
-                    <InvestTrendBreakevenLayers
-                      yDomain={trendPnlEurDomain}
-                      breakevenLabel={lang === "it" ? "Pareggio" : "Breakeven"}
-                    />
-                    <InvestTrendMarkersLayer
-                      markers={investTrendMarkers}
-                      selectedTicker={selectedPosition?.ticker}
-                    />
-                    <Tooltip content={<InvestTrendChartTooltip valueMode="eur" />} />
-                    {!selectedKey && (
-                      <Area
-                        type="monotone"
-                        dataKey="pnl"
-                        fill="url(#investTrendPnlEurFill)"
-                        stroke="none"
-                        isAnimationActive={false}
-                      />
-                    )}
-                    <Line
-                      type="monotone"
-                      dataKey="pnl"
-                      name={lang === "it" ? "P&L portafoglio €" : "Portfolio P&L €"}
-                      stroke={trendOutlook.lineColor}
-                      strokeWidth={selectedKey ? 1.75 : 2.5}
-                      strokeOpacity={selectedKey ? 0.4 : 1}
-                      dot={false}
-                      activeDot={{
-                        r: 4,
-                        strokeWidth: 2,
-                        stroke: "#fff",
-                        fill: trendOutlook.lineColor,
-                      }}
-                    />
-                    {selectedKey && (
-                      <Line
-                        type="monotone"
-                        dataKey="pnlSel"
-                        name={selectedPosition?.ticker ?? "Selection"}
-                        stroke={trendOutlook.lineColor}
-                        strokeWidth={2.5}
-                        dot={false}
-                        activeDot={{
-                          r: 4,
-                          strokeWidth: 2,
-                          stroke: "#fff",
-                          fill: trendOutlook.lineColor,
-                        }}
-                      />
-                    )}
-                  </ComposedChart>
-                </ResponsiveContainer>
-                </div>
-                <InvestTrendLegend
-                  items={[
-                    {
-                      key: "pnlEur",
-                      label: lang === "it" ? "P&L €" : "P&L €",
-                      color: trendOutlook.lineColor,
-                    },
-                    {
-                      key: "beEur",
-                      label: lang === "it" ? "Pareggio (€0)" : "Breakeven (€0)",
-                      color: "#2563eb",
-                      dashed: true,
-                    },
-                    ...(selectedKey
-                      ? [
-                          {
-                            key: "selEur",
-                            label: selectedPosition?.ticker ?? "Selection",
-                            color: trendOutlook.lineColor,
-                          },
-                        ]
-                      : []),
-                  ]}
-                />
-              </div>
-              {investTrendMarkers.length > 0 && (
-                <p className="text-[10px] text-ink-muted shrink-0 px-1">
-                  {lang === "it"
-                    ? "Linea verticale tratteggiata = data di acquisto registrata."
-                    : "Vertical dashed line = buy date recorded."}
-                  {selectedPosition
-                    ? lang === "it"
-                      ? ` Evidenziata per ${selectedPosition.ticker}.`
-                      : ` Highlighted for ${selectedPosition.ticker}.`
-                    : lang === "it"
-                      ? " Seleziona un titolo sopra per confrontarlo col portafoglio."
-                      : " Select a company above to compare with the portfolio."}
-                </p>
-              )}
-              </div>
-            </>
-          )}
-        </div>
-      </section>
-    );
-  }
-
-  if (!isDecisionLabEmbed && view === "snapshotBar") {
-    const barDataKey =
-      snapshotMetric === "pct"
-        ? snapshotScope === "today"
-          ? "pnlPctToday"
-          : snapshotScope === "reading"
-            ? "pnlPctSinceReading"
-            : "pnlPct"
-        : snapshotScope === "today"
-          ? "pnlEurToday"
-          : snapshotScope === "reading"
-            ? "pnlEurSinceReading"
-            : "pnlEur";
-    const barName =
-      snapshotMetric === "pct"
-        ? snapshotScope === "today"
-          ? t("sim.pnl.bar.pctDay")
-          : snapshotScope === "reading"
-            ? t("sim.pnl.bar.pctReading")
-            : t("sim.pnl.bar.pctTotal")
-        : snapshotScope === "today"
-          ? t("sim.pnl.bar.eurDay")
-          : snapshotScope === "reading"
-            ? t("sim.pnl.bar.eurReading")
-            : t("sim.pnl.bar.eurTotal");
-    const fmtPct = (v: number | null | undefined) =>
-      v == null || !Number.isFinite(v)
-        ? "—"
-        : `${v >= 0 ? "+" : ""}${v.toFixed(2)}%`;
-    const fmtEur = (v: number | null | undefined) =>
-      v == null || !Number.isFinite(v)
-        ? "—"
-        : `${v >= 0 ? "+" : ""}€ ${v.toLocaleString("en-US", { maximumFractionDigits: 2 })}`;
-    const fmtEurVal = (v: number | null | undefined) =>
-      v == null || !Number.isFinite(v)
-        ? "—"
-        : `€ ${v.toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
-    const fmtRecalcTime = (ms: number) =>
-      new Date(ms).toLocaleTimeString(lang === "it" ? "it-IT" : "en-GB", {
-        hour: "2-digit",
-        minute: "2-digit",
-        second: "2-digit",
-        hour12: false,
-      });
-    const barYDomain: [number, number] =
-      snapshotMetric === "pct"
-        ? snapshotScope === "today"
-          ? pnlPctTodayDomain
-          : snapshotScope === "reading"
-            ? pnlPctReadingDomain
-            : pnlPctDomain
-        : snapshotScope === "today"
-          ? pnlEurTodayDomain
-          : snapshotScope === "reading"
-            ? pnlEurReadingDomain
-            : pnlEurDomain;
-    const barPortfolioReference: number | null =
-      snapshotScope === "reading"
-        ? null
-        : snapshotMetric === "pct"
-          ? snapshotScope === "today"
-            ? snapshotTotals.pnlPctToday
-            : snapshotTotals.pnlPct
-          : snapshotScope === "today"
-            ? snapshotTotals.todayCovered > 0
-              ? snapshotTotals.pnlEurToday
-              : null
-            : snapshotTotals.pnlEur;
-    const accentOf = (v: number | null | undefined) =>
-      v == null ? "" : portfolioPnlAccentClass(v);
-    return (
-      <>
-      <section className="card sim-harmonize flex flex-col flex-1 min-h-[28rem]">
-        {renderWorkspaceViewTabs()}
-        <div className="flex flex-wrap items-center gap-2 border-b border-[rgb(var(--border))] px-4 py-3 shrink-0">
-          <div className="min-w-0">
-            <h2 className="text-lg font-semibold inline-flex items-center gap-2">
-              <PnlTabRankIcon active />
-              {t("sim.pnl.title")}
-            </h2>
-            <p className="text-[11px] text-ink-muted mt-0.5 flex flex-wrap items-center gap-x-2 gap-y-0.5">
-              <span>
-                {t("sim.pnl.subtitle.meta", {
-                  n: chartData.length,
-                  scope:
-                    snapshotScope === "today"
-                      ? t("sim.pnl.scope.today")
-                      : snapshotScope === "reading"
-                        ? t("sim.pnl.scope.reading")
-                        : t("sim.pnl.scope.total"),
-                })}
-              </span>
-              {priceSnapshotAt ? (
-                <span className="text-ink-muted/80">
-                  · {t("sim.pnl.pricesAt")} {fmtSnapshotPriceLabel(priceSnapshotAt)}
-                </span>
-              ) : null}
-            </p>
-          </div>
-          <div className="ml-auto shrink-0 flex items-center gap-2">
-            {renderSimulationRefreshControls(
-              chartData.length
-                ? `${chartData.length} active · ${history.length} history pts`
-                : undefined,
-            )}
-          </div>
-        </div>
-        <div className="p-4 flex-1 flex flex-col gap-3">
-          {chartData.length === 0 ? (
-            <p className="text-sm text-ink-muted text-center py-8">
-              {t("sim.pnl.empty")}
-            </p>
-          ) : (
-            <>
-              {refreshApiOk === false ? (
-                <p className="text-[11px] text-[rgb(var(--signal-down))] bg-[rgb(var(--signal-down))]/8 border border-[rgb(var(--signal-down))]/30 rounded-md px-3 py-2 leading-snug">
-                  {t("refresh.btn.refreshData.offline")}
-                </p>
-              ) : null}
-              {priceDataHint ? (
-                <p className="text-[11px] text-amber-800 dark:text-amber-300 bg-amber-500/10 border border-amber-500/25 rounded-md px-3 py-2 leading-snug">
-                  {priceDataHint}
-                </p>
-              ) : null}
-
-              {/* ── Hero: risposta chiara «quanto sono in rosso/verde» (totale dall'ingresso) ── */}
-              <div
-                className={`${ptfBlockTotalClassName(ptfSumTotalTone)} px-4 py-3`}
-                title={t("sim.pnl.sumTotalTip")}
-              >
-                <p className={`${ptfSumBlkTotal.blockTitleTotal} text-[11px]`}>
-                  {t("sim.pnl.hero.label")}
-                </p>
-                <div className="flex flex-wrap items-baseline gap-x-4 gap-y-1 mt-1">
-                  <span className={`text-3xl font-bold tabular-nums${accentOf(snapshotTotals.pnlEur)}`}>
-                    {fmtEur(snapshotTotals.pnlEur)}
-                  </span>
-                  <span className={`text-xl font-semibold tabular-nums${accentOf(snapshotTotals.pnlPct)}`}>
-                    {fmtPct(snapshotTotals.pnlPct)}
-                  </span>
-                </div>
-                <p className="text-[11px] text-ink-muted/85 mt-1 tabular-nums">
-                  {t("sim.pnl.onInvested", {
-                    capital: fmtEurVal(snapshotTotals.capital),
-                    value: fmtEurVal(snapshotTotals.valueNow),
-                  })}
-                  {" · "}
-                  {t("sim.pnl.recalc")} {fmtRecalcTime(lastRecalcAt)}
-                </p>
-                {portfolioPriorLegEur != null &&
-                snapshotTotals.todayCovered > 0 &&
-                Math.abs(portfolioPriorLegEur) > 0.01 ? (
-                  <p className="text-[11px] text-ink-muted/90 mt-2 tabular-nums leading-snug border-t border-[rgb(var(--border))]/35 pt-2">
-                    {t(
-                      snapshotTotals.anyHistoryUncertainContamination
-                        ? "sim.pnl.hero.breakdownUncertain"
-                        : snapshotTotals.priorLegIsImplicitEstimate
-                          ? "sim.pnl.hero.breakdownImplicit"
-                          : "sim.pnl.hero.breakdown",
-                      {
-                        prior: fmtSignedEurPnl(portfolioPriorLegEur),
-                        today: fmtSignedEurPnl(snapshotTotals.pnlEurToday ?? 0),
-                        todayPct: fmtPct(snapshotTotals.pnlPctToday),
-                      },
-                    )}
-                  </p>
-                ) : snapshotTotals.todayCovered > 0 ? (
-                  <p className="text-[11px] text-ink-muted/90 mt-2 tabular-nums leading-snug border-t border-[rgb(var(--border))]/35 pt-2">
-                    {t("sim.pnl.hero.breakdownTodayOnly", {
-                      today: fmtSignedEurPnl(snapshotTotals.pnlEurToday ?? 0),
-                      todayPct: fmtPct(snapshotTotals.pnlPctToday),
-                    })}
-                  </p>
-                ) : null}
-              </div>
-
-              {/* ── KPI secondari: giornata + closed piggy ── */}
-              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-                <div
-                  className={`${ptfBlockDaySecondaryClassName()}`}
-                  title={t("sim.pnl.kpi.todayTitleTip")}
-                >
-                  <p className="text-[10px] uppercase tracking-wide text-ink-muted font-semibold">
-                    {t("sim.pnl.kpi.todayTitle")}
-                  </p>
-                  <div className="flex items-baseline gap-3 mt-0.5">
-                    <span
-                      className={`text-xl font-bold tabular-nums${
-                        snapshotTotals.todayCovered > 0 ? accentOf(snapshotTotals.pnlEurToday) : ""
-                      }`}
-                    >
-                      {snapshotTotals.todayCovered > 0
-                        ? fmtEur(snapshotTotals.pnlEurToday ?? 0)
-                        : "—"}
-                    </span>
-                    <span
-                      className={`text-sm tabular-nums${
-                        snapshotTotals.todayCovered > 0 ? accentOf(snapshotTotals.pnlPctToday) : ""
-                      }`}
-                    >
-                      {snapshotTotals.todayCovered > 0 && snapshotTotals.pnlPctToday != null
-                        ? fmtPct(snapshotTotals.pnlPctToday)
-                        : "—"}
-                    </span>
-                  </div>
-                  <p className="text-[10px] text-ink-muted/80 mt-0.5 leading-snug">
-                    {t("sim.pnl.tickersWithDaily", {
-                      covered: snapshotTotals.todayCovered,
-                      total: snapshotTotals.todayTotal,
-                    })}
-                    {priceSnapshotAt ? (
-                      <> · {t("sim.pnl.pricesAt")} {fmtSnapshotPriceLabel(priceSnapshotAt)}</>
-                    ) : null}
-                  </p>
-                </div>
-                <ClosedPiggyBankBeerGlass
-                  display={closedPiggyDisplay}
-                  onReset={resetClosedPiggy}
-                  compact
-                  showExplain={false}
-                />
-              </div>
-              <p className="text-[10px] text-ink-muted/65 leading-snug -mt-1">
-                {t("sim.pnl.hintReload")}
-              </p>
-              <p className="text-[10px] text-[rgb(var(--panel-feed-accent-strong))]/75 leading-snug border-l-2 border-[rgb(var(--panel-feed-accent))]/35 pl-2">
-                {t("sim.pnl.slopeHarmonyNote")}
-              </p>
-
-              {/* ── Toggle: scope + metric ── */}
-              <div className="flex flex-wrap items-center gap-3 rounded-lg border border-[rgb(var(--border))]/40 bg-[rgb(var(--surface))]/50 px-3 py-2">
-                <div className="flex items-center gap-1.5">
-                  <span className="text-[10px] uppercase tracking-wide text-ink-muted">
-                    {t("sim.pnl.chartLabel")}
-                  </span>
-                  {(
-                    [
-                      ["today", t("sim.pnl.chart.today"), t("sim.pnl.chart.todayTip")] as const,
-                      ["reading", t("sim.pnl.chart.reading"), t("sim.pnl.chart.readingTip")] as const,
-                      ["total", t("sim.pnl.chart.total"), t("sim.pnl.chart.totalTip")] as const,
-                    ] as const
-                  ).map(([scopeKey, lab, tip]) => {
-                    const active = snapshotScope === scopeKey;
-                    return (
-                      <button
-                        key={scopeKey}
-                        type="button"
-                        onClick={() => setSnapshotScope(scopeKey)}
-                        className={active ? "seg-btn-active" : "seg-btn-outline"}
-                        title={tip}
-                      >
-                        {lab}
-                      </button>
-                    );
-                  })}
-                </div>
-                <div className="flex items-center gap-1.5">
-                  <span className="text-[10px] uppercase tracking-wide text-ink-muted">
-                    {t("sim.pnl.metric")}
-                  </span>
-                  {([
-                    ["pct", "%"],
-                    ["eur", "€"],
-                  ] as const).map(([k, lab]) => {
-                    const active = snapshotMetric === k;
-                    return (
-                      <button
-                        key={k}
-                        type="button"
-                        onClick={() => setSnapshotMetric(k)}
-                        className={active ? "seg-btn-active" : "seg-btn-outline"}
-                      >
-                        {lab}
-                      </button>
-                    );
-                  })}
-                </div>
-                <button
-                  type="button"
-                  className="ml-auto inline-flex items-center gap-1.5 rounded-md border border-[rgb(var(--border))]/45 bg-[rgb(var(--surface-2))]/50 px-2.5 py-1 text-[11px] font-medium text-ink-muted hover:border-[rgb(var(--panel-feed-accent))]/35 hover:text-ink hover:bg-[rgb(var(--surface-3))]/60 disabled:opacity-40 disabled:pointer-events-none transition-colors"
-                  disabled={chartData.length === 0}
-                  onClick={() => setDailyPnlLedgerOpen(true)}
-                  title={t("sim.pnl.ledger.openTitle")}
-                >
-                  <DailyLedgerIcon className="h-3.5 w-3.5 shrink-0 opacity-80" />
-                  {t("sim.pnl.ledger.open")}
-                </button>
-              </div>
-
-              <PortfolioPnlBarChart
-                key={`${snapshotScope}-${snapshotMetric}`}
-                data={chartDataSorted}
-                dataKey={barDataKey}
-                seriesName={barName}
-                metric={snapshotMetric}
-                yDomain={barYDomain}
-                showDualInTooltip={snapshotScope === "total"}
-                portfolioReference={barPortfolioReference}
-                portfolioReferenceLabel={
-                  snapshotScope === "reading"
-                    ? ""
-                    : snapshotMetric === "pct"
-                      ? snapshotScope === "today"
-                        ? t("sim.pnl.chart.refToday", {
-                            value: fmtPct(snapshotTotals.pnlPctToday),
-                          })
-                        : t("sim.pnl.chart.refTotal", {
-                            value: fmtPct(snapshotTotals.pnlPct),
-                          })
-                      : snapshotScope === "today"
-                        ? t("sim.pnl.chart.refToday", {
-                            value: fmtEur(
-                              snapshotTotals.todayCovered > 0
-                                ? snapshotTotals.pnlEurToday
-                                : null,
-                            ),
-                          })
-                        : t("sim.pnl.chart.refTotal", {
-                            value: fmtEur(snapshotTotals.pnlEur),
-                          })
-                }
-              />
-              {snapshotScope === "total" ? (
-                <p className="text-[10px] text-ink-muted/80 leading-snug -mt-1 px-0.5">
-                  {t("sim.pnl.chart.totalDualHint")}
-                </p>
-              ) : snapshotScope === "reading" ? (
-                <p className="text-[10px] text-ink-muted/80 leading-snug -mt-1 px-0.5">
-                  {t("sim.pnl.chart.readingHint")}
-                </p>
-              ) : (
-                <p className="text-[10px] text-ink-muted/80 leading-snug -mt-1 px-0.5">
-                  {t("sim.pnl.chart.todayVsTotalHint")}
-                </p>
-              )}
-
-              <PortfolioGainPlanChart rows={chartDataByExpectedGain} history={history} />
-
-              {/* ── Portfolio positions: tabella stile Simulation ── */}
-              <div className={`flex flex-col gap-2.5 ${pnlBlocksShellClass}`}>
-                {pnlWinRate.decisive > 0 ? (
-                  <p
-                    className={`text-[10px] tabular-nums font-medium px-0.5 ${
-                      pnlWinRate.winPct != null && pnlWinRate.winPct > 50
-                        ? "text-emerald-800/90"
-                        : pnlWinRate.winPct != null && pnlWinRate.winPct < 50
-                          ? "text-rose-800/90"
-                          : "text-ink-muted/80"
-                    }`}
-                    title={
-                      lang === "it"
-                        ? "Quota posizioni in gain vs in loss (flat esclusi)"
-                        : "Share of positions in gain vs loss (flat excluded)"
-                    }
-                  >
-                    {lang === "it"
-                      ? `${pnlWinRate.gainCount} in gain · ${pnlWinRate.lossCount} in loss`
-                      : `${pnlWinRate.gainCount} gaining · ${pnlWinRate.lossCount} losing`}
-                    {pnlWinRate.winPct != null ? (
-                      <span className="font-semibold">
-                        {" "}
-                        · {pnlWinRate.winPct.toFixed(0)}% gain
-                      </span>
-                    ) : null}
-                    {pnlWinRate.winPct === 50 ? (
-                      <span className="font-normal opacity-80">
-                        {" "}
-                        ({lang === "it" ? "pari — sfondo neutro" : "even — neutral backdrop"})
-                      </span>
-                    ) : null}
-                  </p>
-                ) : null}
-                <div className="flex flex-wrap items-center justify-between gap-2 px-0.5">
-                  <p className="text-[10px] text-ink-muted/85">
-                    {t("sim.pnl.sortedBestWorst", {
-                      scope:
-                        snapshotScope === "today"
-                          ? t("sim.pnl.scope.today")
-                          : t("sim.pnl.scope.total"),
-                    })}
-                  </p>
-                  <p className="text-[10px] text-ink-muted flex flex-wrap items-center gap-x-3 gap-y-0.5">
-                    <span className="inline-flex items-center gap-1">
-                      <RankAnimalIcon visual={dealRankVisual(0, 3)} basePx={14} />
-                      {lang === "it" ? "top deal" : "top deal"}
-                    </span>
-                    <span className="inline-flex items-center gap-1">
-                      <RankAnimalIcon
-                        visual={{
-                          kind: "worst",
-                          emoji: WORST_RANK_EMOJI,
-                          crown: false,
-                          scale: 1.05,
-                        }}
-                        basePx={14}
-                      />
-                      {lang === "it" ? "in perdita" : "in loss"}
-                    </span>
-                  </p>
-                </div>
-                <PortfolioPnlSheetTable
-                  rows={chartDataSorted}
-                  rankByKey={pnlCardRank.rankByKey}
-                  rankTotal={pnlCardRank.total}
-                  simTableColumns={simTable?.columns}
-                  lang={lang === "it" ? "it" : "en"}
-                  onOpenCurve={(row) =>
-                    onOpenPredictionCharts({
-                      ticker: row.ticker,
-                      completionDate: row.completionDate ?? "—",
-                      seriesKey: row.seriesKey ?? null,
-                    })
-                  }
-                  onSell={sellRowSimulation}
-                />
-
-                {/* Somma gain portafoglio (Σ ticker attivi) */}
-                <article className={`${portfolioRowArticleClass(ptfSumTotalTone)} mt-0`}>
-                  <p className={`${ptfSumBlkTotal.blockTitleTotal} mb-2 text-[11px]`}>
-                    {t("sim.pnl.portfolioSumTitle")}
-                  </p>
-                  <div className={PTF_CARD.grid}>
-                    <div className={PTF_BLK_NEUTRAL.block}>
-                      <p className={PTF_BLK_NEUTRAL.blockTitle}>{t("sim.pnl.portfolio.capital")}</p>
-                      <PtfField label={t("sim.pnl.portfolio.invested")} value={fmtEurVal(snapshotTotals.capital)} />
-                      <PtfField label={t("sim.pnl.portfolio.valueNow")} value={fmtEurVal(snapshotTotals.valueNow)} />
-                    </div>
-                    <div className={PTF_BLK_NEUTRAL.block}>
-                      <p className={PTF_BLK_NEUTRAL.blockTitle}>{t("sim.pnl.portfolio.dayCoverage")}</p>
-                      <PtfField
-                        label={t("sim.pnl.portfolio.tickersDaily")}
-                        value={`${snapshotTotals.todayCovered}/${snapshotTotals.todayTotal}`}
-                      />
-                    </div>
-                    <div className={ptfBlockDayClassName(ptfSumDayTone)}>
-                      <p className={`ptf-block-day-title ${ptfSumBlkDay.blockTitleDay}`}>
-                        {snapshotTotals.todayCovered > 0
-                          ? portfolioDailyChangeLabel(lang === "it", ptfSumDayTone)
-                          : t("sim.pnl.sumTodayShort")}
-                      </p>
-                      <div className={PTF_CARD.metricGrid2}>
-                        <PtfField
-                          label={t("sim.pnl.field.gainPct")}
-                          value={
-                            snapshotTotals.todayCovered > 0
-                              ? fmtPct(snapshotTotals.pnlPctToday)
-                              : "—"
-                          }
-                          tone={
-                            snapshotTotals.todayCovered > 0
-                              ? ptfPnlToneFromDisplay(ptfSumDayTone)
-                              : "text-slate-500"
-                          }
-                        />
-                        <PtfField
-                          label={t("sim.pnl.field.gainEur")}
-                          value={
-                            snapshotTotals.todayCovered > 0
-                              ? fmtSignedEurPnl(snapshotTotals.pnlEurToday)
-                              : "—"
-                          }
-                          tone={
-                            snapshotTotals.todayCovered > 0
-                              ? ptfPnlToneFromDisplay(ptfSumDayTone)
-                              : "text-slate-500"
-                          }
-                        />
-                      </div>
-                    </div>
-                    <div className={ptfBlockTotalClassName(ptfSumTotalTone)}>
-                      <p className={ptfSumBlkTotal.blockTitleTotal}>{t("sim.pnl.sumTotalShort")}</p>
-                      <div className={PTF_CARD.metricGrid2}>
-                        <PtfField
-                          label={t("sim.pnl.field.gainPct")}
-                          value={fmtPct(snapshotTotals.pnlPct)}
-                          tone={ptfPnlToneFromDisplay(ptfSumTotalTone)}
-                        />
-                        <PtfField
-                          label={t("sim.pnl.field.gainEur")}
-                          value={fmtSignedEurPnl(snapshotTotals.pnlEur)}
-                          tone={ptfPnlToneFromDisplay(ptfSumTotalTone)}
-                        />
-                      </div>
-                    </div>
-                  </div>
-                </article>
-              </div>
-            </>
-          )}
-        </div>
-      </section>
-      <PortfolioDailyPnlDrawer
-        open={dailyPnlLedgerOpen}
-        onClose={() => setDailyPnlLedgerOpen(false)}
-        ledger={dailyPnlLedger}
-      />
-    </>
-    );
-  }
 
   if (!isDecisionLabEmbed && view === "lossAnalysis") {
     return (
-      <div className="card sim-harmonize flex flex-col flex-1">
-        {renderWorkspaceViewTabs({
-          trailing: (
-            <div className="ml-auto shrink-0 flex items-center gap-2">
-              {renderSimulationRefreshControls(
-                hasActivePositions
-                  ? `${positionAssessmentCount}/${totalAssessmentCount}`
-                  : undefined,
-              )}
+      <>
+        <DeskPageScroll data-page="deep-dive" className="px-4 pt-3 pb-3">
+          <section
+            className="min-w-0 w-full max-w-none shrink-0 flex flex-col rounded-lg border border-[rgb(var(--border))]/45 bg-[rgb(var(--surface))] px-2.5 py-2.5"
+            aria-label={t("sim.lossAnalysis.pane.kpi")}
+          >
+            <div className="shrink-0 flex items-center justify-end gap-3 border-b border-[rgb(var(--border))]/40 pb-1.5 mb-0.5">
+              {!isDecisionLabEmbed ? (
+                <RefreshControls
+                  onRefresh={handleReload}
+                  loading={reloadBusy}
+                  loadingLabel={reloadBusyLabel}
+                  tooltip={t("refresh.page.simulation.tooltip")}
+                  dataUpdatedAt={dataUpdatedAt}
+                  className="!items-end shrink-0"
+                />
+              ) : null}
             </div>
-          ),
-        })}
-        <PortfolioLossAnalysisView
-          key={lastRecalcAt}
-          simTable={simTable}
-          inputs={inputs}
-          history={history}
-          chartBundle={chartBundle}
-          sdsRows={sdsRowsForMig}
-          gainPlanRows={chartDataByExpectedGain}
-          onBack={() => setView("snapshotBar")}
-          onSell={sellRowSimulation}
-          onRegisterBuy={buyRowSimulation}
-          onOpenPredictionCharts={onOpenPredictionCharts}
-          onOpenDecisionLab={onOpenDecisionLabBlock}
-          onOpenSlopeCharts={onOpenSlopeCharts}
-          focusTicker={
-            focusTicker?.view === "lossAnalysis" ? focusTicker.ticker ?? null : null
-          }
-          focusRowKey={
-            focusTicker?.view === "lossAnalysis" ? focusTicker.rowKey ?? null : null
-          }
-          onFocusTickerConsumed={onFocusConsumed}
+            <PortfolioLossAnalysisView
+              key={lastRecalcAt}
+              simTable={simTable}
+              inputs={inputs}
+              history={history}
+              chartBundle={sharedChartBundleProp ?? chartBundle}
+              sdsRows={sdsRowsForMig}
+              onSell={sellRowSimulation}
+              onRegisterBuy={buyRowSimulation}
+              onOpenPredictionCharts={onOpenPredictionCharts}
+              onOpenDecisionLab={onOpenDecisionLabBlock}
+              onOpenSlopeCharts={onOpenSlopeCharts}
+              embedded
+              onBack={() => {
+                setHeldDeepDive({ ticker: null, rowKey: null });
+                onExitDeepDive?.();
+              }}
+              focusTicker={focusTicker?.ticker ?? heldDeepDive.ticker}
+              focusRowKey={focusTicker?.rowKey ?? heldDeepDive.rowKey}
+              focusNonce={focusTicker?.focusNonce ?? null}
+              preferTopKpi={false}
+              openDeepDive={
+                Boolean(focusTicker?.openDeepDive) ||
+                Boolean(focusTicker?.openEis) ||
+                Boolean(focusTicker?.ticker?.trim()) ||
+                Boolean(heldDeepDive.ticker) ||
+                Boolean(heldDeepDive.rowKey)
+              }
+              openEis={
+                focusTicker?.view === "lossAnalysis"
+                  ? Boolean(focusTicker.openEis)
+                  : false
+              }
+              onFocusTickerConsumed={onFocusConsumed}
+            />
+          </section>
+        </DeskPageScroll>
+        <PortfolioDailyPnlDrawer
+          open={dailyPnlLedgerOpen}
+          onClose={() => setDailyPnlLedgerOpen(false)}
+          ledger={dailyPnlLedger}
         />
-      </div>
+      </>
     );
   }
 
@@ -3351,16 +1708,6 @@ export function InvestmentSimulationView({
               onClick={() => onOpenSupernovaScreen()}
             >
               {t("sim.workspace.openSupernova")}
-            </button>
-          ) : null}
-          {onOpenPatternScreen ? (
-            <button
-              type="button"
-              className="btn-ghost text-[11px] font-semibold border border-[rgb(var(--border))]/50"
-              title={t("sim.workspace.openPatternTip")}
-              onClick={() => onOpenPatternScreen()}
-            >
-              {t("sim.workspace.openPattern")}
             </button>
           ) : null}
           {!isDecisionLabEmbed && onOpenDecisionLabScreen ? (
@@ -3934,21 +2281,27 @@ export function InvestmentSimulationView({
                 inPortfolio && simRow
                   ? positionPnlForOpenRow(simRow, inputs, history)
                   : null;
-              const rowOutlook: PortfolioTableOutlook = resolvePortfolioTableOutlook({
+              const rowOutlook: PortfolioTableOutlook = resolvePnlRowOutlook({
                 inPortfolio,
+                pnlUnavailable: p.pnlUnavailable,
                 pnlEur: pnlAligned?.pnlEur ?? (inPortfolio ? p.pnlEur : null),
                 pnlPct: pnlAligned?.pnlPct ?? (inPortfolio ? p.pnlPct : null),
-                planReturnPct: gainPlan ? primaryReturnPctFromGainPlan(gainPlan) : null,
-                slope5d: curvesForTone?.slope5d ?? null,
-                slope20d: curvesForTone?.slope20d ?? null,
-                simRow: simRowForTone ?? null,
-                chartPoints: chartPtsForRow,
               });
               const rowStyle: React.CSSProperties | undefined = focusStyle;
               const portfolioRowCls =
                 !isFocused && TABLE_COLORS_ENABLED
                   ? portfolioTableOutlookClass(rowOutlook)
                   : "";
+              // Verdetto d'uscita unificato (stesso motore della ex tab
+              // "Open positions → when to exit"): mostrato accanto a Sell.
+              const exitV = inPortfolio
+                ? exitVerdict(
+                    curvesForTone?.slope20d ?? null,
+                    pnlAligned?.pnlPct ?? p.pnlPct ?? null,
+                    buildExitVerdictContext(simRowForTone, p.capital),
+                  )
+                : null;
+              const exitTone = exitV ? verdictTone(exitV.verdict) : null;
               const planReturnTone =
                 gainPlan?.targetReturnPct ?? planReturnByKey.get(p.key) ?? null;
               const entryBuyPrice =
@@ -4027,18 +2380,10 @@ export function InvestmentSimulationView({
                     <button
                       type="button"
                       className="group text-left bg-transparent border-0 p-0 cursor-pointer max-w-full w-full"
-                      title={
-                        isDecisionLabEmbed && onOpenSimulationRow
-                          ? t("sim.workspace.tickerSimulationTip")
-                          : t("sim.workspace.tickerDecisionLabTip")
-                      }
+                      title={t("sim.workspace.tickerDecisionLabTip")}
                       onClick={(e) => {
                         e.stopPropagation();
-                        if (isDecisionLabEmbed && onOpenSimulationRow) {
-                          openSimulationRowFor(p);
-                        } else {
-                          openDecisionLabBlockFor(p);
-                        }
+                        openDecisionLabBlockFor(p);
                       }}
                     >
                       <span className="inline-flex items-center gap-1 max-w-full">
@@ -4052,11 +2397,9 @@ export function InvestmentSimulationView({
                           pnlUnavailable={p.pnlUnavailable}
                           tableOutlook={inPortfolio ? rowOutlook : null}
                           className={
-                            isDecisionLabEmbed && onOpenSimulationRow
-                              ? "font-semibold text-[rgb(var(--accent))] group-hover:underline"
-                              : inPortfolio
-                                ? "group-hover:underline"
-                                : "font-semibold text-[rgb(var(--accent))] group-hover:underline"
+                            inPortfolio
+                              ? "group-hover:underline"
+                              : "font-semibold text-[rgb(var(--accent))] group-hover:underline"
                           }
                         />
                       </span>
@@ -4123,7 +2466,7 @@ export function InvestmentSimulationView({
                     return (
                       <td className={sheetGridTdClass("cd")} data-col="cd">
                         <span
-                          className="text-[10px] whitespace-nowrap"
+                          className="text-[11px] whitespace-nowrap"
                           style={cdExtras?.style}
                           title={cdLabel !== "—" ? cdLabel : undefined}
                         >
@@ -4258,7 +2601,7 @@ export function InvestmentSimulationView({
                   <td className={sheetGridTdClass("px")} data-col="px">
                     <div>{fmtUsd(p.currPrice)}</div>
                     {priceSnapshotAt ? (
-                      <div className="text-[10px] text-ink-muted/65 font-normal leading-tight">
+                      <div className="text-[11px] text-ink-muted/65 font-normal leading-tight">
                         {fmtSnapshotPriceLabel(priceSnapshotAt)}
                       </div>
                     ) : null}
@@ -4295,7 +2638,7 @@ export function InvestmentSimulationView({
                         return dailyPct != null ? (
                           <>
                             <span
-                              className={`text-[10px] font-semibold tabular-nums ${
+                              className={`text-[11px] font-semibold tabular-nums ${
                                 dailyPct > 0
                                   ? "text-[rgb(var(--signal-up))]"
                                   : dailyPct < 0
@@ -4307,13 +2650,13 @@ export function InvestmentSimulationView({
                               {dailyPct.toFixed(2)}%
                             </span>
                             {priceSnapshotAt && (
-                              <span className="text-[10px] text-ink-muted/70 whitespace-nowrap">
+                              <span className="text-[11px] text-ink-muted/70 whitespace-nowrap">
                                 {fmtSnapshotPriceLabel(priceSnapshotAt)}
                               </span>
                             )}
                           </>
                         ) : (
-                          <span className="text-[10px] text-ink-muted/80 font-normal">
+                          <span className="text-[11px] text-ink-muted/80 font-normal">
                             {priceSnapshotAt ? fmtSnapshotPriceLabel(priceSnapshotAt) : "—"}
                           </span>
                         );
@@ -4324,7 +2667,7 @@ export function InvestmentSimulationView({
                     <div className="flex items-center gap-1.5">
                       {inPortfolio && entryPct != null && (
                         <span
-                          className={`text-xs font-bold leading-none ${
+                          className={`text-[11px] font-bold leading-none ${
                             entryPct > 0
                               ? "text-[rgb(var(--signal-up))]"
                               : "text-[rgb(var(--signal-down))]"
@@ -4339,7 +2682,7 @@ export function InvestmentSimulationView({
                         </span>
                       )}
                       <DecimalTextInput
-                        className="input w-full py-0.5 text-xs tabular-nums"
+                        className="input w-full py-0.5 text-[11px] tabular-nums"
                         value={inp.buyPrice > 0 ? inp.buyPrice : 0}
                         placeholder={
                           localEntry || inp.ignoreSheet
@@ -4364,7 +2707,7 @@ export function InvestmentSimulationView({
                             ? String(p.capital)
                             : undefined
                       }
-                      inputClassName="input w-full py-0.5 text-xs tabular-nums"
+                      inputClassName="input w-full py-0.5 text-[11px] tabular-nums"
                       onCommit={(n) => setInput(p.key, "capital", n)}
                     />
                   </td>
@@ -4397,7 +2740,7 @@ export function InvestmentSimulationView({
                   <td className={sheetGridTdClass("px")} data-col="px">
                     <div>{fmtUsd(p.currPrice)}</div>
                     {priceSnapshotAt ? (
-                      <div className="text-[10px] text-ink-muted/65 font-normal leading-tight">
+                      <div className="text-[11px] text-ink-muted/65 font-normal leading-tight">
                         {fmtSnapshotPriceLabel(priceSnapshotAt)}
                       </div>
                     ) : null}
@@ -4433,7 +2776,7 @@ export function InvestmentSimulationView({
                     <div className="flex items-center gap-1.5">
                       {inPortfolio && entryPct != null && (
                         <span
-                          className={`text-sm font-bold leading-none ${
+                          className={`text-[11px] font-bold leading-none ${
                             entryPct > 0
                               ? "text-[rgb(var(--signal-up))]"
                               : "text-[rgb(var(--signal-down))]"
@@ -4448,7 +2791,7 @@ export function InvestmentSimulationView({
                         </span>
                       )}
                       <DecimalTextInput
-                        className="input w-full max-w-[7.5rem] py-0.5 text-xs tabular-nums"
+                        className="input w-full max-w-[7.5rem] py-0.5 text-[11px] tabular-nums"
                         value={inp.buyPrice > 0 ? inp.buyPrice : 0}
                         placeholder={
                           localEntry || inp.ignoreSheet
@@ -4473,7 +2816,7 @@ export function InvestmentSimulationView({
                             ? String(p.capital)
                             : undefined
                       }
-                      inputClassName="input w-full max-w-[7.5rem] py-0.5 text-xs tabular-nums"
+                      inputClassName="input w-full max-w-[7.5rem] py-0.5 text-[11px] tabular-nums"
                       wrapperClassName="flex flex-col gap-0.5 min-w-0"
                       onCommit={(n) => setInput(p.key, "capital", n)}
                     />
@@ -4511,7 +2854,7 @@ export function InvestmentSimulationView({
                     {canBuy ? (
                       <button
                         type="button"
-                        className="btn-ghost text-[10px] px-1 text-positive font-semibold"
+                        className="btn-ghost text-[11px] px-1 text-positive font-semibold"
                         title={`Open position · €${DEFAULT_SIM_BUY_CAPITAL_EUR} at current price`}
                         onClick={() => buyRowSimulation(p.key)}
                       >
@@ -4521,16 +2864,24 @@ export function InvestmentSimulationView({
                       <button
                         type="button"
                         disabled
-                        className="btn-ghost text-[10px] px-1 text-ink-muted opacity-60 cursor-not-allowed"
+                        className="btn-ghost text-[11px] px-1 text-ink-muted opacity-60 cursor-not-allowed"
                         title={buyBlockReason}
                       >
                         Buy
                       </button>
                     ) : null}
+                    {inPortfolio && exitTone && exitV && exitV.verdict !== "n/d" && (
+                      <span
+                        className={`inline-block px-1.5 py-0.5 rounded text-[11px] font-bold ${exitTone.color} ${exitTone.bg}`}
+                        title={exitV.reason}
+                      >
+                        {exitTone.label}
+                      </span>
+                    )}
                     {inPortfolio && (
                       <button
                         type="button"
-                        className="btn-ghost text-[10px] px-1 text-positive"
+                        className="btn-ghost text-[11px] px-1 text-positive"
                         title={
                           p.currPrice != null
                             ? `Sell ${p.ticker} at $${p.currPrice.toFixed(2)}`
@@ -4664,7 +3015,7 @@ function renderSynthCapSuggestion(
   lang: "it" | "en",
 ): React.ReactNode {
   if (share == null || totalCapitalEur <= 0) {
-    return <span className="text-ink-muted text-[10px]">—</span>;
+    return <span className="text-ink-muted text-[11px]">—</span>;
   }
   const eur = share * totalCapitalEur;
   const pct = share * 100;
@@ -4679,121 +3030,9 @@ function renderSynthCapSuggestion(
           : `Actionable synth (max 25%/deal): ${eurLabel} (${pct.toFixed(1)}% of pot). Underwater positions are never upsized — only reduced toward target.`
       }
     >
-      <span className="text-xs font-semibold">{eurLabel}</span>
-      <span className="text-[10px] text-ink-muted/75">({pct.toFixed(1)}%)</span>
+      <span className="text-[11px] font-semibold">{eurLabel}</span>
+      <span className="text-[11px] text-ink-muted/75">({pct.toFixed(1)}%)</span>
     </div>
   );
-}
-
-// ── Top Status: allineato alle tier pubblicate da Decision Lab ──────────────
-
-type TopStatusKind =
-  | "top"
-  | "watch"
-  | "top2_buy"
-  | "low_aff"
-  | "low_pred"
-  | "neg_pred"
-  | "missing"
-  | "inactive";
-
-function evaluateTopStatus(
-  simRow: Record<string, unknown> | undefined,
-  hasPosition: boolean,
-  planReturnPct?: number | null,
-  seriesKey?: string | null,
-  topOpps?: TopOppsSnapshot,
-): { kind: TopStatusKind; affPct: number | null; pred5Pp: number | null; reasons: string[] } {
-  if (!hasPosition) {
-    if (seriesKey && topOpps) {
-      const tier = recommendationTierForKey(seriesKey, false, topOpps);
-      if (tier === "top2_buy") {
-        return {
-          kind: "top2_buy",
-          affPct: null,
-          pred5Pp: null,
-          reasons: ["Top 2 BUY — published by Decision Lab (best ROI/day, hot zone)"],
-        };
-      }
-      if (tier === "hot_top") {
-        return {
-          kind: "top",
-          affPct: null,
-          pred5Pp: null,
-          reasons: ["Hot zone Top Opportunity — published by Decision Lab"],
-        };
-      }
-      if (tier === "watch_top") {
-        return {
-          kind: "watch",
-          affPct: null,
-          pred5Pp: null,
-          reasons: ["Watch zone Early opportunity — published by Decision Lab"],
-        };
-      }
-    }
-    return { kind: "inactive", affPct: null, pred5Pp: null, reasons: ["No capital: position inactive"] };
-  }
-  if (!simRow) {
-    return { kind: "missing", affPct: null, pred5Pp: null, reasons: ["Sim data not available"] };
-  }
-
-  const findCol = (...parts: string[]): string | null => {
-    for (const k of Object.keys(simRow)) {
-      const flat = k.replace(/\n/g, " ");
-      if (parts.every((p) => flat.toLowerCase().includes(p.toLowerCase()))) return k;
-    }
-    return null;
-  };
-  const numv = (v: unknown): number | null => {
-    if (v == null || v === "" || v === "—") return null;
-    const n = typeof v === "number" ? v : Number(String(v).replace(/,/g, ".").replace(/%/g, ""));
-    return Number.isFinite(n) ? n : null;
-  };
-  const toPp = (v: number | null, raw: unknown): number | null => {
-    if (v == null) return null;
-    const hasPct = typeof raw === "string" && raw.includes("%");
-    return Math.abs(v) <= 1.5 && !hasPct ? v * 100 : v;
-  };
-
-  const cAff    = findCol("Affidabilit", "calib") ?? findCol("Affidabilit") ?? "";
-  const cPred4  = findCol("Pred", "+4") ?? "";
-  const cPred7  = findCol("Pred", "+7") ?? "";
-
-  let aff = numv(simRow[cAff]);
-  if (aff != null && aff <= 1.5) aff *= 100;
-  const pred4 = toPp(numv(simRow[cPred4]), simRow[cPred4]);
-  const pred7 = toPp(numv(simRow[cPred7]), simRow[cPred7]);
-  let pred5: number | null;
-  if (pred4 != null && pred7 != null) pred5 = pred4 + (pred7 - pred4) * (1 / 3);
-  else if (pred7 != null) pred5 = pred7;
-  else if (pred4 != null) pred5 = pred4;
-  else pred5 = null;
-
-  const affMin = loadTopOppMinAffidPct();
-  const PRED_MIN_DEFAULT_PP = 0.5;
-
-  const reasons: string[] = [];
-  if (aff == null) reasons.push("Reliability missing");
-  else if (aff < affMin) reasons.push(`Reliability ${aff.toFixed(0)}% < ${affMin}% (Decision Lab threshold)`);
-
-  if (pred5 == null) reasons.push("Pred +5 missing");
-  else if (pred5 <= 0) reasons.push(`Pred +5 ${pred5.toFixed(2)}pp (negative direction)`);
-  else if (pred5 < PRED_MIN_DEFAULT_PP) reasons.push(`Pred +5 ${pred5.toFixed(2)}pp < ${PRED_MIN_DEFAULT_PP}pp (UI threshold)`);
-
-  if (planReturnPct != null && planReturnPct <= 0) {
-    reasons.push(
-      `ROI target ${planReturnPct.toFixed(1)}% (no rise segment / slope turn-down)`,
-    );
-  }
-
-  let kind: TopStatusKind;
-  if (reasons.length === 0) kind = "top";
-  else if (planReturnPct != null && planReturnPct <= 0) kind = "neg_pred";
-  else if (pred5 != null && pred5 <= 0) kind = "neg_pred";
-  else if (aff != null && aff < affMin) kind = "low_aff";
-  else kind = "low_pred";
-
-  return { kind, affPct: aff, pred5Pp: pred5, reasons };
 }
 

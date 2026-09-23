@@ -31,7 +31,7 @@ export async function loadLocalSheet(kind: LocalSheetKind): Promise<SheetTable> 
       : kind === "clinical"
         ? "Clinical_OpenFDA"
         : kind === "secK8"
-          ? "SEC 8-K"
+          ? "SEC K-8"
           : kind === "accuracy"
           ? "Accuracy"
           : "Financial";

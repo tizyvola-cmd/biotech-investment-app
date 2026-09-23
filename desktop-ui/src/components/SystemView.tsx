@@ -6,12 +6,12 @@ import {
   type RefreshTabProfileId,
 } from "./RefreshView";
 import { Settings } from "./Settings";
-import { CrossTabCoherencePanel } from "./CrossTabCoherencePanel";
 import { SystemOwnershipPanel } from "./SystemOwnershipPanel";
-import type { SheetTable } from "../types";
-import { useT } from "../shared/i18n";
+import { AiApiKeysPanel } from "./AiApiKeysPanel";
+import { AiProviderSwitch } from "./AiProviderSwitch";
+import { useT, useLang } from "../shared/i18n";
 import { exportDesktopSnapshots, runRefreshProfile } from "../api/refresh";
-import { fetchRefreshStatus } from "../api/supernova";
+import { fetchAiProviderInfo, fetchRefreshStatus, type AiProviderInfo } from "../api/supernova";
 import { setRefreshDurationClass, setRefreshProfile } from "../shared/refreshStatusStore";
 import {
   effectiveRegime,
@@ -33,9 +33,6 @@ export function SystemView({
   onRefreshStatus,
   theme,
   onTheme,
-  simTable,
-  coherenceFocus = false,
-  onCoherenceFocusConsumed,
 }: {
   apiOk: boolean | null;
   busy: boolean;
@@ -47,39 +44,39 @@ export function SystemView({
   onRefreshStatus: () => void;
   theme: ResolvedTheme;
   onTheme: (t: ResolvedTheme) => void;
-  simTable: SheetTable | null;
-  coherenceFocus?: boolean;
-  onCoherenceFocusConsumed?: () => void;
 }) {
-  const [panel, setPanel] = useState<"refresh" | "settings" | "coherence" | "about">("refresh");
+  const [panel, setPanel] = useState<"refresh" | "settings" | "about" | "ai">("ai");
   const [refreshError, setRefreshError] = useState<string | null>(null);
   const [marketCtx, setMarketCtx] = useState<MarketContextDoc | null>(null);
+  const [aiProvider, setAiProvider] = useState<AiProviderInfo | null>(null);
   const t = useT();
+  const { lang } = useLang();
+  const it = lang === "it";
 
   useEffect(() => {
     void loadMarketContextDoc().then(setMarketCtx).catch(() => setMarketCtx(null));
   }, [busy]);
 
+  useEffect(() => {
+    if (panel !== "ai") return;
+    void fetchAiProviderInfo()
+      .then(setAiProvider)
+      .catch(() => setAiProvider(null));
+  }, [panel]);
+
   const regime: MarketRegime = effectiveRegime(marketCtx);
   const gateBypass = loadMarketGateBypass();
 
-  useEffect(() => {
-    if (coherenceFocus) {
-      setPanel("coherence");
-      onCoherenceFocusConsumed?.();
-    }
-  }, [coherenceFocus, onCoherenceFocusConsumed]);
-
   const tabs: {
-    id: "refresh" | "settings" | "coherence" | "about";
+    id: "refresh" | "settings" | "about" | "ai";
     labelKey:
       | "system.tab.refresh"
       | "system.tab.settings"
-      | "system.tab.coherence"
-      | "system.tab.about";
+      | "system.tab.about"
+      | "system.tab.ai";
   }[] = [
     { id: "refresh", labelKey: "system.tab.refresh" },
-    { id: "coherence", labelKey: "system.tab.coherence" },
+    { id: "ai", labelKey: "system.tab.ai" },
     { id: "settings", labelKey: "system.tab.settings" },
     { id: "about", labelKey: "system.tab.about" },
   ];
@@ -165,7 +162,7 @@ export function SystemView({
         </div>
       </div>
 
-      <div className="flex flex-1 min-h-0 flex-col pt-3 overflow-y-auto">
+      <div className="flex flex-1 min-h-0 flex-col pt-3 pb-4 overflow-y-auto overflow-x-hidden">
         {panel === "refresh" && (
           <RefreshView
             apiOk={apiOk}
@@ -175,7 +172,22 @@ export function SystemView({
             onStartProfile={startRefreshProfile}
           />
         )}
-        {panel === "coherence" && <CrossTabCoherencePanel simTable={simTable} />}
+        {panel === "ai" && (
+          <div className="max-w-2xl space-y-3 pb-6">
+            <div>
+              <h3 className="text-sm font-semibold text-ink">
+                {it ? "Piattaforme AI" : "AI platforms"}
+              </h3>
+              <p className="text-[11px] text-ink-muted mt-0.5 leading-snug">
+                {it
+                  ? "Inserisci le API key e scegli il provider attivo. Claude per qualità; Gemini gratis come fallback."
+                  : "Paste API keys and pick the active provider. Claude for quality; Gemini free as fallback."}
+              </p>
+            </div>
+            <AiProviderSwitch info={aiProvider} onUpdated={setAiProvider} />
+            <AiApiKeysPanel defaultOpen onProviderUpdate={setAiProvider} />
+          </div>
+        )}
         {panel === "settings" && (
           <Settings
             apiOk={apiOk}

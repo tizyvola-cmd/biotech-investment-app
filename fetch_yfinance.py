@@ -85,6 +85,44 @@ def _yf_quote_refresh_hours() -> float:
         return 1.0
 
 
+# Thresholds per rilevare prezzi anomali restituiti da yfinance.
+# Biotech può muovere ±90% su catalyst, ma non ÷1000 o ×10 in un giorno.
+_PRICE_CRASH_FLOOR = 0.05   # curr < prev × 5%  → sicuramente sbagliato
+_PRICE_SPIKE_CEIL  = 10.0   # curr > prev × 10x → sicuramente sbagliato
+_PRICE_WARN_FLOOR  = 0.10   # curr < prev × 10% → sospetto, solo warning
+_PRICE_WARN_CEIL   = 3.0    # curr > prev × 3x  → sospetto, solo warning
+
+
+def _price_anomalous(curr, prev, *, symbol: str = "") -> bool:
+    """
+    True se curr è implausibilmente lontano da previousClose.
+    Soglie hard: <5% o >1000% di prev → scarta (salva valore cached).
+    Soglie soft: <10% o >300% → avviso ma accetta.
+    Restituisce False se prev/curr non sono validabili.
+    """
+    try:
+        c, p = float(curr), float(prev)
+        if c <= 0 or p <= 0:
+            return False
+        r = c / p
+        if r < _PRICE_CRASH_FLOOR or r > _PRICE_SPIKE_CEIL:
+            print(
+                f"[YFinance] {symbol}: prezzo anomalo {c:.4f} (prev={p:.4f}, ratio={r:.4f})"
+                " — scartato, tenuto valore cache precedente.",
+                flush=True,
+            )
+            return True
+        if r < _PRICE_WARN_FLOOR or r > _PRICE_WARN_CEIL:
+            print(
+                f"[YFinance] {symbol}: prezzo sospetto {c:.4f} (prev={p:.4f}, ratio={r:.4f})"
+                " — accettato ma verificare.",
+                flush=True,
+            )
+    except (TypeError, ValueError):
+        pass
+    return False
+
+
 def cache_path(symbol: str) -> str:
     return os.path.join(CACHE_DIR, f"{symbol}.json")
 
@@ -138,12 +176,24 @@ def _fetch_quotes_only(symbol: str, base: dict) -> dict:
         t = yf.Ticker(symbol)
         fi = t.fast_info
         info = t.info or {}
-        prev = fi.get("previous_close") or info.get("previousClose")
+        # Prefer regular-session previous close (same as refresh_live_signals /
+        # Yahoo quote widget). `previous_close` can include after-hours and
+        # flip Var. Giorn. % on weekend rebuilds.
+        prev = (
+            fi.get("regular_market_previous_close")
+            or info.get("regularMarketPreviousClose")
+            or fi.get("previous_close")
+            or info.get("previousClose")
+        )
         curr = (
             fi.get("last_price")
             or info.get("currentPrice")
             or info.get("regularMarketPrice")
         )
+        # Validazione: se il prezzo è implausibile rispetto al previousClose,
+        # teniamo il valore già in cache invece di sovrascriverlo con spazzatura.
+        if prev and curr and _price_anomalous(curr, prev, symbol=symbol):
+            curr = base.get("currentPrice")
         open_px = (
             fi.get("open")
             or info.get("regularMarketOpen")
@@ -185,12 +235,20 @@ def fetch_symbol(symbol: str) -> dict:
         fi = t.fast_info
         info = t.info or {}
 
-        prev = fi.get("previous_close") or info.get("previousClose")
+        prev = (
+            fi.get("regular_market_previous_close")
+            or info.get("regularMarketPreviousClose")
+            or fi.get("previous_close")
+            or info.get("previousClose")
+        )
         curr = (
             fi.get("last_price")
             or info.get("currentPrice")
             or info.get("regularMarketPrice")
         )
+        # Stessa validazione del path incrementale.
+        if prev and curr and _price_anomalous(curr, prev, symbol=symbol):
+            curr = (cached or {}).get("currentPrice")
         open_px = (
             fi.get("open")
             or info.get("regularMarketOpen")
@@ -342,12 +400,23 @@ def run_fetch(symbols: list[str]) -> list[dict]:
 
 
 def main() -> None:
-    with open(os.path.join(DATA_DIR, "biotech_symbols.json"), encoding="utf-8") as f:
-        symbols = json.load(f)
+    try:
+        from medtech_universe import load_universe_symbols_for_yfinance
+
+        symbols = load_universe_symbols_for_yfinance()
+    except ImportError:
+        with open(os.path.join(DATA_DIR, "biotech_symbols.json"), encoding="utf-8") as f:
+            symbols = json.load(f)
     if not isinstance(symbols, list):
         symbols = list(symbols) if symbols else []
     records = run_fetch(symbols)
     save_outputs(records)
+    try:
+        from orch_refresh_gates import mark_run
+
+        mark_run("yfinance", stats={"tickers": len(records)})
+    except Exception:
+        pass
     print(">>> YFINANCE COMPLETATO (CACHE INCREMENTALE) <<<")
     print(f"Ticker in output: {len(records)}")
 

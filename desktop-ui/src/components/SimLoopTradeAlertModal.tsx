@@ -113,11 +113,25 @@ export function SimLoopTradeAlertModal({
                   {alert.pnlEur != null && Number.isFinite(alert.pnlEur) ? (
                     <span
                       className={`text-[10px] tabular-nums font-semibold ${
-                        alert.pnlEur >= 0 ? "text-emerald-700" : "text-rose-700"
+                        batch.pending
+                          ? "text-ink-muted"
+                          : alert.pnlEur > 0
+                            ? "text-emerald-700"
+                            : alert.pnlEur < 0
+                              ? "text-rose-700"
+                              : "text-ink-muted"
                       }`}
                     >
-                      P&L {alert.pnlEur >= 0 ? "+" : ""}
-                      {Math.round(alert.pnlEur).toLocaleString(it ? "it-IT" : "en-US")} €
+                      {(() => {
+                        const pnl = `${alert.pnlEur >= 0 ? "+" : ""}${Math.round(alert.pnlEur).toLocaleString(it ? "it-IT" : "en-US")} €`;
+                        return batch.pending
+                          ? t("simLoopTradeAlert.pnlPending", { pnl })
+                          : t("simLoopTradeAlert.pnlRealized", { pnl });
+                      })()}
+                    </span>
+                  ) : batch.pending ? (
+                    <span className="text-[10px] text-ink-muted">
+                      {t("simLoopTradeAlert.pnlPending", { pnl: "—" })}
                     </span>
                   ) : null}
                   <button
@@ -140,7 +154,15 @@ export function SimLoopTradeAlertModal({
         </ul>
 
         <div className="px-4 py-3 border-t border-[rgb(var(--border))]/40 flex justify-end">
-          <button type="button" className="btn-ghost text-xs" onClick={onClose}>
+          <button
+            type="button"
+            className="btn-ghost text-xs relative z-20"
+            onClick={(e) => {
+              e.preventDefault();
+              e.stopPropagation();
+              onClose();
+            }}
+          >
             {t("simLoopTradeAlert.dismiss")}
           </button>
         </div>

@@ -12,19 +12,20 @@ The mobile PWA (`mobile-ui/`) is a **tester companion** to the full desktop app 
 
 ## Principles
 
-1. **Max 3–4 data points per list row** — ticker, one countdown/metric, one badge. Hide company names, secondary columns, and long subtitles in lists.
-2. **One primary action per screen** — e.g. opportunities → tap row → fill price + capital → save. Put the form first; market context second.
-3. **Segment instead of stacking** — use `SegToggle` (Hot / Watch) rather than two long scroll sections on the same tab.
-4. **Touch targets ≥ 44px** — inputs and primary buttons use `detail-touch-input` / `btn-lg` (min-height 48px).
-5. **No wide tables on mobile** — opportunities use a fixed **6-column** table (`MobileSimTable`: Ticker · RA · CD · Var · ROI · Reliab); portfolio uses compact 5–7 col tables with vertical scroll only, no horizontal pan.
-6. **Theme** — dark/light via `supernova-mobile-theme` in localStorage; toggle in header.
-7. **i18n** — **English is the source language** for all new UI copy in `mobile-ui/src/i18n.ts` (`en` key first). Default locale is **en** (`sn_mobile_lang`). Add Italian in the `it` field only; use `useMobileLang()` / `t("key")` — never hardcode user-facing strings in components.
+1. **Dashboard-only shell** — no bottom TabBar for Trades / Piggy / Investimenti (desktop keeps those). Drill-down detail/opportunity from dashboard is OK.
+2. **Max 3–4 data points per list row** — ticker, one countdown/metric, one badge. Hide company names, secondary columns, and long subtitles in lists.
+3. **One primary action per screen** — e.g. tap ticker → fill price + capital → save. Put the form first; market context second.
+4. **Segment instead of stacking** — use `SegToggle` rather than two long scroll sections on the same screen.
+5. **Touch targets ≥ 44px** — inputs and primary buttons use `detail-touch-input` / `btn-lg` (min-height 48px).
+6. **No wide tables on mobile** — compact tables with vertical scroll only, no horizontal pan.
+7. **Theme** — dark/light via `supernova-mobile-theme` in localStorage; toggle in header.
+8. **i18n** — **English is the source language** for all new UI copy in `mobile-ui/src/i18n.ts` (`en` key first). Default locale is **en** (`sn_mobile_lang`). Add Italian in the `it` field only; use `useMobileLang()` / `t("key")` — never hardcode user-facing strings in components.
 
 ## When adding mobile features
 
 - Ask: “Can this be one card with 2 metrics?” before porting a desktop panel.
 - Prefer `MobileSimTable` for opportunities; deprecate card lists for dense opp data.
-- Dashboard mobile shows **KPI + piggy + actions + upcoming CD** only — no full AI feed or portfolio duplicate.
+- Dashboard mobile shows **Soft BUY/SELL chips + market/wind table + open positions** (+ signal banner). No full AI feed or desktop KPI grid.
 
 ## Anti-patterns
 

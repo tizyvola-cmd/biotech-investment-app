@@ -193,6 +193,25 @@ export function blendOverlayColor(parentColor: string): string {
   return map[parentColor] ?? "#a78bfa";
 }
 
+/** Linear fill for grid knots missing from snapshot — avoids flat 0% gaps on the chart. */
+export function fillCalendarCurveGaps(
+  raw: (number | null)[],
+  offsets: readonly number[],
+): number[] {
+  const anchors = offsets
+    .map((offset, i) => ({ offset, y: raw[i] }))
+    .filter((p): p is { offset: number; y: number } => p.y != null && Number.isFinite(p.y));
+  if (anchors.length < 2) {
+    return raw.map((v) => (v != null && Number.isFinite(v) ? v : 0));
+  }
+  return offsets.map((offset, i) => {
+    const exact = raw[i];
+    if (exact != null && Number.isFinite(exact)) return exact;
+    const v = interpolateAtOffset(anchors, offset, { extrapolate: true });
+    return v != null && Number.isFinite(v) ? roundPredPct(v) : 0;
+  });
+}
+
 export function buildOverlayCurve(
   ticker: string,
   chartPoints: ChartPoint[],
@@ -211,7 +230,7 @@ export function buildOverlayCurve(
     offsets,
   });
   if (!raw) return null;
-  const values = raw.map((v) => (v != null && Number.isFinite(v) ? v : 0));
+  const values = fillCalendarCurveGaps(raw, offsets);
   const { peakRoi, peakOffset, kind } = peakRoiWithOffset(values, offsets, nowOff);
   return {
     ticker: ticker.toUpperCase(),

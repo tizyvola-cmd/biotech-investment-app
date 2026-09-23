@@ -45,6 +45,14 @@ import {
   SLOPE_WINDOW_20D,
   SLOPE_WINDOW_5D,
 } from "../sheet/slopeTrajectoryOverlay";
+import {
+  interpolateFieldOnOffsetGrid,
+  isLossAnalysisAlignedTile,
+  LOSS_ANALYSIS_ALIGNED_CHART_MARGIN,
+  LOSS_ANALYSIS_ALIGNED_X_AXIS_HEIGHT,
+  LOSS_ANALYSIS_ALIGNED_Y_AXIS_WIDTH,
+  LOSS_ANALYSIS_CHART_SYNC_ID,
+} from "../sheet/lossAnalysisChartLayout";
 import { segmentSlopePpD } from "../sheet/slopeRecalibCurve";
 import { fmtPortfolioPnlPct } from "../sheet/portfolioGainLossStyle";
 import { useT } from "../shared/i18n";
@@ -62,6 +70,8 @@ export function SlopeTrajectoryChart({
   dailyMovePct = null,
   height = 200,
   chartOnly = false,
+  xDomainOverride,
+  xTicksOverride,
 }: {
   points: SlopeTrajectoryPoint[];
   todayOffset: number;
@@ -77,17 +87,27 @@ export function SlopeTrajectoryChart({
   height?: number;
   /** Solo grafico — niente didascalie sopra/sotto (tile 24h assessment). */
   chartOnly?: boolean;
+  /** Loss-analysis tile: shared calendar domain with pred / gain charts. */
+  xDomainOverride?: [number, number];
+  xTicksOverride?: number[];
 }) {
   const t = useT();
   const { theme: appearanceTheme } = useThemeContext();
   const it = lang === "it";
   const curvesGrid = useMemo(() => chartCurvesGrid(), [appearanceTheme]);
   const curvesAxisTick = useMemo(() => chartCurvesAxisTick(), [appearanceTheme]);
-  const xDomain = useMemo(() => slopeTrajectoryXDomain(points, todayOffset), [points, todayOffset]);
-  const xTicks = useMemo(() => slopeTrajectoryAxisTicks(xDomain, todayOffset), [xDomain, todayOffset]);
+  const xDomain = useMemo(
+    () => xDomainOverride ?? slopeTrajectoryXDomain(points, todayOffset),
+    [xDomainOverride, points, todayOffset],
+  );
+  const xTicks = useMemo(
+    () => xTicksOverride ?? slopeTrajectoryAxisTicks(xDomain, todayOffset),
+    [xTicksOverride, xDomain, todayOffset],
+  );
+  const alignedTile = isLossAnalysisAlignedTile({ chartOnly, xDomainOverride });
   const tile = chartOnly;
-  const lineW = tile ? 1.75 : 2.5;
-  const lineWSecondary = tile ? 1.5 : 2;
+  const lineW = tile ? 2 : 2.5;
+  const lineWSecondary = tile ? 1.65 : 2;
   const dotMain = tile ? 3.5 : 5;
   const dotKnot = tile ? 4.5 : 6;
   const refTodayW = tile ? 1.5 : 2;
@@ -148,8 +168,45 @@ export function SlopeTrajectoryChart({
         });
       }
     }
-    return [...map.values()].sort((a, b) => a.offset - b.offset);
-  }, [points, expectedPreErrorSlice, todayOffset]);
+    const sparse = [...map.values()].sort((a, b) => a.offset - b.offset);
+    if (!alignedTile) return sparse;
+
+    const predGrid = interpolateFieldOnOffsetGrid(
+      sparse.map((p) => ({ offset: p.offset, y: p.pred })),
+      xDomain,
+      true,
+    );
+    const actualGrid = interpolateFieldOnOffsetGrid(
+      sparse.map((p) => ({ offset: p.offset, y: p.actual })),
+      xDomain,
+      true,
+    );
+    const gapGrid = interpolateFieldOnOffsetGrid(
+      sparse.map((p) => ({ offset: p.offset, y: p.gap })),
+      xDomain,
+      true,
+    );
+    const expectedGrid = interpolateFieldOnOffsetGrid(
+      sparse.map((p) => ({ offset: p.offset, y: p.expectedPreError })),
+      xDomain,
+      true,
+    );
+    const sparseByOff = new Map(sparse.map((p) => [p.offset, p]));
+    return predGrid.map((pg, i) => {
+      const off = pg.offset;
+      const base = sparseByOff.get(off);
+      return {
+        offset: off,
+        label: base?.label ?? (off === todayOffset ? "T0" : off === 0 ? "CD" : `T${off}`),
+        pred: pg.y,
+        actual: actualGrid[i]?.y ?? null,
+        gap: gapGrid[i]?.y ?? null,
+        expectedPreError: expectedGrid[i]?.y ?? null,
+        isToday: base?.isToday,
+        isRecalibKnot: base?.isRecalibKnot,
+      } satisfies Row;
+    });
+  }, [points, expectedPreErrorSlice, todayOffset, alignedTile, xDomain]);
 
   const [yMin, yMax] = useMemo(
     () =>
@@ -350,17 +407,25 @@ export function SlopeTrajectoryChart({
       <ResponsiveContainer
         width="100%"
         height={chartOnly ? "100%" : height}
+        debounce={50}
         className="slope-trajectory-chart"
       >
         <LineChart
           data={chartData}
-          margin={{ top: dailyPinSub ? 30 : 12, right: 12, left: 4, bottom: 6 }}
+          syncId={alignedTile ? LOSS_ANALYSIS_CHART_SYNC_ID : undefined}
+          margin={
+            alignedTile
+              ? { ...LOSS_ANALYSIS_ALIGNED_CHART_MARGIN }
+              : { top: dailyPinSub ? 30 : 12, right: 12, left: 4, bottom: 6 }
+          }
         >
           <CartesianGrid {...curvesGrid} />
           {renderCdZones({
             cdX: 0,
             xMin: xDomain[0],
             xMax: xDomain[1],
+            todayX: alignedTile ? todayOffset : null,
+            hideBadges: alignedTile,
           })}
           <XAxis
             dataKey="offset"
@@ -371,6 +436,9 @@ export function SlopeTrajectoryChart({
             axisLine={CHART_CURVES_AXIS_LINE}
             tickLine={false}
             tickFormatter={(d: number) => formatSlopeTrajectoryAxisTick(d, todayOffset, lang)}
+            height={alignedTile ? LOSS_ANALYSIS_ALIGNED_X_AXIS_HEIGHT : undefined}
+            interval={alignedTile ? 0 : undefined}
+            padding={alignedTile ? { left: 0, right: 0 } : undefined}
           />
           <YAxis
             domain={[yMin, yMax]}
@@ -378,7 +446,7 @@ export function SlopeTrajectoryChart({
             axisLine={CHART_CURVES_AXIS_LINE}
             tickLine={false}
             tickFormatter={(v: number) => `${v >= 0 ? "+" : ""}${v.toFixed(1)}%`}
-            width={52}
+            width={alignedTile ? LOSS_ANALYSIS_ALIGNED_Y_AXIS_WIDTH : 52}
             label={
               showSlopeWindows
                 ? {
@@ -428,6 +496,7 @@ export function SlopeTrajectoryChart({
               />
             </>
           ) : null}
+          {!alignedTile ? (
           <ReferenceLine
             x={todayOffset}
             stroke="#dc2626"
@@ -442,6 +511,7 @@ export function SlopeTrajectoryChart({
             }
             ifOverflow="extendDomain"
           />
+          ) : null}
           {rotation && showSlopeWindows ? (
             <ReferenceLine
               x={SLOPE_WINDOW_5D.start}
@@ -530,13 +600,13 @@ export function SlopeTrajectoryChart({
           />
           ) : null}
           <Line
-            type="monotone"
+            type={alignedTile ? "linear" : "monotone"}
             dataKey="pred"
             name={predName}
             stroke={CHART_LAB_LINE_PRED}
-            strokeWidth={lineW}
-            strokeDasharray="6 3"
-            dot={(props) => {
+            strokeWidth={alignedTile ? 2.75 : lineW}
+            strokeDasharray={alignedTile ? undefined : "6 3"}
+            dot={alignedTile ? false : (props) => {
               const row = props.payload as SlopeTrajectoryPoint | undefined;
               if (row?.isToday) {
                 return <NowCurvePinShape cx={props.cx} cy={props.cy} />;
@@ -582,12 +652,12 @@ export function SlopeTrajectoryChart({
           ) : null}
           {showActualLine ? (
             <Line
-              type="monotone"
+              type={alignedTile ? "linear" : "monotone"}
               dataKey="actual"
               name={actualName}
               stroke={CHART_LAB_LINE_ACTUAL}
-              strokeWidth={lineW}
-              dot={(props) => {
+              strokeWidth={alignedTile ? 2.75 : lineW}
+              dot={alignedTile ? false : (props) => {
                 const row = props.payload as SlopeTrajectoryPoint | undefined;
                 if (row?.isToday) return <g />;
                 if (
@@ -612,7 +682,8 @@ export function SlopeTrajectoryChart({
                 );
               }}
               activeDot={{ r: 7, fill: CHART_LAB_DOT_ACTUAL }}
-              connectNulls={false}
+              strokeDasharray={alignedTile ? undefined : "6 3"}
+              connectNulls
             />
           ) : null}
           {showSlopeWindows

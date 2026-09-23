@@ -22,6 +22,7 @@ _FIELD_TO_ENV = {
     "anthropic_api_key": "ANTHROPIC_API_KEY",
     "openai_api_key": "OPENAI_API_KEY",
     "github_token": "GITHUB_TOKEN",
+    "gemini_api_key": "GEMINI_API_KEY",
 }
 
 _ENV_TO_FIELD = {v: k for k, v in _FIELD_TO_ENV.items()}
@@ -72,6 +73,7 @@ def get_status() -> dict[str, Any]:
         ("anthropic", "ANTHROPIC_API_KEY"),
         ("openai", "OPENAI_API_KEY"),
         ("github", "GITHUB_TOKEN"),
+        ("gemini", "GEMINI_API_KEY"),
     ):
         field = _ENV_TO_FIELD[env_name]
         from_file = field in file_data
@@ -110,11 +112,13 @@ def save_secrets(
     anthropic_api_key: str | None = None,
     openai_api_key: str | None = None,
     github_token: str | None = None,
+    gemini_api_key: str | None = None,
     anthropic_prepaid_eur: float | str | None = None,
     anthropic_org_id: str | None = None,
     clear_anthropic: bool = False,
     clear_openai: bool = False,
     clear_github: bool = False,
+    clear_gemini: bool = False,
     clear_anthropic_prepaid: bool = False,
 ) -> dict[str, Any]:
     """
@@ -128,6 +132,8 @@ def save_secrets(
         updates["openai_api_key"] = "" if clear_openai else (openai_api_key or "").strip()
     if github_token is not None or clear_github:
         updates["github_token"] = "" if clear_github else (github_token or "").strip()
+    if gemini_api_key is not None or clear_gemini:
+        updates["gemini_api_key"] = "" if clear_gemini else (gemini_api_key or "").strip()
 
     meta_updates: dict[str, Any] = {}
     if clear_anthropic_prepaid:

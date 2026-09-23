@@ -1,12 +1,13 @@
-import { useCallback, useEffect, useMemo, useRef, useState, startTransition } from "react";
+import { Fragment, useCallback, useEffect, useMemo, useState } from "react";
 import {
   fetchTesterFeedbackConfig,
-  fetchTesterFeedbackEvents,
   fetchTesterFeedbackExport,
   fetchTesterFeedbackSummary,
+  fetchTesterSimMonitor,
   postTesterFeedbackEvent,
   registerTester,
   resendTesterApprovalEmail,
+  replyTesterEmail,
   saveTesterFeedbackCalibSnapshot,
   setTesterStatus,
   deleteTester,
@@ -15,26 +16,15 @@ import { useLang } from "../shared/i18n";
 import { SHEET_GRID_TABLE_CLASS, gridTd, gridTh } from "../sheet/sheetGridTable";
 import { SheetGridColgroup } from "../sheet/SheetGridColgroup";
 import type {
-  TesterFeedbackEvent,
   TesterFeedbackKind,
   TesterFeedbackModule,
   TesterFeedbackSummary,
   TesterFeedbackConfig,
   TesterMeta,
+  TesterSimMonitor,
+  TesterSimPosition,
+  TesterSimRow,
 } from "../types/testerFeedback";
-import type { ChartBundle, SheetTable } from "../types";
-import {
-  closedSimOutcomeRowsFromDoc,
-  loadInvestmentSimOutcomes,
-} from "../data/investmentSimOutcomesData";
-import { buildClosedSuccessMetrics } from "../sheet/portfolioSuccessBridge";
-import type { ClosedSuccessMetrics } from "../sheet/portfolioSuccessBridge";
-import { InvestDecisionSimPanel } from "./InvestDecisionSimPanel";
-import { TesterPortfolioDiversifyTab } from "./TesterPortfolioDiversifyTab";
-import { ViewErrorBoundary } from "./ViewErrorBoundary";
-
-type TesterMonitorTab = "mobile" | "decisionSim" | "diversify";
-
 const MODULE_LABELS: Record<TesterFeedbackModule, { it: string; en: string }> = {
   dashboard: { it: "Dashboard", en: "Dashboard" },
   simulation: { it: "Simulation", en: "Simulation" },
@@ -51,7 +41,27 @@ const KIND_LABELS: Record<TesterFeedbackKind, { it: string; en: string }> = {
   signal_feedback: { it: "Feedback segnale", en: "Signal feedback" },
   catalyst_label: { it: "Etichetta catalyst", en: "Catalyst label" },
   gain_note: { it: "Nota guadagno", en: "Gain note" },
+  ui_error: { it: "Errore UI", en: "UI error" },
 };
+
+function editionLabel(raw: string | undefined, it: boolean): string {
+  const ed = (raw || "").toLowerCase();
+  if (ed === "biotech") return "Biotech";
+  if (ed === "tech") return "Tech";
+  if (ed === "both") return it ? "Biotech + Tech" : "Biotech + Tech";
+  return "—";
+}
+
+function gmailComposeUrl(to: string, subject: string, body: string): string {
+  const q = new URLSearchParams({
+    view: "cm",
+    fs: "1",
+    to,
+    su: subject,
+    body,
+  });
+  return `https://mail.google.com/mail/?${q.toString()}`;
+}
 
 function fmtTs(iso: string | undefined, locale: string): string {
   if (!iso) return "—";
@@ -98,19 +108,45 @@ function fmtApprovalFeedback(mail: TesterMeta["approval_email"] | undefined, it:
   return parts.join(" · ");
 }
 
-function payloadPreview(payload: Record<string, unknown>): string {
-  const keys = ["outcome", "agree", "relevant", "error_type", "note", "horizon"];
-  const parts: string[] = [];
-  for (const k of keys) {
-    if (payload[k] != null && String(payload[k]).trim()) {
-      parts.push(`${k}=${String(payload[k]).slice(0, 40)}`);
-    }
+function fmtEur(value: number | null | undefined, locale: string): string {
+  if (value == null || !Number.isFinite(value)) return "—";
+  try {
+    return value.toLocaleString(locale, {
+      style: "currency",
+      currency: "EUR",
+      maximumFractionDigits: 0,
+    });
+  } catch {
+    return `€${Math.round(value)}`;
   }
-  if (!parts.length) {
-    const raw = JSON.stringify(payload);
-    return raw.length > 80 ? `${raw.slice(0, 77)}…` : raw || "—";
+}
+
+function fmtPct(value: number | null | undefined): string {
+  if (value == null || !Number.isFinite(value)) return "—";
+  const sign = value > 0 ? "+" : "";
+  return `${sign}${value.toFixed(1)}%`;
+}
+
+function fmtDate(iso: string | null | undefined, locale: string): string {
+  if (!iso) return "—";
+  try {
+    return new Date(iso).toLocaleDateString(locale, {
+      day: "2-digit",
+      month: "short",
+      year: "2-digit",
+    });
+  } catch {
+    return iso;
   }
-  return parts.join(" · ");
+}
+
+function gainClass(value: number | null | undefined): string {
+  if (value == null || !Number.isFinite(value) || value === 0) {
+    return "tabular-nums";
+  }
+  return value > 0
+    ? "tabular-nums text-[rgb(var(--signal-up))]"
+    : "tabular-nums text-[rgb(var(--signal-down))]";
 }
 
 function KpiCard({
@@ -133,30 +169,17 @@ function KpiCard({
 
 export function TesterMonitorView({
   apiOk,
-  simTable = null,
-  chartsBundle = null,
 }: {
   apiOk: boolean | null;
-  simTable?: SheetTable | null;
-  chartsBundle?: ChartBundle | null;
 }) {
   const { lang } = useLang();
   const it = lang === "it";
   const locale = it ? "it-IT" : "en-US";
 
-  const [activeTab, setActiveTab] = useState<TesterMonitorTab>("mobile");
-  const [isTabTransitioning, setIsTabTransitioning] = useState(false);
-  const tabContentRef = useRef<HTMLDivElement>(null);
-
   const [summary, setSummary] = useState<TesterFeedbackSummary | null>(null);
-  const [events, setEvents] = useState<TesterFeedbackEvent[]>([]);
   const [storePath, setStorePath] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
-
-  const [filterTester, setFilterTester] = useState("");
-  const [filterModule, setFilterModule] = useState<TesterFeedbackModule | "">("");
-  const [filterKind, setFilterKind] = useState<TesterFeedbackKind | "">("");
 
   const [demoTesterId, setDemoTesterId] = useState("demo_tester");
   const [demoDisplay, setDemoDisplay] = useState("Demo");
@@ -169,41 +192,43 @@ export function TesterMonitorView({
   const [statusBusy, setStatusBusy] = useState<string | null>(null);
   const [statusMsg, setStatusMsg] = useState<string | null>(null);
   const [emailCfg, setEmailCfg] = useState<TesterFeedbackConfig["approval_email"] | null>(null);
-  const [closedSuccess, setClosedSuccess] = useState<ClosedSuccessMetrics | null>(null);
 
-  useEffect(() => {
-    if (apiOk === false) return;
-    void loadInvestmentSimOutcomes().then(({ doc }) => {
-      const rows = closedSimOutcomeRowsFromDoc(doc);
-      setClosedSuccess(buildClosedSuccessMetrics(rows));
-    });
-  }, [apiOk]);
+  const [inviteEmail, setInviteEmail] = useState("");
+  const [inviteName, setInviteName] = useState("");
+  const [inviteBusy, setInviteBusy] = useState(false);
+  const [inviteMsg, setInviteMsg] = useState<string | null>(null);
+  const [inviteLink, setInviteLink] = useState<string | null>(null);
+  const [inviteLinkCopied, setInviteLinkCopied] = useState(false);
+
+  const [replyTester, setReplyTester] = useState<TesterMeta | null>(null);
+  const [replySubject, setReplySubject] = useState("");
+  const [replyBody, setReplyBody] = useState("");
+  const [replyBusy, setReplyBusy] = useState(false);
+  const [replyMsg, setReplyMsg] = useState<string | null>(null);
+
+  const [simMonitor, setSimMonitor] = useState<TesterSimMonitor | null>(null);
+  const [expandedSim, setExpandedSim] = useState<string | null>(null);
 
   const reload = useCallback(async () => {
     if (apiOk === false) return;
     setLoading(true);
     setError(null);
     try {
-      const [cfg, sum, evRes] = await Promise.all([
+      const [cfg, sum, sim] = await Promise.all([
         fetchTesterFeedbackConfig(),
         fetchTesterFeedbackSummary(),
-        fetchTesterFeedbackEvents({
-          limit: 300,
-          tester_id: filterTester.trim() || undefined,
-          module: filterModule || undefined,
-          kind: filterKind || undefined,
-        }),
+        fetchTesterSimMonitor().catch(() => null),
       ]);
       setStorePath(cfg.store_path);
       setEmailCfg(cfg.approval_email ?? null);
       setSummary(sum);
-      setEvents(evRes.events);
+      setSimMonitor(sim);
     } catch (e) {
       setError(e instanceof Error ? e.message : String(e));
     } finally {
       setLoading(false);
     }
-  }, [apiOk, filterTester, filterModule, filterKind]);
+  }, [apiOk]);
 
   useEffect(() => {
     void reload();
@@ -319,7 +344,6 @@ export function TesterMonitorView({
     setStatusMsg(null);
     try {
       const res = await deleteTester(testerId);
-      if (filterTester === testerId) setFilterTester("");
       setStatusMsg(
         it
           ? `Tester eliminato (${res.events_removed ?? 0} eventi rimossi).`
@@ -330,6 +354,116 @@ export function TesterMonitorView({
       setError(e instanceof Error ? e.message : String(e));
     } finally {
       setStatusBusy(null);
+    }
+  };
+
+  const inviteTester = async () => {
+    const email = inviteEmail.trim();
+    if (!email) {
+      setInviteMsg(it ? "Inserisci un’email." : "Enter an email.");
+      return;
+    }
+    if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) {
+      setInviteMsg(it ? "Email non valida." : "Invalid email.");
+      return;
+    }
+    setInviteBusy(true);
+    setInviteMsg(null);
+    setInviteLink(null);
+    setInviteLinkCopied(false);
+    try {
+      const reg = await registerTester({
+        email,
+        display_name: inviteName.trim() || undefined,
+        source: "desktop",
+      });
+      const tid = reg.tester?.tester_id;
+      if (!tid) {
+        throw new Error(it ? "Registrazione fallita." : "Registration failed.");
+      }
+      const alreadyApproved =
+        (reg.tester?.status || "").toLowerCase() === "approved";
+      const finalMeta = alreadyApproved
+        ? (await resendTesterApprovalEmail(tid)).tester
+        : (await setTesterStatus(tid, "approved")).tester;
+      const feedback = finalMeta?.approval_email;
+      setInviteMsg(fmtApprovalFeedback(feedback, it));
+      if (feedback?.welcome_url) setInviteLink(feedback.welcome_url);
+      setInviteEmail("");
+      setInviteName("");
+      await reload();
+    } catch (e) {
+      setInviteMsg(e instanceof Error ? e.message : String(e));
+    } finally {
+      setInviteBusy(false);
+    }
+  };
+
+  const copyInviteLink = async () => {
+    if (!inviteLink) return;
+    try {
+      await navigator.clipboard.writeText(inviteLink);
+      setInviteLinkCopied(true);
+      window.setTimeout(() => setInviteLinkCopied(false), 2500);
+    } catch {
+      setInviteLinkCopied(false);
+    }
+  };
+
+  const gmailBox =
+    emailCfg?.gmail_reply_email || emailCfg?.owner_notify_email || "tizyvola@gmail.com";
+
+  const startReply = (row: TesterMeta) => {
+    const to = row.email || "";
+    setReplyTester(row);
+    setReplySubject(`SuperNova — ${to}`);
+    setReplyBody("");
+    setReplyMsg(null);
+  };
+
+  const openGmailFor = (row: TesterMeta) => {
+    const to = (row.email || "").trim();
+    if (!to) return;
+    const subject = `SuperNova — ${to}`;
+    const body = it
+      ? `Ciao ${row.display_name || ""},\n\n`
+      : `Hi ${row.display_name || ""},\n\n`;
+    window.open(gmailComposeUrl(to, subject, body), "_blank", "noopener,noreferrer");
+  };
+
+  const sendReply = async () => {
+    if (!replyTester) return;
+    setReplyBusy(true);
+    setReplyMsg(null);
+    try {
+      const res = await replyTesterEmail(replyTester.tester_id, {
+        subject: replySubject,
+        body: replyBody,
+      });
+      const sent = res.tester?.owner_reply;
+      if (sent?.ok) {
+        setReplyMsg(it ? `Inviata da ${sent.from || gmailBox}` : `Sent from ${sent.from || gmailBox}`);
+        setReplyBody("");
+        await reload();
+      } else if (sent?.skipped) {
+        setReplyMsg(
+          it
+            ? `SMTP non pronto (${sent.reason || "smtp"}). Apro Gmail.`
+            : `SMTP not ready (${sent.reason || "smtp"}). Opening Gmail.`,
+        );
+        window.open(
+          sent.gmail_compose_url ||
+            gmailComposeUrl(replyTester.email || "", replySubject, replyBody),
+          "_blank",
+          "noopener,noreferrer",
+        );
+      } else {
+        setReplyMsg(sent?.reason || (it ? "Invio fallito." : "Send failed."));
+      }
+    } catch (e) {
+      setReplyMsg(e instanceof Error ? e.message : String(e));
+    } finally {
+      setReplyBusy(false);
     }
   };
 
@@ -363,95 +497,17 @@ export function TesterMonitorView({
     }
   };
 
-  const handleTabClick = useCallback((tab: TesterMonitorTab) => {
-    setIsTabTransitioning(true);
-    startTransition(() => {
-      setActiveTab(tab);
-      setIsTabTransitioning(false);
-      // Scroll to top when changing tabs
-      setTimeout(() => {
-        if (tabContentRef.current) {
-          tabContentRef.current.scrollTop = 0;
-        }
-      }, 0);
-    });
-  }, []);
-
   return (
     <div className="tester-monitor-shell flex flex-col flex-1 gap-4 pb-6 pr-1">
-      <div className="tester-monitor-panel shrink-0 rounded-2xl px-2 py-2 flex gap-1 relative z-10">
-        <button
-          type="button"
-          className={`rounded-lg px-3 py-1.5 text-xs font-semibold transition cursor-pointer ${
-            activeTab === "mobile"
-              ? "bg-[rgb(var(--accent))]/15 text-[rgb(var(--accent))] border border-[rgb(var(--accent))]/30"
-              : "text-ink-muted hover:bg-surface/60 border border-transparent"
-          }`}
-          onClick={() => handleTabClick("mobile")}
-          aria-selected={activeTab === "mobile"}
-          role="tab"
-        >
-          {it ? "📱 Feedback mobile" : "📱 Mobile feedback"}
-        </button>
-        <button
-          type="button"
-          className={`rounded-lg px-3 py-1.5 text-xs font-semibold transition cursor-pointer ${
-            activeTab === "decisionSim"
-              ? "bg-[rgb(var(--accent))]/15 text-[rgb(var(--accent))] border border-[rgb(var(--accent))]/30"
-              : "text-ink-muted hover:bg-surface/60 border border-transparent"
-          }`}
-          onClick={() => handleTabClick("decisionSim")}
-          aria-selected={activeTab === "decisionSim"}
-          role="tab"
-        >
-          {it ? "🔁 Sim invest/disinvest" : "🔁 Invest/divest sim loop"}
-        </button>
-        <button
-          type="button"
-          className={`rounded-lg px-3 py-1.5 text-xs font-semibold transition cursor-pointer ${
-            activeTab === "diversify"
-              ? "bg-[rgb(var(--accent))]/15 text-[rgb(var(--accent))] border border-[rgb(var(--accent))]/30"
-              : "text-ink-muted hover:bg-surface/60 border border-transparent"
-          }`}
-          onClick={() => handleTabClick("diversify")}
-          aria-selected={activeTab === "diversify"}
-          role="tab"
-        >
-          {it ? "📊 Capitale & diversificazione" : "📊 Capital & diversification"}
-        </button>
-      </div>
-
-      <div ref={tabContentRef} className="flex flex-col flex-1">
-        {isTabTransitioning ? (
-          <div className="flex items-center justify-center flex-1">
-            <p className="text-sm text-ink-muted animate-pulse">{it ? "Caricamento..." : "Loading..."}</p>
-          </div>
-        ) : activeTab === "decisionSim" ? (
-          <div key="decisionSim-tab" className="flex flex-col flex-1">
-            <ViewErrorBoundary label="Sim loop">
-              <InvestDecisionSimPanel
-                simTable={simTable}
-                chartsBundle={chartsBundle}
-                closedSuccess={closedSuccess}
-              />
-            </ViewErrorBoundary>
-          </div>
-        ) : activeTab === "diversify" ? (
-          <div key="diversify-tab" className="flex flex-col flex-1">
-            <ViewErrorBoundary label="Cap & Div">
-              <TesterPortfolioDiversifyTab apiOk={apiOk} simTable={simTable} />
-            </ViewErrorBoundary>
-          </div>
-        ) : (
-          <div key="mobile-tab" className="flex flex-col gap-4 flex-1">
+      <div className="flex flex-col gap-4 flex-1">
             <div className="tester-monitor-panel shrink-0 rounded-2xl px-4 py-3">
         <p className="tester-monitor-text text-sm font-semibold">
-          {it ? "📱 Monitor tester (app mobile)" : "📱 Tester monitor (mobile app)"}
+          {it ? "Access — utenti e minuti" : "Access — users & minutes"}
         </p>
         <p className="tester-monitor-muted text-[11px] leading-relaxed mt-1 max-w-[900px]">
           {it
-            ? "Registrazione mobile per email → stato pending finché non approvi qui (Approva/Revoca). Le sessioni compaiono come eventi session_ping."
-            : "Mobile registers by email → pending until you approve here (Approve/Revoke). Sessions appear as session_ping events."}
+            ? "Request Access dalla landing → Approva qui. Poi l’utente entra con Sign-in / Sign-up. I minuti/giorno arrivano dai session_ping (desktop + mobile)."
+            : "Request Access from the landing → Approve here. Then the user signs in. Daily minutes come from session_ping (desktop + mobile)."}
         </p>
         <p className="tester-monitor-muted text-[11px] leading-relaxed mt-1 max-w-[900px]">
           {it
@@ -472,6 +528,7 @@ export function TesterMonitorView({
         </p>
         {storePath && (
           <p className="tester-monitor-muted text-[10px] mt-1 font-mono truncate" title={storePath}>
+            {it ? "Store attivo: " : "Active store: "}
             {storePath}
           </p>
         )}
@@ -519,11 +576,107 @@ export function TesterMonitorView({
           )}
         </p>
       )}
+
+      <div className="tester-monitor-panel shrink-0 rounded-2xl px-4 py-3">
+        <p className="tester-monitor-text text-sm font-semibold">
+          {it ? "Gmail collegata" : "Connected Gmail"}
+        </p>
+        <p className="tester-monitor-muted text-[11px] leading-relaxed mt-1 max-w-[900px]">
+          {it
+            ? "Le richieste arrivano su questa casella. Reply-To è l’email dell’utente: da Gmail basta Rispondi. Puoi anche scrivere da qui."
+            : "Access requests land in this mailbox. Reply-To is the applicant — hit Reply in Gmail. You can also write from here."}
+        </p>
+        <p className="tester-monitor-text text-[12px] font-mono mt-2">{gmailBox}</p>
+        {emailCfg?.smtp_configured ? (
+          <p className="tester-monitor-muted text-[10px] mt-1">
+            {it ? "SMTP Gmail attivo — invio diretto dalla tab." : "Gmail SMTP on — send from this tab."}
+          </p>
+        ) : (
+          <p className="tester-monitor-muted text-[10px] mt-1">
+            {it
+              ? "SMTP non configurato: usa “Apri in Gmail”. Per l’invio da qui imposta SUPERNOVA_SMTP_HOST=smtp.gmail.com e USER/PASSWORD della stessa casella."
+              : "SMTP off: use Open in Gmail. To send from here set SUPERNOVA_SMTP_HOST=smtp.gmail.com and USER/PASSWORD for this mailbox."}
+          </p>
+        )}
+      </div>
       {apiOk === false && (
         <p className="text-[12px] text-[rgb(var(--signal-down))]">
           {it ? "API offline — avvia SuperNova desktop per ricevere eventi dai tester." : "API offline — start SuperNova desktop to receive tester events."}
         </p>
       )}
+
+      <div className="tester-monitor-panel shrink-0 rounded-2xl px-4 py-3">
+        <p className="tester-monitor-text text-sm font-semibold">
+          {it ? "✉️ Invita un tester" : "✉️ Invite a tester"}
+        </p>
+        <p className="tester-monitor-muted text-[11px] leading-relaxed mt-1 max-w-[720px]">
+          {it
+            ? "Inserisci l’email: il tester viene registrato come approvato e riceve automaticamente il link di installazione dell’app mobile. Se l’SMTP non è configurato, sotto compare il link da inviare a mano (WhatsApp/email)."
+            : "Enter an email: the tester is registered as approved and automatically receives the mobile install link. If SMTP is not configured, the link to send manually (WhatsApp/email) appears below."}
+        </p>
+        <form
+          className="mt-3 flex flex-wrap gap-2 items-end"
+          onSubmit={(e) => {
+            e.preventDefault();
+            void inviteTester();
+          }}
+        >
+          <label className="tester-monitor-muted text-[10px] flex flex-col gap-0.5">
+            {it ? "Email tester" : "Tester email"}
+            <input
+              type="email"
+              autoComplete="email"
+              className="input text-[12px] py-1 w-[16rem]"
+              value={inviteEmail}
+              onChange={(e) => setInviteEmail(e.target.value)}
+              placeholder="alice@example.com"
+              disabled={inviteBusy || apiOk === false}
+              required
+            />
+          </label>
+          <label className="tester-monitor-muted text-[10px] flex flex-col gap-0.5">
+            {it ? "Nome (opzionale)" : "Name (optional)"}
+            <input
+              className="input text-[12px] py-1 w-[10rem]"
+              value={inviteName}
+              onChange={(e) => setInviteName(e.target.value)}
+              placeholder={it ? "Alice" : "Alice"}
+              disabled={inviteBusy || apiOk === false}
+            />
+          </label>
+          <button
+            type="submit"
+            className="btn text-xs py-1.5 px-3"
+            disabled={inviteBusy || apiOk === false || !inviteEmail.trim()}
+          >
+            {inviteBusy
+              ? it ? "Invio…" : "Sending…"
+              : it ? "✉️ Invia invito" : "✉️ Send invite"}
+          </button>
+        </form>
+        {inviteMsg && (
+          <p className="tester-monitor-text text-[11px] mt-2 font-medium">
+            {inviteMsg}
+          </p>
+        )}
+        {inviteLink && (
+          <div className="mt-2 flex flex-wrap items-center gap-2 rounded-lg border border-[rgb(var(--tester-monitor-border))]/50 bg-surface/60 px-2 py-1.5">
+            <code className="text-[10px] font-mono truncate max-w-[520px]" title={inviteLink}>
+              {inviteLink}
+            </code>
+            <button
+              type="button"
+              className="btn-ghost text-[10px] py-0.5 px-2"
+              onClick={() => void copyInviteLink()}
+            >
+              {inviteLinkCopied
+                ? it ? "✓ Copiato" : "✓ Copied"
+                : it ? "Copia link" : "Copy link"}
+            </button>
+          </div>
+        )}
+      </div>
+
       {error && (
         <p className="text-[12px] text-[rgb(var(--signal-down))] bg-red-500/10 border border-red-500/30 rounded-lg px-3 py-2">
           {error}
@@ -558,8 +711,34 @@ export function TesterMonitorView({
                   <p className="tester-monitor-muted text-[10px] font-mono truncate">
                     {t.email ? `${t.tester_id} · ${t.display_name || "—"}` : t.tester_id}
                   </p>
+                  <p className="tester-monitor-text text-[11px] mt-1">
+                    {it ? "Versione: " : "Edition: "}
+                    <span className="font-semibold">{editionLabel(t.interest_edition, it)}</span>
+                  </p>
+                  {t.interest_other ? (
+                    <p className="tester-monitor-muted text-[11px] mt-0.5 whitespace-pre-wrap">
+                      {it ? "Altri interessi: " : "Other markets: "}
+                      {t.interest_other}
+                    </p>
+                  ) : null}
                 </div>
                 <div className="flex flex-wrap items-center gap-1.5 shrink-0">
+                  <button
+                    type="button"
+                    className="btn-ghost text-xs py-1.5 px-3"
+                    disabled={!t.email}
+                    onClick={() => startReply(t)}
+                  >
+                    {it ? "Rispondi" : "Reply"}
+                  </button>
+                  <button
+                    type="button"
+                    className="btn-ghost text-xs py-1.5 px-3"
+                    disabled={!t.email}
+                    onClick={() => openGmailFor(t)}
+                  >
+                    {it ? "Apri in Gmail" : "Open in Gmail"}
+                  </button>
                   <button
                     type="button"
                     className="btn text-xs py-1.5 px-3"
@@ -596,6 +775,74 @@ export function TesterMonitorView({
           </div>
         </div>
       )}
+
+      {replyTester ? (
+        <div className="tester-monitor-panel shrink-0 rounded-2xl px-4 py-3">
+          <p className="tester-monitor-text text-sm font-semibold">
+            {it ? "Rispondi da Gmail" : "Reply from Gmail"}
+          </p>
+          <p className="tester-monitor-muted text-[11px] mt-1">
+            {it ? "Da" : "From"} <span className="font-mono">{gmailBox}</span>
+            {" → "}
+            <span className="font-mono">{replyTester.email}</span>
+            {" · "}
+            {editionLabel(replyTester.interest_edition, it)}
+            {replyTester.interest_other ? ` · ${replyTester.interest_other}` : ""}
+          </p>
+          <label className="tester-monitor-muted text-[10px] flex flex-col gap-0.5 mt-3">
+            {it ? "Oggetto" : "Subject"}
+            <input
+              className="input text-[12px] py-1"
+              value={replySubject}
+              onChange={(e) => setReplySubject(e.target.value)}
+            />
+          </label>
+          <label className="tester-monitor-muted text-[10px] flex flex-col gap-0.5 mt-2">
+            {it ? "Messaggio" : "Message"}
+            <textarea
+              className="input text-[12px] py-2 min-h-[7rem]"
+              value={replyBody}
+              onChange={(e) => setReplyBody(e.target.value)}
+            />
+          </label>
+          <div className="flex flex-wrap gap-2 mt-3">
+            <button
+              type="button"
+              className="btn text-xs py-1.5 px-3"
+              disabled={replyBusy || apiOk === false || !replyBody.trim()}
+              onClick={() => void sendReply()}
+            >
+              {replyBusy ? "…" : it ? "Invia da Gmail" : "Send from Gmail"}
+            </button>
+            <button
+              type="button"
+              className="btn-ghost text-xs py-1.5 px-3"
+              onClick={() =>
+                window.open(
+                  gmailComposeUrl(replyTester.email || "", replySubject, replyBody),
+                  "_blank",
+                  "noopener,noreferrer",
+                )
+              }
+            >
+              {it ? "Apri in Gmail" : "Open in Gmail"}
+            </button>
+            <button
+              type="button"
+              className="btn-ghost text-xs py-1.5 px-3"
+              onClick={() => {
+                setReplyTester(null);
+                setReplyMsg(null);
+              }}
+            >
+              {it ? "Chiudi" : "Close"}
+            </button>
+          </div>
+          {replyMsg ? (
+            <p className="tester-monitor-text text-[11px] mt-2">{replyMsg}</p>
+          ) : null}
+        </div>
+      ) : null}
 
       {summary && (
         <div className="flex flex-wrap gap-2 shrink-0">
@@ -651,8 +898,8 @@ export function TesterMonitorView({
             {it ? "Tester registrati" : "Registered testers"}
           </p>
           <div className="overflow-x-auto">
-            <table className={`${SHEET_GRID_TABLE_CLASS} tester-monitor-table text-[11px] border-collapse min-w-[860px]`}>
-              <SheetGridColgroup columnCount={8} />
+            <table className={`${SHEET_GRID_TABLE_CLASS} tester-monitor-table text-[11px] border-collapse min-w-[980px]`}>
+              <SheetGridColgroup columnCount={9} />
               <thead>
                 <tr className="text-left uppercase tracking-wide text-[10px]">
                   <th className={gridTh("left", "py-2")}>Email</th>
@@ -661,6 +908,7 @@ export function TesterMonitorView({
                   <th className={gridTh("left", "py-2")}>{it ? "Stato" : "Status"}</th>
                   <th className={gridTh("center", "py-2")}>{it ? "Portfolio" : "Portfolio"}</th>
                   <th className={gridTh("left", "py-2")}>{it ? "Ultimo accesso" : "Last seen"}</th>
+                  <th className={gridTh("center", "py-2")}>{it ? "Min oggi" : "Min today"}</th>
                   <th className={gridTh("center", "py-2")}>{it ? "Sessioni" : "Sessions"}</th>
                   <th className={gridTh("center", "py-2")}>{it ? "Azioni" : "Actions"}</th>
                 </tr>
@@ -670,11 +918,7 @@ export function TesterMonitorView({
                   const st = (t.status || "pending").toLowerCase();
                   const pf = t.portfolio;
                   return (
-                  <tr
-                    key={t.tester_id}
-                    className="cursor-pointer"
-                    onClick={() => setFilterTester(t.tester_id)}
-                  >
+                  <tr key={t.tester_id}>
                     <td className={`${gridTd("left", "py-2")} text-[10px]`}>{t.email || "—"}</td>
                     <td className={`${gridTd("left", "py-2")} font-mono font-semibold text-[10px]`}>{t.tester_id}</td>
                     <td className={gridTd("left", "py-2")}>{t.display_name}</td>
@@ -697,6 +941,16 @@ export function TesterMonitorView({
                       )}
                     </td>
                     <td className={`${gridTd("left", "py-2")} tester-monitor-muted`}>{fmtTs(t.last_seen_at, locale)}</td>
+                    <td className={`${gridTd("center", "py-2")} font-bold tabular-nums`}>
+                      {t.usage_minutes_today ?? 0}
+                      <span className="tester-monitor-muted font-normal text-[9px]">
+                        {" "}
+                        {it ? "min" : "min"}
+                        {(t.usage_minutes_total ?? 0) > 0
+                          ? ` · Σ ${t.usage_minutes_total}`
+                          : ""}
+                      </span>
+                    </td>
                     <td className={`${gridTd("center", "py-2")} font-bold tabular-nums`}>
                       {t.session_ping_count ?? 0}
                       <span className="tester-monitor-muted font-normal text-[9px]">
@@ -735,6 +989,14 @@ export function TesterMonitorView({
                               onClick={() => void updateTesterStatus(t.tester_id, "revoked")}
                             >
                               {it ? "Revoca" : "Revoke"}
+                            </button>
+                            <button
+                              type="button"
+                              className="btn-ghost text-[9px] px-1.5 py-0.5"
+                              disabled={!t.email}
+                              onClick={() => startReply(t)}
+                            >
+                              {it ? "Rispondi" : "Reply"}
                             </button>
                             <button
                               type="button"
@@ -778,99 +1040,281 @@ export function TesterMonitorView({
         </div>
       )}
 
-      <div className="tester-monitor-panel-soft rounded-xl p-3 shrink-0">
-        <p className="tester-monitor-text text-[11px] font-semibold mb-2">{it ? "Filtri eventi" : "Event filters"}</p>
-        <div className="flex flex-wrap gap-2 items-end">
-          <label className="tester-monitor-muted text-[10px] flex flex-col gap-0.5">
-            tester_id
-            <input
-              className="input text-[11px] py-1 w-[8rem]"
-              value={filterTester}
-              onChange={(e) => setFilterTester(e.target.value)}
-              placeholder="alice"
-            />
-          </label>
-          <label className="tester-monitor-muted text-[10px] flex flex-col gap-0.5">
-            module
-            <select
-              className="input text-[11px] py-1"
-              value={filterModule}
-              onChange={(e) => setFilterModule(e.target.value as TesterFeedbackModule | "")}
-            >
-              <option value="">{it ? "Tutti" : "All"}</option>
-              {(summary?.valid_modules ?? []).map((m) => (
-                <option key={m} value={m}>
-                  {MODULE_LABELS[m as TesterFeedbackModule]?.[lang] ?? m}
-                </option>
-              ))}
-            </select>
-          </label>
-          <label className="tester-monitor-muted text-[10px] flex flex-col gap-0.5">
-            kind
-            <select
-              className="input text-[11px] py-1"
-              value={filterKind}
-              onChange={(e) => setFilterKind(e.target.value as TesterFeedbackKind | "")}
-            >
-              <option value="">{it ? "Tutti" : "All"}</option>
-              {(summary?.valid_kinds ?? []).map((k) => (
-                <option key={k} value={k}>
-                  {KIND_LABELS[k as TesterFeedbackKind]?.[lang] ?? k}
-                </option>
-              ))}
-            </select>
-          </label>
-          <button type="button" className="btn-ghost text-[11px] py-1" onClick={() => { setFilterTester(""); setFilterModule(""); setFilterKind(""); }}>
-            {it ? "Reset filtri" : "Reset filters"}
-          </button>
+      <div className="tester-monitor-panel rounded-2xl overflow-hidden shrink-0" data-testid="tester-sim-monitor-panel">
+        <div className="flex flex-wrap items-baseline justify-between gap-2 px-4 py-3 border-b border-[rgb(var(--tester-monitor-border))]/40">
+          <div>
+            <p className="tester-monitor-text text-sm font-semibold">
+              {it ? "📊 Simulazioni tester" : "📊 Tester simulations"}
+            </p>
+            <p className="tester-monitor-muted text-[11px] mt-0.5 max-w-[720px]">
+              {it
+                ? "Cosa hanno comprato e venduto ogni tester, con gain aperto (mark-to-market), gain chiuso realizzato e “follow rate”: quanti dei loro BUY sono ancora oggi coerenti col segnale del modello (direction_live=up e pred5>0)."
+                : "What each tester bought and sold, with open gain (mark-to-market), realized closed gain and “follow rate”: how many of their BUYs are still aligned with today's model signal (direction_live=up and pred5>0)."}
+            </p>
+            {simMonitor && !simMonitor.sim_snapshot_available && (
+              <p className="text-[11px] text-amber-300 mt-1">
+                {it
+                  ? "Snapshot Simulation non disponibile — prezzi correnti e follow rate potrebbero non essere aggiornati."
+                  : "Simulation snapshot missing — current prices and follow rate may be stale."}
+              </p>
+            )}
+            {!simMonitor && (
+              <p className="text-[11px] text-amber-300 mt-1">
+                {loading
+                  ? it ? "Carico dati simulazioni…" : "Loading simulation data…"
+                  : apiOk === false
+                    ? it ? "API offline — nessun dato disponibile." : "API offline — no data available."
+                    : it ? "Nessun dato di simulazione disponibile (endpoint /api/tester-feedback/sim-monitor)." : "No simulation data available (endpoint /api/tester-feedback/sim-monitor)."}
+              </p>
+            )}
+          </div>
+          {simMonitor && (
+            <div className="flex flex-wrap gap-2">
+              <KpiCard
+                label={it ? "Cap. aperto" : "Open capital"}
+                value={fmtEur(simMonitor.aggregate.total_open_capital_eur, locale)}
+                sub={`${simMonitor.aggregate.total_open_positions} ${it ? "posizioni" : "positions"}`}
+              />
+              <KpiCard
+                label={it ? "Gain aperto" : "Open gain"}
+                value={fmtEur(simMonitor.aggregate.total_open_gain_eur, locale)}
+                sub={
+                  simMonitor.aggregate.total_open_gain_pct != null
+                    ? fmtPct(simMonitor.aggregate.total_open_gain_pct)
+                    : undefined
+                }
+              />
+              <KpiCard
+                label={it ? "Gain chiuso" : "Closed gain"}
+                value={fmtEur(simMonitor.aggregate.total_closed_gain_eur, locale)}
+                sub={`${simMonitor.aggregate.total_closed_positions} ${it ? "chiuse" : "closed"}`}
+              />
+              <KpiCard
+                label={it ? "Follow rate medio" : "Avg follow rate"}
+                value={
+                  simMonitor.aggregate.avg_follow_rate_pct != null
+                    ? `${simMonitor.aggregate.avg_follow_rate_pct.toFixed(1)}%`
+                    : "—"
+                }
+                sub={
+                  it
+                    ? `${simMonitor.aggregate.testers_with_activity}/${simMonitor.aggregate.tester_count} tester attivi`
+                    : `${simMonitor.aggregate.testers_with_activity}/${simMonitor.aggregate.tester_count} active testers`
+                }
+              />
+            </div>
+          )}
         </div>
-      </div>
-
-      <div className="tester-monitor-panel rounded-xl flex-1 min-h-[200px]">
-        <p className="tester-monitor-text text-[11px] font-semibold px-3 py-2 border-b border-[rgb(var(--tester-monitor-border))]/40">
-          {it ? "Flusso eventi" : "Event stream"} ({events.length})
-        </p>
-        <div className="overflow-x-auto">
-          <table className={`${SHEET_GRID_TABLE_CLASS} tester-monitor-table text-[11px] border-collapse min-w-[720px]`}>
-            <SheetGridColgroup columnCount={7} />
-            <thead className="sticky top-0 z-[1]">
-              <tr className="text-left uppercase tracking-wide text-[10px]">
-                <th className={gridTh("left", "py-2")}>{it ? "Quando" : "When"}</th>
-                <th className={gridTh("left", "py-2")}>Tester</th>
-                <th className={gridTh("left", "py-2")}>{it ? "Modulo" : "Module"}</th>
-                <th className={gridTh("left", "py-2")}>Kind</th>
-                <th className={gridTh("left", "py-2")}>Ticker</th>
-                <th className={gridTh("left", "py-2")}>Payload</th>
-                <th className={gridTh("left", "py-2")}>Src</th>
-              </tr>
-            </thead>
-            <tbody>
-              {events.length === 0 ? (
-                <tr className="tester-monitor-row-empty">
-                  <td colSpan={7} className={`${gridTd("left", "py-10")} text-center italic`}>
-                    {it
-                      ? "Nessun evento — usa il form sotto o l’app mobile quando pronta."
-                      : "No events — use the form below or the mobile app when ready."}
-                  </td>
-                </tr>
-              ) : (
-                events.map((ev) => (
-                  <tr key={ev.id}>
-                    <td className={`${gridTd("left", "py-2")} tester-monitor-muted whitespace-nowrap`}>{fmtTs(ev.created_at, locale)}</td>
-                    <td className={`${gridTd("left", "py-2")} font-mono font-semibold`}>{ev.tester_id}</td>
-                    <td className={gridTd("left", "py-2")}>{MODULE_LABELS[ev.module]?.[lang] ?? ev.module}</td>
-                    <td className={gridTd("left", "py-2")}>{KIND_LABELS[ev.kind]?.[lang] ?? ev.kind}</td>
-                    <td className={`${gridTd("left", "py-2")} font-bold`}>{ev.ticker ?? "—"}</td>
-                    <td className={`${gridTd("left", "py-2")} tester-monitor-muted max-w-[240px] truncate`} title={JSON.stringify(ev.payload)}>
-                      {payloadPreview(ev.payload)}
-                    </td>
-                    <td className={`${gridTd("left", "py-2")} text-[10px] uppercase`}>{ev.source}</td>
+        {!simMonitor ? (
+          <p className="tester-monitor-muted text-[11px] italic px-4 py-6 text-center">
+            {loading
+              ? it ? "Carico posizioni tester…" : "Loading tester positions…"
+              : it ? "Nessun dato disponibile — riprova con ↻ Aggiorna in alto." : "No data available — retry with ↻ Refresh above."}
+          </p>
+        ) : simMonitor.testers.length === 0 ? (
+            <p className={`tester-monitor-muted text-[11px] italic px-4 py-6 text-center`}>
+              {it
+                ? "Nessun tester ha ancora salvato posizioni di simulazione dall'app mobile."
+                : "No tester has saved simulation positions from the mobile app yet."}
+            </p>
+          ) : (
+            <div className="overflow-x-auto">
+              <table
+                className={`${SHEET_GRID_TABLE_CLASS} tester-monitor-table text-[11px] border-collapse min-w-[960px]`}
+              >
+                <SheetGridColgroup columnCount={9} />
+                <thead>
+                  <tr className="text-left uppercase tracking-wide text-[10px]">
+                    <th className={gridTh("left", "py-2")}>Tester</th>
+                    <th className={gridTh("center", "py-2")}>{it ? "Buy" : "Buys"}</th>
+                    <th className={gridTh("center", "py-2")}>{it ? "Sell" : "Sells"}</th>
+                    <th className={gridTh("right", "py-2")}>{it ? "Cap. aperto" : "Open capital"}</th>
+                    <th className={gridTh("right", "py-2")}>{it ? "Gain aperto" : "Open gain"}</th>
+                    <th className={gridTh("right", "py-2")}>{it ? "Gain chiuso" : "Closed gain"}</th>
+                    <th className={gridTh("center", "py-2")}>{it ? "Follow rate" : "Follow rate"}</th>
+                    <th className={gridTh("left", "py-2")}>{it ? "Aggiornato" : "Updated"}</th>
+                    <th className={gridTh("center", "py-2")}></th>
                   </tr>
-                ))
-              )}
-            </tbody>
-          </table>
-        </div>
+                </thead>
+                <tbody>
+                  {simMonitor.testers.map((t: TesterSimRow) => {
+                    const expanded = expandedSim === t.tester_id;
+                    return (
+                      <Fragment key={t.tester_id}>
+                        <tr
+                          className="cursor-pointer"
+                          onClick={() =>
+                            setExpandedSim(expanded ? null : t.tester_id)
+                          }
+                        >
+                          <td className={gridTd("left", "py-2")}>
+                            <div className="flex flex-col">
+                              <span className="font-semibold text-[11px]">
+                                {t.email || t.display_name || t.tester_id}
+                              </span>
+                              <span className="tester-monitor-muted text-[10px] font-mono">
+                                {t.display_name && t.email ? t.display_name : ""}
+                              </span>
+                            </div>
+                          </td>
+                          <td className={`${gridTd("center", "py-2")} font-bold tabular-nums`}>
+                            {t.totals.buys_count}
+                          </td>
+                          <td className={`${gridTd("center", "py-2")} font-bold tabular-nums`}>
+                            {t.totals.closed_count}
+                          </td>
+                          <td className={`${gridTd("right", "py-2")} tabular-nums`}>
+                            {fmtEur(t.totals.open_capital_eur, locale)}
+                          </td>
+                          <td className={`${gridTd("right", "py-2")} ${gainClass(t.totals.open_gain_eur)}`}>
+                            <div className="flex flex-col items-end">
+                              <span>{fmtEur(t.totals.open_gain_eur, locale)}</span>
+                              {t.totals.open_gain_pct != null && (
+                                <span className="text-[9px] opacity-75">
+                                  {fmtPct(t.totals.open_gain_pct)}
+                                </span>
+                              )}
+                            </div>
+                          </td>
+                          <td className={`${gridTd("right", "py-2")} ${gainClass(t.totals.closed_gain_eur)}`}>
+                            {fmtEur(t.totals.closed_gain_eur, locale)}
+                          </td>
+                          <td className={`${gridTd("center", "py-2")} tabular-nums`}>
+                            {t.totals.follow_rate_pct != null ? (
+                              <span className="font-bold">
+                                {t.totals.follow_rate_pct.toFixed(0)}%
+                              </span>
+                            ) : (
+                              <span className="tester-monitor-muted">—</span>
+                            )}
+                            <span className="tester-monitor-muted text-[9px] block">
+                              {t.totals.aligned_buys}/{t.totals.buys_count}
+                            </span>
+                          </td>
+                          <td className={`${gridTd("left", "py-2")} tester-monitor-muted text-[10px]`}>
+                            {fmtTs(t.sim_updated_at ?? undefined, locale)}
+                          </td>
+                          <td className={`${gridTd("center", "py-2")} text-[10px]`}>
+                            {t.totals.buys_count > 0
+                              ? expanded
+                                ? it ? "▲ chiudi" : "▲ hide"
+                                : it ? "▼ dettagli" : "▼ details"
+                              : ""}
+                          </td>
+                        </tr>
+                        {expanded && t.positions.length > 0 && (
+                          <tr className="tester-monitor-row-detail">
+                            <td colSpan={9} className="px-4 py-3">
+                              <div className="overflow-x-auto">
+                                <table className="tester-monitor-subtable text-[10px] border-collapse w-full">
+                                  <thead>
+                                    <tr className="text-left uppercase tracking-wide text-[9px] tester-monitor-muted">
+                                      <th className="py-1 pr-2">{it ? "Stato" : "State"}</th>
+                                      <th className="py-1 pr-2">Ticker</th>
+                                      <th className="py-1 pr-2">{it ? "Buy" : "Bought"}</th>
+                                      <th className="py-1 pr-2 text-right">{it ? "Cap. €" : "Cap. €"}</th>
+                                      <th className="py-1 pr-2 text-right">{it ? "Buy $" : "Buy $"}</th>
+                                      <th className="py-1 pr-2 text-right">{it ? "Now $" : "Now $"}</th>
+                                      <th className="py-1 pr-2 text-right">{it ? "Valore €" : "Value €"}</th>
+                                      <th className="py-1 pr-2 text-right">{it ? "P&L €" : "P&L €"}</th>
+                                      <th className="py-1 pr-2 text-right">P&L %</th>
+                                      <th className="py-1 pr-2 text-center">{it ? "Segnale oggi" : "Signal today"}</th>
+                                    </tr>
+                                  </thead>
+                                  <tbody>
+                                    {t.positions.map((p: TesterSimPosition, idx: number) => {
+                                      const pnlEur =
+                                        p.state === "open" ? p.open_pnl_eur : p.closed_pnl_eur;
+                                      const pnlPct =
+                                        p.state === "open" ? p.open_pnl_pct : p.closed_pnl_pct;
+                                      const value =
+                                        p.state === "open" ? p.value_eur : p.closed_value_eur;
+                                      return (
+                                        <tr
+                                          key={`${t.tester_id}-${p.ticker}-${idx}`}
+                                          className="border-t border-[rgb(var(--tester-monitor-border))]/25"
+                                        >
+                                          <td className="py-1 pr-2">
+                                            <span
+                                              className={`tester-status-pill tester-status-pill--${
+                                                p.state === "open" ? "approved" : "pending"
+                                              }`}
+                                            >
+                                              {p.state === "open"
+                                                ? it ? "aperta" : "open"
+                                                : it ? "chiusa" : "closed"}
+                                            </span>
+                                          </td>
+                                          <td className="py-1 pr-2 font-mono font-semibold">
+                                            {p.ticker}
+                                            {p.name && (
+                                              <span className="tester-monitor-muted font-normal ml-1">
+                                                {p.name}
+                                              </span>
+                                            )}
+                                          </td>
+                                          <td className="py-1 pr-2 tester-monitor-muted">
+                                            {fmtDate(p.invested_at, locale)}
+                                          </td>
+                                          <td className="py-1 pr-2 text-right tabular-nums">
+                                            {fmtEur(p.capital_eur, locale)}
+                                          </td>
+                                          <td className="py-1 pr-2 text-right tabular-nums">
+                                            {p.buy_price_usd != null
+                                              ? `$${p.buy_price_usd.toFixed(2)}`
+                                              : "—"}
+                                          </td>
+                                          <td className="py-1 pr-2 text-right tabular-nums">
+                                            {p.current_price_usd != null
+                                              ? `$${p.current_price_usd.toFixed(2)}`
+                                              : "—"}
+                                          </td>
+                                          <td className="py-1 pr-2 text-right tabular-nums">
+                                            {fmtEur(value ?? null, locale)}
+                                          </td>
+                                          <td className={`py-1 pr-2 text-right ${gainClass(pnlEur ?? null)}`}>
+                                            {fmtEur(pnlEur ?? null, locale)}
+                                          </td>
+                                          <td className={`py-1 pr-2 text-right ${gainClass(pnlPct ?? null)}`}>
+                                            {fmtPct(pnlPct ?? null)}
+                                          </td>
+                                          <td className="py-1 pr-2 text-center">
+                                            {p.signal_up_now ? (
+                                              <span
+                                                className="text-[rgb(var(--signal-up))] font-bold"
+                                                title={it ? "Segnale corrente allineato al BUY" : "Current signal aligned with BUY"}
+                                              >
+                                                ▲ BUY
+                                              </span>
+                                            ) : (
+                                              <span
+                                                className="tester-monitor-muted"
+                                                title={
+                                                  it
+                                                    ? "Segnale corrente non allineato al BUY"
+                                                    : "Current signal not aligned with BUY"
+                                                }
+                                              >
+                                                ▬
+                                              </span>
+                                            )}
+                                          </td>
+                                        </tr>
+                                      );
+                                    })}
+                                  </tbody>
+                                </table>
+                              </div>
+                            </td>
+                          </tr>
+                        )}
+                      </Fragment>
+                    );
+                  })}
+                </tbody>
+              </table>
+            </div>
+          )}
       </div>
 
       <details className="tester-monitor-demo rounded-xl p-3 shrink-0">
@@ -916,8 +1360,6 @@ export function TesterMonitorView({
         </div>
         {demoMsg && <p className="tester-monitor-text text-[10px] mt-2 font-medium">{demoMsg}</p>}
       </details>
-          </div>
-        )}
       </div>
     </div>
   );

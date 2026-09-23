@@ -5,6 +5,7 @@ import type { AdviceCalibrationSummary } from "./investDecisionSimAdviceCalibrat
 function emptyLive(): AdviceCalibrationSummary {
   return {
     lowProb: { count: 0, good: 0, bad: 0, successRatePct: null },
+    midProb: { count: 0, good: 0, bad: 0, successRatePct: null },
     highProb: { count: 0, good: 0, bad: 0, successRatePct: null },
     scoredCount: 0,
     pendingCount: 0,

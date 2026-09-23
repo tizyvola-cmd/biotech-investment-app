@@ -97,7 +97,7 @@ export function MigMarketModelSlopesCard({
       calibScore != null ? `${summary} · cal ${calibScore.toFixed(0)}` : summary;
 
     return (
-      <div className="h-full w-full min-h-0" title={summaryFull}>
+      <div className="h-full w-full min-h-0 flex items-center justify-center" title={summaryFull}>
         <MigTripleSlopeGlyph
           miiAngleDeg={row.slopeAngleDeg}
           preAngleDeg={row.calibPreDaily.modelSlopeAngleDeg}

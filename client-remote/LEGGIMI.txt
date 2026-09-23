@@ -1,0 +1,75 @@
+SuperNova — Client remoto (per nuovo utente)
+==========================================
+
+Cosa ricevi
+-----------
+Un launcher che apre SuperNova nel browser sul server condiviso.
+Non installa Python ne Node sul tuo PC.
+
+IMPORTANTE
+----------
+- NON usare SuperNova.exe come "installatore": apre solo il sito.
+- Windows a volte BLOCCA SuperNova.exe (falso allarme antivirus).
+- Installazione corretta = doppio click su Installa-su-Desktop.bat
+
+Come installare (una volta)
+---------------------------
+1. Scompatta lo ZIP in una cartella stabile (es. Documenti\SuperNova).
+2. Doppio click su:  Installa-su-Desktop.bat
+3. Sul Desktop compaiono DUE icone:
+     - SuperNova            (icona colore)  → tuo account
+     - SuperNova Andrea     (icona GRIGIA)  → account Andrea
+4. Puoi tenerle APERTE INSIEME: Andrea usa un profilo Edge/Chrome dedicato
+   (localStorage separato), cosi i due account non si pestano i piedi.
+
+Due account desktop insieme
+---------------------------
+Sul PC di sviluppo (cartella Biotech completa):
+- SuperNova (Electron)        → tuo account / Pulse
+- SuperNova Andrea (grigia)   → avvia Electron LOCALE con profilo separato
+  (scripts\Avvia_SuperNova_Andrea.bat) — non apre il browser sul VPS
+
+Solo client-remote (ZIP senza Electron):
+- SuperNova (colore)  → browser sul server
+- SuperNova Andrea (grigia) → browser Edge/Chrome con profilo SuperNova-Andrea
+
+Login Andrea: andrea.vicario1979@gmail.com  (gmail, non gamil)
+I mobile seguono l'EMAIL, non quale scorciatoia desktop e aperta.
+
+Crea il tuo account (email)
+---------------------------
+Alla prima apertura DEVE comparire la schermata "Crea il tuo account SuperNova".
+1. Inserisci la tua email (e nome opzionale).
+2. Conferma: parti con un portafoglio VUOTO (i tuoi investimenti, non quelli del lab)
+   — eccetto tizyvola@gmail.com che usa il book Pulse condiviso.
+3. Usa la STESSA email sull'app mobile (/mobile/) per collegare desktop e telefono.
+   Soft BUY/SELL e posizioni restano sullo stesso account.
+4. Secondo account: usa la scorciatoia grigia "SuperNova Andrea", oppure
+   in alto a destra → "Account" (switch nella stessa finestra).
+5. Mobile: una sola email per volta (la stessa del desktop di quell utente).
+   Non c e switch multi-account sulla PWA.
+
+Se non vedi la schermata account
+--------------------------------
+- Fai Ctrl+F5 (cache).
+- Apri in finestra anonima / altro browser.
+- NON usare ?lab=1 (quello e solo per l'operatore del server).
+
+Come si aggiorna
+----------------
+Gli aggiornamenti li pubblica chi gestisce il server (deploy VPS).
+Tu non reinstalli nulla: alla prossima apertura vedi la versione nuova.
+(Se la pagina resta vecchia: Ctrl+F5 nel browser.)
+
+Se non si apre
+--------------
+- Controlla di avere Internet.
+- Apri a mano:  http://91.99.15.48:8765/
+- Oppure modifica config.txt / config-andrea.txt (riga URL=...).
+
+Note
+----
+- Desktop:  URL=http://HOST:8765/
+- Mobile tester:  URL=http://HOST:8765/mobile/
+- Stessa email su mobile e desktop = stesso portafoglio.
+- Profilo Andrea (Edge/Chrome): SuperNova-Andrea  (vedi config-andrea.txt)

@@ -1,30 +1,58 @@
 import { useMemo } from "react";
-import type { CdPatternTickerRecommendation } from "../sheet/cdPatternRecommendation";
+import type { EisSuperScoreState } from "../api/eisSuperScore";
+import {
+  resolveNearestEisForTicker,
+  type CdPatternTickerRecommendation,
+} from "../sheet/cdPatternRecommendation";
 import { useT } from "../shared/i18n";
 import { eisBarPercent, eisColor } from "../sheet/eventImpactScore";
 import { buildTickerEisDetail } from "../sheet/tickerEisSummary";
 import { ClinicalIndicatorSummaryBlock } from "./ClinicalIndicatorSummary";
 
 export function CdPatternEisPanel({
-  rec,
+  ticker,
+  completionDate = null,
   sheetClinicalKpi,
   lang = "it",
+  eisSuperScoreState,
   onOpenFeed,
   onOpenDetail,
+  /** @deprecated Prefer `ticker` + `completionDate`; kept for call sites that still pass `rec`. */
+  rec,
 }: {
-  rec: CdPatternTickerRecommendation;
+  ticker?: string;
+  completionDate?: string | null;
   sheetClinicalKpi?: number | null;
   lang?: "it" | "en";
+  eisSuperScoreState?: EisSuperScoreState | null;
   onOpenFeed?: (ticker: string) => void;
   onOpenDetail: () => void;
+  rec?: CdPatternTickerRecommendation;
 }) {
   const t = useT();
   const it = lang === "it";
-  const eisDetail = useMemo(
-    () => buildTickerEisDetail(rec.ticker, lang, sheetClinicalKpi),
-    [rec.ticker, lang, sheetClinicalKpi],
+  const resolvedTicker = (ticker ?? rec?.ticker ?? "").trim().toUpperCase();
+  const resolvedCd = completionDate ?? rec?.completionDate ?? null;
+
+  const eis = useMemo(
+    () =>
+      resolveNearestEisForTicker({
+        patternRec: rec ?? null,
+        ticker: resolvedTicker,
+        completionDate: resolvedCd,
+        lang,
+        eisSuperScoreState,
+        clinicalKpi: sheetClinicalKpi,
+      }),
+    [rec, resolvedTicker, resolvedCd, lang, eisSuperScoreState, sheetClinicalKpi],
   );
-  const eis = rec.nearestEis;
+
+  const eisDetail = useMemo(
+    () => buildTickerEisDetail(resolvedTicker, lang, sheetClinicalKpi),
+    [resolvedTicker, lang, sheetClinicalKpi],
+  );
+
+  if (!resolvedTicker) return null;
 
   if (!eis) {
     if (eisDetail.clinicalIndicators.length > 0) {
@@ -159,7 +187,7 @@ export function CdPatternEisPanel({
           <button
             type="button"
             className="btn-ghost text-[10px] font-semibold border border-[rgb(var(--border))]/50"
-            onClick={() => onOpenFeed(rec.ticker)}
+            onClick={() => onOpenFeed(resolvedTicker)}
           >
             {t("decisionLab.pattern.eis.openFeed")}
           </button>

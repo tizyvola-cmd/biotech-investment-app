@@ -95,6 +95,115 @@ export type CorrelationSignificance = {
   stars: SignificanceStars;
 };
 
+export type OlsRegression = {
+  slope: number;
+  intercept: number;
+  r: number | null;
+  /** Two endpoints for chart overlay — spans xSpan or data min/max. */
+  line: { x: number; y: number }[];
+};
+
+/**
+ * Theil-Sen robust regression y = slope·x + intercept.
+ *
+ * Slope is the median of pair-wise slopes; intercept is the median of
+ * per-point residuals after applying the slope. Insensitive to outliers
+ * with ≥29% breakdown point (vs OLS which has 0%), so the drawn line
+ * reflects the *typical* relationship rather than a fit dominated by a
+ * few high-leverage points.
+ *
+ * Rationale: for small-n scatter plots (n ~ 15-30) with 1-2 influential
+ * points, OLS can produce a visually steep line while Pearson r stays
+ * weak, misleading the reader. Theil-Sen keeps the visual and the
+ * correlation coherent.
+ *
+ * Returns `null` for n < 3 or when all x values are equal.
+ */
+export function linearRegressionTheilSen(
+  xs: number[],
+  ys: number[],
+  xSpan?: { min: number; max: number },
+): OlsRegression | null {
+  if (xs.length < 3 || xs.length !== ys.length) return null;
+  const n = xs.length;
+  const slopes: number[] = [];
+  for (let i = 0; i < n; i += 1) {
+    for (let j = i + 1; j < n; j += 1) {
+      const dx = xs[j]! - xs[i]!;
+      if (dx === 0) continue;
+      slopes.push((ys[j]! - ys[i]!) / dx);
+    }
+  }
+  if (slopes.length === 0) return null;
+  slopes.sort((a, b) => a - b);
+  const mid = Math.floor(slopes.length / 2);
+  const slope =
+    slopes.length % 2 === 0 ? 0.5 * (slopes[mid - 1]! + slopes[mid]!) : slopes[mid]!;
+
+  const residuals: number[] = new Array(n);
+  for (let i = 0; i < n; i += 1) residuals[i] = ys[i]! - slope * xs[i]!;
+  residuals.sort((a, b) => a - b);
+  const rMid = Math.floor(n / 2);
+  const intercept =
+    n % 2 === 0 ? 0.5 * (residuals[rMid - 1]! + residuals[rMid]!) : residuals[rMid]!;
+
+  const r = pearsonR(xs, ys);
+  const xMin = xSpan?.min ?? Math.min(...xs);
+  const xMax = xSpan?.max ?? Math.max(...xs);
+  const y0 = slope * xMin + intercept;
+  const y1 = slope * xMax + intercept;
+  return {
+    slope: Math.round(slope * 10000) / 10000,
+    intercept: Math.round(intercept * 10000) / 10000,
+    r,
+    line: [
+      { x: xMin, y: Math.round(y0 * 100) / 100 },
+      { x: xMax, y: Math.round(y1 * 100) / 100 },
+    ],
+  };
+}
+
+/**
+ * Ordinary least-squares y = slope·x + intercept.
+ * Returns regression line endpoints for scatter overlay (n ≥ 3).
+ *
+ * Prefer {@link linearRegressionTheilSen} for visual overlays on small
+ * scatter plots (n < ~50): OLS is heavily biased by 1-2 outliers, which
+ * makes the drawn line look more significant than the correlation
+ * warrants. Keep OLS only when you need the algebraic slope (e.g. to
+ * decompose y into a linear component of x plus residuals — see the
+ * MCS-net regression in `ModelComparisonPanel`).
+ */
+export function linearRegressionOLS(
+  xs: number[],
+  ys: number[],
+  xSpan?: { min: number; max: number },
+): OlsRegression | null {
+  if (xs.length < 3 || xs.length !== ys.length) return null;
+  const n = xs.length;
+  const mx = xs.reduce((s, v) => s + v, 0) / n;
+  const my = ys.reduce((s, v) => s + v, 0) / n;
+  const sxx = xs.reduce((s, x) => s + (x - mx) ** 2, 0);
+  if (sxx < 1e-12) return null;
+  const sxy = xs.reduce((s, x, i) => s + (x - mx) * (ys[i]! - my), 0);
+  const slope = sxy / sxx;
+  const intercept = my - slope * mx;
+  const r = pearsonR(xs, ys);
+  const xMin = xSpan?.min ?? Math.min(...xs);
+  const xMax = xSpan?.max ?? Math.max(...xs);
+  const y0 = slope * xMin + intercept;
+  const y1 = slope * xMax + intercept;
+  return {
+    slope: Math.round(slope * 10000) / 10000,
+    intercept: Math.round(intercept * 10000) / 10000,
+    r,
+    line: [
+      { x: xMin, y: Math.round(y0 * 100) / 100 },
+      { x: xMax, y: Math.round(y1 * 100) / 100 },
+    ],
+  };
+}
+
 /** Pearson ρ between paired numeric series (n ≥ 3). */
 export function pearsonR(xs: number[], ys: number[]): number | null {
   if (xs.length < 3 || xs.length !== ys.length) return null;
@@ -114,6 +223,38 @@ export function pearsonR(xs: number[], ys: number[]): number | null {
   const den = Math.sqrt(dx2 * dy2);
   if (den <= 0 || !Number.isFinite(den)) return null;
   return Math.round((num / den) * 1000) / 1000;
+}
+
+/** Partial Pearson r(x,y | z) — linear association of x and y net of z. */
+export function partialPearsonR(xs: number[], ys: number[], zs: number[]): number | null {
+  if (xs.length < 4 || xs.length !== ys.length || ys.length !== zs.length) return null;
+  const rxy = pearsonR(xs, ys);
+  const rxz = pearsonR(xs, zs);
+  const ryz = pearsonR(ys, zs);
+  if (rxy == null || rxz == null || ryz == null) return null;
+  const denom = Math.sqrt(Math.max(0, 1 - rxz * rxz) * Math.max(0, 1 - ryz * ryz));
+  if (denom <= 1e-12) return null;
+  return Math.round(((rxy - rxz * ryz) / denom) * 1000) / 1000;
+}
+
+/** Spearman rank ρ — robust when scores are skewed or ties are few. */
+export function spearmanR(xs: number[], ys: number[]): number | null {
+  if (xs.length < 3 || xs.length !== ys.length) return null;
+  const rank = (vals: number[]): number[] => {
+    const indexed = vals.map((v, i) => ({ v, i }));
+    indexed.sort((a, b) => a.v - b.v);
+    const out = new Array<number>(vals.length);
+    let i = 0;
+    while (i < indexed.length) {
+      let j = i;
+      while (j + 1 < indexed.length && indexed[j + 1]!.v === indexed[i]!.v) j += 1;
+      const avgRank = (i + j) / 2 + 1;
+      for (let k = i; k <= j; k += 1) out[indexed[k]!.i] = avgRank;
+      i = j + 1;
+    }
+    return out;
+  };
+  return pearsonR(rank(xs), rank(ys));
 }
 
 export function correlationSignificance(
@@ -151,6 +292,27 @@ export function formatPValue(p: number | null | undefined): string {
   if (p == null || !Number.isFinite(p)) return "n/d";
   if (p < 0.001) return "<0.001";
   return p.toFixed(3);
+}
+
+/** 95% confidence interval for Pearson r via Fisher z transform. Needs n ≥ 4. */
+export function fisherZ95Ci(r: number, n: number): { lo: number; hi: number } | null {
+  if (n < 4 || !Number.isFinite(r)) return null;
+  const clipped = Math.max(-0.999, Math.min(0.999, r));
+  const z = 0.5 * Math.log((1 + clipped) / (1 - clipped));
+  const se = 1 / Math.sqrt(n - 3);
+  const zLo = z - 1.96 * se;
+  const zHi = z + 1.96 * se;
+  const toR = (zv: number) => (Math.exp(2 * zv) - 1) / (Math.exp(2 * zv) + 1);
+  return {
+    lo: Math.round(toR(zLo) * 100) / 100,
+    hi: Math.round(toR(zHi) * 100) / 100,
+  };
+}
+
+export function formatFisherCi(ci: { lo: number; hi: number } | null | undefined): string {
+  if (!ci) return "";
+  const fmt = (v: number) => `${v >= 0 ? "+" : ""}${v.toFixed(2)}`;
+  return `[${fmt(ci.lo)}, ${fmt(ci.hi)}]`;
 }
 
 /** Minimum |ρ| for two-tailed significance at α (default p<0.05), given n pairs. */

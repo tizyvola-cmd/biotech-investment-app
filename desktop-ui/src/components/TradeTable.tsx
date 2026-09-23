@@ -39,8 +39,8 @@ export function TradeTable({ trades }: { trades: Trade[] }) {
             <th className={gridTh("center", "py-2")}>{it ? "Azione" : "Action"}</th>
             <th className={gridTh("right", "py-2")}>{it ? "Prezzo $" : "Price $"}</th>
             <th className={gridTh("right", "py-2")}>{it ? "Qtà" : "Qty"}</th>
-            <th className={gridTh("right", "py-2")}>{it ? "Valore €" : "Value €"}</th>
-            <th className={gridTh("right", "py-2")}>P&L €</th>
+            <th className={gridTh("right", "py-2")}>{it ? "Valore $" : "Value $"}</th>
+            <th className={gridTh("right", "py-2")}>P&L $</th>
             <th className={gridTh("right", "py-2")}>P&L %</th>
           </tr>
         </thead>

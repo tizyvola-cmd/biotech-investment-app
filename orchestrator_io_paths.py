@@ -36,30 +36,46 @@ CLINICAL_SIMULATION_SNAPSHOT_JSON = os.path.join(
 SEC_K8_SIMULATION_SNAPSHOT_JSON = os.path.join(
     DATA_DIR, "sec_k8_simulation_snapshot.json"
 )
+SEC_10Q_FEED_SNAPSHOT_JSON = os.path.join(DATA_DIR, "sec_10q_feed_snapshot.json")
+SEC_10Q_FEED_CACHE_JSON = os.path.join(DATA_DIR, "sec_10q_feed_cache.json")
 DESKTOP_DATA_MANIFEST_JSON = os.path.join(DATA_DIR, "desktop_data_manifest.json")
 INVESTMENT_DECISION_COHORT_JSON = os.path.join(DATA_DIR, "investment_decision_cohort.json")
 INVESTMENT_DECISION_COHORT_HISTORY_JSON = os.path.join(
     DATA_DIR, "investment_decision_cohort_history.json"
 )
 INVESTMENT_SIM_OUTCOMES_JSON = os.path.join(DATA_DIR, "investment_sim_outcomes.json")
+CATALYST_PATTERN_LIBRARY_JSON = os.path.join(DATA_DIR, "catalyst_pattern_library.json")
+CATALYST_PATTERN_AUDIT_MD = os.path.join(DATA_DIR, "catalyst_pattern_audit.md")
 INVESTMENT_TRADE_CALIB_JSON = os.path.join(DATA_DIR, "investment_trade_calib.json")
 INVEST_SIM_INPUTS_JSON = os.path.join(DATA_DIR, "invest_sim_inputs.json")
 INVEST_SIM_HISTORY_JSON = os.path.join(DATA_DIR, "invest_sim_history.json")
 TESTER_FEEDBACK_STORE_JSON = os.path.join(DATA_DIR, "tester_feedback_store.json")
 TESTER_FEEDBACK_CALIB_JSON = os.path.join(DATA_DIR, "tester_feedback_calibration.json")
 MARKET_CONTEXT_JSON = os.path.join(DATA_DIR, "market_context.json")
+MARKET_CONTEXT_SNAPSHOT_JSON = os.path.join(DATA_DIR, "market_context_snapshot.json")
 CLUSTER_CAL_FACTORS_JSON = os.path.join(DATA_DIR, "cluster_cal_factors.json")
 REGIME_MULTIPLIERS_JSON = os.path.join(DATA_DIR, "regime_multipliers.json")
 OUTCOMES_WITH_REGIME_JSON = os.path.join(DATA_DIR, "outcomes_with_regime.json")
 REGIME_HISTORY_JSON = os.path.join(DATA_DIR, "regime_history.json")
 LEARNING_HISTORY_JSON = os.path.join(DATA_DIR, "learning_history.json")
 LEARNING_LOG_JSON = os.path.join(DATA_DIR, "learning_log.json")
+LEARNING_LAB_OVERVIEW_SNAPSHOT_JSON = os.path.join(
+    DATA_DIR, "learning_lab_overview_snapshot.json"
+)
 TICKER_PERFORMANCE_JSON = os.path.join(DATA_DIR, "ticker_performance.json")
 FEEDBACK_SUMMARY_JSON = os.path.join(DATA_DIR, "feedback_summary.json")
 FEEDBACK_HISTORY_JSON = os.path.join(DATA_DIR, "feedback_history.json")
 PRED_CURVE_SEQ_STATE_JSON = os.path.join(DATA_DIR, "pred_curve_seq_state.json")
 SDS_ROI_BACKTEST_SCORES_JSON = os.path.join(DATA_DIR, "sds_roi_backtest_scores.json")
 SDS_ROI_FORECAST_LOG_JSON = os.path.join(DATA_DIR, "sds_roi_forecast_log.json")
+REGULATORY_RISK_SNAPSHOT_JSON = os.path.join(DATA_DIR, "regulatory_risk_snapshot.json")
+RESILIENCE_SCORES_SNAPSHOT_JSON = os.path.join(
+    DATA_DIR, "resilience_scores_snapshot.json"
+)
+MOBILE_DASHBOARD_SNAPSHOT_JSON = os.path.join(DATA_DIR, "mobile_dashboard_snapshot.json")
+WHATIF_READOUT_DAILY_SNAPSHOT_JSON = os.path.join(
+    DATA_DIR, "whatif_readout_daily_snapshot.json"
+)
 ORCHESTRATOR_SCRIPT = os.path.join(_PROJECT_ROOT, "data_orchestrator.py")
 
 
@@ -97,6 +113,8 @@ __all__ = (
     "CLINICAL_CSV",
     "CLINICAL_SIMULATION_SNAPSHOT_JSON",
     "SEC_K8_SIMULATION_SNAPSHOT_JSON",
+    "SEC_10Q_FEED_SNAPSHOT_JSON",
+    "SEC_10Q_FEED_CACHE_JSON",
     "DESKTOP_DATA_MANIFEST_JSON",
     "INVESTMENT_DECISION_COHORT_JSON",
     "INVESTMENT_DECISION_COHORT_HISTORY_JSON",
@@ -113,12 +131,17 @@ __all__ = (
     "REGIME_HISTORY_JSON",
     "LEARNING_HISTORY_JSON",
     "LEARNING_LOG_JSON",
+    "LEARNING_LAB_OVERVIEW_SNAPSHOT_JSON",
     "TICKER_PERFORMANCE_JSON",
     "FEEDBACK_SUMMARY_JSON",
     "FEEDBACK_HISTORY_JSON",
     "PRED_CURVE_SEQ_STATE_JSON",
     "SDS_ROI_BACKTEST_SCORES_JSON",
     "SDS_ROI_FORECAST_LOG_JSON",
+    "REGULATORY_RISK_SNAPSHOT_JSON",
+    "RESILIENCE_SCORES_SNAPSHOT_JSON",
+    "MOBILE_DASHBOARD_SNAPSHOT_JSON",
+    "WHATIF_READOUT_DAILY_SNAPSHOT_JSON",
     "ORCHESTRATOR_SCRIPT",
     "PYTHON_VENV_EXE",
     "APP_ICON_PNG",

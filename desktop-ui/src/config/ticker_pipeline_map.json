@@ -1,0 +1,58 @@
+{
+  "version": 1,
+  "note": "Mirrored from repo-root config/ticker_pipeline_map.json for Vite/TS imports. Edit root config and copy here (or keep in sync).",
+  "tickers": {
+    "CRDL": {
+      "cdAssetId": "cardiolrx",
+      "programs": [
+        {
+          "assetId": "cardiolrx",
+          "name": "CardiolRx",
+          "indication": "Recurrent Pericarditis",
+          "phase": "Phase 3",
+          "status": "active",
+          "isCdAsset": true,
+          "nctId": "NCT06708299"
+        }
+      ]
+    },
+    "ZNTL": {
+      "cdAssetId": "azenosertib",
+      "programs": [
+        {
+          "assetId": "azenosertib",
+          "name": "azenosertib (ZN-c3)",
+          "indication": null,
+          "phase": null,
+          "status": "active",
+          "isCdAsset": true,
+          "nctId": null
+        }
+      ]
+    },
+    "KZIA": {
+      "cdAssetId": "paxalisib",
+      "programs": [
+        {
+          "assetId": "paxalisib",
+          "name": "paxalisib",
+          "indication": "Triple Negative Breast Cancer",
+          "phase": "Phase 1b",
+          "status": "active",
+          "isCdAsset": true,
+          "nctId": "NCT03914742"
+        },
+        {
+          "assetId": "evt801",
+          "name": "EVT801",
+          "indication": null,
+          "phase": null,
+          "status": "active",
+          "isCdAsset": false,
+          "nctId": "NCT02903771"
+        }
+      ]
+    }
+  },
+  "proposedPrograms": []
+}

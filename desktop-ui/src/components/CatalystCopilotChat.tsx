@@ -267,7 +267,7 @@ export function CatalystCopilotChat({
 
   return (
     <aside
-      className="catalyst-copilot flex flex-col w-[min(100%,400px)] shrink-0 border-l border-violet-200/80 bg-[rgb(var(--surface-elevated))] shadow-xl z-10"
+      className="catalyst-copilot flex flex-col w-[min(100%,400px)] shrink-0 self-start sticky top-0 border-l border-violet-200/80 bg-[rgb(var(--surface-elevated))] shadow-xl z-10 overflow-hidden"
       aria-label={it ? "Chat Intelligence Catalyst Feed" : "Catalyst Feed Intelligence chat"}
     >
       <header className="shrink-0 px-3 py-2.5 border-b border-violet-200/60 bg-gradient-to-r from-violet-50 to-indigo-50/80">
@@ -466,7 +466,9 @@ export function CatalystCopilotChat({
           >
             {it ? "Svuota chat" : "Clear chat"}
           </button>
-          <span className="text-[9px] text-slate-400">Enter · Shift+Enter newline</span>
+          <span className="text-[9px] text-slate-400">
+            {it ? "Enter · Shift+Enter a capo" : "Enter · Shift+Enter newline"}
+          </span>
         </div>
       </footer>
     </aside>

@@ -17,7 +17,15 @@ function openExternalHref(href: string, event: React.MouseEvent<HTMLAnchorElemen
   const open = window.supernova?.shell?.openExternal;
   if (!open) return;
   event.preventDefault();
-  void open(href);
+  event.stopPropagation();
+  let url = String(href || "").trim();
+  if (/^\/\//.test(url)) url = `https:${url}`;
+  else if (url && !/^https?:\/\//i.test(url) && /^(www\.)?[a-z0-9][a-z0-9.-]*\.[a-z]{2,}/i.test(url)) {
+    url = `https://${url}`;
+  }
+  void Promise.resolve(open(url)).catch(() => {
+    window.open(url, "_blank", "noopener,noreferrer");
+  });
 }
 
 export function isSecEdgarElencoColumn(column: string): boolean {

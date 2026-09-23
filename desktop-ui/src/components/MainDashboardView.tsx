@@ -1,57 +1,112 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { startTransition, useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useDashboardScrollDebug } from "../debug/dashboardScrollDebug";
 import type { AppScreen, ChartBundle, ChartPoint, SheetTable } from "../types";
 import { loadSimulationChartsBundle } from "../data/simulationCharts";
-import { useInvestSimInputs } from "../hooks/useInvestSimInputs";
+import { useInvestSimInputs, useRegisterExternalHolding } from "../hooks/useInvestSimInputs";
 import {
   aggregateOpenPortfolioPnl,
   buildDashboardPortfolioChips,
   buildPortfolioDailyPnlLedger,
+  isValidMarketTicker,
   rowHasActivePortfolio,
 } from "../sheet/simulationPosition";
 import type { InvestSimHistoryPoint, InvestSimInputs } from "../sheet/investSimStorage";
 import { useInvestSimPortfolioHistory } from "../hooks/useInvestSimPortfolioHistory";
 import { useDashboardPortfolioMetricsReady } from "../hooks/useDashboardPortfolioMetricsReady";
-import { readLocalSdsSnapshot, type SdsRow } from "../api/supernova";
+import {
+  readLocalSdsSnapshot,
+  fetchRegulatoryRiskSnapshot,
+  fetchIntraday1h,
+  fetchVolumeAcceleration,
+  fetchVolumeVsPrevSession,
+  type RegulatoryRiskSnapshot,
+  type SdsRow,
+} from "../api/supernova";
+import { useClinicalPreCdRecords } from "../hooks/useClinicalPreCdRecords";
+import { buildPriorSessionPctByTicker } from "../sheet/softBuyRisingStreak";
 import { buildSdsByTicker, setCachedSdsForTopOpps } from "../sheet/sdsTopOppGate";
 import { buildMigSolidityByKey } from "../sheet/entrySolidityMig";
+import { daysToCdFromSimRow } from "../sheet/sdsCohortScope";
 import { RefreshControls } from "./RefreshControls";
 import { useLang, useT } from "../shared/i18n";
-import { useDashboardAiFeed } from "./DashboardAiFeedCard";
+import type { DashboardAiFeedTickerMeta } from "./DashboardAiFeedCard";
+import {
+  countRecentPastEvents,
+  flattenAiFeed,
+  rankAndSliceFeed,
+} from "../sheet/dashboardAiFeedBuild";
 import {
   buildMobileDashboardSnapshot,
   scheduleMobileDashboardSnapshotPublish,
 } from "../api/mobileDashboardSnapshot";
 import { loadEisSuperScoreState } from "../api/eisSuperScore";
+import { buildWhatIfCrownReadoutContext } from "../sheet/whatIfCrownReadout";
+import {
+  hydrateWhatIfReadoutDailySnapshot,
+  maybeSnapshotUniverseReadouts,
+} from "../sheet/whatIfReadoutDailySnapshot";
+import { PortfolioPnlSummaryBlock } from "./PortfolioPnlSummaryBlock";
 import { loadSdsReferenceCurves, type SdsRoiProfileId } from "../sheet/sdsRoiBlend";
 import { useCdPatternPolygonOverview } from "../sheet/useCdPatternPolygonOverview";
 import type { LossAnalysisProbOptions } from "../sheet/portfolioLossAnalysis";
+import {
+  getCachedMarketContextSnapshot,
+  loadMarketContextSnapshot,
+  type MarketContextSnapshotDoc,
+} from "../sheet/marketContextScore";
+import { GAIN_STAR_LEDGER_CHANGED_EVENT } from "../sheet/gainStarLedger";
+import {
+  syncEarlyPeakMinTargets,
+} from "../sheet/earlyPeakMinPriceAlerts";
+import type { EarlyPeakBuyMinTarget } from "../sheet/earlyPeakBuyMinTarget";
+import { EarlyPeakMinPriceAlertModal } from "./EarlyPeakMinPriceAlertModal";
+import { HighImpactEisToast } from "./HighImpactEisToast";
+import { VolumeSpikeToast } from "./VolumeSpikeToast";
 import { publishDashboardRecommendationsFromSimulation } from "../sheet/topOppsFromSimulation";
 import { subscribeTopOpps } from "../sheet/topOppsStore";
 import {
   filterOffPortfolioHotZoneSimRows,
-  SIM_HOT_ZONE_DAYS,
 } from "../sheet/simCdHorizonScope";
 import { DashboardPulseTable } from "./DashboardPulseTable";
-import { SimLoopPulseView } from "./SimLoopPulseView";
-import { ViewErrorBoundary } from "./ViewErrorBoundary";
+import { NewEntriesThisWeekTable } from "./NewEntriesThisWeekTable";
+import { HypeDetectedThisWeekTable } from "./HypeDetectedThisWeekTable";
 import { DashboardRecommendationsModal } from "./DashboardRecommendationsModal";
-import { DashboardChartsRow } from "./DashboardChartsRow";
+import { MarketContextWidget } from "./MarketContextWidget";
+import { runWhatIfLiveSignalsForPanel } from "../sheet/whatIfPanelRefresh";
+import { invalidateProjectJsonCache } from "../data/projectData";
+import {
+  buildOperationalRecResult,
+  type OperationalRecResult,
+} from "../sheet/operationalRecommendation";
+import { isVolumeSurge } from "../sheet/volumeVsPrevSession";
+import { maybeTriggerEisForHighVol } from "../sheet/volumeAccelEisTrigger";
+import { maybeRunHypeVolumeFunnelScan } from "../sheet/hypeVolumeFunnelTrigger";
 import { subscribeTop2BuySell } from "../sheet/top2BuySellStore";
 import {
   buildDashboardPulseData,
   buildDashboardVisitSnapshotFromState,
+  buildSyntheticDayVisitBaseline,
+  captureDashboardVisitBaseline,
 } from "../sheet/dashboardPulseView";
-import { saveDashboardVisitSnapshot, clearDashboardVisitSnapshot, loadDashboardVisitSnapshot } from "../sheet/dashboardVisitSnapshot";
+import {
+  saveDashboardVisitSnapshot,
+  clearDashboardVisitSnapshot,
+  loadDashboardVisitSnapshot,
+  loadSessionVisitBaseline,
+  saveSessionVisitBaseline,
+  visitSnapshotLooksLikeSameSessionPoison,
+  type DashboardVisitSnapshot,
+} from "../sheet/dashboardVisitSnapshot";
 import { useRefreshStatus } from "../shared/refreshStatusStore";
 import { buildPnlRankIndexMap, piggyBankChipRankVisual } from "../sheet/dealRankIcon";
 import { buildSimRowByKeyMap } from "../sheet/investSimKeys";
 import {
-  portfolioChipToneFromAction,
   resolvePortfolioPositionActionForRow,
 } from "../sheet/portfolioPositionAction";
 import {
   PORTFOLIO_CHIP_CLS,
   portfolioPiggyBankChipDisplay,
+  piggyChipToneFrom24h,
   piggyBankNeedsDayVsTotalNote,
   piggyBankPriorLegFromEntry,
 } from "../sheet/portfolioGainLossStyle";
@@ -59,34 +114,49 @@ import { piggyTrendLooksLikeDataCorrection } from "../sheet/piggyBankTrend";
 import { PortfolioHeroRankIcon, RankAnimalIcon } from "./DealRankBadge";
 import { ClosedPiggyBankCompact } from "./ClosedPiggyBankBeerGlass";
 import { useClosedPiggyBank } from "../hooks/useClosedPiggyBank";
-import { DashboardPanelUpdatedLabel } from "./DashboardPanelUpdatedLabel";
-import { latestDashboardPanelIso } from "../sheet/dashboardPanelDailyRefresh";
+import { ManualEisGainStarOnly } from "./ManualEisConfirmedCell";
+import type { ClosedPiggyBankDisplay } from "../sheet/closedPiggyBank";
+import {
+  resolvePiggyChipMoveBadge,
+  xbiDayReturnPctFromSnapshot,
+} from "../sheet/piggyIdiosyncraticBadge";
+import {
+  softBuyGatePiggyTintClass,
+  type SoftBuyGateStrength,
+} from "../sheet/softBuyGateStrength";
+import { SoftBuyGateStrengthMarks } from "./SoftBuyGateStrengthMarks";
+import { buildSuggestionMonitorRows } from "../sheet/suggestionMonitor";
+import {
+  DECISION_SIM_CHANGED_EVENT,
+  loadDecisionSimState,
+} from "../sheet/investDecisionSimStorage";
+import {
+  ADVICE_FEEDBACK_CHANGED_EVENT,
+  loadAdviceFeedback,
+} from "../sheet/adviceFeedback";
+import {
+  type LossRiskCatalog,
+} from "../hooks/useLossRiskCatalog";
+import type { LossRiskEntry } from "./LossRiskPoopCell";
+
+/** Stable empties — never allocate per render (breaks operationalRec / monitor memos). */
+const EMPTY_LOSS_RISK_CATALOG: LossRiskCatalog = new Map();
+const EMPTY_LOSS_RISK_BY_ROW: Map<string, LossRiskEntry> = new Map();
+import { useSimLoopSynthAllocation } from "../hooks/useSimLoopSynthAllocation";
+import { loadUiPrefsLocal } from "../sheet/uiPrefs";
 
 // ── Utility ──────────────────────────────────────────────────
 
-function parseDMY(s: string): Date | null {
-  if (!s) return null;
-  const parts = s.split("/");
-  if (parts.length !== 3) return null;
-  const [d, m, y] = parts.map(Number);
-  const date = new Date(y, m - 1, d);
-  return Number.isNaN(date.getTime()) ? null : date;
-}
-
-function daysFromToday(s: string): number | null {
-  const d = parseDMY(s);
-  if (!d) return null;
-  const today = new Date();
-  today.setHours(0, 0, 0, 0);
-  return Math.ceil((d.getTime() - today.getTime()) / 86400000);
-}
-
-function fmtUsd(v: number): string {
+function fmtSignedUsd(v: number): string {
   const abs = Math.abs(v);
-  const sign = v < 0 ? "-" : "";
+  const sign = v < 0 ? "-" : v > 0 ? "+" : "";
   if (abs >= 1e6) return `${sign}$${(abs / 1e6).toFixed(1)}M`;
   if (abs >= 1e3) return `${sign}$${(abs / 1e3).toFixed(1)}k`;
   return `${sign}$${abs.toFixed(0)}`;
+}
+
+function fmtUsd(v: number): string {
+  return fmtSignedUsd(v).replace(/^\+/, "");
 }
 
 function tickerFromRow(row: Record<string, unknown>): string {
@@ -96,24 +166,39 @@ function tickerFromRow(row: Record<string, unknown>): string {
 }
 
 // ── PiggyBankBar ─────────────────────────────────────────────────────────────
-// Horizontal full-width bar — sits between hero KPIs and main content.
+// Horizontal full-width bar — sits between P&L summary and Pulse.
 
 function PiggyBankBar({
   simTable,
   inputs,
   history,
   metricsReady,
-  onNavigateToPnl,
+  closedPiggyDisplay,
+  onResetClosedPiggy,
+  reinvestedEur,
+  openFromBudgetEur,
+  gainsCashEur,
+  gateStrengthByKey,
 }: {
   simTable: SheetTable | null;
   inputs: InvestSimInputs;
   history: InvestSimHistoryPoint[];
   /** False while Simulation / inputs / history are still merging — hide P&L numbers. */
   metricsReady: boolean;
-  onNavigateToPnl?: () => void;
+  closedPiggyDisplay: ClosedPiggyBankDisplay;
+  onResetClosedPiggy: () => void;
+  /** Open-book amount from gains beyond budget (budget-first). */
+  reinvestedEur?: number;
+  /** Open-book amount still covered by the investment budget. */
+  openFromBudgetEur?: number;
+  /** Closed gains sitting in piggy cash (not drawn for open book). */
+  gainsCashEur?: number;
+  /** Soft BUY gate ticks — same engine as Suggested BUY chips. */
+  gateStrengthByKey?: Map<string, SoftBuyGateStrength>;
 }) {
   const { lang } = useLang();
   const t = useT();
+  const it = lang === "it";
 
   const rowByKey = useMemo(
     () => buildSimRowByKeyMap(simTable?.rows ?? []),
@@ -130,12 +215,13 @@ function PiggyBankBar({
     [simTable, inputs, history],
   );
 
-  const closedLedger = useMemo(
-    () => buildPortfolioDailyPnlLedger(simTable, inputs, history),
-    [simTable, inputs, history],
+  /** XBI last-session % — idio badge when market flat and ticker Var.24h moves. */
+  const xbiDayPct = useMemo(
+    () => xbiDayReturnPctFromSnapshot(getCachedMarketContextSnapshot()),
+    // Snapshot is cached by App boot; refresh when open P&L updates.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [metricsReady, portfolioTotals.pnlEur],
   );
-  const { display: closedPiggyDisplay, reset: resetClosedPiggy } =
-    useClosedPiggyBank(closedLedger);
 
   const totalCapital = portfolioTotals.capital;
   const totalPnl = portfolioTotals.pnlEur;
@@ -333,33 +419,13 @@ function PiggyBankBar({
       className="piggy-bank-bar piggy-bank-bar--compact shrink-0 flex items-center gap-2 px-3 py-1.5 overflow-hidden relative rounded-xl border"
       title={
         lang === "it"
-          ? "Salvadanaio portfolio: P&L totale dall'ingresso, variazione 24h, barra 0–40% del target gain, chip per ticker (verde=gain, giallo=attendi, rosso=vendi)"
-          : "Portfolio piggy bank: total P&L since entry, 24h move, 0–40% target gain bar, per-ticker chips (green=gain, yellow=wait, red=sell)"
+          ? "Salvadanaio portfolio: P&L totale dall'ingresso, variazione 24h, barra 0–40% del target gain, chip per ticker (verde=24h positiva, rosso=24h negativa)"
+          : "Portfolio piggy bank: total P&L since entry, 24h move, 0–40% target gain bar, per-ticker chips (green=24h up, red=24h down)"
       }
     >
-      {/* Portfolio rank pig (same tiers as P&L: 👑🐷 → 🐔) — clic → tab P&L */}
+      {/* Portfolio rank pig (same tiers as P&L: 👑🐷 → 🐔) */}
       <div className="relative select-none shrink-0 flex items-end justify-center min-w-[3rem]">
-        {onNavigateToPnl && !noData ? (
-          <button
-            type="button"
-            onClick={onNavigateToPnl}
-            className="rounded-lg hover:opacity-85 focus:outline-none focus-visible:ring-2 focus-visible:ring-[rgb(var(--accent))]/50 transition-opacity"
-            title={
-              lang === "it"
-                ? "Apri tab P&L in Simulation"
-                : "Open P&L tab in Simulation"
-            }
-            aria-label={
-              lang === "it"
-                ? "Apri tab P&L in Simulation"
-                : "Open P&L tab in Simulation"
-            }
-          >
-            <PortfolioHeroRankIcon gainPct={pnlPct} noData={noData} basePx={40} />
-          </button>
-        ) : (
-          <PortfolioHeroRankIcon gainPct={pnlPct} noData={noData} basePx={40} />
-        )}
+        <PortfolioHeroRankIcon gainPct={pnlPct} noData={noData} basePx={40} />
         {isPos && !noData && (
           <span
             className="absolute -top-1 -right-1 text-sm leading-none"
@@ -488,8 +554,11 @@ function PiggyBankBar({
       {/* Salvadanaio opportunità chiuse — bicchiere birra */}
       <ClosedPiggyBankCompact
         display={closedPiggyDisplay}
-        onReset={resetClosedPiggy}
-        onOpenDetail={onNavigateToPnl}
+        onReset={onResetClosedPiggy}
+        onOpenDetail={undefined}
+        reinvestedEur={reinvestedEur}
+        openFromBudgetEur={openFromBudgetEur}
+        gainsCashEur={gainsCashEur}
       />
 
       {/* Per-ticker chips — same engine as Pulse (resolvePositionPnlBreakdown) */}
@@ -507,7 +576,7 @@ function PiggyBankBar({
               pnlEur,
               pnlPct: pp,
             });
-            const chipTone = portfolioChipToneFromAction(action);
+            const chipTone = piggyChipToneFrom24h(pnlEur24h, pnlPct24h);
             const rankIdx = chipRank.rankByKey.get(ticker);
             const rankVisual = piggyBankChipRankVisual(
               rankIdx ?? null,
@@ -516,13 +585,37 @@ function PiggyBankBar({
               pp,
             );
             const todayLbl = lang === "it" ? "oggi" : "24h";
+            const idioBadge = resolvePiggyChipMoveBadge(pnlPct24h, xbiDayPct);
+            const gate = gateStrengthByKey?.get(key) ?? null;
+            const gateTint = gate
+              ? softBuyGatePiggyTintClass(gate.tier, gate.ticks)
+              : "";
+            const chipTitle = [
+              `${ticker}: ${chip.title}`,
+              idioBadge ? (it ? idioBadge.titleIt : idioBadge.titleEn) : null,
+              gate ? (it ? gate.summaryIt : gate.summaryEn) : null,
+            ]
+              .filter(Boolean)
+              .join("\n");
             return (
               <span
                 key={ticker}
-                className={`piggy-bank-chip piggy-bank-chip--${chipTone} ${PORTFOLIO_CHIP_CLS[chipTone]}`}
-                title={`${ticker}: ${chip.title}`}
+                className={`piggy-bank-chip piggy-bank-chip--${chipTone} ${PORTFOLIO_CHIP_CLS[chipTone]}${gateTint ? ` ${gateTint}` : ""}`}
+                title={chipTitle}
               >
                 {rankVisual ? <RankAnimalIcon visual={rankVisual} basePx={12} /> : null}
+                {gate && gate.ticks > 0 ? (
+                  <SoftBuyGateStrengthMarks strength={gate} dense />
+                ) : null}
+                <ManualEisGainStarOnly ticker={ticker} pnlPct24h={pnlPct24h} />
+                {idioBadge ? (
+                  <span
+                    className="rounded px-0.5 text-[8px] font-bold uppercase tracking-wide bg-amber-500/20 text-amber-900 dark:text-amber-100 border border-amber-500/35"
+                    title={it ? idioBadge.titleIt : idioBadge.titleEn}
+                  >
+                    {it ? idioBadge.labelIt : idioBadge.labelEn}
+                  </span>
+                ) : null}
                 <span className="text-[10px] leading-snug">
                   <span className="font-bold">{ticker}</span>{" "}
                   <span>{chip.mainUsd}</span>
@@ -544,64 +637,16 @@ function PiggyBankBar({
 
 // ─────────────────────────────────────────────────────────────────────────────
 
-function HeroKpi({
-  label,
-  value,
-  sub,
-  accent,
-}: {
-  label: string;
-  value: string;
-  sub?: string;
-  accent?: "up" | "down" | "warn" | "accent";
-}) {
-  const lineColor =
-    accent === "up"
-      ? "rgb(var(--signal-up))"
-      : accent === "down"
-        ? "rgb(var(--signal-down))"
-        : accent === "warn"
-          ? "rgb(var(--warn))"
-          : "rgb(var(--accent))";
-
-  const valueColor =
-    accent === "up"
-      ? "text-[rgb(var(--signal-up))]"
-      : accent === "down"
-        ? "text-[rgb(var(--signal-down))]"
-        : accent === "warn"
-          ? "text-[rgb(var(--warn))]"
-          : "text-ink";
-
-  return (
-    <div className="flex-1 card px-4 py-3 relative overflow-hidden min-w-0">
-      <div
-        className="absolute top-0 left-0 right-0 h-[2px]"
-        style={{ background: lineColor }}
-      />
-      <p className="text-[11px] font-semibold uppercase tracking-wider text-ink-muted/70 truncate">
-        {label}
-      </p>
-      <p className={`text-xl font-bold tabular-nums mt-0.5 leading-tight ${valueColor}`}>
-        {value}
-      </p>
-      {sub && <p className="text-[11px] text-ink-muted mt-0.5">{sub}</p>}
-    </div>
-  );
-}
-
 // ── Main component ────────────────────────────────────────────
 
 export function MainDashboardView({
   simTable,
   simLoading,
-  secK8Loading,
-  onScreen,
+  secK8Loading: _secK8Loading,
+  onScreen: _onScreen,
   onOpenSecK8: _onOpenSecK8,
   onReload,
-  onNavigateToSimulationPnl,
-  onOpenSimulationRow,
-  onOpenSimulationSheet,
+  onReloadSimulation,
   onOpen24hAssessment,
   onRegisterBuy,
   onSellPosition,
@@ -609,6 +654,9 @@ export function MainDashboardView({
   onOpenCatalystFeed: _onOpenCatalystFeed,
   onOpenClinicalFeed: _onOpenClinicalFeed,
   onOpenSupernovaTab,
+  sharedChartBundle = null,
+  sharedLossRiskCatalog = null,
+  sharedLossRiskByRowKey = null,
 }: {
   simTable: SheetTable | null;
   simLoading: boolean;
@@ -618,40 +666,57 @@ export function MainDashboardView({
   onOpenSecK8?: (ticker: string) => void;
   /** Full local reload of every snapshot used by the dashboard. */
   onReload?: () => void | Promise<void>;
-  onNavigateToSimulationPnl?: () => void;
-  onOpenSimulationRow?: (focus: { ticker: string; cd?: string }) => void;
-  onOpenSimulationSheet?: (focus: {
+  /** Reload Simulation snapshot only (what-if panel after live signals). */
+  onReloadSimulation?: () => void | Promise<SheetTable | null | undefined>;
+  onOpen24hAssessment?: (focus: {
     ticker: string;
     cd?: string;
-    action?: "buy" | "sell";
+    rowKey?: string;
+    openDeepDive?: boolean;
   }) => void;
-  onOpen24hAssessment?: (focus: { ticker: string; cd?: string }) => void;
   onRegisterBuy?: import("../hooks/useInvestSimInputs").PortfolioRegisterBuyHandler;
   onSellPosition?: import("./PortfolioExitButton").PortfolioSellHandler;
   onOpenPredictionCharts?: (focus: { seriesKey: string | null; ticker: string }) => void;
   onOpenCatalystFeed?: () => void;
   onOpenClinicalFeed?: (ticker: string) => void;
   onOpenSupernovaTab?: (ticker: string) => void;
+  /** Chart bundle from App — avoids duplicate loadSimulationChartsBundle on dashboard. */
+  sharedChartBundle?: ChartBundle | null;
+  /** Shared Risk v2 catalog from App (single build for Home + sim-loop Soft SELL). */
+  sharedLossRiskCatalog?: LossRiskCatalog | null;
+  sharedLossRiskByRowKey?: Map<string, LossRiskEntry> | null;
 }) {
+  useDashboardScrollDebug("MainDashboardView", "post-fix-v2");
   const simRows = simTable?.rows ?? [];
 
   const t = useT();
   const { lang } = useLang();
   const { dataUpdatedAt } = useRefreshStatus();
   const [dashboardReloadToken, setDashboardReloadToken] = useState(0);
+  /** Yahoo prior-session % — Soft BUY / Cutoff growth streak (↑≥2d). */
+  const [priorSessionPctByTicker, setPriorSessionPctByTicker] = useState<
+    Map<string, number>
+  >(() => new Map());
+  const [volumeAccelByTicker, setVolumeAccelByTicker] = useState<
+    Map<string, { flagged: boolean; score: number | null; doublingMinutes: number | null; rvol: number | null }>
+  >(() => new Map());
+  /** Daily VOL vs prev ≥150% — Off Book High Vol rescue into Suggested BUY. */
+  const [volumeSurgeTickers, setVolumeSurgeTickers] = useState<string[]>([]);
+  const [cdHorizonPublishRev, setCdHorizonPublishRev] = useState(0);
   const [dashboardRefreshing, setDashboardRefreshing] = useState(false);
-  // "Since your last visit" pulse view mode — toggles between the real
-  // portfolio (default) and the sim loop's paper portfolio. Both views
-  // occupy the same slot (screen-swap, not popup) so the user can
-  // evaluate the advancement of one or the other — one at a time. The
-  // toggle button lives in each view's header (top-right).
-  const [pulseMode, setPulseMode] = useState<"portfolio" | "simLoop" | "simLoopSynth">(
-    "portfolio",
-  );
+  const [refreshPhaseLabel, setRefreshPhaseLabel] = useState<string | null>(null);
+  const [livePricesBackground, setLivePricesBackground] = useState(false);
+  const [mobilePublishContext, setMobilePublishContext] = useState<{
+    autoRegSnap: RegulatoryRiskSnapshot | null;
+    mcsDoc: MarketContextSnapshotDoc | null;
+  }>({ autoRegSnap: null, mcsDoc: null });
+  const [gainStarLedgerVersion, setGainStarLedgerVersion] = useState(0);
+  const { records: clinicalPreCdRecordsMerged } = useClinicalPreCdRecords();
   const [recModalOpen, setRecModalOpen] = useState(false);
   const [recStats, setRecStats] = useState({ total: 0, newCount: 0, keySig: "" });
   const recModalAckSigRef = useRef("");
   const inputs = useInvestSimInputs(simTable, dashboardReloadToken);
+  const registerExternalHolding = useRegisterExternalHolding(simTable);
   const { history: portfolioHistory, historyReady } = useInvestSimPortfolioHistory(
     dashboardReloadToken,
   );
@@ -662,7 +727,23 @@ export function MainDashboardView({
   );
   const portfolioMetricsReady = portfolioInputsReady && historyReady;
 
-  const [chartBundle, setChartBundle] = useState<ChartBundle | null>(null);
+  const [decisionSimState, setDecisionSimState] = useState(() => loadDecisionSimState());
+  const [adviceFeedback, setAdviceFeedback] = useState(() =>
+    typeof window !== "undefined" ? loadAdviceFeedback() : null,
+  );
+  useEffect(() => {
+    const onSimChange = () => setDecisionSimState(loadDecisionSimState());
+    window.addEventListener(DECISION_SIM_CHANGED_EVENT, onSimChange);
+    return () => window.removeEventListener(DECISION_SIM_CHANGED_EVENT, onSimChange);
+  }, []);
+
+  useEffect(() => {
+    const onFeedbackChange = () => setAdviceFeedback(loadAdviceFeedback());
+    window.addEventListener(ADVICE_FEEDBACK_CHANGED_EVENT, onFeedbackChange);
+    return () => window.removeEventListener(ADVICE_FEEDBACK_CHANGED_EVENT, onFeedbackChange);
+  }, []);
+
+  const [chartBundle, setChartBundle] = useState<ChartBundle | null>(sharedChartBundle);
   const [eisState, setEisState] = useState<Awaited<ReturnType<typeof loadEisSuperScoreState>> | null>(
     null,
   );
@@ -673,26 +754,57 @@ export function MainDashboardView({
   const [sdsGateTick, setSdsGateTick] = useState(0);
   const [sdsRowsForMig, setSdsRowsForMig] = useState<SdsRow[] | null>(null);
 
-  /** Grafici, SDS, EIS e curve di riferimento — riletti ad ogni Refresh pagina. */
+  useEffect(() => {
+    if (sharedChartBundle) setChartBundle(sharedChartBundle);
+  }, [sharedChartBundle]);
+
+  /** SDS + charts first (Pulse). EIS / ref curves after idle. */
   useEffect(() => {
     let cancelled = false;
     void (async () => {
-      const [chartsRes, sdsDoc, eis, curves] = await Promise.all([
-        loadSimulationChartsBundle(),
+      const needCharts = !sharedChartBundle || dashboardReloadToken > 0;
+      const [chartsRes, sdsDoc] = await Promise.all([
+        needCharts ? loadSimulationChartsBundle() : Promise.resolve({ bundle: sharedChartBundle! }),
         readLocalSdsSnapshot(),
-        loadEisSuperScoreState(),
-        loadSdsReferenceCurves(),
       ]);
       if (cancelled) return;
       setChartBundle(chartsRes.bundle);
       setCachedSdsForTopOpps(buildSdsByTicker(sdsDoc?.rows));
       setSdsRowsForMig(sdsDoc?.rows ?? null);
-      setEisState(eis);
-      setRefCurves(curves.refs);
       if (dashboardReloadToken > 0) setSdsGateTick((n) => n + 1);
     })();
     return () => {
       cancelled = true;
+    };
+  }, [dashboardReloadToken, sharedChartBundle]);
+
+  useEffect(() => {
+    let cancelled = false;
+    const run = () => {
+      void Promise.all([loadEisSuperScoreState(), loadSdsReferenceCurves()]).then(
+        ([eis, curves]) => {
+          if (cancelled) return;
+          setEisState(eis);
+          setRefCurves(curves.refs);
+        },
+      );
+    };
+    const w = window as Window & {
+      requestIdleCallback?: (cb: () => void, opts?: { timeout: number }) => number;
+      cancelIdleCallback?: (id: number) => void;
+    };
+    let idleHandle: number | null = null;
+    const timeoutHandle = window.setTimeout(() => {
+      if (typeof w.requestIdleCallback === "function") {
+        idleHandle = w.requestIdleCallback(run, { timeout: 2_500 });
+      } else {
+        run();
+      }
+    }, 400);
+    return () => {
+      cancelled = true;
+      window.clearTimeout(timeoutHandle);
+      if (idleHandle != null) w.cancelIdleCallback?.(idleHandle);
     };
   }, [dashboardReloadToken]);
 
@@ -716,6 +828,31 @@ export function MainDashboardView({
     [simTable, chartBundle, sdsRowsForMig],
   );
 
+  const readoutSnapshotCtx = useMemo(
+    () =>
+      buildWhatIfCrownReadoutContext({
+        sdsRows: sdsRowsForMig,
+        eisSuperScoreState: eisState,
+        simTable,
+        chartBundle,
+        inputs,
+      }),
+    [sdsRowsForMig, eisState, simTable, chartBundle, inputs],
+  );
+
+  useEffect(() => {
+    void hydrateWhatIfReadoutDailySnapshot();
+  }, []);
+
+  useEffect(() => {
+    if (!simTable?.rows?.length || !sdsRowsForMig?.length) return;
+    maybeSnapshotUniverseReadouts({
+      simTable,
+      inputs,
+      ctx: readoutSnapshotCtx,
+    });
+  }, [simTable, sdsRowsForMig, readoutSnapshotCtx, inputs]);
+
   const probOptionsForPublish = useMemo((): LossAnalysisProbOptions | null => {
     if (!simTable?.rows?.length) return null;
     return {
@@ -727,6 +864,11 @@ export function MainDashboardView({
       mergedInputs: inputs,
     };
   }, [simTable, sdsRowsForMig, migSolidityByKey, eisState, polygonOverview, inputs]);
+
+  const lossRiskCatalog = sharedLossRiskCatalog ?? EMPTY_LOSS_RISK_CATALOG;
+  const catalogByRowKey = sharedLossRiskByRowKey ?? EMPTY_LOSS_RISK_BY_ROW;
+
+  const langCode = lang === "it" ? "it" : "en";
 
   const opportunityRows = useMemo(
     () => filterOffPortfolioHotZoneSimRows(simRows, inputs),
@@ -742,6 +884,131 @@ export function MainDashboardView({
     return m;
   }, [chartBundle]);
 
+  const dashboardTopCapital = useMemo(() => {
+    const pref = loadUiPrefsLocal().topCapital;
+    if (pref != null && Number.isFinite(pref) && pref > 0) return pref;
+    let sum = 0;
+    for (const v of Object.values(inputs)) {
+      if (v.capital > 0) sum += v.capital;
+    }
+    return sum > 0 ? sum : 5000;
+  }, [inputs]);
+
+  /** Portfolio investment budget (casella Portfolio) — budget-first open attribution. */
+  const portfolioBudgetEur = useMemo(() => {
+    const pref = loadUiPrefsLocal();
+    const v = pref.topCapitalPortfolio ?? pref.topCapital;
+    return v != null && Number.isFinite(v) && v > 0 ? v : 50_000;
+  }, [inputs, dashboardReloadToken]);
+
+  const sharedSynthAlloc = useSimLoopSynthAllocation({
+    simTable,
+    sdsRows: sdsRowsForMig,
+    investInputs: inputs,
+    pointsBySeriesKey: top2ChartPointsByKey,
+    totalCapitalEur: dashboardTopCapital,
+    enabled: Boolean(simTable?.rows?.length) && dashboardTopCapital > 0,
+  });
+
+  const sharedMonitorRows = useMemo(() => {
+    if (!simTable?.rows?.length) return [];
+    return buildSuggestionMonitorRows({
+      simTable,
+      inputs,
+      pointsBySeriesKey: top2ChartPointsByKey,
+      lang: langCode,
+      probOptions: probOptionsForPublish,
+      paperPortfolio: decisionSimState.paperPortfolio,
+      adviceFeedback,
+      synthAlloc: sharedSynthAlloc,
+      history: portfolioHistory,
+      lossRiskCatalog,
+      catalogByRowKey,
+      autoRegSnap: mobilePublishContext.autoRegSnap,
+    });
+  }, [
+    simTable,
+    inputs,
+    top2ChartPointsByKey,
+    langCode,
+    probOptionsForPublish,
+    decisionSimState.paperPortfolio,
+    adviceFeedback,
+    sharedSynthAlloc,
+    portfolioHistory,
+    lossRiskCatalog,
+    catalogByRowKey,
+    mobilePublishContext.autoRegSnap,
+  ]);
+
+  const closedLedger = useMemo(
+    () => buildPortfolioDailyPnlLedger(simTable, inputs, portfolioHistory),
+    [simTable, inputs, portfolioHistory],
+  );
+  const { display: closedPiggyDisplay, reset: resetClosedPiggy } =
+    useClosedPiggyBank(closedLedger, inputs);
+
+  /**
+   * Visit baseline frozen at dashboard enter. Re-reading localStorage on each
+   * price tick zeroes Δ visit after alt-tab (visibility save overwrites storage).
+   * `undefined` = not captured yet; `null` = first visit / discarded stale.
+   */
+  const [visitBaseline, setVisitBaseline] = useState<
+    DashboardVisitSnapshot | null | undefined
+  >(undefined);
+  const visitBaselineCapturedRef = useRef(false);
+
+  useEffect(() => {
+    if (!portfolioMetricsReady || simLoading || !simTable?.rows?.length) return;
+    if (visitBaselineCapturedRef.current) return;
+    const totals = aggregateOpenPortfolioPnl(simTable, inputs, portfolioHistory);
+    // Prefer tab session freeze — Strict Mode remount used to re-read a leave
+    // snapshot just written with live MTM and zero Δ visit for the whole visit.
+    const sessionFrozen = loadSessionVisitBaseline();
+    let baseline: DashboardVisitSnapshot | null = sessionFrozen;
+    if (!baseline) {
+      const prior = loadDashboardVisitSnapshot();
+      const usablePrior =
+        prior &&
+        !visitSnapshotLooksLikeSameSessionPoison(prior, totals.pnlEur)
+          ? prior
+          : null;
+      baseline = captureDashboardVisitBaseline(usablePrior, totals);
+      if (prior && !usablePrior) {
+        // Poisoned same-session leave — drop it so next real leave can rewrite.
+        clearDashboardVisitSnapshot();
+      } else if (prior && !baseline) {
+        clearDashboardVisitSnapshot();
+        try {
+          window.localStorage.removeItem("dashboard.piggy.lastPnlEur");
+          window.localStorage.removeItem("dashboard.piggy.lastTrend");
+        } catch {
+          /* non-fatal */
+        }
+      }
+      if (!baseline) {
+        // No usable leave snapshot — implied prior close (live − 24h) so Δ visit
+        // shows up/down for the session instead of locking +€0 after first paint.
+        baseline = buildSyntheticDayVisitBaseline({
+          simTable,
+          inputs,
+          history: portfolioHistory,
+          migByKey: migSolidityByKey,
+        });
+      }
+      saveSessionVisitBaseline(baseline);
+    }
+    visitBaselineCapturedRef.current = true;
+    setVisitBaseline(baseline);
+  }, [
+    portfolioMetricsReady,
+    simLoading,
+    simTable,
+    inputs,
+    portfolioHistory,
+    migSolidityByKey,
+  ]);
+
   const dashboardPulseData = useMemo(
     () =>
       buildDashboardPulseData({
@@ -751,63 +1018,369 @@ export function MainDashboardView({
         chartPointsByKey: top2ChartPointsByKey,
         sdsByTicker,
         migByKey: migSolidityByKey,
+        /** Hold null until freeze — never live-reload storage mid-visit. */
+        priorSnapshot: visitBaseline === undefined ? null : visitBaseline,
         lang,
+        closedPiggyDisplay,
+        startingCapitalEur: portfolioBudgetEur,
       }),
-    [simTable, inputs, portfolioHistory, top2ChartPointsByKey, sdsByTicker, migSolidityByKey, lang],
+    [
+      simTable,
+      inputs,
+      portfolioHistory,
+      top2ChartPointsByKey,
+      sdsByTicker,
+      migSolidityByKey,
+      visitBaseline,
+      lang,
+      closedPiggyDisplay,
+      portfolioBudgetEur,
+    ],
   );
 
+  // Prior Nasdaq session returns (Yahoo 1h) — only open-book + near-CD tickers.
+  // Full-universe fetch (80 names, up to 90s) was freezing Soft BUY + snapshot publish.
   useEffect(() => {
-    const persistVisit = () => {
-      if (!portfolioMetricsReady || simLoading || !simTable?.rows?.length) return;
-      saveDashboardVisitSnapshot(
-        buildDashboardVisitSnapshotFromState({
-          simTable,
-          inputs,
-          history: portfolioHistory,
-          migByKey: migSolidityByKey,
-        }),
-      );
+    if (!simTable?.rows?.length) {
+      setPriorSessionPctByTicker(new Map());
+      return;
+    }
+    const openTickers = new Set(
+      portfolioRows
+        .map((r) => String(r.Ticker ?? "").trim().toUpperCase())
+        .filter((tk) => isValidMarketTicker(tk)),
+    );
+    const nearCd: string[] = [];
+    for (const r of simTable.rows) {
+      const tk = String(r.Ticker ?? "").trim().toUpperCase();
+      if (!isValidMarketTicker(tk) || openTickers.has(tk)) continue;
+      const d = daysToCdFromSimRow(r);
+      if (d != null && d >= 0 && d <= 90) nearCd.push(tk);
+    }
+    const tickers = [
+      ...new Set([...openTickers, ...volumeSurgeTickers, ...nearCd]),
+    ].slice(0, 50);
+    let cancelled = false;
+    const run = () => {
+      void (async () => {
+        try {
+          const payload = await fetchIntraday1h(tickers);
+          if (cancelled) return;
+          const next = buildPriorSessionPctByTicker(payload);
+          startTransition(() => {
+            if (!cancelled) setPriorSessionPctByTicker(next);
+          });
+        } catch {
+          if (!cancelled) {
+            startTransition(() => setPriorSessionPctByTicker(new Map()));
+          }
+        }
+      })();
     };
-    const onVis = () => {
-      if (document.visibilityState === "hidden") persistVisit();
+    // Defer past first paint / Pulse layout.
+    let idleHandle: number | null = null;
+    let timeoutHandle: ReturnType<typeof setTimeout> | null = null;
+    const w = window as Window & {
+      requestIdleCallback?: (cb: () => void, opts?: { timeout: number }) => number;
+      cancelIdleCallback?: (id: number) => void;
     };
-    window.addEventListener("beforeunload", persistVisit);
-    document.addEventListener("visibilitychange", onVis);
+    if (typeof w.requestIdleCallback === "function") {
+      idleHandle = w.requestIdleCallback(run, { timeout: 4_000 });
+    } else {
+      timeoutHandle = window.setTimeout(run, 1_500);
+    }
     return () => {
-      window.removeEventListener("beforeunload", persistVisit);
-      document.removeEventListener("visibilitychange", onVis);
+      cancelled = true;
+      if (idleHandle != null && typeof w.cancelIdleCallback === "function") {
+        w.cancelIdleCallback(idleHandle);
+      }
+      if (timeoutHandle != null) window.clearTimeout(timeoutHandle);
+    };
+  }, [simTable, portfolioRows, dashboardReloadToken, volumeSurgeTickers]);
+
+  // VOL vs prev (cheap) → EIS search on daily/live surge; 5m T_double → Soft BUY High Vol.
+  useEffect(() => {
+    if (!simTable?.rows?.length) {
+      setVolumeSurgeTickers([]);
+      setVolumeAccelByTicker(new Map());
+      return;
+    }
+    const tickers: string[] = [];
+    const seen = new Set<string>();
+    for (const r of simTable.rows) {
+      const tk = String(r.Ticker ?? "").trim().toUpperCase();
+      if (!isValidMarketTicker(tk) || seen.has(tk)) continue;
+      seen.add(tk);
+      tickers.push(tk);
+      if (tickers.length >= 80) break;
+    }
+    let cancelled = false;
+    const run = () => {
+      void (async () => {
+        try {
+          const vsPrev = await fetchVolumeVsPrevSession(tickers);
+          if (cancelled) return;
+          const surge = Object.entries(vsPrev.rows ?? {})
+            .filter(([, row]) => isVolumeSurge(row.pct_of_prev))
+            .map(([tk]) => tk.trim().toUpperCase())
+            .filter(Boolean);
+          if (!cancelled) {
+            startTransition(() => setVolumeSurgeTickers(surge));
+          }
+          maybeTriggerEisForHighVol(surge);
+          if (!surge.length) {
+            startTransition(() => setVolumeAccelByTicker(new Map()));
+            return;
+          }
+          const accel = await fetchVolumeAcceleration(surge);
+          if (cancelled) return;
+          const map = new Map<
+            string,
+            {
+              flagged: boolean;
+              score: number | null;
+              doublingMinutes: number | null;
+              rvol: number | null;
+            }
+          >();
+          for (const [tk, row] of Object.entries(accel.rows ?? {})) {
+            map.set(tk, {
+              flagged: Boolean(row.flagged),
+              score: row.score ?? null,
+              doublingMinutes: row.doubling_time_minutes ?? null,
+              rvol: row.rvol ?? null,
+            });
+          }
+          startTransition(() => {
+            if (!cancelled) setVolumeAccelByTicker(map);
+          });
+        } catch {
+          if (!cancelled) {
+            startTransition(() => {
+              setVolumeSurgeTickers([]);
+              setVolumeAccelByTicker(new Map());
+            });
+          }
+        }
+      })();
+    };
+    let idleHandle: number | null = null;
+    let timeoutHandle: ReturnType<typeof setTimeout> | null = null;
+    const w = window as Window & {
+      requestIdleCallback?: (cb: () => void, opts?: { timeout: number }) => number;
+      cancelIdleCallback?: (id: number) => void;
+    };
+    if (typeof w.requestIdleCallback === "function") {
+      idleHandle = w.requestIdleCallback(run, { timeout: 6_000 });
+    } else {
+      timeoutHandle = window.setTimeout(run, 2_500);
+    }
+    return () => {
+      cancelled = true;
+      if (idleHandle != null && typeof w.cancelIdleCallback === "function") {
+        w.cancelIdleCallback(idleHandle);
+      }
+      if (timeoutHandle != null) window.clearTimeout(timeoutHandle);
+    };
+  }, [simTable, dashboardReloadToken]);
+
+  useEffect(() => {
+    if (!simTable?.rows?.length) return;
+    maybeRunHypeVolumeFunnelScan(() => {
+      void onReloadSimulation?.();
+    });
+  }, [simTable, dashboardReloadToken, onReloadSimulation]);
+
+  /**
+   * Single operative arbiter (Soft/Urgent enhance + history) — shared by
+   * Pulse OPEN POSITIONS Rec and Home Cutoff BUY/SELL boxes.
+   *
+   * Must not run during render: buildLossAnalysisItems on the full sheet
+   * blocks the JS thread, so sidebar clicks and Home scroll freeze until it
+   * finishes. Yield first; publish the result as a transition.
+   */
+  const [operationalRec, setOperationalRec] = useState<OperationalRecResult | null>(null);
+  useEffect(() => {
+    if (!simTable?.rows?.length) {
+      setOperationalRec(null);
+      return;
+    }
+    let cancelled = false;
+    let idleHandle: number | null = null;
+    const run = () => {
+      if (cancelled) return;
+      const next = buildOperationalRecResult({
+        simTable,
+        inputs,
+        pointsBySeriesKey: top2ChartPointsByKey,
+        chartBundle,
+        history: portfolioHistory,
+        lang: langCode,
+        sdsRows: sdsRowsForMig,
+        probOptions: probOptionsForPublish,
+        lossRiskCatalog,
+        catalogByRowKey,
+        autoRegSnap: mobilePublishContext.autoRegSnap,
+        priorSessionPctByTicker,
+        volumeAccelByTicker,
+        highVolTickers: volumeSurgeTickers,
+      });
+      if (cancelled) return;
+      startTransition(() => {
+        if (!cancelled) setOperationalRec(next);
+      });
+    };
+    const timeoutHandle = window.setTimeout(() => {
+      const w = window as Window & {
+        requestIdleCallback?: (cb: () => void, opts?: { timeout: number }) => number;
+      };
+      if (typeof w.requestIdleCallback === "function") {
+        idleHandle = w.requestIdleCallback(run, { timeout: 600 });
+      } else {
+        run();
+      }
+    }, 0);
+    return () => {
+      cancelled = true;
+      window.clearTimeout(timeoutHandle);
+      const w = window as Window & { cancelIdleCallback?: (id: number) => void };
+      if (idleHandle != null) w.cancelIdleCallback?.(idleHandle);
     };
   }, [
     simTable,
     inputs,
+    top2ChartPointsByKey,
+    chartBundle,
     portfolioHistory,
-    migSolidityByKey,
-    portfolioMetricsReady,
-    simLoading,
+    langCode,
+    sdsRowsForMig,
+    probOptionsForPublish,
+    lossRiskCatalog,
+    catalogByRowKey,
+    mobilePublishContext.autoRegSnap,
+    priorSessionPctByTicker,
+    volumeAccelByTicker,
+    volumeSurgeTickers,
   ]);
 
+  const simRowByKey = useMemo(
+    () => buildSimRowByKeyMap(simTable?.rows ?? []),
+    [simTable?.rows],
+  );
+
+  const [earlyPeakMinTargets, setEarlyPeakMinTargets] = useState<
+    Map<string, EarlyPeakBuyMinTarget>
+  >(() => new Map());
+
   useEffect(() => {
-    if (!portfolioMetricsReady || simLoading || !simTable?.rows?.length) return;
-    const prior = loadDashboardVisitSnapshot();
-    if (!prior) return;
-    const totals = aggregateOpenPortfolioPnl(simTable, inputs, portfolioHistory);
-    if (
-      piggyTrendLooksLikeDataCorrection(
-        prior.portfolioPnlEur,
-        totals.pnlEur,
-        totals.pnlEurToday,
-        totals.todayCovered,
-      )
-    ) {
-      clearDashboardVisitSnapshot();
-      try {
-        window.localStorage.removeItem("dashboard.piggy.lastPnlEur");
-        window.localStorage.removeItem("dashboard.piggy.lastTrend");
-      } catch {
-        /* non-fatal */
+    if (!operationalRec) return;
+    const active: EarlyPeakBuyMinTarget[] = [];
+    for (const b of operationalRec.buys) {
+      if (
+        !b.isEarlyPeak ||
+        b.buyAtMinTargetUsd == null ||
+        !(b.buyAtMinTargetUsd > 0)
+      ) {
+        continue;
+      }
+      const simRow = simRowByKey.get(b.key) ?? null;
+      const dayRaw = simRow ? simRow["Var. Giorn. %"] : null;
+      const dayPct =
+        typeof dayRaw === "number" && Number.isFinite(dayRaw)
+          ? dayRaw
+          : typeof dayRaw === "string"
+            ? Number(String(dayRaw).replace(/,/g, ".").replace(/%/g, ""))
+            : null;
+      active.push({
+        key: b.key,
+        ticker: b.ticker,
+        weekMinPriceUsd: b.weekMinPriceUsd ?? b.buyAtMinTargetUsd,
+        buyAtMinTargetUsd: b.buyAtMinTargetUsd,
+        signalDayPct: Number.isFinite(dayPct!) ? dayPct : null,
+        setAtIso: new Date().toISOString(),
+      });
+    }
+    setEarlyPeakMinTargets(syncEarlyPeakMinTargets(active));
+  }, [operationalRec, simRowByKey]);
+
+  // Suggested action per key — Pulse Rec column (= Cutoff operative lists).
+  const pulseRecommendationByKey = useMemo(() => {
+    const map = new Map<string, "buy" | "sell" | "hold" | "review" | "none">();
+    const byTicker = new Map<string, "buy" | "sell" | "hold" | "review" | "none">();
+
+    // Prefer full operational enhance (history + risk/reg + G2 prior session).
+    // Open-book BUY → HOLD chip (same as Decision Chart / Actions).
+    if (operationalRec) {
+      const openKeys = new Set(dashboardPulseData.portfolioRows.map((pr) => pr.key));
+      for (const [key, action] of operationalRec.byKey) {
+        const display =
+          action === "buy" && openKeys.has(key) ? ("hold" as const) : action;
+        map.set(key, display);
+        const itemTicker = key.split("|")[0]?.trim().toUpperCase();
+        if (itemTicker) byTicker.set(itemTicker, display);
       }
     }
-  }, [simTable, inputs, portfolioHistory, portfolioMetricsReady, simLoading]);
+
+    // Fallback: suggestion-monitor rows (synth bridge) only when op map misses.
+    for (const row of sharedMonitorRows) {
+      if (!row.key || !row.suggestedAction) continue;
+      if (!map.has(row.key)) map.set(row.key, row.suggestedAction);
+      const tk = String(row.ticker ?? "")
+        .trim()
+        .toUpperCase();
+      if (tk && !byTicker.has(tk)) byTicker.set(tk, row.suggestedAction);
+    }
+
+    for (const pr of dashboardPulseData.portfolioRows) {
+      const existing = map.get(pr.key);
+      if (existing && existing !== "none") continue;
+      const viaTicker = byTicker.get(pr.ticker.trim().toUpperCase());
+      if (viaTicker && viaTicker !== "none") {
+        map.set(pr.key, viaTicker);
+      } else if (pr.gainPlanRow.capital > 0 && (!existing || existing === "none")) {
+        map.set(pr.key, "hold");
+      }
+    }
+    return map;
+  }, [operationalRec, sharedMonitorRows, dashboardPulseData.portfolioRows]);
+
+  const persistVisitRef = useRef(() => {});
+  persistVisitRef.current = () => {
+    if (!portfolioMetricsReady || simLoading || !simTable?.rows?.length) return;
+    saveDashboardVisitSnapshot(
+      buildDashboardVisitSnapshotFromState({
+        simTable,
+        inputs,
+        history: portfolioHistory,
+        migByKey: migSolidityByKey,
+      }),
+    );
+  };
+
+  useEffect(() => {
+    const persistVisit = () => persistVisitRef.current();
+    /**
+     * Do NOT persist on visibilitychange (alt-tab). That used to overwrite the
+     * previous-visit leave snapshot with live MTM mid-session, so the next
+     * enter saw prior ≈ live → Δ visit all "—" / €0.
+     * Real leave: tab close / pagehide / navigate away from Home.
+     */
+    /** Skip Strict Mode's synthetic unmount so we don't wipe the enter baseline. */
+    let persistOnUnmount = false;
+    const arm = requestAnimationFrame(() => {
+      persistOnUnmount = true;
+    });
+    window.addEventListener("beforeunload", persistVisit);
+    // Electron / PWA often skip beforeunload — pagehide is the reliable leave hook.
+    window.addEventListener("pagehide", persistVisit);
+    return () => {
+      cancelAnimationFrame(arm);
+      window.removeEventListener("beforeunload", persistVisit);
+      window.removeEventListener("pagehide", persistVisit);
+      // Leaving Dashboard (navigate away) — next enter compares against this.
+      if (persistOnUnmount) persistVisit();
+    };
+  }, []);
 
   useEffect(() => {
     if (recStats.newCount <= 0) return;
@@ -822,7 +1395,12 @@ export function MainDashboardView({
 
   useEffect(() => {
     if (simLoading || !simTable?.rows?.length) return;
-    publishDashboardRecommendationsFromSimulation(simTable, inputs, top2ChartPointsByKey);
+    // Opening/refreshing the Dashboard is the recompute action the staleness
+    // alert points users to — force the store timestamp so the age resets even
+    // when the recomputed picks are identical to the stored ones.
+    publishDashboardRecommendationsFromSimulation(simTable, inputs, top2ChartPointsByKey, {
+      forceTimestamp: true,
+    });
   }, [simTable, inputs, simLoading, top2ChartPointsByKey, sdsGateTick]);
 
   const feedScopeTickers = useMemo(() => {
@@ -834,6 +1412,19 @@ export function MainDashboardView({
     return s;
   }, [portfolioRows]);
 
+  const feedTickerMeta = useMemo(() => {
+    const map = new Map<string, DashboardAiFeedTickerMeta>();
+    for (const r of portfolioRows) {
+      const tk = tickerFromRow(r).trim().toUpperCase();
+      if (!tk || tk.includes("TOTALE")) continue;
+      map.set(tk, {
+        inPortfolio: true,
+        daysToCd: daysToCdFromSimRow(r),
+      });
+    }
+    return map;
+  }, [portfolioRows]);
+
   const portfolioMetrics = useMemo(() => {
     const totals = aggregateOpenPortfolioPnl(simTable, inputs, portfolioHistory);
     return { cap: totals.capital, pnl: totals.pnlEur };
@@ -841,57 +1432,140 @@ export function MainDashboardView({
 
   const totalCapital = portfolioMetrics.cap;
 
-  const nextCdDays = useMemo(() => {
-    return portfolioRows.reduce<number | null>((best, r) => {
-      const days = daysFromToday(String(r["Completion Date"] ?? ""));
-      if (days == null || days < 0) return best;
-      return best == null || days < best ? days : best;
-    }, null);
-  }, [portfolioRows]);
-
-  const {
-    feed: aiFeedTop,
-    recentCount: aiFeedRecentCount,
-    loading: aiFeedLoading,
-    loadError: aiFeedLoadError,
-    updatedAt: aiFeedUpdatedAt,
-    reload: reloadAiFeed,
-  } = useDashboardAiFeed(feedScopeTickers);
-
-  const chartsSectionUpdatedAt = useMemo(
-    () => latestDashboardPanelIso(dataUpdatedAt, aiFeedUpdatedAt),
-    [dataUpdatedAt, aiFeedUpdatedAt],
+  const allFeedItems = useMemo(
+    () => flattenAiFeed(clinicalPreCdRecordsMerged, feedScopeTickers, feedTickerMeta),
+    [clinicalPreCdRecordsMerged, feedScopeTickers, feedTickerMeta],
   );
+  const aiFeedTop = useMemo(() => rankAndSliceFeed(allFeedItems, 10), [allFeedItems]);
+  const aiFeedRecentCount = useMemo(() => countRecentPastEvents(allFeedItems), [allFeedItems]);
 
   const handleDashboardRefresh = useCallback(async () => {
     setDashboardRefreshing(true);
+    setRefreshPhaseLabel(lang === "it" ? "Foglio…" : "Sheet…");
+    invalidateProjectJsonCache("simulation_sheet_snapshot.json");
+    const reloadSim = async (): Promise<SheetTable | null> => {
+      if (onReloadSimulation) {
+        const table = await onReloadSimulation();
+        return table ?? null;
+      }
+      await onReload?.();
+      return null;
+    };
     try {
-      await Promise.all([onReload?.(), reloadAiFeed()]);
+      // Fast path: re-read Simulation so the button unlocks quickly.
+      // Previously we awaited Yahoo live-signals (up to 90s) THEN reloaded every
+      // sheet (clinical/SEC/accuracy) — Refresh felt stuck and janked the page.
+      const freshTable = await reloadSim();
+      const tableForPublish = freshTable ?? simTable;
+      if (tableForPublish?.rows?.length) {
+        publishDashboardRecommendationsFromSimulation(
+          tableForPublish,
+          inputs,
+          top2ChartPointsByKey,
+          { forceTimestamp: true },
+        );
+      }
       setDashboardReloadToken((n) => n + 1);
+      setSdsGateTick((n) => n + 1);
     } finally {
       setDashboardRefreshing(false);
+      setRefreshPhaseLabel(null);
     }
-  }, [onReload, reloadAiFeed]);
+
+    // Background: force Yahoo prices, then pull Simulation again (same-day MTM).
+    setLivePricesBackground(true);
+    void (async () => {
+      try {
+        const live = await runWhatIfLiveSignalsForPanel({
+          cdHorizon: 90,
+          timeoutMs: 60_000,
+        });
+        if (!live.ok) {
+          if (live.message) {
+            console.warn("[dashboard refresh] live signals:", live.message);
+          }
+          return;
+        }
+        invalidateProjectJsonCache("simulation_sheet_snapshot.json");
+        await reloadSim();
+        try {
+          const { hydrateInvestSimHistory } = await import("../sheet/investSimStorage");
+          await hydrateInvestSimHistory();
+        } catch {
+          /* optional */
+        }
+        setDashboardReloadToken((n) => n + 1);
+        setSdsGateTick((n) => n + 1);
+      } finally {
+        setLivePricesBackground(false);
+      }
+    })();
+  }, [
+    onReload,
+    onReloadSimulation,
+    simTable,
+    inputs,
+    top2ChartPointsByKey,
+    lang,
+  ]);
+
+  useEffect(() => {
+    const onHorizon = () => setCdHorizonPublishRev((n) => n + 1);
+    window.addEventListener("supernova-cd-horizon-changed", onHorizon);
+    return () => window.removeEventListener("supernova-cd-horizon-changed", onHorizon);
+  }, []);
+
+  // Volatile visit Δ — read at publish time; don't re-queue on every MTM tick.
+  const visitBaselinePublishRef = useRef(visitBaseline);
+  visitBaselinePublishRef.current = visitBaseline;
 
   useEffect(() => {
     if (simLoading || !simTable?.rows?.length) return;
-    scheduleMobileDashboardSnapshotPublish(
-      buildMobileDashboardSnapshot({
-        simTable,
-        inputs,
-        history: portfolioHistory,
-        chartBundle,
-        probOptions: probOptionsForPublish,
-        simTableVersion: null,
-        portfolioRows,
-        opportunityRows,
-        totalCapital,
-        aiFeed: aiFeedTop,
-        aiFeedRecentCount,
-        lang: lang === "it" ? "it" : "en",
-        refCurves,
-      }),
-    );
+    const idleHandleRef = { current: null as number | null };
+    const timer = window.setTimeout(() => {
+      const publish = () => {
+        const vb = visitBaselinePublishRef.current;
+        const snap = buildMobileDashboardSnapshot({
+          simTable,
+          inputs,
+          history: portfolioHistory,
+          chartBundle,
+          probOptions: probOptionsForPublish,
+          simTableVersion: null,
+          portfolioRows,
+          opportunityRows,
+          totalCapital,
+          aiFeed: aiFeedTop,
+          aiFeedRecentCount,
+          lang: langCode,
+          refCurves,
+          autoRegSnap: mobilePublishContext.autoRegSnap,
+          mcsDoc: mobilePublishContext.mcsDoc,
+          clinicalPreCdRecords: clinicalPreCdRecordsMerged,
+          lossRiskCatalog,
+          catalogByRowKey,
+          paperPortfolio: decisionSimState.paperPortfolio,
+          adviceFeedback,
+          priorSessionPctByTicker,
+          operationalRec,
+          priorVisitSnapshot: vb === undefined ? null : vb,
+        });
+        scheduleMobileDashboardSnapshotPublish(snap);
+      };
+      const w = window as Window & {
+        requestIdleCallback?: (cb: () => void, opts?: { timeout: number }) => number;
+      };
+      if (typeof w.requestIdleCallback === "function") {
+        idleHandleRef.current = w.requestIdleCallback(publish, { timeout: 2_500 });
+      } else {
+        publish();
+      }
+    }, 1_200);
+    return () => {
+      window.clearTimeout(timer);
+      const w = window as Window & { cancelIdleCallback?: (id: number) => void };
+      if (idleHandleRef.current != null) w.cancelIdleCallback?.(idleHandleRef.current);
+    };
   }, [
     simLoading,
     simTable,
@@ -904,12 +1578,62 @@ export function MainDashboardView({
     totalCapital,
     aiFeedTop,
     aiFeedRecentCount,
-    lang,
+    langCode,
     refCurves,
+    mobilePublishContext,
+    clinicalPreCdRecordsMerged,
+    gainStarLedgerVersion,
+    lossRiskCatalog,
+    catalogByRowKey,
+    cdHorizonPublishRev,
+    decisionSimState.paperPortfolio,
+    adviceFeedback,
+    priorSessionPctByTicker,
+    operationalRec,
   ]);
 
+  useEffect(() => {
+    let cancelled = false;
+    const run = () => {
+      void Promise.all([
+        fetchRegulatoryRiskSnapshot().catch(() => null),
+        loadMarketContextSnapshot().catch(() => null),
+      ]).then(([autoRegSnap, mcsDoc]) => {
+        if (!cancelled) {
+          setMobilePublishContext({
+            autoRegSnap,
+            mcsDoc,
+          });
+        }
+      });
+    };
+    const w = window as Window & {
+      requestIdleCallback?: (cb: () => void, opts?: { timeout: number }) => number;
+      cancelIdleCallback?: (id: number) => void;
+    };
+    let idleHandle: number | null = null;
+    let timeoutHandle: number | null = null;
+    if (typeof w.requestIdleCallback === "function") {
+      idleHandle = w.requestIdleCallback(run, { timeout: 4_000 });
+    } else {
+      timeoutHandle = window.setTimeout(run, 1_500);
+    }
+    return () => {
+      cancelled = true;
+      if (idleHandle != null) w.cancelIdleCallback?.(idleHandle);
+      if (timeoutHandle != null) window.clearTimeout(timeoutHandle);
+    };
+  }, [dashboardReloadToken]);
+
+  useEffect(() => {
+    const onGainStarsChanged = () => setGainStarLedgerVersion((v) => v + 1);
+    window.addEventListener(GAIN_STAR_LEDGER_CHANGED_EVENT, onGainStarsChanged);
+    return () => window.removeEventListener(GAIN_STAR_LEDGER_CHANGED_EVENT, onGainStarsChanged);
+  }, []);
+
   return (
-    <div className="sim-harmonize flex flex-col gap-3 pr-1 w-full min-h-0">
+    <>
+    <div className="sim-harmonize dashboard-home-page flex flex-col gap-2 w-full min-w-0 shrink-0 pb-2">
 
       {/* Refresh toolbar */}
       <div className="flex items-center justify-between gap-2 shrink-0">
@@ -921,55 +1645,33 @@ export function MainDashboardView({
             </p>
           </div>
         </div>
-        <RefreshControls
-          onRefresh={handleDashboardRefresh}
-          loading={dashboardRefreshing || simLoading || secK8Loading || aiFeedLoading}
-          tooltip={t("refresh.page.dashboard.tooltip")}
-          dataUpdatedAt={dataUpdatedAt}
-          extraInfo={
-            simTable
-              ? `${(simTable.rows ?? []).length} Simulation rows`
-              : undefined
-          }
-        />
+        <div className="flex flex-col items-end gap-0.5 shrink-0">
+          <RefreshControls
+            onRefresh={handleDashboardRefresh}
+            loading={dashboardRefreshing}
+            loadingLabel={refreshPhaseLabel ?? (lang === "it" ? "Aggiorno…" : "Updating…")}
+            tooltip={t("refresh.page.dashboard.tooltip")}
+            dataUpdatedAt={dataUpdatedAt}
+            extraInfo={
+              simTable
+                ? `${(simTable.rows ?? []).length} Simulation rows`
+                : undefined
+            }
+          />
+          {livePricesBackground ? (
+            <span className="text-[10px] text-ink-muted/80 tabular-nums">
+              {lang === "it" ? "Prezzi Yahoo in corso…" : "Yahoo prices running…"}
+            </span>
+          ) : null}
+        </div>
       </div>
 
-      {/* Hero KPI strip */}
-      <div className="flex gap-2 shrink-0">
-        <HeroKpi
-          label={lang === "it" ? "Portafoglio / Opp." : "Portfolio / Opp."}
-          value={`${portfolioRows.length} / ${opportunityRows.length}`}
-          sub={
-            lang === "it"
-              ? `investiti · CD ≤${SIM_HOT_ZONE_DAYS}g fuori portafoglio`
-              : `invested · off-portfolio CD ≤${SIM_HOT_ZONE_DAYS}d`
-          }
-        />
-        <div className="flex-1 card px-4 py-3 relative overflow-hidden min-w-0">
-          <div
-            className="absolute top-0 left-0 right-0 h-[2px]"
-            style={{ background: "rgb(var(--accent))" }}
-          />
-          <p className="text-[11px] font-semibold uppercase tracking-wider text-ink-muted/70 truncate">
-            {lang === "it" ? "Capitale totale" : "Total Capital"}
-          </p>
-          <p className="text-xl font-bold tabular-nums mt-0.5 leading-tight text-ink">
-            {totalCapital > 0 ? fmtUsd(totalCapital) : "—"}
-          </p>
-        </div>
-        <HeroKpi
-          label={lang === "it" ? "Prossimo CD" : "Next Catalyst"}
-          value={nextCdDays != null ? `${nextCdDays} d` : "—"}
-          accent={nextCdDays != null && nextCdDays <= 3 ? "warn" : undefined}
-          sub={nextCdDays != null && nextCdDays <= 7 ? "⚡ imminent" : undefined}
-        />
-        <HeroKpi
-          label={lang === "it" ? "AI feed" : "Top AI feed"}
-          value={String(aiFeedRecentCount)}
-          sub="clinical pubs · 30d"
-          accent="accent"
-        />
+      {/* Market context — first panel of the tab (never deferred). */}
+      <div className="shrink-0 min-w-0">
+        <MarketContextWidget lang={lang} />
       </div>
+
+      <PortfolioPnlSummaryBlock data={dashboardPulseData} />
 
       {/* Piggy bank bar — full-width, below KPIs */}
       <PiggyBankBar
@@ -977,45 +1679,85 @@ export function MainDashboardView({
         inputs={inputs}
         history={portfolioHistory}
         metricsReady={portfolioMetricsReady}
-        onNavigateToPnl={onNavigateToSimulationPnl}
+        closedPiggyDisplay={closedPiggyDisplay}
+        onResetClosedPiggy={resetClosedPiggy}
+        reinvestedEur={dashboardPulseData.portfolioTotals.gainsRecycledInOpenEur}
+        openFromBudgetEur={dashboardPulseData.portfolioTotals.capitalNotFromGainsEur}
+        gainsCashEur={
+          (dashboardPulseData.portfolioTotals.gainsRecycledInOpenEur ?? 0) <= 0.5
+            ? Math.max(0, closedPiggyDisplay.pnlEur)
+            : Math.max(
+                0,
+                closedPiggyDisplay.pnlEur -
+                  (dashboardPulseData.portfolioTotals.gainsRecycledInOpenEur ?? 0),
+              )
+        }
+        gateStrengthByKey={operationalRec?.gateStrengthByKey}
       />
 
-      {/* "Since your last visit" — promoted right under the Piggy Bank so
-          the delta-since-last-session story is the first thing the user
-          reads. Three pulse scopes (portfolio · sim loop equal · sim loop synth)
-          share one slot; PulseScopeSwitcher selects which session is active. */}
+      {/* Real portfolio pulse — always painted (no content-visibility defer). */}
       <div className="shrink-0 min-w-0">
-      {pulseMode === "portfolio" ? (
         <DashboardPulseTable
           data={dashboardPulseData}
           history={portfolioHistory}
           simTable={simTable}
+          inputs={inputs}
           sdsRows={sdsRowsForMig}
           chartBundle={chartBundle}
           reloadToken={dashboardReloadToken}
-          onOpenSimulationRow={onOpenSimulationRow}
+          clinicalPreCdRecords={clinicalPreCdRecordsMerged}
           onOpen24hAssessment={onOpen24hAssessment}
+          onAddExternalHolding={registerExternalHolding}
+          onSell={onSellPosition}
           onOpenSupernovaTab={onOpenSupernovaTab}
-          pulseScope={pulseMode}
-          onPulseScopeChange={setPulseMode}
+          recommendationByKey={pulseRecommendationByKey}
         />
-      ) : (
-        <ViewErrorBoundary label="Sim loop pulse">
-        <SimLoopPulseView
-          variant={pulseMode === "simLoopSynth" ? "synth" : "equal"}
-          pulseScope={pulseMode}
-          onPulseScopeChange={setPulseMode}
+      </div>
+
+      <HighImpactEisToast
+        tickers={dashboardPulseData.portfolioRows.map((r) => r.ticker.trim().toUpperCase())}
+        records={clinicalPreCdRecordsMerged}
+        lang={lang === "it" ? "it" : "en"}
+      />
+
+      <VolumeSpikeToast
+        tickers={dashboardPulseData.portfolioRows.map((r) => r.ticker.trim().toUpperCase())}
+        lang={lang === "it" ? "it" : "en"}
+      />
+
+      <EarlyPeakMinPriceAlertModal
+        targets={earlyPeakMinTargets}
+        rowByKey={simRowByKey}
+        lang={lang === "it" ? "it" : "en"}
+        onOpenEvaluation={
+          onOpen24hAssessment
+            ? (focus) =>
+                onOpen24hAssessment({
+                  ticker: focus.ticker,
+                  rowKey: focus.rowKey,
+                  cd: focus.rowKey?.includes("|")
+                    ? focus.rowKey.split("|").slice(1).join("|")
+                    : undefined,
+                })
+            : undefined
+        }
+      />
+
+      <div className="shrink-0 min-w-0">
+        <NewEntriesThisWeekTable
           simTable={simTable}
-          sdsRows={sdsRowsForMig}
-          chartBundle={chartBundle}
-          investInputs={inputs}
-          reloadToken={dashboardReloadToken}
-          onOpenSimulationRow={onOpenSimulationRow}
           onOpen24hAssessment={onOpen24hAssessment}
         />
-        </ViewErrorBoundary>
-      )}
       </div>
+
+      <div className="shrink-0 min-w-0">
+        <HypeDetectedThisWeekTable
+          simTable={simTable}
+          onOpen24hAssessment={onOpen24hAssessment}
+        />
+      </div>
+
+      {/* Evaluation Lab → Top KPI (Decision Chart removed). */}
 
       {!recModalOpen && recStats.total > 0 ? (
         <div className="shrink-0 min-w-0 px-1">
@@ -1039,48 +1781,19 @@ export function MainDashboardView({
         simLoading={simLoading}
         chartBundle={chartBundle}
         sdsRows={sdsRowsForMig}
-        onOpenSimulationSheet={onOpenSimulationSheet}
         onOpen24hAssessment={onOpen24hAssessment}
         onRegisterBuy={onRegisterBuy}
         onSell={onSellPosition}
         onStatsChange={setRecStats}
+        adviceFeedback={adviceFeedback}
+        paperPortfolio={decisionSimState.paperPortfolio}
+        synthAlloc={sharedSynthAlloc}
       />
 
-      {/* Grafici · P(plan) + paper sim · poi 24h + AI feed */}
-      <section
-        className="dashboard-charts-section card dashboard-middle-panel flex flex-col gap-3 min-w-0 shrink-0"
-        aria-label={lang === "it" ? "Grafici e AI feed" : "Charts and AI feed"}
-      >
-        <div className="shrink-0 px-4 py-3 border-b border-[rgb(var(--border))]/60 bg-[rgb(var(--surface-elevated))]">
-          <h2 className="text-base font-semibold text-ink">
-            {lang === "it" ? "Grafici e AI feed" : "Charts & AI feed"}
-          </h2>
-          <p className="mt-1 text-[11px] text-ink-muted leading-snug">
-            {lang === "it"
-              ? "P(plan) e paper sim · sotto: performance 24h e feed AI"
-              : "P(plan) and paper sim · below: 24h performance and AI feed"}
-          </p>
-          <DashboardPanelUpdatedLabel updatedAt={chartsSectionUpdatedAt} className="!text-[11px]" />
-        </div>
-        <div className="px-3 pb-4 min-w-0">
-          <DashboardChartsRow
-            simTable={simTable}
-            chartBundle={chartBundle}
-            sdsRows={sdsRowsForMig}
-            dataUpdatedAt={dataUpdatedAt}
-            onNavigate={onScreen}
-            aiFeed={{
-              feed: aiFeedTop,
-              recentCount: aiFeedRecentCount,
-              loading: aiFeedLoading,
-              loadError: aiFeedLoadError,
-              updatedAt: aiFeedUpdatedAt,
-              scopeLabel: t("dashboard.list.portfolio"),
-              onOpenFeed: () => onScreen("catalystFeed"),
-            }}
-          />
-        </div>
-      </section>
+      {/* "Charts & AI feed" section removed on user request. The Top AI feed
+          is still reachable from the sidebar (Catalyst Feed tab). */}
     </div>
+
+    </>
   );
 }

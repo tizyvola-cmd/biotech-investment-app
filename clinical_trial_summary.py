@@ -86,6 +86,141 @@ def _ctgov_get(nct_id: str) -> dict[str, Any] | None:
     return None
 
 
+def _format_ctgov_measurement(
+    raw: dict[str, Any],
+    *,
+    denom_by_group: dict[str, str],
+    arm_by_group: dict[str, str],
+) -> str | None:
+    """Format one CT.gov results measurement: arm, count/N, spread."""
+    v = str(raw.get("value") or "").strip()
+    if not v:
+        return None
+    lo = raw.get("lowerLimit")
+    hi = raw.get("upperLimit")
+    sp = raw.get("spread")
+    gid = str(raw.get("groupId") or "")
+    denom = str(denom_by_group.get(gid) or "").strip()
+    body = v
+    if denom and re.fullmatch(r"[-+]?\d+(?:\.\d+)?", v):
+        try:
+            pct = 100.0 * float(v) / float(denom)
+            body = f"{v}/{denom} ({pct:.0f}%)"
+        except (TypeError, ValueError, ZeroDivisionError):
+            body = f"{v}/{denom}"
+    if lo and hi:
+        body = f"{body} ({lo}–{hi})"
+    elif sp:
+        body = f"{body} ±{sp}"
+    arm = str(arm_by_group.get(gid) or "").strip()
+    if arm and arm.lower() not in body.lower():
+        return f"{arm}: {body}"
+    return body
+
+
+def _outcome_from_results_row(om: dict[str, Any]) -> dict[str, Any] | None:
+    title = str(om.get("title") or om.get("measure") or "").strip()
+    if not title:
+        return None
+    denom_by_group: dict[str, str] = {}
+    for block in om.get("denoms") or []:
+        if not isinstance(block, dict):
+            continue
+        for c in block.get("counts") or []:
+            if not isinstance(c, dict):
+                continue
+            gid = str(c.get("groupId") or "")
+            val = str(c.get("value") or "").strip()
+            if gid and val:
+                denom_by_group[gid] = val
+    arm_by_group = {
+        str(g.get("id") or ""): str(g.get("title") or "").strip()
+        for g in (om.get("groups") or [])
+        if isinstance(g, dict) and g.get("id")
+    }
+    values: list[str] = []
+    for cls in om.get("classes") or []:
+        if not isinstance(cls, dict):
+            continue
+        for cat in cls.get("categories") or []:
+            if not isinstance(cat, dict):
+                continue
+            for m in cat.get("measurements") or []:
+                if not isinstance(m, dict):
+                    continue
+                formatted = _format_ctgov_measurement(
+                    m, denom_by_group=denom_by_group, arm_by_group=arm_by_group
+                )
+                if formatted:
+                    values.append(formatted)
+    desc = str(om.get("description") or "").strip()[:400]
+    measure: dict[str, Any] = {
+        "type": str(om.get("type") or "").strip() or "PRIMARY",
+        "title": title[:220],
+        "description": desc,
+        "time_frame": str(om.get("timeFrame") or "").strip()[:120],
+    }
+    if values:
+        measure["values"] = values[:6]
+    p_text = f"{desc} {title}"
+    pm = re.search(r"p\s*[<=>]\s*[\d.]+", p_text, re.IGNORECASE)
+    if pm:
+        measure["p_value_hint"] = pm.group(0)
+    return measure
+
+
+def _protocol_outcome_measures(protocol: dict[str, Any]) -> list[dict[str, Any]]:
+    """Study-plan endpoints from the CT.gov page (present even before results)."""
+    outcomes_mod = protocol.get("outcomesModule") or {}
+    rows: list[dict[str, Any]] = []
+    for otype, key in (("PRIMARY", "primaryOutcomes"), ("SECONDARY", "secondaryOutcomes")):
+        for om in outcomes_mod.get(key) or []:
+            if not isinstance(om, dict):
+                continue
+            title = str(om.get("measure") or om.get("title") or "").strip()
+            if not title:
+                continue
+            rows.append(
+                {
+                    "type": otype,
+                    "title": title[:220],
+                    "description": str(om.get("description") or "").strip()[:400],
+                    "time_frame": str(om.get("timeFrame") or "").strip()[:120],
+                }
+            )
+    return rows
+
+
+def _merge_outcome_measures(
+    results_oms: list[dict[str, Any]],
+    protocol_oms: list[dict[str, Any]],
+) -> list[dict[str, Any]]:
+    """Results keep posted numbers; protocol fills titles/descriptions still recruiting."""
+    by_title: dict[str, dict[str, Any]] = {}
+    order: list[str] = []
+
+    def _key(om: dict[str, Any]) -> str:
+        return str(om.get("title") or "").strip().lower()
+
+    for om in results_oms + protocol_oms:
+        key = _key(om)
+        if not key:
+            continue
+        prev = by_title.get(key)
+        if prev is None:
+            by_title[key] = dict(om)
+            order.append(key)
+            continue
+        merged = dict(prev)
+        for field in ("type", "title", "description", "time_frame", "p_value_hint"):
+            if not str(merged.get(field) or "").strip() and om.get(field):
+                merged[field] = om[field]
+        if not merged.get("values") and om.get("values"):
+            merged["values"] = om["values"]
+        by_title[key] = merged
+    return [by_title[k] for k in order]
+
+
 def _extract_results(study: dict[str, Any]) -> dict[str, Any]:
     """Pull structured outcome/safety data from a CT.gov study JSON."""
     results_section = study.get("resultsSection") or {}
@@ -97,40 +232,20 @@ def _extract_results(study: dict[str, Any]) -> dict[str, Any]:
     conditions_mod  = protocol.get("conditionsModule") or {}
     arms_mod        = protocol.get("armsInterventionsModule") or {}
     desc_mod        = protocol.get("descriptionModule") or {}
+    elig_mod        = protocol.get("eligibilityModule") or {}
 
-    # ── Primary / secondary outcomes ──────────────────────────────────────────
-    outcome_measures: list[dict] = []
+    # ── Primary / secondary outcomes (results table + study-plan definitions) ──
+    results_oms: list[dict[str, Any]] = []
     om_module = results_section.get("outcomeMeasuresModule") or {}
-    for om in (om_module.get("outcomeMeasures") or []):
-        measure: dict[str, Any] = {
-            "type":        om.get("type", ""),
-            "title":       om.get("title", ""),
-            "time_frame":  om.get("timeFrame", ""),
-        }
-        # Collect group values
-        values: list[str] = []
-        for cls in (om.get("classes") or []):
-            for cat in (cls.get("categories") or []):
-                for m in (cat.get("measurements") or []):
-                    v = m.get("value", "")
-                    lo = m.get("lowerLimit")
-                    hi = m.get("upperLimit")
-                    sp = m.get("spread")
-                    if v:
-                        suffix = ""
-                        if lo and hi:
-                            suffix = f" ({lo}–{hi})"
-                        elif sp:
-                            suffix = f" ±{sp}"
-                        values.append(f"{v}{suffix}")
-        if values:
-            measure["values"] = values
-        # p-value annotation if in title/description
-        p_text = om.get("description") or om.get("title") or ""
-        pm = re.search(r"p\s*[<=>]\s*[\d.]+", p_text, re.IGNORECASE)
-        if pm:
-            measure["p_value_hint"] = pm.group(0)
-        outcome_measures.append(measure)
+    for om in om_module.get("outcomeMeasures") or []:
+        if not isinstance(om, dict):
+            continue
+        parsed = _outcome_from_results_row(om)
+        if parsed:
+            results_oms.append(parsed)
+    outcome_measures = _merge_outcome_measures(
+        results_oms, _protocol_outcome_measures(protocol)
+    )
 
     # ── Adverse events ─────────────────────────────────────────────────────────
     ae_module = results_section.get("adverseEventsModule") or {}
@@ -162,6 +277,42 @@ def _extract_results(study: dict[str, Any]) -> dict[str, Any]:
     )
     brief_summary = desc_mod.get("briefSummary", "")[:600]
 
+    # ── Design (blinding / allocation / model) ─────────────────────────────────
+    design_info = design.get("designInfo") or {}
+    if not isinstance(design_info, dict):
+        design_info = {}
+    masking_info = design_info.get("maskingInfo") or {}
+    if not isinstance(masking_info, dict):
+        masking_info = {}
+    allocation = str(design_info.get("allocation") or "").strip()
+    intervention_model = str(design_info.get("interventionModel") or "").strip()
+    primary_purpose = str(design_info.get("primaryPurpose") or "").strip()
+    masking = str(masking_info.get("masking") or "").strip()
+    study_type = str(design.get("studyType") or "").strip()
+    study_design = _format_ctgov_study_design(
+        masking=masking,
+        allocation=allocation,
+        intervention_model=intervention_model,
+        primary_purpose=primary_purpose,
+        study_type=study_type,
+        interventions=interventions,
+    )
+
+    # ── Eligibility / inclusion ───────────────────────────────────────────────
+    eligibility_raw = str(elig_mod.get("eligibilityCriteria") or "").strip()
+    inclusion_criteria = _extract_inclusion_criteria(eligibility_raw)
+
+    # ── Completion dates ───────────────────────────────────────────────────────
+    def _fmt_date_struct(struct: Any) -> str:
+        if not isinstance(struct, dict):
+            return ""
+        d = struct.get("date")
+        return str(d).strip() if d else ""
+
+    primary_completion_date = _fmt_date_struct(status_mod.get("primaryCompletionDateStruct"))
+    completion_date = _fmt_date_struct(status_mod.get("completionDateStruct"))
+    start_date = _fmt_date_struct(status_mod.get("startDateStruct"))
+
     return {
         "nct_id":           ident.get("nctId", ""),
         "brief_title":      brief_title,
@@ -173,12 +324,116 @@ def _extract_results(study: dict[str, Any]) -> dict[str, Any]:
         "conditions":       conditions,
         "interventions":    interventions,
         "brief_summary":    brief_summary,
-        "outcome_measures": outcome_measures[:8],
+        "outcome_measures": outcome_measures[:10],
         "ae_summary":       ae_summary,
         "pmids":            pmids,
         "citations":        citations,
         "has_results":      bool(results_section),
+        "study_type":       study_type,
+        "allocation":       allocation,
+        "intervention_model": intervention_model,
+        "primary_purpose":  primary_purpose,
+        "masking":          masking,
+        "study_design":     study_design,
+        "inclusion_criteria": inclusion_criteria,
+        "start_date":       start_date,
+        "primary_completion_date": primary_completion_date,
+        "completion_date":  completion_date,
     }
+
+
+def _humanize_ctgov_token(raw: str) -> str:
+    s = str(raw or "").strip().replace("_", " ")
+    if not s:
+        return ""
+    # Keep known acronyms uppercase; title-case the rest.
+    up = s.upper()
+    if up in ("N/A", "NA", "NONE"):
+        return ""
+    mapping = {
+        "DOUBLE": "Double-blind",
+        "DOUBLE BLIND": "Double-blind",
+        "SINGLE": "Single-blind",
+        "SINGLE BLIND": "Single-blind",
+        "TRIPLE": "Triple-blind",
+        "TRIPLE BLIND": "Triple-blind",
+        "QUADRUPLE": "Quadruple-blind",
+        "NONE (OPEN LABEL)": "Open-label",
+        "OPEN LABEL": "Open-label",
+        "RANDOMIZED": "Randomized",
+        "NON-RANDOMIZED": "Non-randomized",
+        "PARALLEL": "Parallel assignment",
+        "CROSSOVER": "Crossover",
+        "SEQUENTIAL": "Sequential",
+        "SINGLE GROUP": "Single-group",
+        "FACTORIAL": "Factorial",
+        "TREATMENT": "Treatment",
+        "PREVENTION": "Prevention",
+        "DIAGNOSTIC": "Diagnostic",
+        "INTERVENTIONAL": "Interventional",
+        "OBSERVATIONAL": "Observational",
+    }
+    return mapping.get(up) or s.title()
+
+
+def _format_ctgov_study_design(
+    *,
+    masking: str,
+    allocation: str,
+    intervention_model: str,
+    primary_purpose: str,
+    study_type: str,
+    interventions: str,
+) -> str:
+    parts: list[str] = []
+    for tok in (masking, allocation, intervention_model, primary_purpose, study_type):
+        label = _humanize_ctgov_token(tok)
+        if label and label not in parts:
+            parts.append(label)
+    inter_l = interventions.lower()
+    if "placebo" in inter_l and "Placebo-controlled" not in parts:
+        parts.append("Placebo-controlled")
+    return " · ".join(parts[:6])
+
+
+def _extract_inclusion_criteria(raw: str, max_len: int = 900) -> str:
+    """Prefer the Inclusion Criteria block from CT.gov eligibility text."""
+    text = str(raw or "").strip()
+    if not text:
+        return ""
+    # Split on common CT.gov section headers.
+    lower = text.lower()
+    inc_idx = -1
+    for marker in (
+        "inclusion criteria:",
+        "inclusion criteria",
+        "criteri di inclusione:",
+        "criteri di inclusione",
+    ):
+        i = lower.find(marker)
+        if i >= 0:
+            inc_idx = i + len(marker)
+            break
+    if inc_idx >= 0:
+        chunk = text[inc_idx:]
+        excl = -1
+        for marker in (
+            "exclusion criteria:",
+            "exclusion criteria",
+            "criteri di esclusione:",
+            "criteri di esclusione",
+        ):
+            j = chunk.lower().find(marker)
+            if j >= 0:
+                excl = j
+                break
+        if excl >= 0:
+            chunk = chunk[:excl]
+        text = chunk.strip()
+    text = re.sub(r"\s+", " ", text).strip()
+    if len(text) > max_len:
+        text = text[: max_len - 1].rstrip() + "…"
+    return text
 
 
 # ── PubMed helpers ─────────────────────────────────────────────────────────────

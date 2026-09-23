@@ -6,8 +6,7 @@ import {
   loadSimulationChartsBundle,
   peekSimulationChartsBundle,
 } from "../data/simulationCharts";
-import { buildSimRowByKeyMap, reconcileInvestSimInputs } from "../sheet/investSimKeys";
-import { buildCdPatternTickerRecommendation } from "../sheet/cdPatternRecommendation";
+import { buildSimRowByKeyMap } from "../sheet/investSimKeys";
 import { buildMigSolidityByKey } from "../sheet/entrySolidityMig";
 import { SimulationSparkline } from "../sheet/simulationSparkline";
 import { SlopeTrajectoryChart } from "./SlopeTrajectoryChart";
@@ -32,7 +31,7 @@ import { useCdPatternPolygonOverview } from "../sheet/useCdPatternPolygonOvervie
 import type { InvestSimInputs } from "../sheet/investSimStorage";
 import { useLang, useT } from "../shared/i18n";
 import { PortfolioExitButton, type PortfolioSellHandler } from "./PortfolioExitButton";
-import { EisDetailDrawer } from "./EisDetailDrawer";
+import { openEisDeepDive } from "../sheet/eisDeepDiveFocusStore";
 import { clinicalKpiFromSimRow } from "../sheet/tickerEisSummary";
 import { SlopeVerdictBanner } from "./SlopeVerdictBanner";
 import { slopeVerdictContextFromExit } from "../sheet/slopeVerdictContext";
@@ -40,7 +39,6 @@ import { verdictLabel } from "../sheet/slopeStability";
 import { PortfolioPlanTargetChip } from "./PortfolioPlanTargetChip";
 import { PortfolioTickerMark } from "./PortfolioScopeToggle";
 import { PlanProbHero } from "./PlanProbHero";
-import { CdPatternArcPanel } from "./CdPatternArcPanel";
 import { useInvestSimPortfolioHistory } from "../hooks/useInvestSimPortfolioHistory";
 import {
   PortfolioGainPlanSingleChart,
@@ -51,7 +49,6 @@ import { ModalChartHorizonBanner } from "./ModalChartHorizonBanner";
 import {
   modalGainPlanCaption,
   modalGainPlanMarkerLabel,
-  modalPatternCaption,
   modalPredSparklineCaption,
   modalSlopeTrajectoryCaption,
 } from "../sheet/modalChartCaptions";
@@ -71,7 +68,6 @@ export function PortfolioLossUrgentModal({
   onDismissTicker,
   onOpenSlopeCharts,
   onOpenPredictionCharts,
-  onNavigateSimulation,
   onOpenLossAnalysis,
   onSellPosition,
 }: {
@@ -87,7 +83,6 @@ export function PortfolioLossUrgentModal({
   onDismissTicker: (key: string, pnlPct: number) => void;
   onOpenSlopeCharts: (ticker: string) => void;
   onOpenPredictionCharts: (ticker: string, seriesKey: string | null) => void;
-  onNavigateSimulation: (ticker: string, cd?: string) => void;
   onOpenLossAnalysis: (ticker?: string, cd?: string) => void;
   onSellPosition?: PortfolioSellHandler;
 }) {
@@ -95,10 +90,6 @@ export function PortfolioLossUrgentModal({
   const t = useT();
   const it = lang === "it";
   const history = useInvestSimPortfolioHistory().history;
-  const [eisDrawer, setEisDrawer] = useState<{
-    ticker: string;
-    clinicalKpi: number | null;
-  } | null>(null);
   const chartsBundle =
     chartsBundleProp !== undefined ? chartsBundleProp : peekSimulationChartsBundle();
 
@@ -117,13 +108,17 @@ export function PortfolioLossUrgentModal({
     return () => window.removeEventListener("keydown", onKey);
   }, [open, onClose]);
 
-  useEffect(() => {
-    setEisDrawer(null);
-  }, [activeIndex, open]);
-
-  const openEisDetail = useCallback((ticker: string, clinicalKpi?: number | null) => {
-    setEisDrawer({ ticker, clinicalKpi: clinicalKpi ?? null });
-  }, []);
+  const openEisDetail = useCallback(
+    (ticker: string, clinicalKpi?: number | null, simRowArg?: Record<string, unknown> | null) => {
+      openEisDeepDive({
+        ticker,
+        clinicalKpi: clinicalKpi ?? null,
+        simRow: simRowArg ?? null,
+      });
+      onClose();
+    },
+    [onClose],
+  );
 
   const alert = alerts[activeIndex] ?? null;
 
@@ -196,31 +191,6 @@ export function PortfolioLossUrgentModal({
     }
     return buildSlopeTrajectory({ chartPoints: chartPts, simRow, daysToCd: days });
   }, [simRow, chartPts, alert?.completionDate, chartsReady]);
-
-  const patternRec = useMemo(() => {
-    if (!alert || !simRow || !simTable?.rows?.length) return null;
-    const merged = reconcileInvestSimInputs(inputs, simTable.rows);
-    return buildCdPatternTickerRecommendation({
-      row: simRow,
-      chartPoints: chartPts,
-      investInputs: merged,
-      sdsRows,
-      migByKey: migSolidityByKey,
-      lang: it ? "it" : "en",
-      includeEis: true,
-      eisSuperScoreState,
-    });
-  }, [
-    alert,
-    simRow,
-    simTable,
-    chartPts,
-    inputs,
-    sdsRows,
-    migSolidityByKey,
-    it,
-    eisSuperScoreState,
-  ]);
 
   const gainPlanRow = useMemo(() => {
     if (!alert || !simRow) return null;
@@ -518,28 +488,6 @@ export function PortfolioLossUrgentModal({
                 </p>
               )}
             </ModalChartTile>
-
-            <ModalChartTile
-              title={t("decisionLab.pattern.arcTitle")}
-              caption={modalPatternCaption(t, patternRec?.matchPct)}
-              height={MODAL_CHART_H}
-            >
-              {patternRec ? (
-                <div className="h-full w-full min-h-0 overflow-hidden flex items-center justify-center">
-                  <CdPatternArcPanel
-                    rec={patternRec}
-                    variant="mini"
-                    hideMetrics
-                    chartHeight={MODAL_CHART_H - 4}
-                    className="border-0 bg-transparent p-0 w-full shadow-none"
-                  />
-                </div>
-              ) : (
-                <p className="text-xs text-ink-muted h-full flex items-center justify-center px-2 text-center">
-                  {t("decisionLab.pattern.empty")}
-                </p>
-              )}
-            </ModalChartTile>
           </div>
 
           <div className="flex flex-wrap gap-2">
@@ -547,23 +495,12 @@ export function PortfolioLossUrgentModal({
               <PortfolioExitButton
                 simKey={alert.key}
                 simRow={simRow ?? null}
-                onSell={(key, row, opts) => {
-                  const result = onSellPosition(key, row, opts);
+                onSell={async (key, row, opts) => {
+                  const result = await Promise.resolve(onSellPosition(key, row, opts));
                   if (!result || result.ok) onClose();
                   return result;
                 }}
               />
-            ) : exitDecision === "exit" ? (
-              <button
-                type="button"
-                className="btn-primary text-xs"
-                onClick={() => {
-                  onNavigateSimulation(alert.ticker, alert.completionDate);
-                  onClose();
-                }}
-              >
-                {t("portfolioLoss.modal.action.sellSim")}
-              </button>
             ) : null}
             <button
               type="button"
@@ -598,7 +535,7 @@ export function PortfolioLossUrgentModal({
             <button
               type="button"
               className="btn-ghost text-xs border border-[rgb(var(--border))]/50"
-              onClick={() => openEisDetail(alert.ticker, clinicalKpiFromSimRow(simRow))}
+              onClick={() => openEisDetail(alert.ticker, clinicalKpiFromSimRow(simRow), simRow)}
               title={t("sim.lossAnalysis.action.eisTip")}
             >
               {t("portfolioLoss.modal.action.eis")}
@@ -615,13 +552,6 @@ export function PortfolioLossUrgentModal({
           </button>
         </div>
       </div>
-      <EisDetailDrawer
-        open={eisDrawer != null}
-        onClose={() => setEisDrawer(null)}
-        ticker={eisDrawer?.ticker ?? null}
-        clinicalKpi={eisDrawer?.clinicalKpi}
-        it={it}
-      />
     </div>
   );
 }

@@ -40,15 +40,19 @@ export function DecimalTextInput({
       inputMode="decimal"
       autoComplete="off"
       spellCheck={false}
-      className={className}
+      className={`relative z-[2] min-h-[28px] ${className}`}
       title={title}
       placeholder={placeholder}
       value={focused ? draft : value > 0 ? formatDecimalInput(value) : ""}
-      onFocus={() => {
+      onMouseDown={(e) => e.stopPropagation()}
+      onPointerDown={(e) => e.stopPropagation()}
+      onClick={(e) => e.stopPropagation()}
+      onFocus={(e) => {
         setFocused(true);
         const initial = value > 0 ? formatDecimalInput(value) : "";
         setDraft(initial);
         draftRef.current = initial;
+        e.currentTarget.select();
       }}
       onChange={(e) => {
         setDraft(e.target.value);
@@ -62,6 +66,14 @@ export function DecimalTextInput({
       onKeyDown={(e) => {
         if (e.key === "Enter") {
           e.preventDefault();
+          (e.target as HTMLInputElement).blur();
+        }
+        if (e.key === "Escape") {
+          e.preventDefault();
+          const revert = value > 0 ? formatDecimalInput(value) : "";
+          setDraft(revert);
+          draftRef.current = revert;
+          setFocused(false);
           (e.target as HTMLInputElement).blur();
         }
       }}

@@ -38,7 +38,7 @@ export function extendedPreCdOffsets(nowOffset: number | null | undefined): numb
 export function assessmentChartOffsetsForNow(
   nowOffset: number | null | undefined,
 ): readonly number[] {
-  const merged = new Set<number>([...ASSESSMENT_CHART_OFFSETS, ...extendedPreCdOffsets(nowOffset)]);
+  const merged = new Set<number>([...ASSESSMENT_CHART_OFFSETS, 0, ...extendedPreCdOffsets(nowOffset)]);
   return [...merged].sort((a, b) => a - b);
 }
 
@@ -246,12 +246,14 @@ export function recalibPredValuesAtCalendarOffsets(
       : options?.extendedPostCd
         ? POST_CD_CHART_OFFSETS
         : [];
+  const series = buildUnifiedPredSeries(chartPoints, simRow);
+  if (series.length < 2) return null;
   const samples = samplePredAtCalendarOffsets(chartPoints, simRow, extra);
   if (samples.length < 2) return null;
-  const byOff = new Map(samples.map((s) => [s.offset, s.pct]));
   const values: (number | null)[] = [];
   for (const off of targetOffsets) {
-    values.push(byOff.get(off) ?? null);
+    const v = interpolateAtOffset(series, off, { extrapolate: true });
+    values.push(v != null && Number.isFinite(v) ? roundPredPct(v) : null);
   }
   if (values.filter((v) => v != null && Number.isFinite(v)).length < 2) return null;
   return values;

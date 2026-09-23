@@ -42,6 +42,36 @@ export function normalizedRowKey(ticker: string, cd: unknown): string {
   return `${tk}|${normalizeCompletionDateForKey(cd)}`;
 }
 
+function tickerFromInvestKey(key: string): string {
+  return key.split("|")[0]?.trim().toUpperCase() ?? "";
+}
+
+/** Match invest_sim entry even when CD formatting / remap differs (desktop parity). */
+export function resolveInvestSimEntryForRow(
+  row: Record<string, unknown>,
+  inputs: InvestSimInputs,
+): InvestSimInputEntry {
+  const ticker = String(row.Ticker ?? "").trim().toUpperCase();
+  const cdNorm = normalizeCompletionDateForKey(row["Completion Date"]);
+  const canon = normalizedRowKey(ticker, row["Completion Date"]);
+  const direct = inputs[canon];
+  if (direct) return direct;
+  for (const [k, inp] of Object.entries(inputs)) {
+    if (!inp) continue;
+    const parts = k.split("|");
+    const kTicker = parts[0]?.trim().toUpperCase() ?? "";
+    if (kTicker !== ticker) continue;
+    if (normalizeCompletionDateForKey(parts.slice(1).join("|")) === cdNorm) return inp;
+  }
+  let best: InvestSimInputEntry | null = null;
+  for (const [k, inp] of Object.entries(inputs)) {
+    if (!inp || inp.ignoreSheet || !(inp.capital > 0)) continue;
+    if (tickerFromInvestKey(k) !== ticker) continue;
+    if (!best || (inp.capital ?? 0) > (best.capital ?? 0)) best = inp;
+  }
+  return best ?? { buyPrice: 0, capital: 0 };
+}
+
 export function parseNum(v: unknown): number | null {
   if (v == null || v === "" || v === "—" || v === "-" || v === "N/D") return null;
   const n =
@@ -107,7 +137,8 @@ export function computeSimulationPosition(
   const cd = String(r["Completion Date"] ?? "—");
   const key = normalizedRowKey(ticker, cd);
   const curr = currentPriceFromRow(r);
-  const inp = mergedSimInputs(r, inputs[key] ?? { buyPrice: 0, capital: 0 });
+  const rawInp = resolveInvestSimEntryForRow(r, inputs);
+  const inp = mergedSimInputs(r, rawInp);
   const buyPrice = inp.buyPrice > 0 ? inp.buyPrice : 0;
   const capital = inp.capital > 0 ? inp.capital : 0;
   let shares = 0;

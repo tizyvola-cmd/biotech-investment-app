@@ -477,6 +477,8 @@ export type MonitorEntry = {
   m2Bias7: number | null;
   affMisurata: number | null;
   gapAff: number | null;
+  calFactorV4: number | null;
+  recalibrated?: boolean;
   trigger?: string;
   invalid?: boolean;
 };
@@ -512,6 +514,8 @@ export function parseMonitorEntries(doc: { entries?: unknown[] }): MonitorEntry[
           m2Bias7: parseNum(e.m2_bias_signed_7_pp),
           affMisurata: parseNum(e.aff_misurata_7_pp),
           gapAff: parseNum(e.gap_aff_stim_minus_misur_pp),
+          calFactorV4: parseNum(e.cal_factor_v4),
+          recalibrated: e.recalibrated === true,
           trigger: e.snapshot_trigger != null ? String(e.snapshot_trigger) : undefined,
         };
         entry.invalid = !isMonitorEntryValid(entry);

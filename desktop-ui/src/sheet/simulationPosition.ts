@@ -4,10 +4,11 @@ import type {
   InvestSimInputs,
 } from "./investSimStorage";
 import { loadInvestSimHistory, resolveInvestedAt } from "./investSimStorage";
-import { buildSimRowByKeyMap, normalizedRowKey } from "./investSimKeys";
+import { buildSimRowByKeyMap, normalizeCompletionDateForKey, normalizedRowKey } from "./investSimKeys";
 import type { SheetTable } from "../types";
 import { buyPriceLooksInconsistent } from "./portfolioGainLossStyle";
 import { isUsEquitySessionDay } from "./marketSession";
+import { bookMarkToMarket } from "./bookMarkToMarket";
 
 export const SIM_PNL_NA_TOOLTIP =
   "Current price not available — refresh the Simulation sheet or wait for the price refresh.";
@@ -114,6 +115,99 @@ export function rowKey(ticker: string, cd: string) {
   return normalizedRowKey(ticker, cd);
 }
 
+/** Match invest_sim entry even when legacy alias keys differ from canonical row key. */
+export function resolveInvestSimEntryForRow(
+  row: Record<string, unknown>,
+  inputs: InvestSimInputs,
+): InvestSimInputEntry {
+  const ticker = String(row.Ticker ?? "").trim().toUpperCase();
+  const cdNorm = normalizeCompletionDateForKey(row["Completion Date"]);
+  const canon = normalizedRowKey(ticker, row["Completion Date"]);
+  const direct = inputs[canon];
+  if (direct) return direct;
+  for (const [k, inp] of Object.entries(inputs)) {
+    if (!inp) continue;
+    const parts = k.split("|");
+    const kTicker = parts[0]?.trim().toUpperCase() ?? "";
+    if (kTicker !== ticker) continue;
+    if (normalizeCompletionDateForKey(parts.slice(1).join("|")) === cdNorm) return inp;
+  }
+  return { buyPrice: 0, capital: 0 };
+}
+
+function companyTickerForBook(ticker: string): string {
+  const tk = ticker.trim().toUpperCase();
+  if (!tk) return tk;
+  return warrantCommonTicker(tk) ?? tk;
+}
+
+function tickerFromInvestKey(key: string): string {
+  return key.split("|")[0]?.trim().toUpperCase() ?? "";
+}
+
+/**
+ * Latest real-book sell timestamp for this company (warrant + common share
+ * one book, e.g. JSPRW ↔ JSPR). Used for Soft BUY cooldown and CD-rename ghosts.
+ */
+export function latestBookSoldAtIso(
+  inputs: InvestSimInputs | null | undefined,
+  opts: { key: string; ticker: string },
+): string | null {
+  if (!inputs) return null;
+  const target = companyTickerForBook(opts.ticker || tickerFromInvestKey(opts.key));
+  if (!target) return null;
+
+  let best: string | null = null;
+  let bestMs = -Infinity;
+  for (const [key, e] of Object.entries(inputs)) {
+    if (!e?.ignoreSheet || !e.soldAt?.trim()) continue;
+    const company = companyTickerForBook(tickerFromInvestKey(key));
+    if (company !== target) continue;
+    const ms = Date.parse(e.soldAt);
+    if (!Number.isFinite(ms) || ms <= bestMs) continue;
+    bestMs = ms;
+    best = e.soldAt;
+  }
+  return best;
+}
+
+/** Open capital that is a clear re-buy after the latest company sell. */
+export function isOpenRebuyAfterBookSell(
+  entry: InvestSimInputEntry,
+  soldAtIso: string | null | undefined,
+): boolean {
+  if (!soldAtIso?.trim()) return true;
+  if (entry.ignoreSheet || !(entry.capital > 0) || !entry.investedAt) return false;
+  const invMs = Date.parse(entry.investedAt);
+  const soldMs = Date.parse(soldAtIso);
+  return Number.isFinite(invMs) && Number.isFinite(soldMs) && invMs > soldMs;
+}
+
+/**
+ * True when this sheet row should not count as an open book position:
+ * same-CD sell, or company-level sell with no later re-buy (CD rename ghost).
+ *
+ * Live open capital without investedAt stays active (disk restore / missing stamp).
+ * Empty local entry + company soldAt blocks sheet-capital fallback ghosts.
+ */
+export function isRowMarkedSold(
+  row: Record<string, unknown>,
+  inputs: InvestSimInputs,
+): boolean {
+  const entry = resolveInvestSimEntryForRow(row, inputs);
+  if (entry.ignoreSheet && entry.soldAt) return true;
+  const ticker = String(row.Ticker ?? "").trim().toUpperCase();
+  if (!ticker) return false;
+  const key = normalizedRowKey(ticker, row["Completion Date"]);
+  const soldAt = latestBookSoldAtIso(inputs, { key, ticker });
+  if (!soldAt) return false;
+  if (!entry.ignoreSheet && entry.capital > 0) {
+    if (!entry.investedAt) return false;
+    return !isOpenRebuyAfterBookSell(entry, soldAt);
+  }
+  return true;
+}
+
 export function parseNum(v: unknown): number | null {
   if (v == null || v === "" || v === "—" || v === "-" || v === "N/D") return null;
   const n =
@@ -155,26 +249,25 @@ export function buyPriceForPnl(merged: { buyPrice: number }): number {
 }
 
 /**
- * Buy € entered in Pick stocks — not a same-day spot backfill placeholder.
- * When present, MTM must use this price instead of inferring from Excel P&L columns.
+ * Buy € entered in Pick stocks / portfolio register.
+ * Always trust the stored entry for open-gain MTM (value − capital).
+ * Do not discard buy≈spot as «stale backfill» — that path reinvented P&L from
+ * history / Var. Giorn. % and showed phantom open gains after fresh buys.
  */
 export function trustedUserEntryBuyUsd(
   rawInp: InvestSimInputEntry | undefined,
-  curr: number | null,
-  investedAtIso: string | null | undefined,
+  _curr: number | null,
+  _investedAtIso: string | null | undefined,
 ): number | null {
   if (!rawInp || rawInp.ignoreSheet) return null;
   const local = rawInp.buyPrice;
   if (local <= 0) return null;
-  if (curr != null && curr > 0 && buyIsStaleSpotBackfill(local, curr, investedAtIso)) {
-    return null;
-  }
   return local;
 }
 
 /**
- * Entry buy for portfolio MTM — sheet Prezzo Acquisto, then Pick stocks Buy €.
- * Never infer from Excel P&L (%) / Valore Attuale or history snapshots.
+ * Entry buy for portfolio MTM — typed book Buy € first, then sheet Prezzo Acquisto.
+ * Never infer from Excel P&L (%) / Valore Attuale or history (Trend) snapshots.
  */
 export function resolvePortfolioEntryBuyUsd(
   row: Record<string, unknown>,
@@ -182,38 +275,10 @@ export function resolvePortfolioEntryBuyUsd(
   curr: number | null,
   investedAtIso: string | null | undefined,
 ): number {
-  const sheetBuy = sheetBuyPriceFromRow(row);
-  if (
-    sheetBuy != null &&
-    sheetBuy > 0 &&
-    (curr == null || curr <= 0 || !buyAnchoredToCurrentPrice(sheetBuy, curr))
-  ) {
-    return sheetBuy;
-  }
-
   const trusted = trustedUserEntryBuyUsd(rawInp, curr, investedAtIso);
-  if (trusted != null) {
-    if (curr != null && curr > 0) {
-      const pricePct = ((curr - trusted) / trusted) * 100;
-      const sheetPct = sheetPnlPct(row);
-      if (
-        sheetPct != null &&
-        Math.abs(sheetPct) > 20 &&
-        Math.abs(pricePct - sheetPct) < 8 &&
-        Math.abs(pricePct) > 20
-      ) {
-        if (
-          sheetBuy != null &&
-          sheetBuy > 0 &&
-          !buyAnchoredToCurrentPrice(sheetBuy, curr)
-        ) {
-          return sheetBuy;
-        }
-      }
-    }
-    return trusted;
-  }
+  if (trusted != null) return trusted;
 
+  const sheetBuy = sheetBuyPriceFromRow(row);
   if (sheetBuy != null && sheetBuy > 0) return sheetBuy;
   const local = rawInp?.buyPrice ?? 0;
   if (
@@ -369,6 +434,10 @@ function resolveMtmValueForPositionLegs(
   const priceMtm =
     priceMarkValueFromEntryBuy(pos.capital, entryBuy > 0 ? entryBuy : null, curr) ??
     pos.valueNow;
+  // Known entry buy → mark is always shares×spot (open gain = value − capital).
+  if (entryBuy > 0 && curr != null && curr > 0) {
+    return priceMtm;
+  }
   const closeSeriesRaw = tickerDailyCloseSeries(hist, pos.key, investedAtIso);
   const histEntry = inferEntryCapitalFromHistory(hist, pos.key);
   const closeSeries = scaleCloseSeriesToEntryCapital(
@@ -452,8 +521,143 @@ export function sheetBuyPriceFromRow(r: Record<string, unknown>): number | null 
   return firstParseNumFromRow(r, ["Prezzo Acquisto ($)", "Prezzo acquisto ($)"]);
 }
 
+/**
+ * True when live refresh marked the ticker as delisted / halted / stale
+ * (`direction_live = "stale"`). Nulls live price / Var.24h reads.
+ * Open portfolio positions stay visible (with a dead-price badge).
+ */
+export function isLivePriceDeadFromRow(r: Record<string, unknown> | null | undefined): boolean {
+  if (!r) return false;
+  return String(r["direction_live"] ?? "").toLowerCase() === "stale";
+}
+
+/** Sheet identity ticker (may be a dead warrant, e.g. JSPRW). */
+export function sheetTickerFromRow(r: Record<string, unknown> | null | undefined): string {
+  return String(r?.Ticker ?? "").trim().toUpperCase();
+}
+
+/**
+ * HistLib-style warrant → common (JSPRW → JSPR). Null when not a *W suffix.
+ * Keys / history stay on the sheet warrant; display + live feed use common.
+ */
+export function warrantCommonTicker(ticker: string | null | undefined): string | null {
+  const t = String(ticker ?? "").trim().toUpperCase();
+  if (t.length < 2 || !t.endsWith("W") || t.endsWith("WW")) return null;
+  const common = t.slice(0, -1);
+  return common && common !== t ? common : null;
+}
+
+/** True for sheet warrant symbols (JSPRW, ERNAW…). Prefer the common for BUY. */
+export function isWarrantTicker(ticker: string | null | undefined): boolean {
+  return warrantCommonTicker(ticker) != null;
+}
+
+/**
+ * Hide only stale **warrants** from opportunity lists (NRXPW, lone JSPRW…).
+ * Do **not** drop liquid commons when a refresh batch marks them `stale`
+ * after a temporary yfinance miss — that wiped ~16/17 hot opps (VRTX, BIIB…).
+ */
+export function isStalePhantomOpportunityRow(
+  r: Record<string, unknown> | null | undefined,
+): boolean {
+  if (!isLivePriceDeadFromRow(r)) return false;
+  return isWarrantTicker(sheetTickerFromRow(r));
+}
+
+/** Common tickers present on the Simulation sheet (for warrant de-dupe). */
+export function commonTickersOnSheet(
+  rows: readonly Record<string, unknown>[] | null | undefined,
+): Set<string> {
+  const out = new Set<string>();
+  for (const r of rows ?? []) {
+    const tk = sheetTickerFromRow(r);
+    if (!tk || !isValidMarketTicker(tk)) continue;
+    if (!isWarrantTicker(tk)) out.add(tk);
+  }
+  return out;
+}
+
+/** Yahoo / intraday API — reject summary rows and prose accidentally stored as Ticker. */
+export function isValidMarketTicker(ticker: string | null | undefined): boolean {
+  const t = String(ticker ?? "").trim().toUpperCase();
+  if (!t || t.length > 12 || t.includes("TOTALE")) return false;
+  return /^[A-Z][A-Z0-9.-]{0,11}$/.test(t);
+}
+
+/** Dedupe + drop invalid symbols before `/api/market/intraday-1h`. */
+export function sanitizeIntradayTickers(
+  tickers: readonly string[],
+  max = 80,
+): string[] {
+  const out: string[] = [];
+  const seen = new Set<string>();
+  for (const raw of tickers) {
+    const t = String(raw ?? "").trim().toUpperCase();
+    if (!isValidMarketTicker(t) || seen.has(t)) continue;
+    seen.add(t);
+    out.push(t);
+    if (out.length >= max) break;
+  }
+  return out;
+}
+
+/**
+ * Warrant row whose tradeable common is also on the sheet (JSPRW when JSPR exists).
+ * Skip these from opportunity / Soft BUY surfaces — trade the common only.
+ */
+export function isRedundantWarrantOpportunityRow(
+  row: Record<string, unknown>,
+  commonTickers: ReadonlySet<string>,
+): boolean {
+  const common = warrantCommonTicker(sheetTickerFromRow(row));
+  return common != null && commonTickers.has(common);
+}
+
+/**
+ * Hide warrant duplicates when the tradeable common is already on the sheet
+ * (JSPRW + JSPR → keep JSPR only). Keep the warrant row if it still has open
+ * sim capital (legacy book).
+ */
+export function shouldHideRedundantWarrantRow(
+  row: Record<string, unknown>,
+  commonTickers: ReadonlySet<string>,
+  inputs?: InvestSimInputs | null,
+): boolean {
+  if (!isRedundantWarrantOpportunityRow(row, commonTickers)) return false;
+  if (inputs && rowHasActivePortfolio(row, inputs)) return false;
+  return true;
+}
+
+/** Drop redundant *W rows when the common ticker is present (no open warrant book). */
+export function filterOutRedundantWarrantRows(
+  rows: readonly Record<string, unknown>[],
+  inputs?: InvestSimInputs | null,
+): Record<string, unknown>[] {
+  const commons = commonTickersOnSheet(rows);
+  return rows.filter((r) => !shouldHideRedundantWarrantRow(r, commons, inputs));
+}
+
+/**
+ * Ticker shown across portfolio tabs: prefer live_quote_ticker from refresh,
+ * else strip warrant ``W`` so chips/Pulse/Evaluation match the tradeable common
+ * (JSPRW → JSPR). Sheet identity / history keys stay on the warrant symbol.
+ */
+export function tradeableTickerFromRow(r: Record<string, unknown> | null | undefined): string {
+  const alias = String(r?.["live_quote_ticker"] ?? "").trim().toUpperCase();
+  if (alias) return alias;
+  const sheet = sheetTickerFromRow(r);
+  if (!sheet) return sheet;
+  return warrantCommonTicker(sheet) ?? sheet;
+}
+
 /** Daily price change % from Simulation sheet (Yahoo: vs previous close). */
 export function dailyChangePctFromRow(r: Record<string, unknown>): number | null {
+  // Belt-and-suspenders: refresh_live_signals.py flags delisted/halted
+  // tickers with `direction_live = "stale"` and nulls all live fields.
+  // Guard here too in case the snapshot was produced by an older refresh
+  // that still carries phantom prices (bug NRXPW: warrant delistato
+  // mostrava -25.71% perché il vecchio Var. Giorn. era sopravvissuto).
+  if (isLivePriceDeadFromRow(r)) return null;
   const raw =
     parseNum(r["Var. Giorn. %"]) ??
     parseNum(r["Var. Giorn.%"]) ??
@@ -897,12 +1101,15 @@ export type PositionPnlTotalSource =
   | "daily_close_sum"
   | "entry_today"
   | "price_mtm_contaminated_history"
-  | "price_mtm_uncertain_history";
+  | "price_mtm_uncertain_history"
+  | "price_mtm_trusted_buy";
 
 export type TickerDailyClosePoint = {
   dayKey: string;
   value: number;
   ts: string;
+  /** Capitale inferito dallo snapshot (value − pnl). Usato per scaling per-punto in scaleCloseSeriesToEntryCapital. */
+  snapCapital?: number;
 };
 
 export type PositionPnlBreakdown = {
@@ -952,7 +1159,8 @@ export function priorLegIsImplicitEstimate(
   if (breakdown.historyContaminated || breakdown.historyUncertainContamination) return true;
   if (
     breakdown.totalSource === "price_mtm_contaminated_history" ||
-    breakdown.totalSource === "price_mtm_uncertain_history"
+    breakdown.totalSource === "price_mtm_uncertain_history" ||
+    breakdown.totalSource === "price_mtm_trusted_buy"
   ) {
     return true;
   }
@@ -1030,7 +1238,8 @@ export function tickerDailyCloseSeries(
     const dayKey = calendarDayKey(d);
     if (!dayKey) continue;
     if (investDay && dayKey < investDay) continue;
-    byDay.set(dayKey, { dayKey, value: snap.value, ts: h.ts });
+    const snapCapital = snap.pnl != null ? Math.round((snap.value - snap.pnl) * 100) / 100 : undefined;
+    byDay.set(dayKey, { dayKey, value: snap.value, ts: h.ts, ...(snapCapital != null && snapCapital > 0 ? { snapCapital } : {}) });
   }
   return [...byDay.values()].sort((a, b) => a.dayKey.localeCompare(b.dayKey));
 }
@@ -1246,9 +1455,27 @@ export function resolvePositionPnlBreakdown(
   }
 
   if (isInvestedToday(investedAtIso)) {
-    const totalEur = roundEur(pos.valueNow - entryValue);
-    const totalPct =
+    let totalEur = roundEur(pos.valueNow - entryValue);
+    let totalPct =
       entryValue > 0 ? Math.round((totalEur / entryValue) * 10000) / 100 : 0;
+    // Same-day buy: Prezzo Corrente often still equals entry until live
+    // signals land, while Var. Giorn. % already moved — don't leave Pulse at €0.
+    const dailyPctToday = simRow ? dailyChangePctFromRow(simRow) : null;
+    const currToday = pos.currPrice ?? (simRow ? currentPriceFromRow(simRow) : null);
+    if (
+      Math.abs(totalEur) <= PNL_EPS_EUR &&
+      dailyPctToday != null &&
+      Number.isFinite(dailyPctToday) &&
+      Math.abs(dailyPctToday) > PNL_EPS_PCT &&
+      pos.buyPrice > 0 &&
+      currToday != null &&
+      currToday > 0 &&
+      buyAnchoredToCurrentPrice(pos.buyPrice, currToday)
+    ) {
+      // Spot still at entry → valueNow is not post-move; use capital × %.
+      totalEur = Math.round(((entryValue * dailyPctToday) / 100) * 100) / 100;
+      totalPct = Math.round(dailyPctToday * 100) / 100;
+    }
     return attachReadingDelta(
       {
         totalEur,
@@ -1314,45 +1541,56 @@ export function resolvePositionPnlBreakdown(
     entryBuy > 0 ? entryBuy : null,
     curr,
   );
+  const trustedEntryBuy = entryBuy > 0;
   const forceMtmTotal =
     assessment.contaminated ||
     assessment.uncertainContamination ||
+    trustedEntryBuy ||
     (summed.priorCloseCount === 0 && !isInvestedToday(investedAtIso));
 
   let totalEur = summed.totalEur;
   let totalPct = summed.totalPct;
   let priorLegEur = summed.priorLegEur;
+  let pnlEurToday = summed.pnlEurToday;
+  let pnlPctToday = summed.pnlPctToday;
+  let hasToday = summed.hasToday;
   let totalSource: PositionPnlTotalSource = "daily_close_sum";
   if (forceMtmTotal) {
     totalEur = roundEur(mtmValue - entryValue);
     totalPct =
       entryValue > 0 ? Math.round((totalEur / entryValue) * 10000) / 100 : 0;
-    if (summed.hasToday && summed.pnlEurToday != null) {
-      priorLegEur = roundEur(totalEur - summed.pnlEurToday);
+    // Buy ≈ spot → MTM total can be ~€0 (flat vs entry) while Var. Giorn. %
+    // still moved today (stock returned to entry, or spot stale at buy).
+    // Keep the 24h leg from the sheet — zeroing it hid real days (MLTX/BBNX).
+    if (hasToday && pnlEurToday != null) {
+      priorLegEur = roundEur(totalEur - pnlEurToday);
     }
     if (assessment.contaminated) {
       totalSource = "price_mtm_contaminated_history";
     } else if (assessment.uncertainContamination) {
       totalSource = "price_mtm_uncertain_history";
+    } else if (trustedEntryBuy) {
+      totalSource = "price_mtm_trusted_buy";
     }
   }
 
   const priorLegIsImplicitEstimate =
     forceMtmTotal &&
-    summed.hasToday &&
-    summed.pnlEurToday != null &&
+    hasToday &&
+    pnlEurToday != null &&
     (summed.priorCloseCount === 0 ||
       assessment.contaminated ||
-      assessment.uncertainContamination);
+      assessment.uncertainContamination ||
+      trustedEntryBuy);
 
   return attachReadingDelta(
     {
       totalEur,
       totalPct,
       entryValue,
-      pnlEurToday: summed.pnlEurToday,
-      pnlPctToday: summed.pnlPctToday,
-      hasToday: summed.hasToday,
+      pnlEurToday,
+      pnlPctToday,
+      hasToday,
       todaySource,
       totalSource,
       dailyLegCount: summed.dailyLegCount,
@@ -1369,7 +1607,11 @@ export function resolvePositionPnlBreakdown(
   );
 }
 
-/** Totali riga per Σ portafoglio — identità total = prior + today; MTM solo senza storico. */
+/**
+ * Totali riga per Σ portafoglio.
+ * `breakdown.totalEur` is authoritative (price MTM when entry buy is known);
+ * prior is derived so prior + today = total.
+ */
 export function resolveAggregatePositionPnl(
   pos: Pick<SimulationPosition, "pnlEur" | "pnlUnavailable" | "capital">,
   breakdown: Pick<
@@ -1380,16 +1622,24 @@ export function resolveAggregatePositionPnl(
   if (pos.pnlUnavailable || pos.capital <= 0) return null;
   const hasToday = breakdown.hasToday && breakdown.pnlEurToday != null;
   const today = hasToday ? breakdown.pnlEurToday! : 0;
-  const priorFromLegs = breakdown.priorLegEur ?? 0;
-  const legTotal = roundEur(priorFromLegs + (hasToday ? today : 0));
-
+  const totalEur = roundEur(breakdown.totalEur);
   if (hasToday) {
-    return { totalEur: legTotal, priorLegEur: priorFromLegs, pnlEurToday: today };
+    return {
+      totalEur,
+      priorLegEur: roundEur(totalEur - today),
+      pnlEurToday: today,
+    };
   }
   if (breakdown.priorCloseCount > 0) {
-    return { totalEur: legTotal, priorLegEur: priorFromLegs, pnlEurToday: 0 };
+    return {
+      totalEur,
+      priorLegEur: roundEur(breakdown.priorLegEur ?? totalEur),
+      pnlEurToday: 0,
+    };
   }
-  return { totalEur: roundEur(pos.pnlEur), priorLegEur: 0, pnlEurToday: 0 };
+  // No daily legs — fall back to position MTM when breakdown total is empty.
+  const fallback = Number.isFinite(totalEur) ? totalEur : roundEur(pos.pnlEur);
+  return { totalEur: fallback, priorLegEur: 0, pnlEurToday: 0 };
 }
 
 export type PortfolioTickerDailyRow = {
@@ -1458,20 +1708,24 @@ export function scaleCloseSeriesToEntryCapital(
   entryValue: number,
   historyEntryCapital: number | null,
 ): TickerDailyClosePoint[] {
-  if (
-    !series.length ||
-    entryValue <= 0 ||
-    historyEntryCapital == null ||
-    historyEntryCapital <= 0
-  ) {
-    return series;
+  if (!series.length || entryValue <= 0) return series;
+  // Scaling per-punto: usa snapCapital di ogni singolo punto se disponibile.
+  // Evita di applicare un ratio globale quando il capitale è cambiato nel tempo.
+  const hasPerPoint = series.some((pt) => pt.snapCapital != null && pt.snapCapital > 0);
+  if (hasPerPoint) {
+    return series.map((pt) => {
+      const cap = pt.snapCapital != null && pt.snapCapital > 0 ? pt.snapCapital : historyEntryCapital;
+      if (cap == null || cap <= 0) return pt;
+      const ratio = entryValue / cap;
+      if (Math.abs(ratio - 1) < 0.015) return pt;
+      return { ...pt, value: roundEur(pt.value * ratio) };
+    });
   }
+  // Fallback: ratio globale (comportamento precedente per serie senza snapCapital).
+  if (historyEntryCapital == null || historyEntryCapital <= 0) return series;
   const ratio = entryValue / historyEntryCapital;
   if (Math.abs(ratio - 1) < 0.015) return series;
-  return series.map((pt) => ({
-    ...pt,
-    value: roundEur(pt.value * ratio),
-  }));
+  return series.map((pt) => ({ ...pt, value: roundEur(pt.value * ratio) }));
 }
 
 /** Delta giornalieri solo da chiusure storiche (posizione già venduta). */
@@ -1594,7 +1848,7 @@ export function buildPortfolioDailyPnlLedger(
         entryBuy > 0 ? entryBuy : null,
         curr,
       );
-      if (contaminated || priorCloseCount === 0) {
+      if (contaminated || entryBuy > 0 || priorCloseCount === 0) {
         totalEur = mtmTotalEur;
       }
     }
@@ -1683,7 +1937,9 @@ export function buildPortfolioDailyPnlLedger(
 
     rows.push({
       key,
-      ticker: row ? String(row["Ticker"] ?? parts.ticker).trim().toUpperCase() : parts.ticker,
+      ticker: row
+        ? tradeableTickerFromRow(row) || parts.ticker
+        : warrantCommonTicker(parts.ticker) ?? parts.ticker,
       completionDate: row ? String(row["Completion Date"] ?? parts.cd).trim() || "—" : parts.cd,
       capital: entryCapital,
       legs,
@@ -1773,13 +2029,14 @@ export function positionDailyPnlForPnlTab(
   investedAtIso: string | null | undefined,
   _historyBaseline?: PositionHistoryBaseline | null,
   history?: InvestSimHistoryPoint[] | null,
+  inputs?: InvestSimInputs,
 ): {
   pnlEurToday: number | null;
   pnlPctToday: number | null;
   hasToday: boolean;
   source: PositionDailyPnlSource;
 } {
-  const b = resolvePositionPnlBreakdown(pos, simRow, investedAtIso, history);
+  const b = resolvePositionPnlBreakdown(pos, simRow, investedAtIso, history, inputs);
   return {
     pnlEurToday: b.pnlEurToday,
     pnlPctToday: b.pnlPctToday,
@@ -1812,12 +2069,14 @@ export function computeSimulationPosition(
   inputs: InvestSimInputs,
   ctx?: SimulationPositionContext,
 ): SimulationPosition | null {
-  const ticker = String(r.Ticker ?? "").trim().toUpperCase();
-  if (!ticker || ticker.includes("TOTALE")) return null;
+  const sheetTicker = sheetTickerFromRow(r);
+  if (!sheetTicker || sheetTicker.includes("TOTALE")) return null;
+  const ticker = tradeableTickerFromRow(r);
   const cd = String(r["Completion Date"] ?? "—");
-  const key = rowKey(ticker, cd);
+  // Identity key stays on the sheet symbol (JSPRW|CD) so history / sells match.
+  const key = rowKey(sheetTicker, cd);
   const curr = currentPriceFromRow(r);
-  const rawInp = inputs[key] ?? { buyPrice: 0, capital: 0 };
+  const rawInp = resolveInvestSimEntryForRow(r, inputs);
   const inp = mergedSimInputs(r, rawInp);
   const explicitLocalBuy = rawInp.buyPrice > 0 && !rawInp.ignoreSheet;
   const investedAt = resolveInvestedAt(key, rawInp, ctx?.history ?? []);
@@ -1826,6 +2085,16 @@ export function computeSimulationPosition(
     entryBuy > 0
       ? entryBuy
       : resolveEffectiveBuyPrice(r, inp, key, ctx?.history, investedAt);
+  // Restored books sometimes lose the resolved entry while raw local buy is intact.
+  // Never drop a stored buy when capital is open — otherwise P&L→0 and REC vanishes.
+  if (
+    buyPrice <= 0 &&
+    rawInp.buyPrice > 0 &&
+    !rawInp.ignoreSheet &&
+    (rawInp.capital > 0 || inp.capital > 0)
+  ) {
+    buyPrice = rawInp.buyPrice;
+  }
   const capital = inp.capital > 0 ? inp.capital : 0;
   let shares = 0;
   let valueNow = 0;
@@ -1894,6 +2163,7 @@ export function rowHasActivePortfolio(
   const ticker = String(row.Ticker ?? "").trim().toUpperCase();
   if (!ticker || ticker.includes("TOTALE")) return false;
   const key = rowKey(ticker, String(row["Completion Date"] ?? "—"));
+  if (isRowMarkedSold(row, inputs)) return false;
   if (inputs[key]?.ignoreSheet) return false;
   const pos = computeSimulationPosition(row, inputs, {
     history: resolvePortfolioHistory(),
@@ -1954,7 +2224,7 @@ export function buildPositions(
   inputs: InvestSimInputs,
   history?: InvestSimHistoryPoint[] | null,
 ): SimulationPosition[] {
-  const rows = simTable?.rows ?? [];
+  const rows = filterOutRedundantWarrantRows(simTable?.rows ?? [], inputs);
   const out: SimulationPosition[] = [];
   const ctx: SimulationPositionContext = {
     history: resolvePortfolioHistory(history),
@@ -2056,12 +2326,13 @@ export function positionPnlForOpenRow(
   const totalEur = agg?.totalEur ?? b.totalEur;
   const totalPct =
     positionCapitalPnlPct(totalEur, pos.capital) ?? b.totalPct;
+  const daily = resolveOpenRowDailyPnl(pos, row, b);
   return {
     pos,
     pnlEur: Math.round(totalEur * 100) / 100,
     pnlPct: Math.round(totalPct * 100) / 100,
-    pnlEur24h: b.hasToday ? b.pnlEurToday : null,
-    pnlPct24h: b.hasToday ? b.pnlPctToday : null,
+    pnlEur24h: daily.pnlEur24h,
+    pnlPct24h: daily.pnlPct24h,
     pnlEurSinceReading: b.pnlEurSinceReading,
     pnlPctSinceReading: b.pnlPctSinceReading,
     priorReadingTs: b.priorReadingTs,
@@ -2083,14 +2354,96 @@ export function portfolioDailyHistoryBaseline(
   };
   for (let i = history.length - 1; i >= 0; i--) {
     const dk = dayKey(history[i].ts);
-    if (dk && dk < todayKey) return history[i];
+    if (dk && dk < todayKey)   return history[i];
   }
   return null;
 }
 
+/** Daily move — breakdown when session open; else Var. Giorn. % (same as tab 24h). */
+export function resolveOpenRowDailyPnl(
+  pos: Pick<SimulationPosition, "valueNow">,
+  row: Record<string, unknown> | undefined,
+  breakdown: Pick<
+    ReturnType<typeof resolvePositionPnlBreakdown>,
+    "hasToday" | "pnlEurToday" | "pnlPctToday"
+  >,
+): { pnlEur24h: number | null; pnlPct24h: number | null } {
+  if (breakdown.hasToday && breakdown.pnlEurToday != null) {
+    return {
+      pnlEur24h: breakdown.pnlEurToday,
+      pnlPct24h: breakdown.pnlPctToday,
+    };
+  }
+  if (isUsEquitySessionDay()) {
+    return { pnlEur24h: null, pnlPct24h: null };
+  }
+  if (!row || pos.valueNow <= 0) {
+    return { pnlEur24h: null, pnlPct24h: null };
+  }
+  const sheetDailyPct = dailyChangePctFromRow(row);
+  if (sheetDailyPct == null || !Number.isFinite(sheetDailyPct)) {
+    return { pnlEur24h: null, pnlPct24h: null };
+  }
+  return {
+    pnlPct24h: Math.round(sheetDailyPct * 100) / 100,
+    pnlEur24h: pnlEurFromDailyPct(pos.valueNow, sheetDailyPct),
+  };
+}
+
+export type BookOpenPositionMetrics = {
+  capital: number;
+  valueNow: number;
+  pnlEur: number;
+  pnlPct: number;
+  pnlEur24h: number | null;
+  pnlPct24h: number | null;
+};
+
+function bookOpenDailyPnl(
+  book: NonNullable<ReturnType<typeof bookMarkToMarket>>,
+  row: Record<string, unknown>,
+  investedAtIso: string | null | undefined,
+): { pnlEur24h: number | null; pnlPct24h: number | null } {
+  if (isInvestedToday(investedAtIso)) {
+    return { pnlEur24h: book.pnlEur, pnlPct24h: book.pnlPct };
+  }
+  const dailyPct = dailyChangePctFromRow(row);
+  if (dailyPct == null || !Number.isFinite(dailyPct) || book.valueNow <= 0) {
+    return { pnlEur24h: null, pnlPct24h: null };
+  }
+  return {
+    pnlPct24h: Math.round(dailyPct * 100) / 100,
+    pnlEur24h: pnlEurFromDailyPct(book.valueNow, dailyPct),
+  };
+}
+
 /**
- * Metriche Piggy Bank / Dashboard — allineate a Simulation → P&L
- * (MTM totale + var. 24h da resolvePositionPnlBreakdown / Var. Giorn. %).
+ * Open-row Pulse / Piggy metrics from the typed book (capital + buy + live).
+ * 24h = same shares × Var. Giorn. % — not Trend history legs.
+ */
+export function resolveBookOpenPositionMetrics(
+  row: Record<string, unknown>,
+  inputs: InvestSimInputs,
+  livePriceUsd: number | null | undefined,
+  investedAtIso: string | null | undefined,
+): BookOpenPositionMetrics | null {
+  const entry = resolveInvestSimEntryForRow(row, inputs);
+  const book = bookMarkToMarket(entry, livePriceUsd);
+  if (!book) return null;
+  const daily = bookOpenDailyPnl(book, row, investedAtIso);
+  return {
+    capital: entry.capital,
+    valueNow: book.valueNow,
+    pnlEur: book.pnlEur,
+    pnlPct: book.pnlPct,
+    pnlEur24h: daily.pnlEur24h,
+    pnlPct24h: daily.pnlPct24h,
+  };
+}
+
+/**
+ * Metriche Piggy Bank / Dashboard — libro (capitale ÷ buy × live).
+ * 24h da Var. Giorn. % sulle stesse quote, non dalla catena Trend/history.
  */
 export function buildDashboardPortfolioChips(
   simTable: SheetTable | null,
@@ -2103,19 +2456,37 @@ export function buildDashboardPortfolioChips(
   for (const pos of positions) {
     const row = rowByKey.get(pos.key);
     if (!row || !rowHasActivePortfolio(row, inputs)) continue;
-    if (pos.capital <= 0 || pos.pnlUnavailable) continue;
+    // Keep capital>0 rows even when MTM is unavailable (missing spot) so Pulse
+    // does not hide open names that what-if / Evaluation still count.
+    if (pos.capital <= 0) continue;
     const investedAt = resolveInvestedAt(pos.key, inputs[pos.key], history);
+    const live = pos.currPrice ?? currentPriceFromRow(row);
+    const book = resolveBookOpenPositionMetrics(row, inputs, live, investedAt);
+    if (book) {
+      out.push({
+        ticker: row ? tradeableTickerFromRow(row) : pos.ticker,
+        key: pos.key,
+        capitalEur: book.capital,
+        pnlEur: book.pnlEur,
+        pnlPct: book.pnlPct,
+        pnlEur24h: book.pnlEur24h,
+        pnlPct24h: book.pnlPct24h,
+      });
+      continue;
+    }
     const b = resolvePositionPnlBreakdown(pos, row, investedAt, history, inputs);
     const agg = resolveAggregatePositionPnl(pos, b);
     const chipPnlEur = agg?.totalEur ?? pos.pnlEur;
+    const daily = resolveOpenRowDailyPnl(pos, row, b);
     out.push({
-      ticker: pos.ticker,
+      // Prefer tradeable/common label when warrant is aliased or stale.
+      ticker: row ? tradeableTickerFromRow(row) : pos.ticker,
       key: pos.key,
       capitalEur: pos.capital,
       pnlEur: chipPnlEur,
       pnlPct: positionCapitalPnlPct(chipPnlEur, pos.capital) ?? pos.pnlPct,
-      pnlEur24h: b.hasToday ? b.pnlEurToday : null,
-      pnlPct24h: b.hasToday ? b.pnlPctToday : null,
+      pnlEur24h: daily.pnlEur24h,
+      pnlPct24h: daily.pnlPct24h,
     });
   }
   return out;
@@ -2144,7 +2515,7 @@ export type PortfolioPnlTotals = {
   closedCount: number;
 };
 
-/** Totali portafoglio aperto — stessa logica delle card Simulation → P&L. */
+/** Totali portafoglio aperto — libro (capitale ÷ buy × live), 24h da Var. Giorn. %. */
 export function aggregateOpenPortfolioPnl(
   simTable: SheetTable | null,
   inputs: InvestSimInputs,
@@ -2169,25 +2540,47 @@ export function aggregateOpenPortfolioPnl(
     if (!row || !rowHasActivePortfolio(row, inputs) || p.capital <= 0) continue;
     todayTotal++;
     const investedAt = resolveInvestedAt(p.key, inputs[p.key], hist);
+    const live = p.currPrice ?? currentPriceFromRow(row);
+    const book = resolveBookOpenPositionMetrics(row, inputs, live, investedAt);
+    if (book) {
+      capital += book.capital;
+      valueNow += book.valueNow;
+      pnlEur += book.pnlEur;
+      if (book.pnlEur24h != null) {
+        pnlEurToday += book.pnlEur24h;
+        todayCovered++;
+        baselineValue += book.valueNow - book.pnlEur24h;
+        priorLegEur += roundEur(book.pnlEur - book.pnlEur24h);
+        portfolioPriorLegImplicit = true;
+      }
+      continue;
+    }
     const b = resolvePositionPnlBreakdown(p, row, investedAt, hist, inputs);
     if (b.historyContaminated) anyHistoryContaminated = true;
     if (b.historyUncertainContamination) anyHistoryUncertainContamination = true;
     if (priorLegIsImplicitEstimate(b)) portfolioPriorLegImplicit = true;
     const agg = resolveAggregatePositionPnl(p, b);
+    // Always count invested capital for open rows — even when MTM/agg is unavailable.
+    capital += p.capital;
     if (agg) {
-      capital += p.capital;
       valueNow += p.valueNow;
       pnlEur += agg.totalEur;
-      if (b.hasToday && b.pnlEurToday != null) {
-        pnlEurToday += agg.pnlEurToday;
-        priorLegEur += agg.priorLegEur;
+      const daily = resolveOpenRowDailyPnl(p, row, b);
+      if (daily.pnlEur24h != null) {
+        pnlEurToday += daily.pnlEur24h;
         todayCovered++;
         if (b.priorValue != null && b.priorValue > 0) {
           baselineValue += b.priorValue;
         } else if (p.valueNow > 0) {
-          baselineValue += p.valueNow - b.pnlEurToday;
+          baselineValue += p.valueNow - daily.pnlEur24h;
         }
+        priorLegEur +=
+          b.hasToday && b.pnlEurToday != null
+            ? agg.priorLegEur
+            : roundEur(agg.totalEur - daily.pnlEur24h);
       }
+    } else if (p.valueNow > 0) {
+      valueNow += p.valueNow;
     }
   }
   // Closed positions P&L — sum closedPnlEur for all sold entries

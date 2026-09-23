@@ -12,6 +12,7 @@
     "noEmit": true,
     "jsx": "react-jsx",
     "strict": true,
+    "resolveJsonModule": true,
     "noUnusedLocals": true,
     "noUnusedParameters": true,
     "noFallthroughCasesInSwitch": true,
@@ -19,5 +20,9 @@
     "paths": { "@/*": ["src/*"] }
   },
   "include": ["src"],
-  "exclude": ["src/**/*.integration.test.ts", "src/**/*.test.ts"]
+  "exclude": [
+    "src/**/*.integration.test.ts",
+    "src/**/*.test.ts",
+    "src/api/mobileDashboardSnapshotServer.ts"
+  ]
 }

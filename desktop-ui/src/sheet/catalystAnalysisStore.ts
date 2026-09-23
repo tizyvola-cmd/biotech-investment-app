@@ -26,6 +26,13 @@ export type CatalystStatus =
   | "reported"
   | "stale";
 
+export type CatalystKind =
+  | "pdufa_nda"
+  | "pdufa_bla"
+  | "advisory_committee"
+  | "readout"
+  | null;
+
 export type CatalystEntry = {
   id: string;
   /** Short description, e.g. "VELA-TEEN primary endpoint readout". */
@@ -47,15 +54,23 @@ export type CatalystEntry = {
   statusUpdatedAt: string;
   /** Free-form note on why status changed. */
   statusNote: string | null;
+  /**
+   * Granular catalyst type — user-provided, NOT AI-inferred.
+   * "pdufa_nda" / "pdufa_bla" = FDA action date on NDA/BLA.
+   * "advisory_committee" = AdCom meeting.
+   * "readout" = clinical trial primary endpoint readout.
+   * null = unspecified.
+   */
+  catalystKind?: CatalystKind;
 };
 
 export type RiskFlag = {
   id: string;
   /**
    * Category — deliberately separate from clinical catalyst.
-   * "legal" | "governance" | "reputational" | "financial" | "other"
+   * "regulatory" = CRL / CMC / FDA inspection / manufacturing deficiency.
    */
-  category: "legal" | "governance" | "reputational" | "financial" | "other";
+  category: "legal" | "governance" | "reputational" | "financial" | "regulatory" | "other";
   description: string;
   /** ISO date when flag was added. */
   flaggedAt: string;

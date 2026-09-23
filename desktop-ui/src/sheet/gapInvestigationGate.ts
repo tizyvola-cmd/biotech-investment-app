@@ -31,7 +31,7 @@ function publishGapInvestigationModal(payload: GapInvestigationModalPayload): vo
   window.dispatchEvent(new CustomEvent(GAP_INVESTIGATION_EVENT, { detail: payload }));
 }
 
-/** Phase 1+2+4: detect gaps, stub investigate, persist audit, queue modal (non-blocking). */
+/** Phase 1+2+4: detect gaps, feed investigate, persist audit, queue modal (non-blocking). */
 export async function processGapInvestigationAfterMark(ctx: GapMarkContext): Promise<void> {
   const events = detectGapEvents(
     ctx.portfolioBefore,

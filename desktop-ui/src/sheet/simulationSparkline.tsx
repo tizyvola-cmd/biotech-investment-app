@@ -31,7 +31,7 @@ import {
   CD_WATCH_ZONE_OPACITY_SPARK,
   CD_WATCH_ZONE_RGB,
 } from "./chartCdZones";
-import { t } from "../shared/i18n";
+import { t, getLang } from "../shared/i18n";
 import { extractCurveInputs } from "./precatCurve";
 import { isMarketSlopeDeclining, resolveMarketSlopeTone } from "./portfolioGainLossStyle";
 
@@ -780,41 +780,67 @@ function DenseModelSparkline({
     nowY = yForVal(nowModel, minVal, range, height, padY);
   }
 
+  const it = getLang() === "it";
   const allRecalib = dense.every(
     (p) => p.bestSource === "foglio" || p.bestSource === "ricalibrata"
   );
   const sourceLabel = allRecalib
-    ? "Prediction + Recalibration"
+    ? (it ? "Predizione + Ricalibrazione" : "Prediction + Recalibration")
     : dense.every((p) => p.bestSource === "modello")
-      ? "model (fallback)"
-      : "mixed (recalibrated + model)";
+      ? (it ? "modello (fallback)" : "model (fallback)")
+      : (it ? "misto (ricalibrata + modello)" : "mixed (recalibrated + model)");
 
-  // Max best vs pure model divergence: if > DIVERGE_HINT_PP the recalibration
-  // is appreciably changing the pred → we show a small marker.
   const divergePp = maxDivergencePp(dense);
   const isDiverging = allRecalib && divergePp > DIVERGE_HINT_PP;
 
   const labelTxt = (() => {
-    const parts: string[] = [`Best curve (${sourceLabel})`];
+    const parts: string[] = [
+      it ? `Curva best (${sourceLabel})` : `Best curve (${sourceLabel})`,
+    ];
     if (hasPortfolioPnl && portfolio?.pnlPct != null) {
       const sign = portfolio.pnlPct >= 0 ? "+" : "";
-      parts.unshift(`P&L ${sign}${portfolio.pnlPct.toFixed(2)}% since entry (solid line)`);
-      parts.push("dashed = model forecast from today");
+      parts.unshift(
+        it
+          ? `P&L ${sign}${portfolio.pnlPct.toFixed(2)}% dall'ingresso (linea continua)`
+          : `P&L ${sign}${portfolio.pnlPct.toFixed(2)}% since entry (solid line)`,
+      );
+      parts.push(
+        it
+          ? "tratteggiata = previsione modello da oggi"
+          : "dashed = model forecast from today",
+      );
     }
-    if (nowOff != null) parts.push(`today at ${nowOff > 0 ? "+" : ""}${nowOff}d from CD`);
+    if (nowOff != null)
+      parts.push(
+        it
+          ? `oggi a ${nowOff > 0 ? "+" : ""}${nowOff}g dal CD`
+          : `today at ${nowOff > 0 ? "+" : ""}${nowOff}d from CD`,
+      );
     if (fwdDelta != null) {
       const sign = fwdDelta >= 0 ? "+" : "";
       parts.push(
         marketDeclining
-          ? `model forecast T+5: ${sign}${fwdDelta.toFixed(2)}pp (market slope ↓)`
-          : `Δ from today to T+5: ${sign}${fwdDelta.toFixed(2)}pp`,
+          ? (it
+              ? `previsione modello T+5: ${sign}${fwdDelta.toFixed(2)}pp (slope mercato ↓)`
+              : `model forecast T+5: ${sign}${fwdDelta.toFixed(2)}pp (market slope ↓)`)
+          : (it
+              ? `Δ da oggi a T+5: ${sign}${fwdDelta.toFixed(2)}pp`
+              : `Δ from today to T+5: ${sign}${fwdDelta.toFixed(2)}pp`),
       );
     }
     if (isDiverging) {
-      parts.push(`active recalibration (Δ max ${divergePp.toFixed(1)}pp vs pure model)`);
+      parts.push(
+        it
+          ? `ricalibrazione attiva (Δ max ${divergePp.toFixed(1)}pp vs modello puro)`
+          : `active recalibration (Δ max ${divergePp.toFixed(1)}pp vs pure model)`,
+      );
     }
     if (realePts.length > 0 && !splitAtNow) {
-      parts.push(`${realePts.length} historical real closes`);
+      parts.push(
+        it
+          ? `${realePts.length} chiusure storiche reali`
+          : `${realePts.length} historical real closes`,
+      );
     }
     return parts.join(" · ");
   })();
@@ -1035,12 +1061,18 @@ function FallbackSparkline({
       className={className ? `overflow-visible ${className}` : "shrink-0 overflow-visible"}
       aria-label={
         nowOff != null
-          ? `Pred curve · today at ${nowOff > 0 ? "+" : ""}${nowOff} d from CD (sheet fallback)`
-          : "Predictive curve (sheet fallback)"
+          ? (getLang() === "it"
+              ? `Curva Pred · oggi a ${nowOff > 0 ? "+" : ""}${nowOff} g dal CD (fallback foglio)`
+              : `Pred curve · today at ${nowOff > 0 ? "+" : ""}${nowOff} d from CD (sheet fallback)`)
+          : (getLang() === "it" ? "Curva predittiva (fallback foglio)" : "Predictive curve (sheet fallback)")
       }
       role="img"
     >
-      <title>Model curve (fallback to sheet columns; chart bundle not loaded)</title>
+      <title>
+        {getLang() === "it"
+          ? "Curva modello (fallback alle colonne del foglio; chart bundle non caricato)"
+          : "Model curve (fallback to sheet columns; chart bundle not loaded)"}
+      </title>
       {showCdZones ? (
         <SparklineCdZoneBands
           minOff={minOff}

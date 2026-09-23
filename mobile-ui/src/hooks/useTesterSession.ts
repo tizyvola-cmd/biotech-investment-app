@@ -4,12 +4,15 @@ import {
   fetchTesterFeedbackConfig,
   postTesterFeedbackEvent,
   registerMobileTester,
+  createTesterSession,
   type TesterAccess,
 } from "../api";
 import {
   getStoredTester,
   saveStoredTester,
   clearStoredTester,
+  getTesterSessionToken,
+  setTesterSessionToken,
   testerIdFromEmail,
   type StoredTester,
 } from "../testerSession";
@@ -20,6 +23,18 @@ export type TesterGateState = "loading" | "needs_register" | "pending" | "revoke
 const PING_INTERVAL_MS = 5 * 60 * 1000;
 const PENDING_POLL_MS = 12_000;
 const LS_WELCOME = "sn_tester_show_welcome";
+
+async function ensureServerRegistration(stored: StoredTester): Promise<TesterAccess> {
+  let access = await fetchTesterAccess(stored.testerId);
+  if (!access.registered) {
+    await registerMobileTester({
+      email: stored.email,
+      display_name: stored.displayName || stored.email,
+    });
+    access = await fetchTesterAccess(stored.testerId);
+  }
+  return access;
+}
 
 /** Restore session from approval email link (?welcome=1&email=…). */
 async function bootstrapTesterFromWelcomeUrl(): Promise<StoredTester | null> {
@@ -33,7 +48,14 @@ async function bootstrapTesterFromWelcomeUrl(): Promise<StoredTester | null> {
     if (stored?.email === emailParam) return stored;
 
     const testerId = testerIdFromEmail(emailParam);
-    const access = await fetchTesterAccess(testerId);
+    let access = await fetchTesterAccess(testerId);
+    if (!access.registered) {
+      await registerMobileTester({
+        email: emailParam,
+        display_name: emailParam.split("@")[0] || emailParam,
+      });
+      access = await fetchTesterAccess(testerId);
+    }
     if (!access.registered) return stored;
 
     const next: StoredTester = {
@@ -101,6 +123,16 @@ export function useTesterSession(activeScreen?: string) {
       }
     }
     setGate("ready");
+    if (!getTesterSessionToken()) {
+      void createTesterSession(stored.testerId, stored.email)
+        .then((sess) => {
+          const tok = sess.tester?.session_token;
+          if (typeof tok === "string" && tok) setTesterSessionToken(tok);
+        })
+        .catch(() => {
+          /* ignore */
+        });
+    }
   }, []);
 
   const refreshAccess = useCallback(async () => {
@@ -111,29 +143,14 @@ export function useTesterSession(activeScreen?: string) {
       return null;
     }
     try {
-      const a = await fetchTesterAccess(stored.testerId);
+      const a = await ensureServerRegistration(stored);
       applyAccess(a, stored);
       setAuthErr(null);
       return a;
     } catch (e) {
       const msg = e instanceof Error ? e.message : String(e);
       setAuthErr(msg === "INVITE_REQUIRED" ? "INVITE_REQUIRED" : msg);
-      if (/404|not found/i.test(msg) && stored) {
-        applyAccess(
-          {
-            tester_id: stored.testerId,
-            registered: true,
-            email: stored.email,
-            display_name: stored.displayName,
-            status: "pending",
-            allowed: false,
-          },
-          stored,
-        );
-        setAuthErr(null);
-      } else {
-        setGate("needs_register");
-      }
+      setGate("needs_register");
       return null;
     }
   }, [applyAccess]);
@@ -158,25 +175,11 @@ export function useTesterSession(activeScreen?: string) {
           displayName: String(meta.display_name || displayName || email),
         };
         saveStoredTester(stored);
+        const tok = (meta as { session_token?: string }).session_token;
+        if (tok) setTesterSessionToken(tok);
         setTester(stored);
-        try {
-          const a = await fetchTesterAccess(stored.testerId);
-          applyAccess(a, stored);
-        } catch {
-          // API pre-email-auth: no /access endpoint — infer from register response.
-          const status = String(meta.status ?? "pending");
-          applyAccess(
-            {
-              tester_id: stored.testerId,
-              registered: true,
-              email: stored.email,
-              display_name: stored.displayName,
-              status,
-              allowed: status === "approved" || meta.allowed === true,
-            },
-            stored,
-          );
-        }
+        const a = await ensureServerRegistration(stored);
+        applyAccess(a, stored);
       } catch (e) {
         const msg = e instanceof Error ? e.message : String(e);
         setAuthErr(msg === "INVITE_REQUIRED" ? "INVITE_REQUIRED" : msg);
@@ -201,8 +204,9 @@ export function useTesterSession(activeScreen?: string) {
       const now = Date.now();
       if (now - lastPingRef.current < 30_000) return;
       lastPingRef.current = now;
+      // Mobile is dashboard-only; map legacy tab names to dashboard.
       const module =
-        screen === "portfolio" || screen === "opportunities" || screen === "dashboard"
+        screen === "detail" || screen === "opportunity" || screen === "dashboard"
           ? screen
           : "dashboard";
       try {
@@ -216,6 +220,7 @@ export function useTesterSession(activeScreen?: string) {
             app_version: MOBILE_APP_VERSION,
             screen: screen ?? module,
             email: stored.email,
+            seconds: Math.round(PING_INTERVAL_MS / 1000),
           },
         });
       } catch {

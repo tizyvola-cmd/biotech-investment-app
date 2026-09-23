@@ -7,6 +7,7 @@ import {
   buildPortfolioDailyPnlLedger,
   computeSimulationPosition,
   scaleCloseSeriesToEntryCapital,
+  sheetBuyPriceFromRow,
   tickerDailyCloseSeries,
   type PortfolioTickerDailyRow,
 } from "./simulationPosition";
@@ -17,15 +18,13 @@ export type PortfolioGainAuditRow = {
   status: "open" | "closed";
   purchaseDate: string;
   buyPriceUsd: number | null;
-  capitalEur: number;
   shares: number | null;
   day: string;
   closePriceUsd: number | null;
-  positionValueEur: number | null;
-  dailyPnlEur: number | null;
-  cumulativePnlEur: number | null;
   cumulativePnlPct: number | null;
-  rowKind: "entry" | "day";
+  rowKind: "entry" | "day" | "exit";
+  /** True when buyPrice=0 in both sheet and inputs — shares/closePriceUsd non calcolabili. */
+  buyPriceMissing?: boolean;
 };
 
 export type PortfolioGainAuditExport = {
@@ -37,6 +36,12 @@ export type PortfolioGainAuditExport = {
 
 function round2(n: number): number {
   return Math.round(n * 100) / 100;
+}
+
+/** Returns false for Saturday (6) and Sunday (0) — NASDAQ market closed. */
+function isMarketDay(dayKey: string): boolean {
+  const dow = new Date(dayKey + "T12:00:00Z").getUTCDay();
+  return dow !== 0 && dow !== 6;
 }
 
 function fmtNum(n: number | null | undefined): number | null {
@@ -107,17 +112,24 @@ function buildAuditRowsForLedgerRow(args: {
   const pos = simRow
     ? computeSimulationPosition(simRow, inputs, { history })
     : null;
-  const buyPriceUsd =
-    pos?.buyPrice && pos.buyPrice > 0
-      ? pos.buyPrice
-      : inp?.buyPrice && inp.buyPrice > 0
-        ? inp.buyPrice
-        : null;
+  // Fix B: per le posizioni archived (closed) il buyPrice viene inferito da history usando
+  // il prezzo CORRENTE come denominatore — risultato sistematicamente sbagliato se il
+  // prezzo è cambiato dall'acquisto. Si usa solo il buyPrice esplicito da inputs.
+  // Per le posizioni open si mantiene il fallback a pos.buyPrice + sheetBuy.
+  const sheetBuy = simRow ? (sheetBuyPriceFromRow(simRow) ?? null) : null;
+  const buyPriceUsd: number | null = (() => {
+    if (inp?.buyPrice && inp.buyPrice > 0) return inp.buyPrice;
+    if (lr.archived) return null; // Fix B: non inferire per posizioni chiuse
+    if (pos?.buyPrice && pos.buyPrice > 0) return pos.buyPrice;
+    if (sheetBuy && sheetBuy > 0) return sheetBuy;
+    return null;
+  })();
+  const buyPriceMissing = buyPriceUsd == null;
   const shares =
-    pos?.shares && pos.shares > 0
-      ? pos.shares
-      : buyPriceUsd != null && buyPriceUsd > 0 && lr.capital > 0
-        ? lr.capital / buyPriceUsd
+    buyPriceUsd != null && buyPriceUsd > 0 && lr.capital > 0
+      ? lr.capital / buyPriceUsd
+      : !lr.archived && pos?.shares && pos.shares > 0
+        ? pos.shares
         : null;
   const todayKey = calendarDayKeyFromDate(new Date());
   const closeSeriesRaw = tickerDailyCloseSeries(history, lr.key, investedAt);
@@ -135,9 +147,16 @@ function buildAuditRowsForLedgerRow(args: {
 
   const dayKeys = new Set<string>();
   if (purchaseDate) dayKeys.add(purchaseDate);
-  for (const leg of lr.legs) dayKeys.add(leg.dayKey);
-  for (const pt of closeSeries) dayKeys.add(pt.dayKey);
-  if (!lr.archived) dayKeys.add(todayKey);
+  // Fix E: filter weekend dates from legs (snapshots taken on Sat/Sun bypass the market-day
+  // check and would otherwise generate rows with forward-filled prices attributed to the wrong day).
+  for (const leg of lr.legs) {
+    if (isMarketDay(leg.dayKey)) dayKeys.add(leg.dayKey);
+  }
+  // Bug #3 fix: esclude snapshot di sabato/domenica — NASDAQ chiuso, prezzi non affidabili.
+  for (const pt of closeSeries) {
+    if (isMarketDay(pt.dayKey)) dayKeys.add(pt.dayKey);
+  }
+  if (!lr.archived && isMarketDay(todayKey)) dayKeys.add(todayKey);
 
   const sortedDays = [...dayKeys].sort();
   const out: PortfolioGainAuditRow[] = [];
@@ -150,28 +169,18 @@ function buildAuditRowsForLedgerRow(args: {
       status,
       purchaseDate,
       buyPriceUsd: fmtNum(buyPriceUsd),
-      capitalEur: lr.capital,
       shares: fmtNum(shares),
       day: purchaseDate,
       closePriceUsd: fmtNum(buyPriceUsd),
-      positionValueEur: lr.capital,
-      dailyPnlEur: 0,
-      cumulativePnlEur: 0,
       cumulativePnlPct: 0,
       rowKind: "entry",
+      ...(buyPriceMissing ? { buyPriceMissing: true } : {}),
     });
   }
 
   for (const day of sortedDays) {
     if (day === purchaseDate) continue;
-    const dailyPnlEur = lr.pnlByDay[day] ?? null;
-    const positionValueEur = valueForDayKey(
-      day,
-      lr,
-      closeSeries,
-      liveValue,
-      todayKey,
-    );
+    const positionValueEur = valueForDayKey(day, lr, closeSeries, liveValue, todayKey);
     const cumulativePnlEur =
       positionValueEur != null ? round2(positionValueEur - lr.capital) : null;
     const cumulativePnlPct =
@@ -190,15 +199,42 @@ function buildAuditRowsForLedgerRow(args: {
       status,
       purchaseDate,
       buyPriceUsd: fmtNum(buyPriceUsd),
-      capitalEur: lr.capital,
       shares: fmtNum(shares),
       day,
       closePriceUsd: fmtNum(closePriceUsd),
-      positionValueEur: fmtNum(positionValueEur),
-      dailyPnlEur: fmtNum(dailyPnlEur),
-      cumulativePnlEur: fmtNum(cumulativePnlEur),
       cumulativePnlPct: fmtNum(cumulativePnlPct),
       rowKind: "day",
+    });
+  }
+
+  // Fix D + Bug #5: riga "exit" esplicita per posizioni chiuse.
+  // Genera la riga se soldAt è noto OPPURE se closedValue è impostato (CCCC ha closedValue
+  // ma soldAt mancante per un bug di scrittura al momento della vendita).
+  if (lr.archived && (inp?.soldAt || inp?.closedValue != null)) {
+    const exitDayKey = inp?.soldAt
+      ? inp.soldAt.slice(0, 10)
+      : (out[out.length - 1]?.day ?? purchaseDate); // fallback: ultimo giorno già in output
+    const closedValueEur = inp?.closedValue ?? null;
+    const closedPnlEur = inp?.closedPnlEur ?? null;
+    const closedPnlPct =
+      closedPnlEur != null && lr.capital > 0
+        ? round2((closedPnlEur / lr.capital) * 100)
+        : null;
+    // Fix C: se closedPnl=0 e closedValue=capital il dato è fittizio (fetch fallito al close).
+    // exitCloseUsd rimane null (buyPriceMissing=true già imposto da Fix B).
+    const exitCloseUsd = closeUsdFromValue(closedValueEur, shares, null);
+    out.push({
+      ticker: lr.ticker,
+      completionDate: lr.completionDate,
+      status: "closed",
+      purchaseDate,
+      buyPriceUsd: fmtNum(buyPriceUsd),
+      shares: fmtNum(shares),
+      day: exitDayKey,
+      closePriceUsd: fmtNum(exitCloseUsd),
+      cumulativePnlPct: fmtNum(closedPnlPct),
+      rowKind: "exit",
+      ...(buyPriceMissing ? { buyPriceMissing: true } : {}),
     });
   }
 
@@ -270,14 +306,10 @@ function auditHeaders(lang: "it" | "en"): string[] {
       "Stato",
       "Data acquisto",
       "Prezzo acquisto ($)",
-      "Capitale (€)",
       "Azioni",
       "Giorno",
       "Tipo riga",
       "Prezzo chiusura ($)",
-      "Valore posizione (€)",
-      "P&L giorno (€)",
-      "P&L cumulato (€)",
       "P&L cumul. (%)",
     ];
   }
@@ -287,14 +319,10 @@ function auditHeaders(lang: "it" | "en"): string[] {
     "Status",
     "Purchase date",
     "Buy price ($)",
-    "Capital (€)",
     "Shares",
     "Day",
     "Row type",
     "Close price ($)",
-    "Position value (€)",
-    "Daily P&L (€)",
-    "Cumulative P&L (€)",
     "Cumulative P&L (%)",
   ];
 }
@@ -306,17 +334,13 @@ function legendRows(lang: "it" | "en", exp: PortfolioGainAuditExport): string[][
     [it ? "Generato" : "Generated", exp.generatedAt],
     [
       it ? "Formula azioni" : "Shares formula",
-      it ? "azioni = capitale € / prezzo acquisto $" : "shares = capital € / buy price $",
+      it ? "azioni = capitale investito / prezzo acquisto ($)" : "shares = invested capital / buy price ($)",
     ],
     [
-      it ? "Formula valore" : "Value formula",
+      it ? "P&L cumul. (%)" : "Cumulative P&L (%)",
       it
-        ? "valore € = azioni × prezzo chiusura $ (stessa logica MTM dell'app)"
-        : "value € = shares × close price $ (same MTM logic as the app)",
-    ],
-    [
-      it ? "P&L cumulato" : "Cumulative P&L",
-      it ? "valore posizione − capitale ingresso" : "position value − entry capital",
+        ? "(prezzo chiusura − prezzo acquisto) / prezzo acquisto × 100"
+        : "(close price − buy price) / buy price × 100",
     ],
   ];
   if (exp.incompleteDailyHistory) {
@@ -357,26 +381,20 @@ export function buildPortfolioGainAuditSpreadsheetXml(
             : "closed";
       const kindLabel =
         r.rowKind === "entry"
-          ? lang === "it"
-            ? "ingresso"
-            : "entry"
-          : lang === "it"
-            ? "giorno"
-            : "day";
+          ? lang === "it" ? "ingresso" : "entry"
+          : r.rowKind === "exit"
+            ? lang === "it" ? "uscita" : "exit"
+            : lang === "it" ? "giorno" : "day";
       return `<Row>${[
         xmlCell(r.ticker, "String"),
         xmlCell(r.completionDate, "String"),
         xmlCell(statusLabel, "String"),
         xmlCell(r.purchaseDate, "String"),
         xmlCell(r.buyPriceUsd, "Number"),
-        xmlCell(r.capitalEur, "Number"),
         xmlCell(r.shares, "Number"),
         xmlCell(r.day, "String"),
         xmlCell(kindLabel, "String"),
         xmlCell(r.closePriceUsd, "Number"),
-        xmlCell(r.positionValueEur, "Number"),
-        xmlCell(r.dailyPnlEur, "Number"),
-        xmlCell(r.cumulativePnlEur, "Number"),
         xmlCell(r.cumulativePnlPct, "Number"),
       ].join("")}</Row>`;
     })

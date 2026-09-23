@@ -1,4 +1,5 @@
-import { api } from "./supernova";
+import { api, getStoredToken } from "./supernova";
+import { resolveWeeklyFullApiBase } from "../shared/remoteHost";
 
 export type RefreshProfile = {
   id: string;
@@ -34,6 +35,7 @@ export type OrchestratorRunSummary = {
   new_catalyst_rows?: OrchestratorCatalystEntry[];
   cohort_entries_count?: number;
   staged_workbook?: string;
+  message?: string;
 };
 
 export type WorkbookStatus = {
@@ -48,6 +50,47 @@ export type WorkbookStatus = {
 
 export function fetchOrchestratorSummary() {
   return api<OrchestratorRunSummary>("/api/refresh/orchestrator-summary");
+}
+
+export type WeeklyFullLastRun = {
+  ok?: boolean;
+  message?: string;
+  duration_sec?: number;
+  finished_at?: string;
+};
+
+export type WeeklyFullServerStatus = {
+  enabled?: boolean;
+  running?: boolean;
+  last_run?: WeeklyFullLastRun | null;
+  summary?: OrchestratorRunSummary | null;
+  error?: string;
+};
+
+/** Always hits the WeeklyFull host (VPS in Electron), not local :8765. */
+export async function fetchWeeklyFullStatus(): Promise<WeeklyFullServerStatus> {
+  const base = resolveWeeklyFullApiBase().replace(/\/$/, "");
+  if (!base) {
+    return api<WeeklyFullServerStatus>("/api/refresh/weekly-full-status");
+  }
+  const headers = new Headers();
+  const token = getStoredToken();
+  if (token) headers.set("X-SuperNova-Token", token);
+  const ac = new AbortController();
+  const timeoutId = setTimeout(() => ac.abort(), 12_000);
+  try {
+    const res = await fetch(`${base}/api/refresh/weekly-full-status`, {
+      headers,
+      signal: ac.signal,
+    });
+    if (!res.ok) {
+      const text = await res.text();
+      throw new Error(`${res.status}: ${text.slice(0, 240)}`);
+    }
+    return (await res.json()) as WeeklyFullServerStatus;
+  } finally {
+    clearTimeout(timeoutId);
+  }
 }
 
 export function fetchRefreshProfiles() {

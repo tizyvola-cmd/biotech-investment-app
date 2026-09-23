@@ -37,9 +37,11 @@ import {
   predPctVsTodayByOffset,
   regimeLabel,
   slopeSourceLabel,
+  uncertaintyLabelDisplay,
   type PrecatWaypoint,
   type SlopeSource,
 } from "../sheet/precatCurve";
+import { useLang } from "../shared/i18n";
 import { recalibSeriesFromChartPoints } from "../sheet/slopeRecalibCurve";
 import { resolveRecalibratedChartPoints } from "../sheet/predictionCurveDailyRecalib";
 import {
@@ -229,6 +231,8 @@ export function PrecatCurvePanel({
   chartPoints?: SimChartPoint[];
 }) {
   const t = useT();
+  const { lang } = useLang();
+  const it = lang === "it";
   const { slope20d, slope5d, slope45d, runUp30d } = extractCurveInputs(simRow);
 
   const curve = computePrecatCurve(slope20d, slope5d, runUp30d, daysToCd);
@@ -308,7 +312,7 @@ export function PrecatCurvePanel({
           className="px-1.5 py-0.5 rounded-full text-[10px] font-semibold"
           style={{ background: `${badgeColor}22`, color: badgeColor }}
         >
-          Uncertainty {uLabel}
+          {it ? "Incertezza" : "Uncertainty"} {uncertaintyLabelDisplay(uLabel, it)}
         </span>
         <span className="text-ink-muted">·</span>
         <span

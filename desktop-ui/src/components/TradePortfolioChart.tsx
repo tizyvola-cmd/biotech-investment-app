@@ -15,6 +15,10 @@ import { useLang, useT } from "../shared/i18n";
 import { AdviceTriangleMarker, SellOutcomeTriangle, adviceOutcomeFill } from "./adviceChartMarkers";
 import type { AdviceOutcomeClass } from "../sheet/investDecisionSimAdviceCalibration";
 import { DECISION_SIM_PAIR_PRECHART_FALLBACK_PX } from "./decisionSimChartLayout";
+import {
+  computeMaturationChartYDomain,
+  stabilizeMaturationYDomain,
+} from "../sheet/maturationOverview";
 
 type ChartRow = {
   date: string;
@@ -77,19 +81,19 @@ function ChartLegend({
 }) {
   const primaryLabel = isSynthPrimary
     ? it
-      ? "Sim loop (synth) P&L €"
-      : "Sim loop (synth) P&L €"
+      ? "Sim loop (synth) P&L $"
+      : "Sim loop (synth) P&L $"
     : isWeightPrimary
       ? it
-        ? "Sim loop (weight) P&L €"
-        : "Sim loop (weight) P&L €"
+        ? "Sim loop (weight) P&L $"
+        : "Sim loop (weight) P&L $"
       : isPnlMode
       ? it
-        ? "Sim loop P&L €"
-        : "Sim loop P&L €"
+        ? "Sim loop P&L $"
+        : "Sim loop P&L $"
       : it
-        ? "Valore portafoglio €"
-        : "Portfolio value €";
+        ? "Valore portafoglio $"
+        : "Portfolio value $";
   const primarySwatch = isSynthPrimary ? (
     <span className="inline-block w-5 h-0.5 bg-pink-600 rounded" aria-hidden />
   ) : isWeightPrimary ? (
@@ -165,7 +169,7 @@ function ChartLegend({
           aria-hidden
         />
       ),
-      label: "HOLD / REVIEW",
+      label: "HOLD / UNCERTAIN",
     },
   ];
   return (
@@ -284,7 +288,7 @@ export function TradePortfolioChart({
   simLoopWeightedPortfolioCurve?: PortfolioPoint[];
   /** Sim loop book value with Weight Sim Exp (synth) sizing. */
   simLoopSynthPortfolioCurve?: PortfolioPoint[];
-  /** Y axis: cumulative P&L € (sim loop) or legacy book value. */
+  /** Y axis: cumulative P&L $ (sim loop) or legacy book value. */
   valueMode?: "pnl" | "book";
   /** Primary curve styling — equal / weight / synth sizing. */
   curveVariant?: "equal" | "weight" | "synth";
@@ -424,6 +428,23 @@ export function TradePortfolioChart({
     showOverlayCurves && (simLoopWeightedPortfolioCurve?.length ?? 0) > 0;
   const showSimLoopSynth =
     showOverlayCurves && (simLoopSynthPortfolioCurve?.length ?? 0) > 0;
+
+  const yDomain = useMemo((): [number, number] | undefined => {
+    if (!isPnlMode) return undefined;
+    const vals: number[] = [];
+    for (const row of chartData) {
+      if (Number.isFinite(row.value)) vals.push(row.value);
+      if (row.compareValue != null && Number.isFinite(row.compareValue)) vals.push(row.compareValue);
+      if (row.simLoopWeightedValue != null && Number.isFinite(row.simLoopWeightedValue)) {
+        vals.push(row.simLoopWeightedValue);
+      }
+      if (row.simLoopSynthValue != null && Number.isFinite(row.simLoopSynthValue)) {
+        vals.push(row.simLoopSynthValue);
+      }
+    }
+    if (!vals.length) return undefined;
+    return stabilizeMaturationYDomain(computeMaturationChartYDomain(vals));
+  }, [chartData, isPnlMode]);
 
   const finalPoint = portfolioCurve[portfolioCurve.length - 1];
   const finalPnlRaw =
@@ -600,6 +621,7 @@ export function TradePortfolioChart({
             tickLine={false}
             axisLine={false}
             width={52}
+            domain={yDomain}
           />
           <Tooltip content={<PortfolioTooltip it={it} isPnlMode={isPnlMode} />} />
           <Line

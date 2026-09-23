@@ -20,6 +20,10 @@ export function useAdviceFeedbackAutoApply(args: {
   summary: AdviceCalibrationSummary;
   unifiedAdviceSuccess?: UnifiedAdviceSuccess | null;
   adviceComplement?: AdviceComplementKpis | null;
+  buySuccessRatePct?: number | null;
+  buyScored?: number;
+  sellSuccessRatePct?: number | null;
+  sellScored?: number;
 }): void {
   useEffect(() => {
     if (typeof window === "undefined") return;
@@ -35,6 +39,10 @@ export function useAdviceFeedbackAutoApply(args: {
         capturePct: args.adviceComplement?.capture.capturePct ?? null,
         paperBookReturnPct: args.adviceComplement?.paperReturn.returnPct ?? null,
         closedPnlWinRatePct: args.adviceComplement?.closedPnl.winRatePct ?? null,
+        buySuccessRatePct: args.buySuccessRatePct ?? null,
+        buyScored: args.buyScored ?? 0,
+        sellSuccessRatePct: args.sellSuccessRatePct ?? null,
+        sellScored: args.sellScored ?? 0,
         manual: false,
       }),
     );
@@ -45,5 +53,9 @@ export function useAdviceFeedbackAutoApply(args: {
     args.adviceComplement?.capture.capturePct,
     args.adviceComplement?.paperReturn.returnPct,
     args.adviceComplement?.closedPnl.winRatePct,
+    args.buySuccessRatePct,
+    args.buyScored,
+    args.sellSuccessRatePct,
+    args.sellScored,
   ]);
 }

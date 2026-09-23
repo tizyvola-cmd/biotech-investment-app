@@ -1,0 +1,10 @@
+=== simulation_sheet ETON ===
+Ticker: ETON
+Completion Date: 15/08/2026
+Lead sponsor: PMV Pharmaceuticals, Inc
+NCT: {'text': 'NCT04585750', 'href': 'https://clinicaltrials.gov/study/NCT04585750'}
+Sponsor (da NCT): —
+Relazione sponsor: —
+Studio Phase: PHASE1 | PHASE2
+=== clinical_simulation hits 1 ===
+{'ticker': 'PMVP', 'nct_id': "{'text': 'NCT04585750', 'href': 'https://clinicaltrials.gov/study/NCT04585750'}", 'sponsor_match': 'Exact', 'query_company': 'PMV Pharmaceuticals, Inc.', 'lead_sponsor': 'PMV Pharmaceuticals, Inc', 'brief_title': 'The Evaluation of PC14586 in Patients With Advanced Solid Tumors Harboring a TP5'}

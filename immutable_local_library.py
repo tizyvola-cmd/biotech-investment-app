@@ -34,6 +34,7 @@ CANONICAL_RELATIVE_FILES: tuple[str, ...] = (
     "variations.json",
     "biotech_clinical_openfda.xlsx",
     "biotech_symbols.json",
+    "medtech_symbols.json",
     "model_calibration_state.json",
     "model_historical_input_library.json",
 )

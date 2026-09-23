@@ -6,7 +6,7 @@ from __future__ import annotations
 
 import json
 import os
-from datetime import datetime
+from datetime import datetime, timedelta
 from typing import Any
 
 from orchestrator_io_paths import DATA_DIR, FINAL_XLSX
@@ -267,12 +267,23 @@ def finalize_orchestrator_run(
     finished = datetime.now()
     started_iso = _SESSION.get("started_at")
     started_display = _SESSION.get("started_at_display") or _stamp()
-    try:
-        if started_iso:
+    elapsed_sec = max(0, int(elapsed_sec))
+    if started_iso:
+        try:
             started_dt = datetime.fromisoformat(started_iso)
             elapsed_sec = max(0, int((finished - started_dt).total_seconds()))
-    except Exception:
-        elapsed_sec = max(0, int(elapsed_sec))
+        except Exception:
+            pass
+    else:
+        # Sessione persa (crash/restart API): ricostruisci l'avvio da elapsed_sec.
+        try:
+            started_dt = finished - timedelta(seconds=elapsed_sec)
+            started_iso = started_dt.isoformat(timespec="seconds")
+            started_display = started_dt.strftime("%Y-%m-%d %H:%M:%S")
+        except Exception:
+            started_iso = finished.isoformat(timespec="seconds")
+            started_display = _stamp()
+            elapsed_sec = 0
 
     doc: dict[str, Any] = {
         "profile": _SESSION.get("profile") or "weekly_full",

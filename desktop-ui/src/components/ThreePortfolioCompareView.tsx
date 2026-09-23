@@ -7,10 +7,8 @@
  *
  * Renders:
  *   1. Header + brief explainer
- *   2. Table: rows = unique tickers across mine ∪ sim loop. Per row, three
- *      column groups (Mine equal · Sim loop equal · Sim loop weighted), each
- *      showing capital € + EV € contribution. Totals row at the bottom.
- *   3. Comparison chart: 3 bars (total EV per portfolio scenario).
+ *   2. Cumulative dual chart (three scenarios)
+ *   3. Predictive sizing evaluation (equal vs predictive vs optimal)
  *
  * READ-ONLY: no writes to the real portfolio.
  */
@@ -30,11 +28,18 @@ import type { SdsRow } from "../api/supernova";
 import type { SimOutcomeRow } from "../data/investmentSimOutcomesData";
 import type { CalibrationSnapshot } from "../calibration/calibrationTypes";
 import type { InvestSimInputs } from "../sheet/investSimStorage";
+import type { SdsGainBreakdown } from "../sheet/sdsGainBreakdown";
 import { computeCalibrationSnapshot } from "../calibration/shrinkageEngine";
 import { evaluateWeightedSizingGate } from "../calibration/weightedSizingGate";
 import { computePortfolioSizingSuccessComparison } from "../sheet/portfolioWeightedSizing";
 import { computeSdsGainBreakdown } from "../sheet/sdsGainBreakdown";
 import { buildSynthCurveAllocation } from "../sheet/buildSynthCurveAllocation";
+import {
+  capDivDailyChartFootnote,
+  capDivWalkSessionContext,
+  resolveCapDivWalkDailyPct,
+  resolveCapDivWalkTotalPct,
+} from "../sheet/capDivCumulativeWalk";
 import {
   allocateFromShares,
   buildThreePortfolioComparison,
@@ -48,6 +53,8 @@ import {
   summarizeThreeScenarioGainTotals,
 } from "../sheet/portfolioScenarioGain";
 import { loadDecisionSimState } from "../sheet/investDecisionSimStorage";
+import { DEFAULT_PLAN_CAPITAL_EUR } from "../sheet/expectedRoiDisplay";
+import { SIM_TABLE_SYNTH_MAX_SHARE } from "../sheet/approvedWeightPortfolioShares";
 import { SynthGainImpactPanel, type PortfolioBalancingSuccessRow } from "./SynthGainImpactPanel";
 import { computeRealizedSuccessForDeals } from "../sheet/portfolioSuccessBridge";
 import {
@@ -63,40 +70,131 @@ import { buildSimRowByKeyMap } from "../sheet/investSimKeys";
 import { simulationRowPredAtOffset } from "../data/simulationCharts";
 import { STANDARD_CAL_OFFSETS } from "../sheet/chartNodes";
 import { WeightedSizingGateBanner } from "./WeightedSizingGateBanner";
-import {
-  LossRiskBreakdownModal,
-  type LossRiskEntry,
-} from "./LossRiskPoopCell";
-import {
-  RiskBenefitScaleCell,
-  deriveBenefitFillPct,
-} from "./RiskBenefitScaleIcon";
-
-/** Adapter: ComparisonDeal → generic LossRiskEntry used by the shared cell. */
-function dealToLossRiskEntry(deal: ComparisonDeal): LossRiskEntry {
-  return {
-    ticker: deal.ticker,
-    phaseLabel: deal.cells.clinicalPhase ?? "",
-    riskScore: deal.riskScore,
-    lossRisk: deal.lossRisk,
-    cells: deal.cells,
-  };
-}
-
 function fmtEur(v: number | null | undefined): string {
   if (v == null || !Number.isFinite(v)) return "—";
   const sign = v > 0 ? "+" : "";
-  return `${sign}${Math.round(v).toLocaleString("it-IT")} €`;
+  return `${sign}${Math.round(v).toLocaleString("it-IT")} $`;
 }
 
 function fmtEurNoSign(v: number | null | undefined): string {
   if (v == null || !Number.isFinite(v)) return "—";
-  return `${Math.round(v).toLocaleString("it-IT")} €`;
+  return `${Math.round(v).toLocaleString("it-IT")} $`;
 }
 
-function fmtPct01(v: number | null | undefined, d = 1): string {
-  if (v == null || !Number.isFinite(v)) return "—";
-  return `${(v * 100).toFixed(d)}%`;
+type GroupSummary = {
+  mineN: number;
+  mineEmployedEur: number;
+  simLoopN: number;
+  simLoopEmployedEur: number;
+  synthEmployedEur: number;
+  perTradeEur: number;
+  capPct: number;
+};
+
+/** "3 experiments at a glance" — explains what each group does, when it accepts
+ *  a recommendation (threshold) and how it deploys capital, plus the real
+ *  capital employed (vs the apples-to-apples shared pot used by the charts). */
+function ThreeGroupExplainer({
+  summary,
+  it,
+  fmtEur,
+}: {
+  summary: GroupSummary;
+  it: boolean;
+  fmtEur: (v: number | null | undefined) => string;
+}) {
+  const groups = [
+    {
+      key: "mine",
+      name: it ? "Portfolio reale" : "Real portfolio",
+      dot: "#2563eb",
+      what: it
+        ? "Le tue posizioni reali: decidi tu quali raccomandazioni seguire."
+        : "Your real positions: you decide which recommendations to follow.",
+      threshold: it ? "a tua discrezione" : "your discretion",
+      capitalRule: it ? "il tuo capitale reale" : "your real capital",
+      employed: summary.mineEmployedEur > 0 ? fmtEur(summary.mineEmployedEur) : "—",
+      n: summary.mineN,
+    },
+    {
+      key: "simLoop",
+      name: it ? "Sim loop (uniforme)" : "Sim loop (uniform)",
+      dot: "#9333ea",
+      what: it
+        ? "Entra su ogni raccomandazione sopra la soglia, importo fisso uguale per tutte."
+        : "Enters every recommendation above the threshold, equal fixed amount each.",
+      threshold: it ? "verdetto SÌ + gain atteso > 0 (o P ≥ 40–45%)" : "YES verdict + expected gain > 0 (or P ≥ 40–45%)",
+      capitalRule: it
+        ? `${fmtEur(summary.perTradeEur)} fissi a company`
+        : `${fmtEur(summary.perTradeEur)} flat per company`,
+      employed: fmtEur(summary.simLoopEmployedEur),
+      n: summary.simLoopN,
+    },
+    {
+      key: "synth",
+      name: it ? "Sim synth loop (pesato)" : "Sim synth loop (weighted)",
+      dot: "#db2777",
+      what: it
+        ? "Stessa soglia e stesso universo del sim loop, ma capitale pesato sul pattern approvato."
+        : "Same threshold and universe as the sim loop, but capital weighted by the approved pattern.",
+      threshold: it ? "verdetto SÌ + gain atteso > 0 (o P ≥ 40–45%)" : "YES verdict + expected gain > 0 (or P ≥ 40–45%)",
+      capitalRule: it
+        ? `pesato sui pesi approvati (max ${summary.capPct}%/deal)`
+        : `weighted by approved weights (max ${summary.capPct}%/deal)`,
+      employed: fmtEur(summary.synthEmployedEur),
+      n: summary.simLoopN,
+    },
+  ];
+  return (
+    <div className="rounded-xl border border-indigo-200/50 dark:border-indigo-800/40 bg-indigo-50/30 dark:bg-indigo-950/15 px-3 py-2.5">
+      <p className="text-[11px] font-semibold text-indigo-900 dark:text-indigo-100 mb-1.5">
+        {it ? "I 3 esperimenti a confronto" : "The 3 experiments at a glance"}
+      </p>
+      <div className="overflow-x-auto">
+        <table className="w-full text-[10px] tabular-nums">
+          <thead>
+            <tr className="text-ink-muted border-b border-indigo-200/40 dark:border-indigo-800/30">
+              <th className="text-left font-semibold py-1 pr-2">{it ? "Gruppo" : "Group"}</th>
+              <th className="text-left font-semibold py-1 px-2">{it ? "Cosa fa" : "What it does"}</th>
+              <th className="text-left font-semibold py-1 px-2">
+                {it ? "Soglia ingresso" : "Entry threshold"}
+              </th>
+              <th className="text-left font-semibold py-1 px-2">
+                {it ? "Regola capitale" : "Capital rule"}
+              </th>
+              <th className="text-right font-semibold py-1 pl-2 whitespace-nowrap">
+                {it ? "Capitale reale impiegato" : "Real capital employed"}
+              </th>
+            </tr>
+          </thead>
+          <tbody>
+            {groups.map((g) => (
+              <tr key={g.key} className="border-b border-indigo-200/20 dark:border-indigo-800/15 align-top">
+                <td className="py-1 pr-2 whitespace-nowrap">
+                  <span className="inline-flex items-center gap-1 font-semibold text-ink">
+                    <span className="inline-block w-2 h-2 rounded-full" style={{ backgroundColor: g.dot }} />
+                    {g.name}
+                  </span>
+                </td>
+                <td className="py-1 px-2 text-ink-muted max-w-[220px]">{g.what}</td>
+                <td className="py-1 px-2 text-ink-muted whitespace-nowrap">{g.threshold}</td>
+                <td className="py-1 px-2 text-ink-muted">{g.capitalRule}</td>
+                <td className="py-1 pl-2 text-right font-semibold text-ink whitespace-nowrap">
+                  {g.employed}
+                  <span className="font-normal text-ink-muted"> · n={g.n}</span>
+                </td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
+      <p className="text-[9px] text-ink-muted/80 mt-1.5 leading-relaxed">
+        {it
+          ? "I grafici qui sotto sono a parità di capitale (stesso pot per tutti e 3) per confrontare solo il metodo di sizing — non i capitali reali sopra."
+          : "The charts below use the same capital pot for all 3 to compare only the sizing method — not the real capital employed above."}
+      </p>
+    </div>
+  );
 }
 
 /** Pearson correlation; null when fewer than 3 finite pairs or zero variance. */
@@ -126,12 +224,6 @@ function pearson(xs: number[], ys: number[]): number | null {
   return num / den;
 }
 
-function confTone(c: "low" | "medium" | "high"): string {
-  if (c === "high") return "bg-emerald-100 text-emerald-800 dark:bg-emerald-900/40 dark:text-emerald-200";
-  if (c === "medium") return "bg-amber-100 text-amber-800 dark:bg-amber-900/40 dark:text-amber-200";
-  return "bg-rose-100 text-rose-800 dark:bg-rose-900/30 dark:text-rose-200";
-}
-
 function evTone(v: number): string {
   if (v > 0) return "text-emerald-700 dark:text-emerald-300 font-semibold";
   if (v < 0) return "text-rose-700 dark:text-rose-300 font-semibold";
@@ -142,7 +234,7 @@ function evTone(v: number): string {
  *
  *  - `mine` / `simEq` / `simW` = **portfolio value** = cumulative cost basis +
  *    cumulative P&L for the corresponding scenario. So the curve starts at
- *    €0 (no deal yet) and at each step grows by the new deal's capital plus
+ *    $0 (no deal yet) and at each step grows by the new deal's capital plus
  *    that deal's gain/loss applied to that capital.
  *  - `breakevenMine` / `breakevenSimEq` / `breakevenSimW` = **cumulative
  *    cost basis** for that scenario. This is the "what I've spent so far"
@@ -237,7 +329,7 @@ const SCENARIO_ROW_FIELDS: Record<
  *     has spent so far). The vertical gap between them at any X = current
  *     cumulative P&L — solid above dashed → in profit, solid below → in loss.
  *
- * Both curves start at €0 (row 0) and accumulate one deal at a time. The
+ * Both curves start at $0 (row 0) and accumulate one deal at a time. The
  * breakeven line rises step-by-step as each new deal adds capital, and the
  * portfolio value rises alongside it plus the deal's gain.
  */
@@ -252,13 +344,14 @@ function PortfolioCumulativeDualChart({
   walkSortMode,
   onSetWalkSortMode,
   todayIdx,
+  dailySessionFootnote,
   it,
   fmtEur: fmtEurFn,
 }: {
   totalRows: PortfolioCumulativeRow[];
   dailyRows: PortfolioCumulativeRow[];
   totalYDomain: [number, number];
-  /** Gain-only Y domain for the right pane — anchored at €0, scoped to
+  /** Gain-only Y domain for the right pane — anchored at $0, scoped to
    *  the 24h P&L series only (no invested-capital baseline). */
   dailyGainYDomain: [number, number];
   scenarios: Array<{
@@ -277,6 +370,8 @@ function PortfolioCumulativeDualChart({
   /** X-axis index marking "today" on the deal walk. `null` hides the marker
    *  (e.g. when sorting by |%| desc rather than chronologically). */
   todayIdx: number | null;
+  /** Explains NYSE session semantics for the 24h pane subtitle. */
+  dailySessionFootnote: string;
   it: boolean;
   fmtEur: (v: number | null | undefined) => string;
 }) {
@@ -400,7 +495,7 @@ function PortfolioCumulativeDualChart({
      *    VALUE = invested + P&L) + the stepped invested-capital line +
      *    the horizontal "total breakeven" reference.
      *  - "gain24h": plot ONLY the per-scenario cumulative gain (`pnlMine`
-     *    / `pnlSimEq` / `pnlSimW`) and anchor the breakeven at €0 with a
+     *    / `pnlSimEq` / `pnlSimW`) and anchor the breakeven at $0 with a
      *    single green dashed reference line. Matches the Step 3 chart
      *    convention so the two surfaces are directly comparable.
      */
@@ -444,7 +539,7 @@ function PortfolioCumulativeDualChart({
               <YAxis
                 tick={{ fontSize: 10 }}
                 tickFormatter={(v) =>
-                  `${Math.round(Number(v)) === 0 ? 0 : Number(v).toLocaleString("it-IT")} €`
+                  `${Math.round(Number(v)) === 0 ? 0 : Number(v).toLocaleString("it-IT")} $`
                 }
                 width={64}
                 domain={yDomain}
@@ -458,7 +553,7 @@ function PortfolioCumulativeDualChart({
                     | PortfolioCumulativeRow
                     | undefined;
                   if (!row || row.idx === 0)
-                    return it ? "Punto di partenza (€0 investiti)" : "Starting point (€0 invested)";
+                    return it ? "Punto di partenza ($0 investiti)" : "Starting point ($0 invested)";
                   return `${it ? "Deal" : "Deal"} #${row.idx} — ${row.label}`;
                 }}
                 formatter={(value, dataKey, item) => {
@@ -502,8 +597,8 @@ function PortfolioCumulativeDualChart({
                     breakeven the user has to recover before turning a
                     profit). Solid scenario curves above = in profit.
                   - GAIN24H mode: a single horizontal green dashed line at
-                    €0. The chart no longer carries the invested-capital
-                    baseline so €0 IS the breakeven; scenarios above 0 =
+                    $0. The chart no longer carries the invested-capital
+                    baseline so $0 IS the breakeven; scenarios above 0 =
                     net 24h gain, below = net 24h loss. */}
               {isGain ? null : (
                 <Line
@@ -541,7 +636,7 @@ function PortfolioCumulativeDualChart({
                     of the stepped dashed line at the right edge). Lets
                     the user read "am I above the invested capital line?"
                     without tracing the stair-step.
-                  - GAIN24H mode: drawn at €0 — the canonical breakeven
+                  - GAIN24H mode: drawn at $0 — the canonical breakeven
                     when the invested-capital baseline is removed from the
                     chart. Same green dashed style as the Step 3 chart
                     below for visual continuity. */}
@@ -554,7 +649,7 @@ function PortfolioCumulativeDualChart({
                   strokeOpacity={0.9}
                   ifOverflow="extendDomain"
                   label={{
-                    value: it ? "Breakeven (€0)" : "Breakeven (€0)",
+                    value: it ? "Breakeven ($0)" : "Breakeven ($0)",
                     position: "insideRight",
                     fill: "#15803d",
                     fontSize: 9,
@@ -609,7 +704,7 @@ function PortfolioCumulativeDualChart({
               const cost = lastRow[breakevenKey(s.key)];
               const pnl = lastRow[pnlKey(s.key)];
               // In gain mode the headline number is the cumulative gain
-              // itself (€, signed), with invested capital as context.
+              // itself ($, signed), with invested capital as context.
               // In value mode we headline the portfolio value (cost + P&L)
               // and parenthesize the invested capital — same as before.
               if (isGain) {
@@ -695,11 +790,11 @@ function PortfolioCumulativeDualChart({
           dailyRows,
           dailyGainYDomain,
           it
-            ? "Gain 24h cumulato (€) — breakeven a €0"
-            : "Cumulative 24h gain (€) — breakeven at €0",
-          it
-            ? "Stessi deal in ordine cronologico, ma sull'asse Y c'è SOLO il P&L 24h (senza il capitale investito). La linea verde tratteggiata a €0 è il breakeven: sopra = guadagno netto delle ultime 24h, sotto = perdita. Stessa convenzione del grafico Step 3 sotto — i numeri devono corrispondere."
-            : "Same chronological deals, but the Y axis shows ONLY the 24h P&L (without the invested capital). The green dashed line at €0 is the breakeven: above = net 24h gain, below = loss. Same convention as the Step 3 chart below — the numbers must line up.",
+            ? "Gain 24h cumulato ($) — breakeven a $0"
+            : "Cumulative 24h gain ($) — breakeven at $0",
+          `${it
+            ? "Stessi deal in ordine cronologico, ma sull'asse Y c'è SOLO il P&L 24h (senza il capitale investito). La linea verde tratteggiata a $0 è il breakeven: sopra = guadagno netto delle ultime 24h, sotto = perdita. Stessa convenzione del grafico Step 3 sotto — i numeri devono corrispondere."
+            : "Same chronological deals, but the Y axis shows ONLY the 24h P&L (without the invested capital). The green dashed line at $0 is the breakeven: above = net 24h gain, below = loss. Same convention as the Step 3 chart below — the numbers must line up."} ${dailySessionFootnote}`,
           "cap-div-daily-loss-zone",
           "gain24h",
         )}
@@ -717,6 +812,12 @@ export function ThreePortfolioCompareView({
   totalCapitalEur,
   patternStoreVersion,
   frozenWeightsTick = 0,
+  sharedComparison,
+  sharedCalibrationSnapshot,
+  sharedSdsBreakdown,
+  sharedPhaseA,
+  sharedApprovedPattern,
+  sharedPatternMatchByRowKey,
 }: {
   closedRows: SimOutcomeRow[];
   simTable?: SheetTable | null;
@@ -727,6 +828,17 @@ export function ThreePortfolioCompareView({
   patternStoreVersion: number;
   /** Bumped when Learning Lab approves frozen weights. */
   frozenWeightsTick?: number;
+  /** PERF: shared-context props from the CapDiv tab orchestrator. When
+   *  provided, the corresponding local memo is skipped. See
+   *  PortfolioDiversificationLabPanel for the single-source-of-truth
+   *  computations (avoids up-to-4× duplicate `buildThreePortfolioComparison`
+   *  calls and up-to-5× duplicate `computeCalibrationSnapshot` calls). */
+  sharedComparison?: ThreePortfolioComparison | null;
+  sharedCalibrationSnapshot?: CalibrationSnapshot | null;
+  sharedSdsBreakdown?: SdsGainBreakdown;
+  sharedPhaseA?: PhaseAResult | null;
+  sharedApprovedPattern?: RiskPattern | null;
+  sharedPatternMatchByRowKey?: Map<string, boolean>;
 }) {
   const { lang } = useLang();
   const it = lang === "it";
@@ -754,18 +866,15 @@ export function ThreePortfolioCompareView({
     saveUiPrefs({ threePortfolioCompareOpen: next });
   };
 
-  // Modal state — when the user clicks the poop icon on a row, we open a
-  // popup with the full Phase A + Phase B loss-risk breakdown for that deal.
-  const [riskModalDeal, setRiskModalDeal] = useState<ComparisonDeal | null>(null);
-
   const calibrationSnapshot = useMemo<CalibrationSnapshot | null>(() => {
+    if (sharedCalibrationSnapshot !== undefined) return sharedCalibrationSnapshot;
     try {
       return computeCalibrationSnapshot(closedRows, { simTable, sdsRows });
     } catch {
       return null;
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [closedRows, simTable, sdsRows, patternStoreVersion]);
+  }, [sharedCalibrationSnapshot, closedRows, simTable, sdsRows, patternStoreVersion]);
 
   const weightedGate = useMemo(
     () => evaluateWeightedSizingGate(calibrationSnapshot),
@@ -773,28 +882,32 @@ export function ThreePortfolioCompareView({
   );
 
   const sdsBreakdown = useMemo(
-    () => computeSdsGainBreakdown(closedRows, { simTable, sdsRows }),
-    [closedRows, simTable, sdsRows],
+    () =>
+      sharedSdsBreakdown ??
+      computeSdsGainBreakdown(closedRows, { simTable, sdsRows }),
+    [sharedSdsBreakdown, closedRows, simTable, sdsRows],
   );
 
   // Phase A screening (univariate loss-risk per bucket) — feeds riskScore.
   const phaseA = useMemo<PhaseAResult | null>(() => {
+    if (sharedPhaseA !== undefined) return sharedPhaseA;
     try {
       return runUnivariateScreening(closedRows, { simTable, sdsRows });
     } catch {
       return null;
     }
-  }, [closedRows, simTable, sdsRows]);
+  }, [sharedPhaseA, closedRows, simTable, sdsRows]);
 
   // Approved Phase B pattern — re-read when parent bumps patternStoreVersion.
   const approvedPattern = useMemo<RiskPattern | null>(() => {
+    if (sharedApprovedPattern !== undefined) return sharedApprovedPattern;
     try {
       return loadApprovedPattern().current ?? null;
     } catch {
       return null;
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [patternStoreVersion]);
+  }, [sharedApprovedPattern, patternStoreVersion]);
 
   /**
    * Pre-resolve the Step 2 risk-pattern match for every row in the universe so
@@ -807,6 +920,7 @@ export function ThreePortfolioCompareView({
    * neutral patternPenalty=1.0 and the allocation reduces to EV × confidence.
    */
   const patternMatchByRowKey = useMemo(() => {
+    if (sharedPatternMatchByRowKey) return sharedPatternMatchByRowKey;
     const map = new Map<string, boolean>();
     if (!approvedPattern) return map;
     try {
@@ -827,7 +941,7 @@ export function ThreePortfolioCompareView({
       /* swallow — empty map keeps every deal at patternPenalty=1.0 */
     }
     return map;
-  }, [approvedPattern, closedRows, simTable, sdsRows]);
+  }, [sharedPatternMatchByRowKey, approvedPattern, closedRows, simTable, sdsRows]);
 
   const matchesStep2Pattern = useMemo(
     () => (deal: ComparisonDeal) =>
@@ -837,6 +951,10 @@ export function ThreePortfolioCompareView({
 
   const comparison = useMemo<ThreePortfolioComparison>(
     () => {
+      // PERF: prefer shared comparison from the tab orchestrator. Only fall
+      // back to a local build when the parent didn't supply one (standalone
+      // usage or empty share).
+      if (sharedComparison) return sharedComparison;
       const paperPortfolio = loadDecisionSimState().paperPortfolio;
       return buildThreePortfolioComparison({
         closedRows,
@@ -855,6 +973,7 @@ export function ThreePortfolioCompareView({
       });
     },
     [
+      sharedComparison,
       closedRows,
       simTable,
       sdsRows,
@@ -870,7 +989,7 @@ export function ThreePortfolioCompareView({
     ],
   );
 
-  /** 24h gain target — same default as Step 3 (0.5% of pot, min €50). */
+  /** 24h gain target — same default as Step 3 (0.5% of pot, min $50). */
   const synthTargetGainEur = Math.max(50, Math.round(totalCapitalEur * 0.005));
 
   /**
@@ -893,6 +1012,7 @@ export function ThreePortfolioCompareView({
         phaseA,
         approvedPattern,
         matchesStep2Pattern,
+        paperPortfolio: loadDecisionSimState().paperPortfolio,
       }),
     [
       closedRows,
@@ -985,49 +1105,15 @@ export function ThreePortfolioCompareView({
     synthCurveAllocation,
   ]);
 
-  // Build the table rows: union of mine + sim loop, sorted by max cap allocated.
-  const tableRows = useMemo(() => {
-    const simLoopDealKeys = new Set(comparison.simLoopDeals.map((d) => d.rowKey));
-    const rows = comparison.allDeals.map((d) => {
-      const mineCap = comparison.mine.capByTicker[d.ticker] ?? 0;
-      const simEqCap = comparison.simLoopEqual.capByTicker[d.ticker] ?? 0;
-      const simSynthCap = simLoopDealKeys.has(d.rowKey)
-        ? (simLoopSynthAllocation.capByTicker[d.ticker] ?? 0)
-        : 0;
-      const mineRealized = comparison.mine.realizedEurByTicker[d.ticker] ?? 0;
-      const simEqRealized = comparison.simLoopEqual.realizedEurByTicker[d.ticker] ?? 0;
-      const simSynthRealized = simLoopDealKeys.has(d.rowKey)
-        ? (simLoopSynthAllocation.realizedEurByTicker[d.ticker] ?? 0)
-        : 0;
-      const simSynthSharePct =
-        simSynthCap > 0 && simLoopSynthAllocation.totalCapitalEur > 0
-          ? (simSynthCap / simLoopSynthAllocation.totalCapitalEur) * 100
-          : null;
-      return {
-        deal: d,
-        mineCap,
-        simEqCap,
-        simSynthCap,
-        mineRealized,
-        simEqRealized,
-        simSynthRealized,
-        simSynthSharePct,
-        maxCap: Math.max(mineCap, simEqCap, simSynthCap),
-      };
-    });
-    rows.sort((a, b) => b.maxCap - a.maxCap);
-    return rows;
-  }, [comparison, simLoopSynthAllocation]);
-
   // Scenario metadata — five portfolio strategies on the cumulative charts.
   // Each scenario draws ONE curve per chart (Total P&L + 24h P&L); the curve
-  // starts at €0 and accumulates each deal's contribution under that
+  // starts at $0 and accumulates each deal's contribution under that
   // scenario's capital split.
   const scenarioMeta = useMemo(
     () => [
       {
         key: "mine" as const,
-        name: it ? "Mio (€ equi)" : "Mine (equal €)",
+        name: it ? "Mio ($ equi)" : "Mine (equal $)",
         positions: comparison.mine.positionsCount,
         held: comparison.mine.realizedPositionsCount,
         color: "#2563eb",
@@ -1076,6 +1162,30 @@ export function ThreePortfolioCompareView({
     ],
     [comparison, mineApprovedAllocation, mineSynthAllocation, simLoopSynthAllocation, simLoopApprovedAllocation, it],
   );
+
+  /** "Real capital employed" per experiment group — how each one actually
+   *  deploys money (independent of the apples-to-apples shared pot used by the
+   *  charts below). */
+  const groupSummary = useMemo(() => {
+    const mineN = comparison.mine.positionsCount;
+    const mineEmployedEur = comparison.mineDeals.reduce((sum, d) => {
+      const cap = investInputs?.[d.rowKey]?.capital ?? 0;
+      return sum + (Number.isFinite(cap) && cap > 0 ? cap : 0);
+    }, 0);
+    const simLoopN = comparison.simLoopEqual.positionsCount;
+    const simLoopEmployedEur = DEFAULT_PLAN_CAPITAL_EUR * simLoopN;
+    return {
+      mineN,
+      mineEmployedEur,
+      simLoopN,
+      simLoopEmployedEur,
+      // The synth loop deploys the same total as the uniform loop; it only
+      // redistributes the per-company share by approved-pattern weight.
+      synthEmployedEur: simLoopEmployedEur,
+      perTradeEur: DEFAULT_PLAN_CAPITAL_EUR,
+      capPct: Math.round(SIM_TABLE_SYNTH_MAX_SHARE * 100),
+    };
+  }, [comparison, investInputs]);
 
   /** X-axis sort mode for the cumulative chart.
    *  - "chrono": each deal added on the day it was actually bought (real
@@ -1305,11 +1415,27 @@ export function ThreePortfolioCompareView({
     [comparison.simLoopDeals],
   );
 
+  const capDivSession = useMemo(() => capDivWalkSessionContext(), []);
+
+  const dailySessionFootnote = useMemo(
+    () =>
+      capDivDailyChartFootnote(
+        it ? "it" : "en",
+        capDivSession.lastCloseSessionKey,
+        capDivSession.freezeDailyWalk,
+      ),
+    [it, capDivSession.lastCloseSessionKey, capDivSession.freezeDailyWalk],
+  );
+
   const totalCumulativeData = useMemo(
     () =>
       buildCumulativeSeries(walkOrder, (d, scope) => {
         const src = scope === "mine" ? mineDealByKey.get(d.rowKey) : simLoopDealByKey.get(d.rowKey);
-        return src?.realizedReturnPct ?? null;
+        return resolveCapDivWalkTotalPct(
+          src?.realizedReturnPct ?? null,
+          entryDateForDeal(d),
+          capDivSession.nyTodayKey,
+        );
       }),
     // eslint-disable-next-line react-hooks/exhaustive-deps
     [
@@ -1321,13 +1447,18 @@ export function ThreePortfolioCompareView({
       mineSynthAllocation,
       simLoopSynthAllocation,
       simLoopApprovedAllocation,
+      capDivSession.nyTodayKey,
     ],
   );
   const dailyCumulativeData = useMemo(
     () =>
       buildCumulativeSeries(walkOrder, (d, scope) => {
         const src = scope === "mine" ? mineDealByKey.get(d.rowKey) : simLoopDealByKey.get(d.rowKey);
-        return src?.realizedReturnPct24h ?? null;
+        return resolveCapDivWalkDailyPct(
+          src?.realizedReturnPct24h ?? null,
+          entryDateForDeal(d),
+          capDivSession,
+        );
       }),
     // eslint-disable-next-line react-hooks/exhaustive-deps
     [
@@ -1339,6 +1470,7 @@ export function ThreePortfolioCompareView({
       mineSynthAllocation,
       simLoopSynthAllocation,
       simLoopApprovedAllocation,
+      capDivSession,
     ],
   );
 
@@ -1376,9 +1508,9 @@ export function ThreePortfolioCompareView({
   /**
    * Gain-only Y domain — used by the right ("24h gain") pane to avoid the
    * dashed invested-capital step line dominating the chart. It anchors at
-   * €0 (the breakeven baseline) and only reads the cumulative P&L series
+   * $0 (the breakeven baseline) and only reads the cumulative P&L series
    * for each scenario, so even small 24h moves are clearly readable
-   * against the €0 line instead of being squashed near the top of a
+   * against the $0 line instead of being squashed near the top of a
    * "0 → total invested capital" axis. Matches the Step 3 chart's Y
    * convention.
    */
@@ -1499,7 +1631,11 @@ export function ThreePortfolioCompareView({
         mineSuccess != null
           ? {
               success: mineSuccess,
-              realized: computeRealizedSuccessForDeals(closedRows, mineDeals),
+              realized: computeRealizedSuccessForDeals(
+                closedRows,
+                mineDeals,
+                comparison.mine.capByTicker,
+              ),
               gainWeight24h: synthGainImpact.mine24hWeight,
               gainSynth24h: synthGainImpact.mine24h,
             }
@@ -1508,7 +1644,11 @@ export function ThreePortfolioCompareView({
         simSuccess != null
           ? {
               success: simSuccess,
-              realized: computeRealizedSuccessForDeals(closedRows, simDeals),
+              realized: computeRealizedSuccessForDeals(
+                closedRows,
+                simDeals,
+                weightedCaps.sim,
+              ),
               gainWeight24h: synthGainImpact.sim24hWeight,
               gainSynth24h: synthGainImpact.sim24h,
             }
@@ -1541,16 +1681,15 @@ export function ThreePortfolioCompareView({
    */
   const todayIdx = useMemo(() => {
     if (walkSortMode !== "chrono") return null;
-    const today = new Date().toISOString().slice(0, 10);
     let count = 0;
     for (const d of walkOrder) {
-      if (entryDateForDeal(d) <= today) count++;
+      if (entryDateForDeal(d) <= capDivSession.nyTodayKey) count++;
       else break;
     }
     return count;
     // entryDateForDeal closes over investInputs — already in walkOrder deps.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [walkOrder, walkSortMode]);
+  }, [walkOrder, walkSortMode, capDivSession.nyTodayKey]);
 
   // ── Sizing evaluation: equal vs predictive (approved × EMS tilt) vs optimal ──
   const evalSimRowByKey = useMemo(
@@ -1786,15 +1925,15 @@ export function ThreePortfolioCompareView({
           ) : null}
         </div>
         <p className="text-[10px] text-ink-muted group-open:hidden">
-          {it ? "Clicca per espandere grafici e tabella per deal" : "Click to expand charts and per-deal table"}
+          {it ? "Clicca per espandere i grafici" : "Click to expand charts"}
         </p>
       </summary>
 
       <div className="px-4 pb-4 pt-1 space-y-3 border-t border-indigo-200/30 dark:border-indigo-800/30">
       <p className="text-[11px] text-ink-muted leading-relaxed max-w-3xl">
         {it
-          ? "P&L mark-to-market per scenario. Mine / Sim loop (synth) = mix ottimizzata sul target 24h. Mine · pesati / Sim · pesati = pesi approvati Learning Lab (senza target). Mine equi e Sim equi = pari €."
-          : "Mark-to-market P&L per scenario. Mine / Sim loop (synth) = mix optimized to 24h target. Mine · weighted / Sim · weighted = Learning Lab approved weights (no target). Mine equal and Sim equal = equal €."}
+          ? "P&L mark-to-market per scenario. Le quote «pesate» e «synth» usano i pesi approvati Learning Lab (frozen). Mine / Sim equi = pari $."
+          : "Mark-to-market P&L per scenario. Weighted and synth shares use Learning Lab approved (frozen) weights. Mine / Sim equal = equal $."}
         {synthCurveAllocation?.approvedWeightsAt ? (
           <span className="block mt-1 text-[10px] text-indigo-800/90 dark:text-indigo-200/90">
             {it ? "Pesi approvati aggiornati" : "Approved weights updated"}:{" "}
@@ -1805,10 +1944,12 @@ export function ThreePortfolioCompareView({
         ) : null}
       </p>
 
+      <ThreeGroupExplainer summary={groupSummary} it={it} fmtEur={fmtEurNoSign} />
+
       <WeightedSizingGateBanner gate={weightedGate} lang={lang} compact />
 
       {/* Dual chart — both panes plot the SAME three scenarios as cumulative
-          curves over the deal walk-order. Curves start at €0 and grow (or
+          curves over the deal walk-order. Curves start at $0 and grow (or
           shrink) one deal at a time as each contributor's P&L is added.
           Left pane = all-time MTM, right pane = last-24h delta. */}
       <PortfolioCumulativeDualChart
@@ -1824,6 +1965,7 @@ export function ThreePortfolioCompareView({
         walkSortMode={walkSortMode}
         onSetWalkSortMode={setWalkSortMode}
         todayIdx={todayIdx}
+        dailySessionFootnote={dailySessionFootnote}
         it={it}
         fmtEur={fmtEur}
       />
@@ -1840,162 +1982,6 @@ export function ThreePortfolioCompareView({
           it={it}
         />
       ) : null}
-
-      {/* Per-ticker table */}
-      <div className="overflow-x-auto">
-        <table className="w-full text-[11px] table-fixed">
-          <colgroup>
-            <col style={{ width: "13%" }} />
-            {/* SDS score */}
-            <col style={{ width: "5%" }} />
-            {/* Risk & Benefit scale */}
-            <col style={{ width: "10%" }} />
-            {/* Mine */}
-            <col style={{ width: "8%" }} />
-            <col style={{ width: "9%" }} />
-            {/* Sim equal */}
-            <col style={{ width: "8%" }} />
-            <col style={{ width: "9%" }} />
-            {/* Sim weighted */}
-            <col style={{ width: "8%" }} />
-            <col style={{ width: "9%" }} />
-            {/* Sim weighted · Score (sizing rationale: EV × confMult × patPenalty) */}
-            <col style={{ width: "8%" }} />
-            {/* Win rate column */}
-            <col style={{ width: "13%" }} />
-          </colgroup>
-          <thead>
-            <tr className="text-ink-muted">
-              <th className="text-left font-semibold pb-1 pr-2" rowSpan={2}>
-                {it ? "Deal · fase" : "Deal · phase"}
-              </th>
-              <th
-                className="text-center font-semibold pb-1 px-1"
-                rowSpan={2}
-                title={it ? "Score SDS (Supernova Distance Score) — numerico, dal feed sds_index." : "SDS score (Supernova Distance Score) — numeric, from the sds_index feed."}
-              >
-                SDS
-              </th>
-              <th
-                className="text-center font-semibold pb-1 px-1"
-                rowSpan={2}
-                title={
-                  it
-                    ? "Bilancia rischio vs beneficio. Teschio (sx): rischio investimento 0-100 (Phase A lifts confidence-weighted + Phase B pattern). Cuore (dx): movimento 24h del prezzo (% per giorno) — proxy del beneficio in tempo reale. Click per il dettaglio per-bucket."
-                    : "Risk vs benefit balance. Skull (left): investment-risk 0-100 (Phase A confidence-weighted lifts + Phase B pattern). Heart (right): last-24h price move %/day as a real-time benefit proxy. Click for the per-bucket breakdown."
-                }
-              >
-                Risk &amp; Benefit
-              </th>
-              <th
-                className="text-center font-semibold pb-0 pt-1 px-1"
-                colSpan={2}
-                style={{ color: "#2563eb" }}
-              >
-                {it ? "Mio (€ equi)" : "Mine (equal €)"}
-              </th>
-              <th
-                className="text-center font-semibold pb-0 pt-1 px-1"
-                colSpan={2}
-                style={{ color: "#9333ea" }}
-              >
-                {it ? "Sim loop · equi" : "Sim loop · equal"}
-              </th>
-              <th
-                className="text-center font-semibold pb-0 pt-1 px-1"
-                colSpan={3}
-                style={{ color: "#db2777" }}
-                title={
-                  it
-                    ? "Mix Weight Sim Exp sul pot sim loop (max 25%/deal) — stessa logica pulse Synth"
-                    : "Weight Sim Exp mix on sim loop pot (max 25%/deal) — same as Synth pulse"
-                }
-              >
-                {it ? "Sim loop · synth" : "Sim loop · synth"}
-              </th>
-              <th
-                className="text-center font-semibold pb-1 px-1"
-                rowSpan={2}
-                title={it ? "Win rate calibrato dalla cella best-N (priorità phase>SDS>P(plan)>indication)" : "Calibrated win rate from best-N cell (priority phase>SDS>P(plan)>indication)"}
-              >
-                {it ? "Win rate · conf" : "Win rate · conf"}
-              </th>
-            </tr>
-            <tr className="text-ink-muted border-b border-[rgb(var(--border))]/60">
-              <th
-                className="text-right font-semibold pb-1 px-1"
-                title={it ? "Capitale ipotetico assegnato a questo deal nello scenario" : "Hypothetical capital assigned to this deal in the scenario"}
-              >
-                {it ? "Cap" : "Cap"}
-              </th>
-              <th
-                className="text-right font-semibold pb-1 px-1"
-                title={it ? "P&L realizzato (mark-to-market) = cap × rendimento corrente del deal" : "Realized P&L (mark-to-market) = cap × deal's current return"}
-              >
-                P&L
-              </th>
-              <th
-                className="text-right font-semibold pb-1 px-1"
-                title={it ? "Capitale ipotetico assegnato a questo deal nello scenario" : "Hypothetical capital assigned to this deal in the scenario"}
-              >
-                {it ? "Cap" : "Cap"}
-              </th>
-              <th
-                className="text-right font-semibold pb-1 px-1"
-                title={it ? "P&L realizzato (mark-to-market) = cap × rendimento corrente del deal" : "Realized P&L (mark-to-market) = cap × deal's current return"}
-              >
-                P&L
-              </th>
-              <th
-                className="text-right font-semibold pb-1 px-1"
-                title={it ? "Capitale ipotetico assegnato a questo deal nello scenario" : "Hypothetical capital assigned to this deal in the scenario"}
-              >
-                {it ? "Cap" : "Cap"}
-              </th>
-              <th
-                className="text-right font-semibold pb-1 px-1"
-                title={it ? "P&L realizzato (mark-to-market) = cap × rendimento corrente del deal" : "Realized P&L (mark-to-market) = cap × deal's current return"}
-              >
-                P&L
-              </th>
-              <th
-                className="text-right font-semibold pb-1 px-1"
-                title={
-                  it
-                    ? "Quota capitale nel mix Weight Sim Exp (max 25%/deal)"
-                    : "Capital share in Weight Sim Exp mix (max 25%/deal)"
-                }
-              >
-                {it ? "Quota" : "Share"}
-              </th>
-            </tr>
-          </thead>
-          <tbody>
-            {tableRows.map(({ deal, mineCap, simEqCap, simSynthCap, mineRealized, simEqRealized, simSynthRealized, simSynthSharePct }) => (
-              <TableRow
-                key={deal.rowKey}
-                deal={deal}
-                mineCap={mineCap}
-                simEqCap={simEqCap}
-                simSynthCap={simSynthCap}
-                mineRealized={mineRealized}
-                simEqRealized={simEqRealized}
-                simSynthRealized={simSynthRealized}
-                simSynthSharePct={simSynthSharePct}
-                onOpenRisk={() => setRiskModalDeal(deal)}
-                it={it}
-              />
-            ))}
-            {/* Totals row */}
-            <TotalsRow
-              it={it}
-              mine={comparison.mine}
-              simEq={comparison.simLoopEqual}
-              simSynth={simLoopSynthAllocation}
-            />
-          </tbody>
-        </table>
-      </div>
 
       {/* ── Sizing evaluation: equal vs predictive vs optimal ──────────────── */}
       {comparison.simLoopDeals.length > 0 ? (
@@ -2136,12 +2122,12 @@ export function ThreePortfolioCompareView({
                     >
                       24h %
                     </th>
-                    <th className="text-right font-semibold pb-1 px-1">Eq €24h</th>
+                    <th className="text-right font-semibold pb-1 px-1">Eq $24h</th>
                     <th
                       className="text-right font-semibold pb-1 px-1"
                       title={it ? "P&L 24h con il sizing predittivo" : "24h P&L under predictive sizing"}
                     >
-                      Pred €24h
+                      Pred $24h
                     </th>
                     <th
                       className="text-right font-semibold pb-1 px-1"
@@ -2217,222 +2203,8 @@ export function ThreePortfolioCompareView({
           </div>
         </div>
       ) : null}
-
-      {/* Loss-risk breakdown modal — opened by clicking the poop icon on a row */}
-      <LossRiskBreakdownModal
-        entry={riskModalDeal ? dealToLossRiskEntry(riskModalDeal) : null}
-        onClose={() => setRiskModalDeal(null)}
-        it={it}
-      />
       </div>
     </details>
-  );
-}
-
-function TableRow({
-  deal,
-  mineCap,
-  simEqCap,
-  simSynthCap,
-  mineRealized,
-  simEqRealized,
-  simSynthRealized,
-  simSynthSharePct,
-  onOpenRisk,
-  it,
-}: {
-  deal: ComparisonDeal;
-  mineCap: number;
-  simEqCap: number;
-  simSynthCap: number;
-  mineRealized: number;
-  simEqRealized: number;
-  simSynthRealized: number;
-  simSynthSharePct: number | null;
-  onOpenRisk: () => void;
-  it: boolean;
-}) {
-  const notEntered = deal.realizedReturnPct == null;
-  const realizedCellClass = (cap: number, realized: number) => {
-    if (cap <= 0) return "text-ink-muted";
-    if (notEntered) return "text-ink-muted/70 italic";
-    return evTone(realized);
-  };
-  const realizedCellContent = (cap: number, realized: number) => {
-    if (cap <= 0) return "—";
-    if (notEntered) return "n/a";
-    return fmtEur(realized);
-  };
-  const realizedCellTitle = notEntered
-    ? "Deal not held in any portfolio (real or paper sim) — no mark-to-market P&L yet."
-    : undefined;
-  return (
-    <tr className="border-b border-[rgb(var(--border))]/30 align-middle">
-      <td className="py-1.5 pr-2 truncate" title={`${deal.ticker} · ${deal.cells.clinicalPhase} · ${deal.cells.sdsBucket}`}>
-        <span className="font-medium text-ink">{deal.ticker}</span>{" "}
-        <span className="text-ink-muted text-[10px]">· {deal.cells.clinicalPhase}</span>
-      </td>
-      {/* SDS score (numeric). Bucket label shown as sub-label. */}
-      <td
-        className="py-1.5 px-1 text-center tabular-nums"
-        title={deal.cells.sdsBucket}
-      >
-        <div className={`text-[11px] font-semibold ${sdsTone(deal.sdsValue)}`}>
-          {deal.sdsValue != null && Number.isFinite(deal.sdsValue)
-            ? deal.sdsValue.toFixed(0)
-            : "—"}
-        </div>
-        <div className="text-[8px] text-ink-muted leading-tight">
-          {shortSdsBucket(deal.cells.sdsBucket)}
-        </div>
-      </td>
-      {/* Risk & Benefit (skull + heart balance). Skull = combined investment-
-          risk score (0-100). Heart = last-24h price move % as a proxy for
-          "price growth per unit time" (this view doesn't carry a forward
-          gain-plan horizon, so we use the realised 24h move that's already on
-          the ComparisonDeal). Click opens the per-bucket breakdown modal. */}
-      <td className="py-1.5 px-1 text-center">
-        {(() => {
-          const entry = dealToLossRiskEntry(deal);
-          const benefitFillPct = deriveBenefitFillPct({
-            expectedReturnPct: null,
-            daysToTarget: null,
-            dailyChangePct: deal.realizedReturnPct24h,
-          });
-          return (
-            <RiskBenefitScaleCell
-              entry={entry}
-              benefitFillPct={benefitFillPct}
-              perDayPct={deal.realizedReturnPct24h ?? null}
-              onClick={onOpenRisk}
-              it={it}
-            />
-          );
-        })()}
-      </td>
-      <td className="py-1.5 px-1 text-right tabular-nums text-ink">
-        {mineCap > 0 ? fmtEurNoSign(mineCap) : "—"}
-      </td>
-      <td
-        className={`py-1.5 px-1 text-right tabular-nums ${realizedCellClass(mineCap, mineRealized)}`}
-        title={realizedCellTitle}
-      >
-        {realizedCellContent(mineCap, mineRealized)}
-      </td>
-      <td className="py-1.5 px-1 text-right tabular-nums text-ink">
-        {simEqCap > 0 ? fmtEurNoSign(simEqCap) : "—"}
-      </td>
-      <td
-        className={`py-1.5 px-1 text-right tabular-nums ${realizedCellClass(simEqCap, simEqRealized)}`}
-        title={realizedCellTitle}
-      >
-        {realizedCellContent(simEqCap, simEqRealized)}
-      </td>
-      <td className="py-1.5 px-1 text-right tabular-nums text-ink">
-        {simSynthCap > 0 ? fmtEurNoSign(simSynthCap) : "—"}
-      </td>
-      <td
-        className={`py-1.5 px-1 text-right tabular-nums ${realizedCellClass(simSynthCap, simSynthRealized)}`}
-        title={realizedCellTitle}
-      >
-        {realizedCellContent(simSynthCap, simSynthRealized)}
-      </td>
-      <td className="py-1.5 px-1 text-right tabular-nums">
-        <ApprovedShareCell sharePct={simSynthSharePct} it={it} />
-      </td>
-      <td className="py-1.5 px-1 text-center">
-        <div
-          className="inline-flex items-center gap-1"
-          title={
-            deal.winRateDimension
-              ? `From ${deal.winRateDimension} = "${deal.cells[deal.winRateDimension]}" (n=${deal.winRateN})`
-              : "Neutral default (no calibration data for any deal feature)"
-          }
-        >
-          <span className="tabular-nums text-ink font-medium">{fmtPct01(deal.winRate, 0)}</span>
-          <span className={`text-[8px] px-1 rounded ${confTone(deal.confidence)}`}>
-            {deal.confidence.toUpperCase()}
-          </span>
-        </div>
-        {deal.winRateDimension ? (
-          <div className="text-[8.5px] text-ink-muted leading-tight mt-0.5">
-            {dimensionShort(deal.winRateDimension)}={shortCell(deal.cells[deal.winRateDimension])} · n={deal.winRateN}
-          </div>
-        ) : null}
-      </td>
-    </tr>
-  );
-}
-
-/** Short label for the calibration dimension shown in dense tooltips. */
-function dimensionShort(
-  d: "clinicalPhase" | "clinicalIndication" | "sdsBucket" | "pplanBucket",
-): string {
-  switch (d) {
-    case "clinicalPhase":
-      return "phase";
-    case "clinicalIndication":
-      return "ind";
-    case "sdsBucket":
-      return "sds";
-    case "pplanBucket":
-      return "P(plan)";
-  }
-}
-
-/** Color the SDS score: green ≥55 (high), amber 40-55 (mid), rose <40 (low). */
-function sdsTone(sds: number | null): string {
-  if (sds == null || !Number.isFinite(sds)) return "text-ink-muted";
-  if (sds >= 55) return "text-emerald-700 dark:text-emerald-300";
-  if (sds >= 40) return "text-amber-700 dark:text-amber-300";
-  return "text-rose-700 dark:text-rose-300";
-}
-
-/** Trim verbose SDS bucket labels for the dense sub-label under the score. */
-function shortSdsBucket(bucket: string | undefined): string {
-  if (!bucket) return "—";
-  return bucket
-    .replace("SDS ", "")
-    .replace(" (Low)", " L")
-    .replace(" (Mid)", " M")
-    .replace(" (High)", " H");
-}
-
-function shortCell(cell: string | undefined): string {
-  if (!cell) return "—";
-  return cell
-    .replace("SDS ", "")
-    .replace(" (Low)", "L")
-    .replace(" (Mid)", "M")
-    .replace(" (High)", "H")
-    .replace("P(plan) ", "")
-    .replace("Phase ", "P");
-}
-
-/**
- * Capital share in the Learning Lab approved-weight mix for one sim-loop deal.
- */
-function ApprovedShareCell({
-  sharePct,
-  it,
-}: {
-  sharePct: number | null;
-  it: boolean;
-}) {
-  if (sharePct == null || !Number.isFinite(sharePct) || sharePct <= 0) {
-    return <span className="text-ink-muted">—</span>;
-  }
-  return (
-    <span
-      className="tabular-nums text-emerald-700 dark:text-emerald-300 font-medium"
-      title={
-        it
-          ? `Quota nel mix Learning Lab: ${sharePct.toFixed(1)}% del pot sim loop`
-          : `Learning Lab mix share: ${sharePct.toFixed(1)}% of the sim loop pot`
-      }
-    >
-      {sharePct.toFixed(1)}%
-    </span>
   );
 }
 
@@ -2468,66 +2240,5 @@ function Metric({
       <div className="text-ink-muted leading-tight">{label}</div>
       <div className={`font-semibold tabular-nums ${toneCls}`}>{value}</div>
     </div>
-  );
-}
-
-function TotalsRow({
-  it,
-  mine,
-  simEq,
-  simSynth,
-}: {
-  it: boolean;
-  mine: PortfolioAllocation;
-  simEq: PortfolioAllocation;
-  simSynth: PortfolioAllocation;
-}) {
-  const heldSummary = (alloc: PortfolioAllocation) => {
-    if (alloc.positionsCount === 0) return "0";
-    if (alloc.realizedPositionsCount === alloc.positionsCount) {
-      return `${alloc.positionsCount}`;
-    }
-    return `${alloc.realizedPositionsCount}/${alloc.positionsCount}`;
-  };
-  return (
-    <tr className="border-t-2 border-[rgb(var(--border))]/60 bg-surface/30 font-semibold">
-      <td className="py-2 pr-2 text-ink">
-        {it ? "Totali" : "Totals"}
-        <span
-          className="text-[10px] text-ink-muted font-normal ml-2"
-          title={
-            it
-              ? "Deal investiti / totale assegnato in ogni scenario (gain = cap × rendimento MTM)"
-              : "Deals invested / total assigned per scenario (gain = cap × MTM return)"
-          }
-        >
-          · {heldSummary(mine)} / {heldSummary(simEq)} / {heldSummary(simSynth)}{" "}
-          {it ? "investiti" : "invested"}
-        </span>
-      </td>
-      {/* SDS + Risk total cells (empty — totals don't aggregate scores). */}
-      <td className="py-2 px-1 text-center text-[10px] text-ink-muted">—</td>
-      <td className="py-2 px-1 text-center text-[10px] text-ink-muted">—</td>
-      <td className="py-2 px-1 text-right tabular-nums text-ink">
-        {fmtEurNoSign(mine.totalCapitalEur)}
-      </td>
-      <td className={`py-2 px-1 text-right tabular-nums ${evTone(mine.totalRealizedEur)}`}>
-        {fmtEur(mine.totalRealizedEur)}
-      </td>
-      <td className="py-2 px-1 text-right tabular-nums text-ink">
-        {fmtEurNoSign(simEq.totalCapitalEur)}
-      </td>
-      <td className={`py-2 px-1 text-right tabular-nums ${evTone(simEq.totalRealizedEur)}`}>
-        {fmtEur(simEq.totalRealizedEur)}
-      </td>
-      <td className="py-2 px-1 text-right tabular-nums text-ink">
-        {fmtEurNoSign(simSynth.totalCapitalEur)}
-      </td>
-      <td className={`py-2 px-1 text-right tabular-nums ${evTone(simSynth.totalRealizedEur)}`}>
-        {fmtEur(simSynth.totalRealizedEur)}
-      </td>
-      <td className="py-2 px-1 text-right tabular-nums text-ink-muted">100%</td>
-      <td className="py-2 px-1 text-center text-[10px] text-ink-muted">—</td>
-    </tr>
   );
 }

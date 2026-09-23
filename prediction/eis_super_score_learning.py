@@ -17,6 +17,7 @@ from prediction.eis_magnitude_analysis import (
     EIS_ZERO_EPS,
     _iter_scored_feed_events,
     _pearson,
+    _spearman,
 )
 
 _EIS_SUPER_SCORE_JSON = Path(DATA_DIR) / "eis_super_score_learning.json"
@@ -177,6 +178,38 @@ def _bin_mid(lo: int, hi: int) -> int:
     return round((lo + hi) / 2)
 
 
+def _fisher_r_ci(r: float | None, n: int, *, z: float = 1.96) -> tuple[float | None, float | None]:
+    """Approximate 95% CI for Pearson ρ via Fisher z (n ≥ 4)."""
+    if r is None or n < 4 or not math.isfinite(r):
+        return None, None
+    r_clamped = max(-0.999, min(0.999, float(r)))
+    zr = math.atanh(r_clamped)
+    se = 1.0 / math.sqrt(n - 3)
+    lo = math.tanh(zr - z * se)
+    hi = math.tanh(zr + z * se)
+    return round(lo, 4), round(hi, 4)
+
+
+def _long_short_spread(pairs: list[tuple[float, float]]) -> float | None:
+    """Top vs bottom tertile mean return spread (pp) by score."""
+    if len(pairs) < 6:
+        return None
+    ordered = sorted(pairs, key=lambda p: p[0])
+    k = max(1, len(ordered) // 3)
+    low_y = [p[1] for p in ordered[:k]]
+    high_y = [p[1] for p in ordered[-k:]]
+    return round(sum(high_y) / len(high_y) - sum(low_y) / len(low_y), 4)
+
+
+def _raw_super_mono_spearman(raw_sup: list[tuple[float, float]]) -> float | None:
+    """Spearman(raw, super) — 1.0 means monotone calibration (Pearson lift must be ~0)."""
+    if len(raw_sup) < 3:
+        return None
+    xs = [p[0] for p in raw_sup]
+    ys = [p[1] for p in raw_sup]
+    return _spearman(xs, ys)
+
+
 def build_correlation_timeline(
     event_rows: list[dict[str, Any]] | None = None,
     *,
@@ -193,6 +226,7 @@ def build_correlation_timeline(
         sup_1d: list[tuple[float, float]] = []
         raw_7d: list[tuple[float, float]] = []
         sup_7d: list[tuple[float, float]] = []
+        raw_sup_7d: list[tuple[float, float]] = []
 
         for r in subset:
             eis = r.get("eis_score")
@@ -215,6 +249,7 @@ def build_correlation_timeline(
             if d7 is not None:
                 raw_7d.append((raw, d7))
                 sup_7d.append((sup, d7))
+                raw_sup_7d.append((raw, sup))
 
         def _rho(pairs: list[tuple[float, float]]) -> float | None:
             if len(pairs) < 3:
@@ -237,6 +272,10 @@ def build_correlation_timeline(
         sup_r7 = _rho(sup_7d)
         mae_raw_7 = _mag_mae(raw_7d)
         mae_sup_7 = _mag_mae(sup_7d)
+        ls_raw_7 = _long_short_spread(raw_7d)
+        ls_super_7 = _long_short_spread(sup_7d)
+        mono_sp = _raw_super_mono_spearman(raw_sup_7d)
+        ci_lo, ci_hi = _fisher_r_ci(sup_r7, len(sup_7d))
 
         out.append(
             {
@@ -258,6 +297,14 @@ def build_correlation_timeline(
                 "mae_lift_7d": (
                     round(mae_raw_7 - mae_sup_7, 4) if mae_raw_7 is not None and mae_sup_7 is not None else None
                 ),
+                "long_short_raw_7d": ls_raw_7,
+                "long_short_super_7d": ls_super_7,
+                "long_short_lift_7d": (
+                    round(ls_super_7 - ls_raw_7, 4) if ls_super_7 is not None and ls_raw_7 is not None else None
+                ),
+                "mono_spearman_raw_super_7d": mono_sp,
+                "corr_super_7d_ci_low": ci_lo,
+                "corr_super_7d_ci_high": ci_hi,
                 "cal_factor": (st.get("windows") or {}).get(label, {}).get("cal_factor"),
             }
         )
@@ -333,6 +380,8 @@ def run_eis_super_score_learning_cycle(*, dry_run: bool = True) -> dict[str, Any
         "mean_mae_raw_7d": _mean_rho("mae_raw_7d"),
         "mean_mae_super_7d": _mean_rho("mae_super_7d"),
         "mean_mae_lift_7d": _mean_rho("mae_lift_7d"),
+        "mean_long_short_lift_7d": _mean_rho("long_short_lift_7d"),
+        "mean_mono_spearman_raw_super_7d": _mean_rho("mono_spearman_raw_super_7d"),
         "bins_with_data_7d": sum(1 for r in timeline if r.get("corr_super_7d") is not None),
     }
 

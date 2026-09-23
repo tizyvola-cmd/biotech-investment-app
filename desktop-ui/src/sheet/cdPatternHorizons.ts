@@ -84,12 +84,11 @@ export const CD_PATTERN_WINDOWS: readonly CdPatternWindow[] = [
   },
 ] as const;
 
-export const CD_PATTERN_RADAR_TARGET = [100, 100, 100, 100, 100] as const;
+export const CD_PATTERN_RADAR_TARGET = [100, 100, 100, 100] as const;
 
-export type CdPatternRadarAxisId = "ra" | "sds" | "mii" | "calib" | "slope";
+export type CdPatternRadarAxisId = "sds" | "mii" | "calib" | "slope";
 
 export const CD_PATTERN_RADAR_AXIS_ORDER: readonly CdPatternRadarAxisId[] = [
-  "ra",
   "sds",
   "mii",
   "calib",

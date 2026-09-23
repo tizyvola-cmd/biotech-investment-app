@@ -5,6 +5,7 @@ from __future__ import annotations
 
 import os
 import subprocess
+import sys
 from pathlib import Path
 from typing import Any
 
@@ -67,19 +68,26 @@ def build_refresh_command(profile_key: str, python_exe: str) -> tuple[list[str],
     log_path = refresh_log_path(key)
 
     if key == "sunday":
-        ps1 = ROOT / "scripts" / "Biotech_Refresh_Profiles.ps1"
-        if not ps1.is_file():
-            raise FileNotFoundError(f"Script non trovato: {ps1}")
-        argv = [
-            "powershell",
-            "-NoProfile",
-            "-ExecutionPolicy",
-            "Bypass",
-            "-File",
-            str(ps1),
-            "-Profile",
-            "WeeklyFull",
-        ]
+        if sys.platform == "win32":
+            ps1 = ROOT / "scripts" / "Biotech_Refresh_Profiles.ps1"
+            if not ps1.is_file():
+                raise FileNotFoundError(f"Script non trovato: {ps1}")
+            argv = [
+                "powershell",
+                "-NoProfile",
+                "-ExecutionPolicy",
+                "Bypass",
+                "-File",
+                str(ps1),
+                "-Profile",
+                "WeeklyFull",
+            ]
+            return argv, dict(prof.env_patch), log_path
+        # Linux/VPS: equivalente WeeklyFull (orchestrator + post_refresh_steps)
+        script = ROOT / "scripts" / "saturday_weekly_full_refresh.py"
+        if not script.is_file():
+            raise FileNotFoundError(f"Script non trovato: {script}")
+        argv = [python_exe, "-u", str(script), "--force"]
         return argv, dict(prof.env_patch), log_path
 
     argv = [python_exe, *prof.argv]

@@ -1,5 +1,5 @@
 import type { SimLoopSynthAllocation } from "../hooks/useSimLoopSynthAllocation";
-import { SIM_TABLE_SYNTH_MAX_SHARE } from "./approvedWeightPortfolioShares";
+import { resolveSimTableApprovedShare } from "./simTableApprovedWeightHints";
 import type { InvestSimInputs } from "./investSimStorage";
 import {
   currentPriceFromRow,
@@ -101,12 +101,7 @@ export function resolveSimTableSynthShare(
   inPortfolio: boolean,
 ): number | null {
   if (!alloc) return null;
-  const map = inPortfolio
-    ? alloc.portfolioDisplayShareByRowKey
-    : alloc.simLoopDisplayShareByRowKey;
-  const share = map[rowKey];
-  if (share == null || !Number.isFinite(share) || share <= 0) return null;
-  return Math.min(share, SIM_TABLE_SYNTH_MAX_SHARE);
+  return resolveSimTableApprovedShare(alloc.simTableApprovedWeightMaps, rowKey, inPortfolio);
 }
 
 export function synthCapEurFromShare(share: number, topCapitalEur: number): number {
@@ -122,7 +117,7 @@ export function resolvePortfolioSynthShareRaw(
   rowKey: string,
 ): number | null {
   if (!alloc) return null;
-  const raw = alloc.portfolioDisplayShareByRowKey[rowKey];
+  const raw = alloc.simTableApprovedWeightMaps?.portfolioApprovedShareByRowKey[rowKey];
   if (raw == null || !Number.isFinite(raw)) return null;
   return Math.max(0, raw);
 }

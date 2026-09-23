@@ -13,6 +13,9 @@ export type ClinicalFeedRefreshReport = {
   report_id?: string;
   run_type?: string;
   success?: boolean;
+  update_status?: "ok" | "stale_due_to_error" | "stale_due_to_api_error";
+  last_successful_update?: string | null;
+  error?: string | null;
   change_count?: number;
   changes?: Array<{
     kind?: string;
@@ -196,5 +199,59 @@ export async function acknowledgeClinicalFeedRefresh(
     } catch {
       /* server ack best-effort */
     }
+  }
+}
+
+// ── Stale pipeline warning ─────────────────────────────────────────────────
+
+const STALE_WARNING_ACK_KEY = "supernova_eis_stale_warning_ack_v1";
+
+function loadStaleWarningAck(): string {
+  try {
+    return localStorage.getItem(STALE_WARNING_ACK_KEY) ?? "";
+  } catch {
+    return "";
+  }
+}
+
+export function acknowledgeEisStaleWarning(reportId: string): void {
+  try {
+    localStorage.setItem(STALE_WARNING_ACK_KEY, reportId);
+  } catch {
+    /* ignore */
+  }
+}
+
+export type EisStaleWarning = {
+  show: boolean;
+  reportId: string;
+  errorMessage: string | null;
+  lastAttemptAt: string | null;
+  lastSuccessfulUpdate: string | null;
+};
+
+export async function checkClinicalFeedStaleWarning(): Promise<EisStaleWarning> {
+  const empty: EisStaleWarning = {
+    show: false,
+    reportId: "",
+    errorMessage: null,
+    lastAttemptAt: null,
+    lastSuccessfulUpdate: null,
+  };
+  try {
+    const res = await fetchClinicalFeedRefreshReport();
+    const report = (res.report ?? null) as ClinicalFeedRefreshReport | null;
+    if (!report || report.success !== false) return empty;
+    const rid = String(report.report_id ?? report.finished_at ?? "");
+    if (rid && loadStaleWarningAck() === rid) return empty;
+    return {
+      show: true,
+      reportId: rid,
+      errorMessage: String(report.error ?? "").trim() || null,
+      lastAttemptAt: String(report.finished_at ?? "").trim() || null,
+      lastSuccessfulUpdate: String(report.last_successful_update ?? "").trim() || null,
+    };
+  } catch {
+    return empty;
   }
 }

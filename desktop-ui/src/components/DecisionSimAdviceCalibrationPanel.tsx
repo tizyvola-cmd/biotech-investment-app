@@ -13,11 +13,21 @@ import {
 } from "recharts";
 import {
   aggregateAdviceCalibrationBuckets,
+  adviceCalibrationUniverse,
   buildAdviceForecastErrorScatter,
+  adviceMonitorPointsExcludingPaperSells,
   buildAdviceCalibrationFromLiveRows,
+  buildAdviceCalibrationFromLog,
+  buildAdviceCalibrationFromPaperBuys,
   buildAdviceCalibrationFromPaperSells,
+  buildDealLevelCalibrationPoints,
+  buySellAdviceSnapshotFields,
+  keyFromLiveAdviceCalibrationId,
+  keysWithPaperSellExecution,
+  liveCalibRowsExcludingPaperSells,
   mergeAdviceCalibrationPoints,
   summarizeAdviceCalibration,
+  filterAdviceCalibrationByUniverse,
   badAdviceDiagnosisLabel,
   diagnoseBadAdviceRootCause,
   type AdviceCalibrationPoint,
@@ -25,22 +35,28 @@ import {
   type BadAdviceDiagnosis,
 } from "../sheet/investDecisionSimAdviceCalibration";
 
+import { stabilizeAdviceMovePct } from "../sheet/adviceCalibrationStability";
+import {
+  prepareAdviceCalibrationPoints,
+  useStableAdviceCalibrationPoints,
+} from "../hooks/useStableAdviceCalibrationPoints";
 import {
   ADVICE_FEEDBACK_CHANGED_EVENT,
   buildAdviceFeedback,
   clearAdviceFeedback,
   loadAdviceFeedback,
-  saveAdviceFeedback,
   type AdviceFeedback,
 } from "../sheet/adviceFeedback";
 import {
   buildAdviceLearningSnapshot,
   loadAdviceLearningHistory,
+  persistAdviceLearningsRecalculation,
   recordAdviceLearningSnapshot,
   shouldAutoSnapshot,
 } from "../sheet/adviceLearningHistory";
 import { raEffectivePaperAction, type EntryRaVerdictEntry } from "../sheet/decisionSimRaReplay";
 import type { DecisionSimTick, PaperPosition, TickerSimEvaluation } from "../sheet/investDecisionSimLoop";
+import type { ExperimentAdviceEvent } from "../sheet/investDecisionSimExperiment";
 import type { SheetTable } from "../types";
 import { buildSimRowByKeyMap } from "../sheet/investSimKeys";
 import { dailyChangePctFromRow } from "../sheet/simulationPosition";
@@ -48,13 +64,14 @@ import { recommendationRationale, type SuggestionMonitorRow } from "../sheet/sug
 import { hydrateUiPrefsFromDisk, loadUiPrefsLocal, saveUiPrefs } from "../sheet/uiPrefs";
 import { useT } from "../shared/i18n";
 import { DashboardPanelUpdatedLabel } from "./DashboardPanelUpdatedLabel";
-import { DECISION_SIM_PAIR_CHART_HEIGHT } from "./decisionSimChartLayout";
+import { DECISION_SIM_PAIR_CHART_HEIGHT, adviceErrorTimelineBlockMinHeight } from "./decisionSimChartLayout";
 import type { UnifiedAdviceSuccess } from "../sheet/unifiedAdviceSuccess";
 import { unifiedAdviceSuccessTooltip } from "../sheet/unifiedAdviceSuccess";
 import type { AdviceComplementKpis } from "../sheet/adviceComplementKpis";
 import { formatCapturePct } from "../sheet/adviceComplementKpis";
 import { AdviceCalibScatterDot } from "./adviceChartMarkers";
 import { useAdviceFeedbackAutoApply } from "../hooks/useAdviceFeedbackAutoApply";
+import { AdviceErrorTimelineCharts } from "./AdviceErrorTimelineCharts";
 
 /** Y-axis horizon for the forecast-error scatter.
  *  "24h"        → Y = (24h move) − (expected move) at advice time. Default,
@@ -245,6 +262,191 @@ function AdviceCalibDetailTable({
   );
 }
 
+export function buildMonitorAdviceCalibrationPoints({
+  monitorRows,
+  paperPortfolio = [],
+  decisionSimTicks = [],
+  adviceLog = [],
+  liveEvaluations = [],
+  simTable,
+  lang,
+  raWhatIfActive = false,
+  raVerdictByKey,
+  stabilizeMovePct,
+}: {
+  monitorRows: SuggestionMonitorRow[];
+  paperPortfolio?: PaperPosition[];
+  decisionSimTicks?: DecisionSimTick[];
+  /** Per-tick advice events — supplies historical BUY/SELL errors for 24h/7d charts. */
+  adviceLog?: ExperimentAdviceEvent[];
+  liveEvaluations?: TickerSimEvaluation[];
+  simTable?: SheetTable | null;
+  lang: "it" | "en";
+  raWhatIfActive?: boolean;
+  raVerdictByKey?: Map<string, EntryRaVerdictEntry>;
+  /** Optional quantizer for 24h moves (tester tab stability). */
+  stabilizeMovePct?: (pct: number | null | undefined) => number | null;
+}): AdviceCalibrationPoint[] {
+  const { liveFiltered, resolvePostMove24h } = buildLiveAdviceCalibrationSlice({
+    monitorRows,
+    paperPortfolio,
+    decisionSimTicks,
+    liveEvaluations,
+    simTable,
+    lang,
+    raWhatIfActive,
+    raVerdictByKey,
+    stabilizeMovePct,
+  });
+  return mergeAdviceCalibrationPoints(
+    liveFiltered,
+    buildAdviceCalibrationFromLog(adviceLog, decisionSimTicks, lang),
+    buildAdviceCalibrationFromPaperBuys(decisionSimTicks, lang),
+    buildAdviceCalibrationFromPaperSells(decisionSimTicks, resolvePostMove24h, lang),
+  );
+}
+
+/**
+ * Deal-level + live portfolio points for feedback / timeline / scatter.
+ * Excludes per-tick adviceLog duplicates (one scored outcome per deal).
+ */
+export function buildAdviceCalibrationForLearnings({
+  monitorRows,
+  paperPortfolio = [],
+  decisionSimTicks = [],
+  liveEvaluations = [],
+  simTable,
+  lang,
+  raWhatIfActive = false,
+  raVerdictByKey,
+  stabilizeMovePct,
+}: {
+  monitorRows: SuggestionMonitorRow[];
+  paperPortfolio?: PaperPosition[];
+  decisionSimTicks?: DecisionSimTick[];
+  liveEvaluations?: TickerSimEvaluation[];
+  simTable?: SheetTable | null;
+  lang: "it" | "en";
+  raWhatIfActive?: boolean;
+  raVerdictByKey?: Map<string, EntryRaVerdictEntry>;
+  stabilizeMovePct?: (pct: number | null | undefined) => number | null;
+}): AdviceCalibrationPoint[] {
+  const { liveFiltered, resolvePostMove24h } = buildLiveAdviceCalibrationSlice({
+    monitorRows,
+    paperPortfolio,
+    decisionSimTicks,
+    liveEvaluations,
+    simTable,
+    lang,
+    raWhatIfActive,
+    raVerdictByKey,
+    stabilizeMovePct,
+  });
+  const paperKeys = new Set(paperPortfolio.map((p) => p.key));
+  const livePortfolio = liveFiltered.filter(
+    (p) => adviceCalibrationUniverse(p) === "portafoglio",
+  );
+  const liveSimOutsidePaper = liveFiltered.filter((p) => {
+    if (adviceCalibrationUniverse(p) !== "sim loop") return false;
+    const key = keyFromLiveAdviceCalibrationId(p.id);
+    return key != null && !paperKeys.has(key);
+  });
+  const dealPoints = buildDealLevelCalibrationPoints(
+    decisionSimTicks,
+    resolvePostMove24h,
+    lang,
+    { paperPortfolio, liveEvaluations },
+  );
+  return mergeAdviceCalibrationPoints(dealPoints, livePortfolio, liveSimOutsidePaper);
+}
+
+function buildLiveAdviceCalibrationSlice({
+  monitorRows,
+  paperPortfolio = [],
+  decisionSimTicks = [],
+  liveEvaluations = [],
+  simTable,
+  lang,
+  raWhatIfActive = false,
+  raVerdictByKey,
+  stabilizeMovePct,
+}: {
+  monitorRows: SuggestionMonitorRow[];
+  paperPortfolio?: PaperPosition[];
+  decisionSimTicks?: DecisionSimTick[];
+  liveEvaluations?: TickerSimEvaluation[];
+  simTable?: SheetTable | null;
+  lang: "it" | "en";
+  raWhatIfActive?: boolean;
+  raVerdictByKey?: Map<string, EntryRaVerdictEntry>;
+  stabilizeMovePct?: (pct: number | null | undefined) => number | null;
+}): {
+  liveFiltered: AdviceCalibrationPoint[];
+  resolvePostMove24h: (key: string) => number | null;
+} {
+  const entryProbByKey = new Map<string, number>();
+  for (const pos of paperPortfolio) {
+    if (pos.entryProbPct != null && Number.isFinite(pos.entryProbPct)) {
+      entryProbByKey.set(pos.key, pos.entryProbPct);
+    }
+  }
+  const lastTickAtByKey = new Map<string, string>();
+  for (const tick of decisionSimTicks) {
+    for (const ev of tick.evaluations) {
+      lastTickAtByKey.set(ev.key, tick.at);
+    }
+  }
+  const simRowByKey = buildSimRowByKeyMap(simTable?.rows ?? []);
+  const quantizeMove = (pct: number | null | undefined): number | null => {
+    if (pct == null || !Number.isFinite(pct)) return null;
+    return stabilizeMovePct ? stabilizeMovePct(pct) : stabilizeAdviceMovePct(pct);
+  };
+  const resolvePostMove24h = (key: string): number | null => {
+    const ev = liveEvaluations.find((e) => e.key === key);
+    if (ev?.pnlPct24h != null && Number.isFinite(ev.pnlPct24h)) {
+      return quantizeMove(ev.pnlPct24h);
+    }
+    const row = simRowByKey.get(key);
+    if (row) {
+      const daily = dailyChangePctFromRow(row);
+      if (daily != null && Number.isFinite(daily)) return quantizeMove(daily);
+    }
+    return null;
+  };
+  const paperSoldKeys = keysWithPaperSellExecution(decisionSimTicks);
+  const liveRows = monitorRows.map((row) => {
+    const base = {
+      key: row.key,
+      ticker: row.ticker,
+      suggestedAction: row.suggestedAction,
+      inPaperPortfolio: row.inPaperPortfolio,
+      hasPosition: row.hasPosition,
+      exitDecision: row.exitDecision,
+      probPct: row.probPct,
+      probPctAtAdvice: row.inPaperPortfolio
+        ? (entryProbByKey.get(row.key) ?? row.probPct)
+        : row.probPct,
+      planReturnPct: row.planReturnPct,
+      miiAngleDeg: row.miiAngleDeg,
+      pnlPct: row.pnlPct,
+      pnlPct24h: quantizeMove(row.pnlPct24h),
+      adviceAt: lastTickAtByKey.get(row.key) ?? null,
+    };
+    if (!raWhatIfActive || !raVerdictByKey?.size) return base;
+    return {
+      ...base,
+      suggestedAction: raEffectivePaperAction(row, raVerdictByKey),
+    };
+  });
+  const filteredLiveRows = liveCalibRowsExcludingPaperSells(liveRows, paperSoldKeys);
+  const livePoints = buildAdviceCalibrationFromLiveRows(filteredLiveRows, lang);
+  const { points: liveFiltered } = adviceMonitorPointsExcludingPaperSells(
+    livePoints,
+    paperSoldKeys,
+  );
+  return { liveFiltered, resolvePostMove24h };
+}
+
 export function DecisionSimAdviceCalibrationPanel({
   monitorRows,
   paperPortfolio = [],
@@ -260,6 +462,7 @@ export function DecisionSimAdviceCalibrationPanel({
   raWhatIfActive = false,
   raVerdictByKey,
   preChartMeasureRef,
+  hideErrorCharts = false,
 }: {
   monitorRows: SuggestionMonitorRow[];
   paperPortfolio?: PaperPosition[];
@@ -280,10 +483,15 @@ export function DecisionSimAdviceCalibrationPanel({
   raVerdictByKey?: Map<string, EntryRaVerdictEntry>;
   /** Measures everything above the scatter chart (for pair-layout sync). */
   preChartMeasureRef?: RefObject<HTMLDivElement>;
+  /** Error timeline charts rendered separately (e.g. 4-chart strip). */
+  hideErrorCharts?: boolean;
 }) {
   const t = useT();
   const it = lang === "it";
   const chartHeight = compact ? DECISION_SIM_PAIR_CHART_HEIGHT : 248;
+  const errorTimelineMinHeight = adviceErrorTimelineBlockMinHeight(
+    compact ? DECISION_SIM_PAIR_CHART_HEIGHT : 200,
+  );
 
   // Controlled open state for the "Bad advice ✗" details section. Default
   // to `false` (collapsed) per the user's preference — the bad-advice list is
@@ -298,6 +506,7 @@ export function DecisionSimAdviceCalibrationPanel({
     return v == null ? false : Boolean(v);
   });
   useEffect(() => {
+    if (compact) return;
     let cancelled = false;
     void (async () => {
       const disk = await hydrateUiPrefsFromDisk();
@@ -309,7 +518,7 @@ export function DecisionSimAdviceCalibrationPanel({
     return () => {
       cancelled = true;
     };
-  }, []);
+  }, [compact]);
   const onBadAdviceToggle = useCallback(
     (e: React.SyntheticEvent<HTMLDetailsElement>) => {
       const next = (e.currentTarget as HTMLDetailsElement).open;
@@ -324,6 +533,7 @@ export function DecisionSimAdviceCalibrationPanel({
     return v == null ? false : Boolean(v);
   });
   useEffect(() => {
+    if (compact) return;
     let cancelled = false;
     void (async () => {
       const disk = await hydrateUiPrefsFromDisk();
@@ -335,7 +545,7 @@ export function DecisionSimAdviceCalibrationPanel({
     return () => {
       cancelled = true;
     };
-  }, []);
+  }, [compact]);
   const onInsightsToggle = useCallback(
     (e: React.SyntheticEvent<HTMLDetailsElement>) => {
       const next = (e.currentTarget as HTMLDetailsElement).open;
@@ -345,69 +555,43 @@ export function DecisionSimAdviceCalibrationPanel({
     [],
   );
 
-  const entryProbByKey = useMemo(() => {
-    const map = new Map<string, number>();
-    for (const pos of paperPortfolio) {
-      if (pos.entryProbPct != null && Number.isFinite(pos.entryProbPct)) {
-        map.set(pos.key, pos.entryProbPct);
-      }
-    }
-    return map;
-  }, [paperPortfolio]);
-
-  const simRowByKey = useMemo(
-    () => buildSimRowByKeyMap(simTable?.rows ?? []),
-    [simTable?.rows],
+  const rawPoints = useMemo(
+    () =>
+      buildAdviceCalibrationForLearnings({
+        monitorRows,
+        paperPortfolio,
+        decisionSimTicks,
+        liveEvaluations,
+        simTable,
+        lang,
+        raWhatIfActive,
+        raVerdictByKey,
+      }),
+    [
+      monitorRows,
+      paperPortfolio,
+      decisionSimTicks,
+      liveEvaluations,
+      simTable,
+      lang,
+      raWhatIfActive,
+      raVerdictByKey,
+    ],
   );
 
-  const resolvePostMove24h = useCallback(
-    (key: string): number | null => {
-      const ev = liveEvaluations.find((e) => e.key === key);
-      if (ev?.pnlPct24h != null && Number.isFinite(ev.pnlPct24h)) return ev.pnlPct24h;
-      const row = simRowByKey.get(key);
-      if (row) {
-        const daily = dailyChangePctFromRow(row);
-        if (daily != null && Number.isFinite(daily)) return daily;
-      }
-      return null;
-    },
-    [liveEvaluations, simRowByKey],
-  );
-
-  const points = useMemo(
-    () => {
-      const liveRows = monitorRows.map((row) => {
-        const base = {
-          key: row.key,
-          ticker: row.ticker,
-          suggestedAction: row.suggestedAction,
-          inPaperPortfolio: row.inPaperPortfolio,
-          hasPosition: row.hasPosition,
-          exitDecision: row.exitDecision,
-          probPct: row.probPct,
-          probPctAtAdvice: row.inPaperPortfolio
-            ? (entryProbByKey.get(row.key) ?? row.probPct)
-            : row.probPct,
-          planReturnPct: row.planReturnPct,
-          miiAngleDeg: row.miiAngleDeg,
-          pnlPct: row.pnlPct,
-          pnlPct24h: row.pnlPct24h,
-        };
-        if (!raWhatIfActive || !raVerdictByKey?.size) return base;
-        return {
-          ...base,
-          suggestedAction: raEffectivePaperAction(row, raVerdictByKey),
-        };
-      });
-      return mergeAdviceCalibrationPoints(
-        buildAdviceCalibrationFromLiveRows(liveRows, lang),
-        buildAdviceCalibrationFromPaperSells(decisionSimTicks, resolvePostMove24h, lang),
-      );
-    },
-    [monitorRows, lang, entryProbByKey, decisionSimTicks, resolvePostMove24h, raWhatIfActive, raVerdictByKey],
+  const points = useStableAdviceCalibrationPoints(
+    useMemo(() => prepareAdviceCalibrationPoints(rawPoints), [rawPoints]),
   );
 
   const summary = useMemo(() => summarizeAdviceCalibration(points), [points]);
+  const portfolioSummary = useMemo(
+    () => summarizeAdviceCalibration(filterAdviceCalibrationByUniverse(points, "portfolio")),
+    [points],
+  );
+  const simLoopSummary = useMemo(
+    () => summarizeAdviceCalibration(filterAdviceCalibrationByUniverse(points, "simloop")),
+    [points],
+  );
 
   const [errorHorizon, setErrorHorizon] = useState<ForecastErrorHorizon>("24h");
 
@@ -442,6 +626,21 @@ export function DecisionSimAdviceCalibrationPanel({
     const pad = Math.ceil(maxAbs * 1.2);
     return [-pad, pad];
   }, [scatterData]);
+
+  const xDomain = useMemo((): [number, number] => {
+    if (!scatterData.length) return [0, 100];
+    const xs = scatterData.map((d) => d.x);
+    const xMin = Math.min(...xs);
+    const xMax = Math.max(...xs);
+    const pad = Math.max(4, (xMax - xMin) * 0.08);
+    return [
+      Math.max(0, Math.floor(xMin - pad)),
+      Math.min(100, Math.ceil(xMax + pad)),
+    ];
+  }, [scatterData]);
+
+  /** Affiancato a paper P&L — allinea footer in fondo alla card gemella. */
+  const pairLayout = preChartMeasureRef != null;
 
   const cumulativeAvailableCount = useMemo(
     () =>
@@ -571,6 +770,10 @@ export function DecisionSimAdviceCalibrationPanel({
     summary,
     unifiedAdviceSuccess,
     adviceComplement,
+    buySuccessRatePct: buyStats.accuracyPct,
+    buyScored: buyStats.scored,
+    sellSuccessRatePct: sellStats.accuracyPct,
+    sellScored: sellStats.scored,
   });
 
   const [storedFeedback, setStoredFeedback] = useState<AdviceFeedback | null>(() =>
@@ -592,16 +795,19 @@ export function DecisionSimAdviceCalibrationPanel({
     if (!shouldAutoSnapshot(history, summary.scoredCount, now)) return;
     const snap = buildAdviceLearningSnapshot({
       summary,
+      portfolioSummary,
+      simLoopSummary,
       feedback: storedFeedback,
       unifiedAdviceSuccessPct: unifiedAdviceSuccess?.headlinePct ?? null,
       capturePct: adviceComplement?.capture.capturePct ?? null,
       paperBookReturnPct: adviceComplement?.paperReturn.returnPct ?? null,
       closedPnlWinRatePct: adviceComplement?.closedPnl.winRatePct ?? null,
+      ...buySellAdviceSnapshotFields(points),
       manual: false,
       now: new Date(now),
     });
     recordAdviceLearningSnapshot(snap);
-  }, [summary, storedFeedback, unifiedAdviceSuccess?.headlinePct, adviceComplement]);
+  }, [summary, portfolioSummary, simLoopSummary, storedFeedback, unifiedAdviceSuccess?.headlinePct, adviceComplement, points]);
 
   const hasPendingFeedback =
     pendingFeedback.bucketCorrections.size > 0 || pendingFeedback.actionDemotions.size > 0;
@@ -610,18 +816,25 @@ export function DecisionSimAdviceCalibrationPanel({
     (storedFeedback.bucketCorrections.size > 0 || storedFeedback.actionDemotions.size > 0);
 
   const onApplyLearnings = useCallback(() => {
-    saveAdviceFeedback(pendingFeedback);
     const snap = buildAdviceLearningSnapshot({
       summary,
+      portfolioSummary,
+      simLoopSummary,
       feedback: pendingFeedback,
       unifiedAdviceSuccessPct: unifiedAdviceSuccess?.headlinePct ?? null,
       capturePct: adviceComplement?.capture.capturePct ?? null,
       paperBookReturnPct: adviceComplement?.paperReturn.returnPct ?? null,
       closedPnlWinRatePct: adviceComplement?.closedPnl.winRatePct ?? null,
+      ...buySellAdviceSnapshotFields(points),
       manual: true,
     });
-    recordAdviceLearningSnapshot(snap);
-  }, [pendingFeedback, summary, unifiedAdviceSuccess?.headlinePct, adviceComplement]);
+    persistAdviceLearningsRecalculation({
+      feedback: pendingFeedback,
+      snapshot: snap,
+      resetHistory: false,
+    });
+    setStoredFeedback(loadAdviceFeedback());
+  }, [pendingFeedback, summary, portfolioSummary, simLoopSummary, unifiedAdviceSuccess?.headlinePct, adviceComplement, points]);
 
   const onClearLearnings = useCallback(() => {
     if (typeof window !== "undefined") {
@@ -650,18 +863,20 @@ export function DecisionSimAdviceCalibrationPanel({
 
   return (
     <div
-      className={`rounded-xl shrink-0 flex flex-col h-full min-h-0 ${compact ? "p-2 gap-1.5" : "p-3 gap-2 space-y-2"} ${className ?? "tester-monitor-panel"}`}
+      className={`rounded-xl shrink-0 flex flex-col min-h-0 ${pairLayout ? "h-full" : ""} ${compact ? "p-2 gap-1.5" : "p-3 gap-2 space-y-2"} ${className ?? "tester-monitor-panel"}`}
     >
       <div
         ref={preChartMeasureRef}
         className={`shrink-0 flex flex-col ${compact ? "gap-1.5" : "gap-2"}`}
       >
       <div className="min-w-0">
-        <div className="flex flex-wrap items-center gap-2">
+        <div className="flex flex-wrap items-center gap-2 min-h-[22px]">
           <p className={`tester-monitor-text font-semibold ${compact ? "text-[10px]" : "text-[11px]"}`}>
             {raWhatIfActive
               ? t("testerMonitor.decisionSim.adviceCalib.titleRa")
-              : t("testerMonitor.decisionSim.adviceCalib.title")}
+              : compact
+                ? t("testerMonitor.decisionSim.adviceCalib.titleCompact")
+                : t("testerMonitor.decisionSim.adviceCalib.title")}
           </p>
           {unifiedAdviceSuccess?.headlinePct != null ? (
             <span
@@ -717,11 +932,11 @@ export function DecisionSimAdviceCalibrationPanel({
           <DashboardPanelUpdatedLabel updatedAt={updatedAt} className="!text-[9px]" />
         ) : null}
 
-        {/* Learning loop control bar — actions always visible; status + chips +
-            sell warning collapse to save vertical space. */}
+        {/* Learning loop — reserve min height so scoredCount appearing does not jump layout */}
+        <div className="mt-1.5 space-y-1.5 min-h-[34px]">
         {summary.scoredCount > 0 ? (
-          <div className="mt-1.5 space-y-1.5">
-            <div className="flex flex-wrap items-center gap-2">
+          <>
+            <div className={`flex ${compact ? "flex-col items-stretch gap-1" : "flex-wrap items-center gap-2"}`}>
               <button
                 type="button"
                 onClick={onApplyLearnings}
@@ -757,20 +972,26 @@ export function DecisionSimAdviceCalibrationPanel({
               open={insightsOpen}
               onToggle={onInsightsToggle}
             >
-              <summary className="text-[10px] font-semibold cursor-pointer text-ink select-none list-none [&::-webkit-details-marker]:hidden">
-                <span className="inline-flex items-center gap-1.5">
-                  <span aria-hidden className="text-[9px] opacity-60">
-                    {insightsOpen ? "▾" : "▸"}
+              <summary className={`text-[10px] font-semibold cursor-pointer text-ink select-none list-none [&::-webkit-details-marker]:hidden ${compact ? "leading-snug" : ""}`}>
+                <span className={compact ? "block space-y-0.5" : "inline-flex items-center gap-1.5 flex-wrap"}>
+                  <span className={compact ? "inline-flex items-center gap-1.5" : "inline-flex items-center gap-1.5"}>
+                    <span aria-hidden className="text-[9px] opacity-60">
+                      {insightsOpen ? "▾" : "▸"}
+                    </span>
+                    {t(
+                      compact
+                        ? "adviceLearning.feedback.insightsSummaryCompact"
+                        : "adviceLearning.feedback.insightsSummary",
+                    )}
                   </span>
-                  {t("adviceLearning.feedback.insightsSummary")}
                   {hasStoredFeedback && storedFeedback ? (
-                    <span className="font-normal text-indigo-700 dark:text-indigo-300">
+                    <span className="font-normal text-indigo-700 dark:text-indigo-300 block">
                       · {storedFeedback.bucketCorrections.size}b ·{" "}
                       {storedFeedback.actionDemotions.size}a
                     </span>
                   ) : null}
                   {sellStats.bad >= 3 && sellStats.bad > sellStats.good ? (
-                    <span className="font-normal text-rose-700 dark:text-rose-300">
+                    <span className="font-normal text-rose-700 dark:text-rose-300 block">
                       · SELL {sellStats.good}✓/{sellStats.bad}✗
                     </span>
                   ) : null}
@@ -781,7 +1002,7 @@ export function DecisionSimAdviceCalibrationPanel({
                 <span
                   className={`block text-[10px] leading-snug ${
                     hasStoredFeedback ? "text-indigo-700 dark:text-indigo-300" : "text-ink-muted"
-                  }`}
+                  } ${compact ? "text-[9px]" : ""}`}
                 >
                   {hasStoredFeedback && storedFeedback
                     ? t("adviceLearning.feedback.statusActive", {
@@ -794,8 +1015,14 @@ export function DecisionSimAdviceCalibrationPanel({
                       : t("adviceLearning.feedback.statusInsufficient")}
                 </span>
 
-                <div className={`flex flex-wrap gap-1.5 ${compact ? "text-[9px]" : "text-[10px]"}`}>
-                  <span className="rounded-md border border-amber-200/80 bg-amber-50/80 px-1.5 py-0.5 tabular-nums">
+                <div
+                  className={
+                    compact
+                      ? "grid grid-cols-1 gap-1 text-[9px] min-h-[4.75rem] content-start"
+                      : "flex flex-wrap gap-1.5 text-[10px] min-h-[1.75rem] content-start"
+                  }
+                >
+                  <span className="rounded-md border border-amber-200/80 bg-amber-50/80 px-1.5 py-0.5 tabular-nums leading-snug">
                     {t("testerMonitor.decisionSim.adviceCalib.lowProbBand", {
                       n: summary.lowProb.count,
                       good: summary.lowProb.good,
@@ -803,7 +1030,7 @@ export function DecisionSimAdviceCalibrationPanel({
                       rate: summary.lowProb.successRatePct != null ? `${summary.lowProb.successRatePct}%` : "—",
                     })}
                   </span>
-                  <span className="rounded-md border border-emerald-200/80 bg-emerald-50/80 px-1.5 py-0.5 tabular-nums">
+                  <span className="rounded-md border border-emerald-200/80 bg-emerald-50/80 px-1.5 py-0.5 tabular-nums leading-snug">
                     {t("testerMonitor.decisionSim.adviceCalib.highProbBand", {
                       n: summary.highProb.count,
                       good: summary.highProb.good,
@@ -813,7 +1040,7 @@ export function DecisionSimAdviceCalibrationPanel({
                   </span>
                   {buyStats.scored > 0 ? (
                     <span
-                      className={`rounded-md border px-1.5 py-0.5 tabular-nums ${
+                      className={`rounded-md border px-1.5 py-0.5 tabular-nums leading-snug ${
                         buyStats.accuracyPct != null && buyStats.accuracyPct < 50
                           ? "border-rose-300/80 bg-rose-50/80 text-rose-900 font-semibold"
                           : "border-emerald-200/80 bg-emerald-50/80"
@@ -830,7 +1057,7 @@ export function DecisionSimAdviceCalibrationPanel({
                   ) : null}
                   {sellStats.scored > 0 ? (
                     <span
-                      className={`rounded-md border px-1.5 py-0.5 tabular-nums ${
+                      className={`rounded-md border px-1.5 py-0.5 tabular-nums leading-snug ${
                         sellStats.bad > sellStats.good
                           ? "border-rose-400/80 bg-rose-100/80 text-rose-900 font-semibold"
                           : sellStats.bad > 0
@@ -853,7 +1080,7 @@ export function DecisionSimAdviceCalibrationPanel({
                     </span>
                   ) : null}
                   {summary.pendingCount > 0 ? (
-                    <span className="rounded-md border border-slate-200/80 bg-slate-50/80 px-1.5 py-0.5 text-ink-muted">
+                    <span className="rounded-md border border-slate-200/80 bg-slate-50/80 px-1.5 py-0.5 text-ink-muted leading-snug">
                       {t("testerMonitor.decisionSim.adviceCalib.pending", { n: summary.pendingCount })}
                     </span>
                   ) : null}
@@ -875,158 +1102,177 @@ export function DecisionSimAdviceCalibrationPanel({
                 ) : null}
               </div>
             </details>
-          </div>
+          </>
         ) : null}
+        </div>
+      </div>
       </div>
 
-      {hasData ? (
-        <div className="flex flex-wrap items-center justify-between gap-2 -mb-0.5">
-          <p className="text-[9px] leading-snug text-ink-muted max-w-[640px]">
-            {it
-              ? "Asse Y = errore previsione % (mossa reale − mossa attesa). Sopra zero = ha sorpreso in meglio · sotto zero = ha deluso · linea gialla = stima perfetta."
-              : "Y axis = forecast error % (actual move − expected move). Above zero = beat the forecast · below zero = missed · yellow line = perfect prediction."}
-          </p>
-          <div
-            role="group"
-            aria-label={it ? "Finestra errore" : "Error horizon"}
-            className="inline-flex shrink-0 rounded-md border border-slate-300/70 bg-white/80 p-0.5 text-[9px] font-semibold dark:border-slate-600/60 dark:bg-slate-900/50"
-          >
-            <button
-              type="button"
-              onClick={() => setErrorHorizon("24h")}
-              aria-pressed={errorHorizon === "24h"}
-              title={
-                it
-                  ? "Mossa reale del titolo nelle 24h dopo il consiglio (default)."
-                  : "Stock move in the 24h after the advice (default)."
-              }
-              className={`px-2 py-0.5 rounded transition ${
-                errorHorizon === "24h"
-                  ? "bg-indigo-600 text-white shadow-sm"
-                  : "text-ink-muted hover:text-ink"
-              }`}
-            >
-              24h
-            </button>
-            <button
-              type="button"
-              onClick={() => setErrorHorizon("cumulative")}
-              aria-pressed={errorHorizon === "cumulative"}
-              disabled={cumulativeAvailableCount === 0}
-              title={
-                it
-                  ? "P&L cumulato dall'apertura per le posizioni effettivamente tenute in portafoglio."
-                  : "Cumulative P&L since entry for positions actually held in the portfolio."
-              }
-              className={`px-2 py-0.5 rounded transition ${
-                errorHorizon === "cumulative"
-                  ? "bg-indigo-600 text-white shadow-sm"
-                  : cumulativeAvailableCount === 0
-                    ? "text-ink-muted/50 cursor-not-allowed"
-                    : "text-ink-muted hover:text-ink"
-              }`}
-            >
-              {it ? "Cumulativo" : "Cumulative"}
-              {cumulativeAvailableCount > 0 ? (
-                <span className="ml-1 opacity-70 font-normal">({cumulativeAvailableCount})</span>
-              ) : null}
-            </button>
-          </div>
-        </div>
+      {!hideErrorCharts ? (
+      <div
+        className="shrink-0 overflow-hidden"
+        style={{ minHeight: errorTimelineMinHeight }}
+      >
+        <AdviceErrorTimelineCharts
+          points={pointsForHorizon}
+          lang={lang}
+          chartHeight={compact ? DECISION_SIM_PAIR_CHART_HEIGHT : 200}
+        />
+      </div>
       ) : null}
-      </div>
 
-      {hasData ? (
-        <div className="space-y-1 shrink-0">
-          <ResponsiveContainer width="100%" height={chartHeight}>
-            <ComposedChart margin={{ top: 4, right: 8, bottom: compact ? 16 : 20, left: 4 }}>
-              <CartesianGrid strokeDasharray="3 3" stroke="#e2e8f0" />
-              <XAxis
-                type="number"
-                dataKey="x"
-                domain={[0, 100]}
-                tick={{ fontSize: 8 }}
-                tickFormatter={(v) => `${v}%`}
-                label={
-                  compact
-                    ? undefined
-                    : {
-                        value: t("testerMonitor.decisionSim.adviceCalib.xAxis"),
-                        position: "insideBottom",
-                        offset: -4,
-                        style: { fontSize: 9, fill: "#64748b", fontWeight: 500 },
-                      }
-                }
-              />
-              <YAxis
-                type="number"
-                dataKey="y"
-                domain={yDomain}
-                tick={{ fontSize: 8 }}
-                tickFormatter={(v) => fmtSignedPct(v)}
-                width={44}
-                label={
-                  compact
-                    ? undefined
-                    : {
-                        value: it
-                          ? "Errore % (reale − attesa)"
-                          : "Error % (actual − expected)",
-                        angle: -90,
-                        position: "insideLeft",
-                        offset: 4,
-                        style: { fontSize: 9, fill: "#64748b", fontWeight: 500 },
-                      }
-                }
-              />
-              <ZAxis type="number" range={[64, 64]} />
-              <Tooltip content={<DotTooltip it={it} />} cursor={{ strokeDasharray: "3 3" }} />
-              {/* Faintly tint the "+" and "−" error zones so the split between
-                  "beat forecast" (top) and "missed forecast" (bottom) is obvious. */}
-              <ReferenceArea
-                y1={0}
-                y2={yDomain[1]}
-                fill="#10b981"
-                fillOpacity={0.05}
-                ifOverflow="visible"
-              />
-              <ReferenceArea
-                y1={yDomain[0]}
-                y2={0}
-                fill="#f43f5e"
-                fillOpacity={0.05}
-                ifOverflow="visible"
-              />
-              <ReferenceLine
-                y={0}
-                stroke="#eab308"
-                strokeWidth={2}
-                label={{
-                  value: it ? "Stima perfetta" : "Perfect prediction",
-                  position: "insideTopRight",
-                  fill: "#a16207",
-                  fontSize: 9,
-                  fontWeight: 600,
-                }}
-              />
-              <Scatter
-                data={scatterData}
-                fill="#22c55e"
-                fillOpacity={0.9}
-                legendType="none"
-                shape={(props: { cx?: number; cy?: number; payload?: AdviceForecastErrorDot }) => (
-                  <AdviceCalibScatterDot {...props} />
-                )}
-              />
-            </ComposedChart>
-          </ResponsiveContainer>
-          <ChartLegend it={it} compact={compact} />
-        </div>
-      ) : (
-        <p className="tester-monitor-muted text-[10px] py-4 text-center leading-relaxed">
-          {t("testerMonitor.decisionSim.adviceCalib.empty")}
-        </p>
-      )}
+      <details className="rounded-md border border-[rgb(var(--border))]/35 px-2 py-1 shrink-0">
+          <summary className="cursor-pointer text-[9px] font-semibold text-ink-muted hover:text-ink py-1">
+            {it
+              ? "▸ Dettaglio per P(plan) — scatter errore vs affidabilità"
+              : "▸ P(plan) detail — error vs confidence scatter"}
+          </summary>
+          {hasData ? (
+          <div className="space-y-1 shrink-0 pt-1">
+            <div className="flex flex-wrap items-center justify-between gap-2 -mb-0.5">
+              <p className="text-[9px] leading-snug text-ink-muted max-w-[640px]">
+                {it
+                  ? "Asse X = P(plan) al consiglio · Y = errore % (reale − attesa). Utile per calibrazione bucket; il trend principale è nei grafici sopra."
+                  : "X = P(plan) at advice · Y = error % (actual − expected). Useful for bucket calibration; main trend is in the charts above."}
+              </p>
+              <div
+                role="group"
+                aria-label={it ? "Finestra errore" : "Error horizon"}
+                className="inline-flex shrink-0 rounded-md border border-slate-300/70 bg-white/80 p-0.5 text-[9px] font-semibold dark:border-slate-600/60 dark:bg-slate-900/50"
+              >
+                <button
+                  type="button"
+                  onClick={() => setErrorHorizon("24h")}
+                  aria-pressed={errorHorizon === "24h"}
+                  title={
+                    it
+                      ? "Mossa reale del titolo nelle 24h dopo il consiglio (default)."
+                      : "Stock move in the 24h after the advice (default)."
+                  }
+                  className={`px-2 py-0.5 rounded transition ${
+                    errorHorizon === "24h"
+                      ? "bg-indigo-600 text-white shadow-sm"
+                      : "text-ink-muted hover:text-ink"
+                  }`}
+                >
+                  24h
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setErrorHorizon("cumulative")}
+                  aria-pressed={errorHorizon === "cumulative"}
+                  disabled={cumulativeAvailableCount === 0}
+                  title={
+                    it
+                      ? "P&L cumulato dall'apertura per le posizioni effettivamente tenute in portafoglio."
+                      : "Cumulative P&L since entry for positions actually held in the portfolio."
+                  }
+                  className={`px-2 py-0.5 rounded transition ${
+                    errorHorizon === "cumulative"
+                      ? "bg-indigo-600 text-white shadow-sm"
+                      : cumulativeAvailableCount === 0
+                        ? "text-ink-muted/50 cursor-not-allowed"
+                        : "text-ink-muted hover:text-ink"
+                  }`}
+                >
+                  {it ? "Cumulativo" : "Cumulative"}
+                  {cumulativeAvailableCount > 0 ? (
+                    <span className="ml-1 opacity-70 font-normal">({cumulativeAvailableCount})</span>
+                  ) : null}
+                </button>
+              </div>
+            </div>
+            <div className="w-full shrink-0 overflow-hidden" style={{ height: chartHeight }}>
+            <ResponsiveContainer width="100%" height={chartHeight}>
+              <ComposedChart margin={{ top: 4, right: 8, bottom: compact ? 16 : 20, left: 4 }}>
+                <CartesianGrid strokeDasharray="3 3" stroke="#e2e8f0" />
+                <XAxis
+                  type="number"
+                  dataKey="x"
+                  domain={xDomain}
+                  tick={{ fontSize: 8 }}
+                  tickFormatter={(v) => `${v}%`}
+                  label={
+                    compact
+                      ? undefined
+                      : {
+                          value: t("testerMonitor.decisionSim.adviceCalib.xAxis"),
+                          position: "insideBottom",
+                          offset: -4,
+                          style: { fontSize: 9, fill: "#64748b", fontWeight: 500 },
+                        }
+                  }
+                />
+                <YAxis
+                  type="number"
+                  dataKey="y"
+                  domain={yDomain}
+                  tick={{ fontSize: 8 }}
+                  tickFormatter={(v) => fmtSignedPct(v)}
+                  width={44}
+                  label={
+                    compact
+                      ? undefined
+                      : {
+                          value: it
+                            ? "Errore % (reale − attesa)"
+                            : "Error % (actual − expected)",
+                          angle: -90,
+                          position: "insideLeft",
+                          offset: 4,
+                          style: { fontSize: 9, fill: "#64748b", fontWeight: 500 },
+                        }
+                  }
+                />
+                <ZAxis type="number" range={[64, 64]} />
+                <Tooltip content={<DotTooltip it={it} />} cursor={false} />
+                <ReferenceArea
+                  y1={0}
+                  y2={yDomain[1]}
+                  fill="#10b981"
+                  fillOpacity={0.05}
+                  ifOverflow="visible"
+                />
+                <ReferenceArea
+                  y1={yDomain[0]}
+                  y2={0}
+                  fill="#f43f5e"
+                  fillOpacity={0.05}
+                  ifOverflow="visible"
+                />
+                <ReferenceLine
+                  y={0}
+                  stroke="#eab308"
+                  strokeWidth={2}
+                  label={{
+                    value: it ? "Stima perfetta" : "Perfect prediction",
+                    position: "insideTopRight",
+                    fill: "#a16207",
+                    fontSize: 9,
+                    fontWeight: 600,
+                  }}
+                />
+                <Scatter
+                  data={scatterData}
+                  fill="#22c55e"
+                  fillOpacity={0.9}
+                  legendType="none"
+                  isAnimationActive={false}
+                  shape={(props: { cx?: number; cy?: number; payload?: AdviceForecastErrorDot }) => (
+                    <AdviceCalibScatterDot {...props} />
+                  )}
+                />
+              </ComposedChart>
+            </ResponsiveContainer>
+            </div>
+            <ChartLegend it={it} compact={compact} />
+          </div>
+          ) : (
+            <p className="tester-monitor-muted text-[10px] py-6 text-center leading-relaxed">
+              {t("testerMonitor.decisionSim.adviceCalib.empty")}
+            </p>
+          )}
+        </details>
 
       {/* Trailing collapsibles wrapped in a `mt-auto` footer so they sit
           flush at the bottom of the panel. This is what lets the left
@@ -1034,7 +1280,7 @@ export function DecisionSimAdviceCalibrationPanel({
           ("Sim loop open positions still maturing") summaries line up at
           the same Y line, even when the pre-chart content above differs
           in height between the two cards. */}
-      <div className={`mt-auto shrink-0 ${compact ? "space-y-1.5" : "space-y-2"}`}>
+      <div className={`shrink-0 ${pairLayout ? "mt-auto" : ""} ${compact ? "space-y-1.5" : "space-y-2"}`}>
         {badAdviceRows.length > 0 ? (
           <details
             className="tester-monitor-panel-soft rounded-lg px-2 py-1.5"

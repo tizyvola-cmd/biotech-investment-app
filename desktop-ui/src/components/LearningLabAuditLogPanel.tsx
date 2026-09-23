@@ -113,6 +113,15 @@ export function LearningLabAuditLogPanel({
   );
 
   const weekly = data?.weekly_metrics ?? [];
+  const lastWeekly = weekly[weekly.length - 1] ?? null;
+  const lastPersistedWeek = useMemo(() => {
+    const persisted = weekly.filter((w) => !w.live_snapshot);
+    return persisted[persisted.length - 1]?.week ?? null;
+  }, [weekly]);
+  const showLiveStaleHint =
+    Boolean(lastWeekly?.live_snapshot) &&
+    lastPersistedWeek != null &&
+    String(lastWeekly?.week ?? "") > String(lastPersistedWeek);
 
   return (
     <div className="space-y-4">
@@ -126,6 +135,13 @@ export function LearningLabAuditLogPanel({
               ? "Snapshot da learning_history.json — stesse curve del tab Calibrazione, vista audit."
               : "Snapshots from learning_history.json — same curves as Model tab, audit view."}
           </p>
+          {showLiveStaleHint ? (
+            <p className="text-[10px] text-[rgb(var(--accent))] bg-[rgb(var(--accent))]/10 border border-[rgb(var(--accent))]/25 rounded-md px-2 py-1 mt-1.5 leading-snug">
+              {it
+                ? `Ultimo checkpoint salvato: ${String(lastPersistedWeek).slice(5)}. Il punto finale è live (outcomes aggiornati) — per persistere esegui Apply su cluster/regime nel Learning Lab.`
+                : `Last saved checkpoint: ${String(lastPersistedWeek).slice(5)}. Final point is live (fresh outcomes) — run Apply on cluster/regime in Learning Lab to persist.`}
+            </p>
+          ) : null}
         </div>
         {loading && !data ? (
           <p className="text-[11px] text-ink-muted py-4 text-center">{it ? "Caricamento…" : "Loading…"}</p>

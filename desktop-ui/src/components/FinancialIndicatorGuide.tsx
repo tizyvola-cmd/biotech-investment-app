@@ -20,8 +20,8 @@ function translateLegendHint(hint: string, it: boolean): string {
       "★ se prezzo ≥+5% vs chiusura · ⚡ se ≤−5% · High/Low vs prezzo",
     "CR · QR · Cash FY":
       "CR/QR/Cash FY: rosso sotto soglia · ambra · verde (barra = intensità)",
-    "0–1 bar: green high · amber mid · navy low · beta ⚡ if >2":
-      "barra 0–1: verde alto · ambra medio · navy basso · beta ⚡ se >2",
+    "0–1 bar: green high · amber mid · navy low · beta green <0.85 · amber >1.35 · ⚡ >2":
+      "barra 0–1: verde alto · ambra medio · navy basso · beta verde <0,85 · ambra >1,35 · ⚡ >2",
     "P portfolio · W watchlist": "P portfolio · W watchlist",
   };
   return map[hint] ?? hint;

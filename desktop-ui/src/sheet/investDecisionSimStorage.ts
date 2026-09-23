@@ -16,7 +16,9 @@ import { repairDecisionSimState } from "./simLoopDiagnostics";
 import { stampPostSellMove24hOnTicks } from "./investDecisionSimAdviceCalibration";
 import {
   decisionSimDailyEvaluationKey,
+  decisionSimMarketHourKey,
   isDecisionSimDailyEvaluationWindow,
+  isDecisionSimMarketWindow,
 } from "./investDecisionSimSchedule";
 import {
   isPendingSimTradeDue,
@@ -360,6 +362,19 @@ export function shouldRunDecisionSimTick(state: DecisionSimState, at: Date = new
   ) {
     return false;
   }
+
+  if (state.config.experimentMode) {
+    if (!isDecisionSimMarketWindow(at)) return false;
+    const hourKey = decisionSimMarketHourKey(at);
+    if (!hourKey) return false;
+    if (state.lastTickAt) {
+      const lastHourKey = decisionSimMarketHourKey(new Date(state.lastTickAt));
+      if (lastHourKey === hourKey) return false;
+    }
+    return true;
+  }
+
+  // Weekly run: one solid-BUY evaluation per Rome weekday at 18:00.
   if (!isDecisionSimDailyEvaluationWindow(at)) return false;
   const dayKey = decisionSimDailyEvaluationKey(at);
   if (!dayKey) return false;

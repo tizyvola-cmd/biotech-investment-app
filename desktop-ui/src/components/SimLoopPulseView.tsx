@@ -7,8 +7,10 @@ import {
 import { useLang, useT } from "../shared/i18n";
 import type { ChartBundle, ChartPoint, SheetTable } from "../types";
 import type { SdsRow } from "../api/supernova";
+import { resolveCapCycleKpiDisplay } from "../sheet/experimentCashFlow";
 import {
   portfolioPnlAccentClass,
+  portfolioPnlDirectionGlyph,
   portfolioPnlTabShellClass,
   portfolioPnlTone,
 } from "../sheet/portfolioGainLossStyle";
@@ -23,6 +25,7 @@ import {
   clearSimLoopVisitSnapshot,
   loadSimLoopVisitSnapshot,
   saveSimLoopVisitSnapshot,
+  syncSimLoopEntryShares,
   type SimLoopPulseVariant,
   type SimLoopVisitSnapshot,
 } from "../sheet/simLoopPulseView";
@@ -30,10 +33,12 @@ import type { PulseDirection } from "../sheet/dashboardPulseView";
 import { portfolioPnlDeltaLooksLikeStaleBaseline } from "../sheet/piggyBankTrend";
 import type { InvestSimInputs } from "../sheet/investSimStorage";
 import { useInvestSimPortfolioHistory } from "../hooks/useInvestSimPortfolioHistory";
-import { resolveSimLoopCapitalPot } from "../sheet/investDecisionSimCharts";
+import { resolveDashboardSynthCapitalPot } from "../sheet/investDecisionSimCharts";
+import { floorPaperBookSynthShares } from "../sheet/simLoopCausalSynth";
 import { useSimLoopSynthAllocation } from "../hooks/useSimLoopSynthAllocation";
 import type { PulseScope } from "./PulseScopeSwitcher";
 import { PulseScopeSwitcher } from "./PulseScopeSwitcher";
+import { PulseSimTickScheduleStrip } from "./PulseSimTickScheduleStrip";
 import {
   PulseOpenPositionsMovementLog,
   movementLogRowFromGainPlan,
@@ -100,11 +105,11 @@ function KpiTile({
       className="rounded-xl border border-[rgb(var(--panel-mint-border))]/55 bg-white/90 px-3 py-2 min-w-[7.5rem] flex-1"
       title={title}
     >
-      <p className="text-[11px] uppercase tracking-wide font-semibold text-ink-muted/85">{label}</p>
-      <p className={`text-xs font-bold tabular-nums mt-0.5 leading-tight ${accentClass ?? "text-ink"}`}>
+      <p className="text-[12px] uppercase tracking-wide font-semibold text-ink-muted/85">{label}</p>
+      <p className={`text-sm font-bold tabular-nums mt-0.5 leading-snug ${accentClass ?? "text-ink"}`}>
         {value}
       </p>
-      {sub ? <p className="text-[11px] text-ink-muted mt-0.5 tabular-nums">{sub}</p> : null}
+      {sub ? <p className="text-xs text-ink-muted mt-1 tabular-nums leading-snug">{sub}</p> : null}
     </div>
   );
 }
@@ -152,7 +157,12 @@ export function SimLoopPulseView({
   investInputs?: InvestSimInputs;
   reloadToken?: number;
   onOpenSimulationRow?: (focus: { ticker: string; cd?: string }) => void;
-  onOpen24hAssessment?: (focus: { ticker: string; cd?: string }) => void;
+  onOpen24hAssessment?: (focus: {
+    ticker: string;
+    cd?: string;
+    rowKey?: string;
+    openDeepDive?: boolean;
+  }) => void;
 }) {
   const t = useT();
   const { lang } = useLang();
@@ -186,7 +196,7 @@ export function SimLoopPulseView({
 
   const simLoopCapitalPot = useMemo(
     () =>
-      resolveSimLoopCapitalPot(
+      resolveDashboardSynthCapitalPot(
         state.config.capitalPerTrade,
         state.config.maxOpenPositions,
       ),
@@ -199,19 +209,48 @@ export function SimLoopPulseView({
     investInputs,
     pointsBySeriesKey: chartPointsByKey,
     totalCapitalEur: simLoopCapitalPot,
+    paperPortfolio: state.paperPortfolio,
     enabled: isSynth && Boolean(simTable?.rows?.length),
   });
 
+  const entryShares = useMemo(() => {
+    if (!isSynth || !synthAlloc) return {};
+    return syncSimLoopEntryShares(
+      state.paperPortfolio.map((p) => p.key),
+      synthAlloc.shareByRowKey,
+    );
+  }, [isSynth, synthAlloc, state.paperPortfolio]);
+
   const sizing = useMemo(() => {
     if (!isSynth || !synthAlloc) return null;
+    const mergedShares = { ...synthAlloc.shareByRowKey };
+    for (const [key, share] of Object.entries(entryShares)) {
+      if (typeof share === "number" && Number.isFinite(share)) {
+        mergedShares[key] = share;
+      }
+    }
+    const shareByRowKey = floorPaperBookSynthShares(
+      mergedShares,
+      state.paperPortfolio,
+      {
+        totalCapitalEur: synthAlloc.totalCapitalEur,
+        capitalPerTrade: state.config.capitalPerTrade,
+      },
+    );
     return {
-      shareByRowKey: synthAlloc.shareByRowKey,
+      shareByRowKey,
       totalCapitalEur: synthAlloc.totalCapitalEur,
       capitalPerTrade: state.config.capitalPerTrade,
       targetGainEur: synthAlloc.targetGainEur,
-      sizingMode: "causal_rebalance" as const,
+      sizingMode: "static_approved" as const,
     };
-  }, [isSynth, synthAlloc, state.config.capitalPerTrade]);
+  }, [
+    isSynth,
+    synthAlloc,
+    entryShares,
+    state.config.capitalPerTrade,
+    state.paperPortfolio,
+  ]);
 
   const { history: portfolioHistory } = useInvestSimPortfolioHistory(reloadToken);
 
@@ -229,6 +268,26 @@ export function SimLoopPulseView({
       }),
     [state, simTable, chartPointsByKey, priorSnapshot, lang, sizing, portfolioHistory, investInputs],
   );
+
+  const pulseTotals = data.totals;
+
+  const deltaPnlSinceVisit = data.deltaPnlSinceVisit;
+
+  const visitSnapshotData = useMemo(
+    () => ({ totals: pulseTotals, rows: data.rows }),
+    [pulseTotals, data.rows],
+  );
+
+  /** Snap chart terminal "now" to the same synth-scaled total as KPIs. */
+  const aggregateGainPlanSeries = useMemo(() => {
+    const base = data.aggregateGainPlanSeries;
+    if (!isSynth || base.length === 0) return base;
+    const out = [...base];
+    const last = { ...out[out.length - 1]! };
+    last.actual = pulseTotals.pnlEur;
+    out[out.length - 1] = last;
+    return out;
+  }, [data.aggregateGainPlanSeries, isSynth, pulseTotals.pnlEur]);
 
   const { catalog: lossRiskCatalog } = useLossRiskCatalog({
     simTable,
@@ -266,20 +325,20 @@ export function SimLoopPulseView({
     if (
       portfolioPnlDeltaLooksLikeStaleBaseline(
         prior.totalPnlEur,
-        data.totals.pnlEur,
-        data.totals.pnlEurToday ?? 0,
-        data.totals.todayCovered,
+        pulseTotals.pnlEur,
+        pulseTotals.pnlEurToday ?? 0,
+        pulseTotals.todayCovered,
       )
     ) {
       clearSimLoopVisitSnapshot(variant);
       setPriorSnapshot(null);
     }
-  }, [variant, data.totals.pnlEur, data.totals.pnlEurToday, data.totals.todayCovered]);
+  }, [variant, pulseTotals.pnlEur, pulseTotals.pnlEurToday, pulseTotals.todayCovered]);
 
   useEffect(() => {
     const persistVisit = () => {
       if (data.rows.length === 0) return;
-      saveSimLoopVisitSnapshot(buildSimLoopVisitSnapshotFromData(data), variant);
+      saveSimLoopVisitSnapshot(buildSimLoopVisitSnapshotFromData(visitSnapshotData), variant);
     };
     const onVis = () => {
       if (document.visibilityState === "hidden") persistVisit();
@@ -290,24 +349,29 @@ export function SimLoopPulseView({
       window.removeEventListener("beforeunload", persistVisit);
       document.removeEventListener("visibilitychange", onVis);
     };
-  }, [data, variant]);
+  }, [visitSnapshotData, data.rows.length, variant]);
 
   const persistAndSwitch = useCallback(
     (nextScope: PulseScope) => {
       if (nextScope === pulseScope) return;
       if (data.rows.length > 0) {
-        const snap = buildSimLoopVisitSnapshotFromData(data);
+        const snap = buildSimLoopVisitSnapshotFromData(visitSnapshotData);
         saveSimLoopVisitSnapshot(snap, variant);
         setPriorSnapshot(snap);
       }
       onPulseScopeChange(nextScope);
     },
-    [data, variant, pulseScope, onPulseScopeChange],
+    [visitSnapshotData, data.rows.length, variant, pulseScope, onPulseScopeChange],
   );
 
   const openPortfolioRow = useCallback(
-    (row: { ticker: string; completionDate?: string }) => {
-      const focus = { ticker: row.ticker, cd: row.completionDate };
+    (row: { ticker: string; completionDate?: string; key?: string }) => {
+      const focus = {
+        ticker: row.ticker,
+        cd: row.completionDate,
+        rowKey: row.key,
+        openDeepDive: true,
+      };
       if (onOpen24hAssessment) {
         onOpen24hAssessment(focus);
       } else {
@@ -319,7 +383,7 @@ export function SimLoopPulseView({
 
   const synthUnavailable = isSynth && !synthAlloc;
   const shellCls = portfolioPnlTabShellClass(data.winRate.winPct);
-  const ptfTone = portfolioPnlTone(data.totals.openPnlEur, data.totals.openPnlPct);
+  const ptfTone = portfolioPnlTone(pulseTotals.openPnlEur, pulseTotals.openPnlPct);
 
   return (
     <section
@@ -357,6 +421,7 @@ export function SimLoopPulseView({
             <PulseScopeSwitcher active={pulseScope} onSelect={persistAndSwitch} />
           </div>
         </div>
+        <PulseSimTickScheduleStrip state={state} />
       </div>
 
       {synthUnavailable ? (
@@ -371,7 +436,7 @@ export function SimLoopPulseView({
         <>
           <div className="dashboard-pulse-hero grid gap-3 p-3 lg:grid-cols-[minmax(0,1.35fr)_minmax(0,1fr)]">
             <PortfolioGainPlanAggregateChart
-              series={data.aggregateGainPlanSeries}
+              series={aggregateGainPlanSeries}
               height={172}
               titleKey={`${copyPrefix}.chartTitle`}
               captionKey={`${copyPrefix}.chartCaption`}
@@ -383,9 +448,9 @@ export function SimLoopPulseView({
               <div className="flex flex-wrap gap-2">
                 <KpiTile
                   label={it ? "Gain open (MTM)" : "Gain open (MTM)"}
-                  value={fmtPulseEur(data.totals.openPnlEur)}
-                  sub={data.totals.openPnlPct != null ? fmtPulsePct(data.totals.openPnlPct) : undefined}
-                  accentClass={portfolioPnlAccentClass(data.totals.openPnlEur)}
+                  value={fmtPulseEur(pulseTotals.openPnlEur)}
+                  sub={pulseTotals.openPnlPct != null ? fmtPulsePct(pulseTotals.openPnlPct) : undefined}
+                  accentClass={portfolioPnlAccentClass(pulseTotals.openPnlEur)}
                   title={
                     it
                       ? "P&L mark-to-market sulle posizioni paper aperte"
@@ -395,18 +460,20 @@ export function SimLoopPulseView({
                 <KpiTile
                   label={it ? "Gain 24h" : "Gain 24h"}
                   value={
-                    data.totals.todayCovered > 0 ? fmtPulseEur(data.totals.pnlEurToday) : "—"
+                    pulseTotals.todayCovered > 0 ? fmtPulseEur(pulseTotals.pnlEurToday) : "—"
                   }
                   sub={
-                    data.totals.todayCovered === 0
+                    pulseTotals.todayCovered === 0
                       ? it
                         ? "mercato chiuso"
                         : "market closed"
-                      : undefined
+                      : it
+                        ? "solo mov. giornaliero"
+                        : "daily move only"
                   }
                   accentClass={
-                    data.totals.todayCovered > 0
-                      ? portfolioPnlAccentClass(data.totals.pnlEurToday)
+                    pulseTotals.todayCovered > 0
+                      ? portfolioPnlAccentClass(pulseTotals.pnlEurToday)
                       : undefined
                   }
                   title={t("dashboard.pulse.pnl24hTip")}
@@ -414,39 +481,91 @@ export function SimLoopPulseView({
                 <KpiTile
                   label={it ? "Δ visita" : "Δ visit"}
                   value={
-                    data.deltaPnlSinceVisit != null ? fmtPulseEur(data.deltaPnlSinceVisit) : "—"
+                    deltaPnlSinceVisit != null ? fmtPulseEur(deltaPnlSinceVisit) : "—"
                   }
                   sub={
-                    data.deltaPnlSinceVisit == null
+                    deltaPnlSinceVisit == null
                       ? it
                         ? "prima visita"
                         : "first visit"
                       : undefined
                   }
                   accentClass={
-                    data.deltaPnlSinceVisit != null
-                      ? portfolioPnlAccentClass(data.deltaPnlSinceVisit)
+                    deltaPnlSinceVisit != null
+                      ? portfolioPnlAccentClass(deltaPnlSinceVisit)
                       : undefined
                   }
                   title={t("dashboard.pulse.deltaTip")}
                 />
-                {data.totals.closedDealCount > 0 ? (
+                {pulseTotals.closedDealCount > 0 ? (
                   <KpiTile
                     label={it ? "Gain closed" : "Gain closed"}
-                    value={fmtPulseEur(data.totals.closedPnlEur)}
+                    value={fmtPulseEur(pulseTotals.closedPnlEur)}
                     sub={
-                      it
-                        ? `${data.totals.closedDealCount} deal chiuse`
-                        : `${data.totals.closedDealCount} closed deals`
+                      isSynth
+                        ? it
+                          ? `${pulseTotals.closedDealCount} deal chiuse · ~${fmtPulseEur(
+                              pulseTotals.closedPnlEur / pulseTotals.closedDealCount,
+                            )}/deal synth`
+                          : `${pulseTotals.closedDealCount} closed deals · ~${fmtPulseEur(
+                              pulseTotals.closedPnlEur / pulseTotals.closedDealCount,
+                            )}/deal synth`
+                        : it
+                          ? `${pulseTotals.closedDealCount} deal chiuse`
+                          : `${pulseTotals.closedDealCount} closed deals`
                     }
-                    accentClass={portfolioPnlAccentClass(data.totals.closedPnlEur)}
+                    accentClass={portfolioPnlAccentClass(pulseTotals.closedPnlEur)}
                     title={
-                      it
-                        ? "P&L realizzato sui SELL paper del sim loop"
-                        : "Realized P&L on sim loop paper SELL trades"
+                      isSynth
+                        ? it
+                          ? "P&L realizzato sui SELL paper del sim loop, scalato al peso synth Cap Div — non è il Gain 24h."
+                          : "Realized P&L on sim loop paper SELL trades, scaled by Cap Div synth weight — not Gain 24h."
+                        : it
+                          ? "P&L realizzato sui SELL paper del sim loop"
+                          : "Realized P&L on sim loop paper SELL trades"
                     }
                   />
                 ) : null}
+                {(() => {
+                  const capCycle = resolveCapCycleKpiDisplay(
+                    {
+                      capitalInOpenEur: pulseTotals.capitalInOpenEur,
+                      gainsRecycledInOpenEur: pulseTotals.gainsRecycledInOpenEur,
+                      capitalNotFromGainsEur: pulseTotals.capitalNotFromGainsEur,
+                      closedDealCount: pulseTotals.closedDealCount,
+                    },
+                    t,
+                    fmtPulseEur,
+                  );
+                  return (
+                <KpiTile
+                  label={t("pulse.capCycle.label")}
+                  value={capCycle.value}
+                  sub={capCycle.sub}
+                  title={
+                    isSynth
+                      ? `${t("pulse.capCycle.tip")}\n\n${t("pulse.capCycle.tipSynth")}`
+                      : t("pulse.capCycle.tip")
+                  }
+                />
+                  );
+                })()}
+
+                <KpiTile
+                  label={it ? "Gain totale" : "Total gain"}
+                  value={fmtPulseEur(pulseTotals.pnlEur)}
+                  sub={pulseTotals.pnlPct != null ? fmtPulsePct(pulseTotals.pnlPct) : undefined}
+                  accentClass={portfolioPnlAccentClass(pulseTotals.pnlEur)}
+                  title={
+                    isSynth
+                      ? it
+                        ? "Aperto + chiusi — snapshot Cap Div Weight Sim Exp"
+                        : "Open + closed — Cap Div Weight Sim Exp snapshot"
+                      : it
+                        ? "P&L totale paper sim loop"
+                        : "Total paper sim loop P&L"
+                  }
+                />
               </div>
               {data.rows.length > 0 ? (
                 <PulseOpenPositionsMovementLog
@@ -554,6 +673,7 @@ export function SimLoopPulseView({
                           inPortfolio
                           pnlPct={row.pnlPct}
                           pnlEur={row.pnlEur}
+                          simRow={row.gainPlanRow.simRow}
                           className="text-xs"
                           portfolioMarkTitle={
                             it ? "Posizione paper sim loop" : "Sim loop paper position"
@@ -578,8 +698,11 @@ export function SimLoopPulseView({
                         {row.pnlEur24h != null ? fmtPulseEur(row.pnlEur24h) : "—"}
                       </td>
                       <td
-                        className={`${gridTd("center")} tabular-nums whitespace-nowrap font-semibold${portfolioPnlAccentClass(row.pnlEur)}`}
+                        className={`${gridTd("center")} tabular-nums whitespace-nowrap font-semibold${portfolioPnlAccentClass(row.pnlEur, row.pnlPct)}`}
                       >
+                        <span className="mr-0.5 opacity-80" aria-hidden>
+                          {portfolioPnlDirectionGlyph(row.pnlEur, row.pnlPct)}
+                        </span>
                         {fmtPulseEur(row.pnlEur)}
                         <span className="text-[11px] font-normal opacity-80 ml-0.5">
                           {fmtPulsePct(row.pnlPct)}
@@ -689,6 +812,23 @@ export function SimLoopPulseView({
       {!synthUnavailable && data.rows.length > 0 ? (
         <p className="px-4 pb-3 pt-1 text-[11px] text-ink-muted/75 leading-snug border-t border-[rgb(var(--panel-feed-border))]/25 bg-[rgb(var(--panel-feed-header-bg))]/45">
           {t(`${copyPrefix}.footnote`)}
+          {isSynth ? (
+            <>
+              {" "}
+              {t("dashboard.pulse.simLoopSynth.capDivPotFootnote", {
+                pot: simLoopCapitalPot.toLocaleString(lang === "it" ? "it-IT" : "en-US"),
+              })}
+            </>
+          ) : null}
+          {isSynth && data.equalReferenceTotals ? (
+            <>
+              {" "}
+              {t("dashboard.pulse.simLoopSynth.equalRefFootnote", {
+                cap: state.config.capitalPerTrade.toLocaleString(lang === "it" ? "it-IT" : "en-US"),
+                pnl: fmtPulseEur(data.equalReferenceTotals.pnlEur),
+              })}
+            </>
+          ) : null}
           {ptfTone === "gain"
             ? ` · ${t("dashboard.pulse.inGain")}`
             : ptfTone === "loss"

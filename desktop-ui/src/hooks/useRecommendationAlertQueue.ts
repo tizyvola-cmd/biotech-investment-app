@@ -106,21 +106,16 @@ export function useRecommendationAlertQueue(args: {
       }
       return;
     }
-    if (open) return;
-
+    // Keep signatures current, but never auto-open the modal on app load /
+    // screen changes — BUY/SELL stay visible in Pulse / Actions / Cutoff.
     const next = detectNewRecommendationAlerts(alertContext);
     const keySig = recommendationAlertKeySig(next);
     if (keySig === lastKeySigRef.current) return;
     lastKeySigRef.current = keySig;
-    if (next.length === 0) {
-      setAlerts([]);
-      setOpen(false);
-      return;
-    }
-    ackRecommendationAlerts(next);
-    setAlerts(next);
-    setActiveIndex(0);
-    setOpen(true);
+    if (next.length) ackRecommendationAlerts(next);
+    if (open) return;
+    setAlerts([]);
+    setOpen(false);
   }, [enabled, simTable, alertContext, open]);
 
   const monitorRow = useMemo(() => {

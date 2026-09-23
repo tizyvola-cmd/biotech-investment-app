@@ -141,11 +141,34 @@ describe("P&L tab breakdown", () => {
       pnlUnavailable: false,
       buyPrice: 3.52,
       capital: 5000,
+      currPrice: 3.56,
     };
     const b = resolvePositionPnlBreakdown(pos, {}, new Date().toISOString(), []);
     expect(b.todaySource).toBe("entry_today");
     expect(b.pnlEurToday).toBeCloseTo(b.totalEur, 0);
     expect(b.dailyLegCount).toBe(1);
+  });
+
+  it("entry day uses Var. Giorn. when spot still equals buy", () => {
+    const pos = {
+      key: "VRTX|2026-09-17",
+      valueNow: 2428,
+      pnlEur: 0,
+      pnlPct: 0,
+      pnlUnavailable: false,
+      buyPrice: 496.07,
+      capital: 2428,
+      currPrice: 496.07,
+    };
+    const b = resolvePositionPnlBreakdown(
+      pos,
+      { "Var. Giorn. %": 1.5 },
+      new Date().toISOString(),
+      [],
+    );
+    expect(b.todaySource).toBe("entry_today");
+    expect(b.totalEur).toBeCloseTo(36.42, 0);
+    expect(b.pnlEurToday).toBeCloseTo(b.totalEur, 0);
   });
 });
 

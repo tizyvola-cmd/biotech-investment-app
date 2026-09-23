@@ -46,6 +46,18 @@ import {
   SDS_ROI_PROFILES,
   type SdsRoiProfileId,
 } from "../sheet/sdsRoiBlend";
+import {
+  formatSlopeTrajectoryAxisTick,
+  magnifiedPctDomain,
+} from "../sheet/slopeErrorCharts";
+import {
+  isLossAnalysisAlignedTile,
+  LOSS_ANALYSIS_ALIGNED_CHART_MARGIN,
+  LOSS_ANALYSIS_ALIGNED_X_AXIS_HEIGHT,
+  LOSS_ANALYSIS_ALIGNED_Y_AXIS_WIDTH,
+  LOSS_ANALYSIS_CHART_SYNC_ID,
+  lossAnalysisChartOffsetGrid,
+} from "../sheet/lossAnalysisChartLayout";
 import { useT, useLang } from "../shared/i18n";
 
 const POST_REF_IDS = ["post_rialzo", "post_ribasso", "post_neutro", "cluster0"] as const;
@@ -92,9 +104,82 @@ const REFERENCE_IDS = ["mean", ...HISTORY_CASES.map((c) => c.id)] as const;
 type ReferenceId = (typeof REFERENCE_IDS)[number];
 type SeriesId = ReferenceId | `ovl_${string}`;
 
+function chartLineValue(v: number | null | undefined): number | null {
+  return v != null && Number.isFinite(v) ? v : null;
+}
+
+type CurveKnot = { offset: number; y: number };
+
+function collectVisibleCurveKnots(
+  overlayCurves: SdsOverlayCurve[],
+  blendOverlays: SdsBlendOverlayCurve[],
+  visibleKeys: string[],
+): CurveKnot[] {
+  const knots: CurveKnot[] = [];
+  for (const ovl of overlayCurves) {
+    const key = overlayDataKey(ovl.ticker);
+    if (!visibleKeys.includes(key)) continue;
+    const offsets = ovl.offsets ?? calendarOffsetsForValueCount(ovl.values.length);
+    ovl.values.forEach((v, i) => {
+      if (v != null && Number.isFinite(v)) knots.push({ offset: offsets[i]!, y: v });
+    });
+  }
+  for (const blend of blendOverlays) {
+    const key = blendDataKey(blend.ticker);
+    if (!visibleKeys.includes(key)) continue;
+    const offsets = blend.offsets ?? calendarOffsetsForValueCount(blend.values.length);
+    blend.values.forEach((v, i) => {
+      if (v != null && Number.isFinite(v)) knots.push({ offset: offsets[i]!, y: v });
+    });
+  }
+  return knots;
+}
+
+/** X domain from actual curve knots — always includes CD (0) and today. */
+function curveAdaptiveXDomain(
+  knots: CurveKnot[],
+  todayOffset: number | null,
+): [number, number] {
+  const offsets: number[] = knots.map((k) => k.offset);
+  offsets.push(0);
+  if (todayOffset != null && Number.isFinite(todayOffset)) offsets.push(todayOffset);
+  if (!offsets.length) return [-30, 30];
+  const lo = Math.min(...offsets);
+  const hi = Math.max(...offsets);
+  const span = hi - lo;
+  const pad = Math.max(3, span * 0.08);
+  return [lo - pad, hi + pad];
+}
+
+function curveAdaptiveYDomain(knots: CurveKnot[]): [number, number] {
+  const ys = knots.map((k) => k.y);
+  if (!ys.length) return [-5, 10];
+  const [lo, hi] = magnifiedPctDomain(ys);
+  if (Math.min(...ys) < 0 && Math.max(...ys) > 0) {
+    return [Math.min(lo, -0.5), Math.max(hi, 0.5)];
+  }
+  return [lo, hi];
+}
+
+function buildFocusChartOffsets(
+  knots: CurveKnot[],
+  xDomain: [number, number],
+  todayOffset: number | null,
+  step = 5,
+): number[] {
+  const set = new Set<number>();
+  for (const k of knots) set.add(k.offset);
+  set.add(0);
+  if (todayOffset != null && Number.isFinite(todayOffset)) set.add(todayOffset);
+  const [lo, hi] = xDomain;
+  for (let d = Math.ceil(lo / step) * step; d <= hi; d += step) set.add(d);
+  return [...set].sort((a, b) => a - b);
+}
+
 function computeYDomain(
   rows: Record<string, number | string>[],
   visibleKeys: string[],
+  opts?: { pctFocus?: boolean },
 ): [number, number] {
   if (!visibleKeys.length) return [0, 20];
 
@@ -113,13 +198,30 @@ function computeYDomain(
   if (!Number.isFinite(min) || !Number.isFinite(max)) return [0, 20];
 
   const span = max - min;
-  const pad = Math.max(2, span * 0.15);
+  const pad = opts?.pctFocus
+    ? Math.max(1.5, span * 0.12)
+    : Math.max(2, span * 0.15);
   let yMin = min - pad;
   let yMax = max + pad;
-  if (yMin > 0 && min >= 0) yMin = 0;
+
+  if (opts?.pctFocus) {
+    const minSpan = 10;
+    if (yMax - yMin < minSpan) {
+      const mid = (min + max) / 2;
+      yMin = mid - minSpan / 2;
+      yMax = mid + minSpan / 2;
+    }
+    if (min < 0 && max > 0) {
+      yMin = Math.min(yMin, -1);
+      yMax = Math.max(yMax, 1);
+    }
+  } else if (min >= 0 && yMin < 0) {
+    yMin = 0;
+  }
+
   if (yMax <= yMin) yMax = yMin + 10;
 
-  const step = span > 80 ? 20 : span > 30 ? 10 : span > 10 ? 5 : 2;
+  const step = span > 80 ? 20 : span > 30 ? 10 : span > 10 ? 5 : opts?.pctFocus ? 2 : 2;
   yMin = Math.floor(yMin / step) * step;
   yMax = Math.ceil(yMax / step) * step;
   return [yMin, yMax];
@@ -143,6 +245,11 @@ type Props = {
   defaultVisiblePostRefs?: (typeof POST_REF_IDS)[number][];
   /** Solo area grafico — niente toggle/legenda (tile 24h assessment). */
   chartOnly?: boolean;
+  /** Loss-analysis tile: shared calendar domain with gain / slope charts. */
+  alignedXDomain?: [number, number];
+  alignedXTicks?: number[];
+  /** Match slope chart tick labels (Today / CD / ±Nd) when aligned. */
+  calendarAxisLabels?: boolean;
 };
 
 function initialHiddenSeries(
@@ -172,13 +279,16 @@ export function SdsSupernovaCompareChart({
   refCurves = {},
   defaultVisiblePostRefs = [],
   chartOnly = false,
+  alignedXDomain,
+  alignedXTicks,
+  calendarAxisLabels = false,
 }: Props) {
   const t = useT();
   const { lang } = useLang();
   const tileChart = chartOnly;
-  const mainLineW = tileChart ? 1.85 : 2.5;
-  const secondaryLineW = tileChart ? 1.5 : 1.75;
-  const blendLineW = tileChart ? 1.65 : 2;
+  const mainLineW = tileChart ? 2 : 2.5;
+  const secondaryLineW = tileChart ? 1.65 : 1.75;
+  const blendLineW = tileChart ? 1.85 : 2;
   const [hiddenSeries, setHiddenSeries] = useState<Set<string>>(() =>
     initialHiddenSeries(companyFocus, defaultVisiblePostRefs),
   );
@@ -228,11 +338,75 @@ export function SdsSupernovaCompareChart({
     for (const ovl of overlayCurves) {
       for (const off of ovl.offsets ?? []) merged.add(off);
     }
+    if (alignedXTicks?.length) {
+      for (const off of alignedXTicks) merged.add(off);
+    }
+    if (alignedXDomain) {
+      for (const off of lossAnalysisChartOffsetGrid()) merged.add(off);
+    }
     return [...merged].sort((a, b) => a - b);
-  }, [overlayCurves, blendOverlays, nowMarkers]);
+  }, [overlayCurves, blendOverlays, nowMarkers, alignedXTicks, alignedXDomain]);
+
+  const alignedTile = isLossAnalysisAlignedTile({ alignedXDomain, calendarAxisLabels });
+  const assessmentTile = chartOnly && companyFocus;
+
+  const nowOffsets = useMemo(() => nowMarkers.map((m) => m.offset), [nowMarkers]);
+  const todayOffsetForTicks = nowOffsets[0] ?? 0;
+
+  const extendedCalendar = useMemo(
+    () =>
+      overlayCurves.some((o) => o.values.length > SUPERNova_OFFSETS.length) ||
+      blendOverlays.some((b) => b.values.length > SUPERNova_OFFSETS.length) ||
+      nowMarkers.length > 0,
+    [overlayCurves, blendOverlays, nowMarkers],
+  );
+
+  const cdMarkerOffset = extendedCalendar || alignedTile ? 0 : -3;
+  const bridgeLineGaps = alignedTile || chartOnly || companyFocus;
+
+  const visibleKeys = useMemo(() => {
+    const keys: string[] = [];
+    if (isVisible("mean")) keys.push("mean");
+    for (const c of HISTORY_CASES) {
+      if (isVisible(c.id)) keys.push(c.id);
+    }
+    for (const ovl of overlayCurves) {
+      const key = overlayDataKey(ovl.ticker);
+      if (isVisible(key)) keys.push(key);
+    }
+    for (const rid of availablePostRefs) {
+      const key = refDataKey(rid);
+      if (isVisible(key)) keys.push(key);
+    }
+    for (const blend of blendOverlays) {
+      const key = blendDataKey(blend.ticker);
+      if (isVisible(key)) keys.push(key);
+    }
+    return keys;
+  }, [overlayCurves, blendOverlays, isVisible, availablePostRefs]);
+
+  const curveKnots = useMemo(
+    () => collectVisibleCurveKnots(overlayCurves, blendOverlays, visibleKeys),
+    [overlayCurves, blendOverlays, visibleKeys],
+  );
+
+  const curveFocusAxes = assessmentTile && curveKnots.length >= 2;
+
+  const focusXDomain = useMemo((): [number, number] | null => {
+    if (!curveFocusAxes) return null;
+    return curveAdaptiveXDomain(curveKnots, todayOffsetForTicks);
+  }, [curveFocusAxes, curveKnots, todayOffsetForTicks]);
+
+  const plotOffsets = useMemo((): readonly number[] => {
+    if (curveFocusAxes && focusXDomain) {
+      return buildFocusChartOffsets(curveKnots, focusXDomain, todayOffsetForTicks);
+    }
+    return chartOffsets;
+  }, [curveFocusAxes, focusXDomain, curveKnots, todayOffsetForTicks, chartOffsets]);
 
   const data = useMemo(() => {
-    return chartOffsets.map((off) => {
+    const interpolateExtrapolate = !curveFocusAxes;
+    return plotOffsets.map((off) => {
       const histIdx = SUPERNova_OFFSETS.indexOf(off as (typeof SUPERNova_OFFSETS)[number]);
       const hist = histIdx >= 0 ? SUPERNova_HISTORY_CURVE[histIdx] : null;
       const row: Record<string, number | string> = {
@@ -258,14 +432,15 @@ export function SdsSupernovaCompareChart({
       for (const ovl of overlayCurves) {
         const ovlOffsets = ovl.offsets ?? calendarOffsetsForValueCount(ovl.values.length);
         const ovlIdx = ovlOffsets.indexOf(off);
-        if (ovlIdx >= 0) {
-          row[overlayDataKey(ovl.ticker)] = ovl.values[ovlIdx] ?? 0;
-        } else {
-          const series = ovlOffsets.map((o, i) => ({ offset: o, y: ovl.values[i] ?? 0 }));
-          const v = interpolateAtOffset(series, off, { extrapolate: true });
-          row[overlayDataKey(ovl.ticker)] =
-            v != null && Number.isFinite(v) ? v : (Number.NaN as unknown as number);
-        }
+          row[overlayDataKey(ovl.ticker)] = chartLineValue(
+            ovlIdx >= 0
+              ? ovl.values[ovlIdx] ?? null
+              : interpolateAtOffset(
+                  ovlOffsets.map((o, i) => ({ offset: o, y: ovl.values[i] ?? 0 })),
+                  off,
+                  { extrapolate: interpolateExtrapolate },
+                ),
+          ) as unknown as number;
       }
       for (const blend of blendOverlays) {
         const blendOffsets = blend.offsets ?? calendarOffsetsForValueCount(blend.values.length);
@@ -277,49 +452,57 @@ export function SdsSupernovaCompareChart({
           const series = blendOffsets
             .map((o, i) => ({ offset: o, y: blend.values[i] }))
             .filter((p): p is { offset: number; y: number } => p.y != null && Number.isFinite(p.y));
-          v = interpolateAtOffset(series, off, { extrapolate: true });
+          v = interpolateAtOffset(series, off, { extrapolate: interpolateExtrapolate });
         }
-        row[blendDataKey(blend.ticker)] =
-          v != null && Number.isFinite(v) ? v : (Number.NaN as unknown as number);
+        row[blendDataKey(blend.ticker)] = chartLineValue(v) as unknown as number;
       }
       return row;
     });
-  }, [overlayCurves, blendOverlays, refCurves, availablePostRefs, chartOffsets]);
+  }, [overlayCurves, blendOverlays, refCurves, availablePostRefs, plotOffsets, curveFocusAxes]);
 
-  const visibleKeys = useMemo(() => {
-    const keys: string[] = [];
-    if (isVisible("mean")) keys.push("mean");
-    for (const c of HISTORY_CASES) {
-      if (isVisible(c.id)) keys.push(c.id);
-    }
-    for (const ovl of overlayCurves) {
-      const key = overlayDataKey(ovl.ticker);
-      if (isVisible(key)) keys.push(key);
-    }
-    for (const rid of availablePostRefs) {
-      const key = refDataKey(rid);
-      if (isVisible(key)) keys.push(key);
-    }
-    for (const blend of blendOverlays) {
-      const key = blendDataKey(blend.ticker);
-      if (isVisible(key)) keys.push(key);
-    }
-    return keys;
-  }, [overlayCurves, blendOverlays, isVisible, availablePostRefs]);
-
-  const yDomain = useMemo(() => computeYDomain(data, visibleKeys), [data, visibleKeys]);
+  const yDomain = useMemo((): [number, number] => {
+    if (curveFocusAxes) return curveAdaptiveYDomain(curveKnots);
+    return computeYDomain(data, visibleKeys, { pctFocus: assessmentTile || alignedTile });
+  }, [curveFocusAxes, curveKnots, data, visibleKeys, assessmentTile, alignedTile]);
 
   const xDomain = useMemo((): [number, number] => {
-    const offs = [...chartOffsets, ...nowMarkers.map((m) => m.offset)];
-    return [Math.min(...offs), Math.max(...offs)];
-  }, [chartOffsets, nowMarkers]);
+    if (alignedXDomain) return alignedXDomain;
+    if (curveFocusAxes && focusXDomain) return focusXDomain;
+    const offs = [...plotOffsets, ...nowMarkers.map((m) => m.offset)];
+    const lo = Math.min(...offs);
+    const hi = Math.max(...offs);
+    const edgePad = chartOnly ? 8 : 0;
+    return [lo - edgePad, hi + edgePad];
+  }, [alignedXDomain, curveFocusAxes, focusXDomain, plotOffsets, nowMarkers, chartOnly]);
 
-  const nowOffsets = useMemo(() => nowMarkers.map((m) => m.offset), [nowMarkers]);
+  const chartMargin = useMemo(() => {
+    if (alignedTile) return { ...LOSS_ANALYSIS_ALIGNED_CHART_MARGIN };
+    if (assessmentTile) {
+      return { top: 10, right: 6, left: 2, bottom: 0 };
+    }
+    const hasNow = nowMarkers.length > 0;
+    const todayFarLeft = todayOffsetForTicks <= -45;
+    if (chartOnly) {
+      return {
+        top: hasNow ? (todayFarLeft ? 34 : 28) : 16,
+        right: 10,
+        left: 6,
+        bottom: 10,
+      };
+    }
+    return {
+      top: hasNow ? (embedded ? 18 : 22) : 14,
+      right: embedded ? 36 : 28,
+      left: 4,
+      bottom: 2,
+    };
+  }, [alignedTile, assessmentTile, nowMarkers.length, todayOffsetForTicks, chartOnly, embedded]);
 
-  const xTicks = useMemo(
-    () => pickSparseCalTickOffsets(chartOffsets, nowOffsets, compact ? 11 : 10),
-    [chartOffsets, nowOffsets, compact],
-  );
+  const xTicks = useMemo(() => {
+    if (alignedXTicks?.length) return alignedXTicks;
+    const maxTicks = curveFocusAxes ? 8 : compact ? 11 : 10;
+    return pickSparseCalTickOffsets(plotOffsets, nowOffsets, maxTicks);
+  }, [alignedXTicks, plotOffsets, nowOffsets, compact, curveFocusAxes]);
 
   const filterBtnClass = (visible: boolean, active?: boolean) =>
     `rounded px-2 py-0.5 text-[10px] font-medium border bg-white/80 transition ${
@@ -629,38 +812,64 @@ export function SdsSupernovaCompareChart({
 
       <div
         className={`${
-          chartOnly ? "h-full min-h-[200px]" : compact ? "h-[200px]" : "h-[260px]"
-        } w-full ${chartOnly ? "" : CHART_LAB_PANEL} ${chartOnly ? "" : "p-2"}`}
+          chartOnly ? "h-full w-full min-h-0" : compact ? "h-[200px]" : "h-[260px]"
+        } ${chartOnly ? "" : `w-full ${CHART_LAB_PANEL} p-2`}`}
       >
         <ResponsiveContainer width="100%" height="100%" debounce={50}>
           <LineChart
             data={data}
-            margin={{
-              top: nowMarkers.length ? (embedded ? 18 : 22) : 14,
-              right: embedded ? 36 : 28,
-              left: 4,
-              bottom: 2,
-            }}
+            syncId={alignedTile ? LOSS_ANALYSIS_CHART_SYNC_ID : undefined}
+            margin={chartMargin}
           >
             <CartesianGrid {...CHART_LAB_GRID} />
-            {renderCdZones({ cdX: 0, xMin: xDomain[0], xMax: xDomain[1] })}
+            {renderCdZones({
+              cdX: 0,
+              xMin: xDomain[0],
+              xMax: xDomain[1],
+              todayX: alignedTile || assessmentTile ? todayOffsetForTicks : null,
+              hideBadges: alignedTile || chartOnly,
+            })}
+            {(assessmentTile || alignedTile) ? (
+              <ReferenceLine y={0} stroke="#94a3b8" strokeWidth={1} strokeDasharray="4 3" />
+            ) : null}
             <XAxis
               dataKey="offset"
               type="number"
               domain={xDomain}
               ticks={xTicks}
               tick={CHART_LAB_AXIS_TICK}
-              tickFormatter={(v) => supernovaOffsetLabel(Number(v))}
+              tickFormatter={(v) =>
+                calendarAxisLabels
+                  ? formatSlopeTrajectoryAxisTick(Number(v), todayOffsetForTicks, lang)
+                  : supernovaOffsetLabel(Number(v))
+              }
               interval={0}
-              angle={compact ? -20 : -25}
-              textAnchor="end"
-              height={compact ? 40 : 44}
+              angle={assessmentTile ? -14 : chartOnly ? -18 : 0}
+              textAnchor={chartOnly ? "end" : "middle"}
+              height={
+                alignedTile
+                  ? LOSS_ANALYSIS_ALIGNED_X_AXIS_HEIGHT
+                  : assessmentTile
+                    ? 28
+                    : compact
+                      ? 40
+                      : 44
+              }
+              padding={
+                alignedTile
+                  ? { left: 0, right: 0 }
+                  : chartOnly
+                    ? { left: todayOffsetForTicks <= -45 ? 16 : 10, right: 10 }
+                    : undefined
+              }
             />
             <YAxis
               domain={yDomain}
               tick={CHART_LAB_AXIS_TICK}
               tickFormatter={(v) => fmtAxisPctTick(Number(v))}
-              width={52}
+              width={alignedTile ? LOSS_ANALYSIS_ALIGNED_Y_AXIS_WIDTH : chartOnly ? 56 : 52}
+              tickCount={curveFocusAxes ? 5 : undefined}
+              allowDecimals
             />
             <Tooltip
               formatter={(v: number, name: string, item: { payload?: { offset?: number } }) => {
@@ -704,22 +913,32 @@ export function SdsSupernovaCompareChart({
                 boxShadow: "0 4px 12px rgba(15, 23, 42, 0.08)",
               }}
             />
-            {nowMarkers.map((m, i) => (
+            {!alignedTile
+              ? nowMarkers.map((m, i) => (
+                  <ReferenceLine
+                    key={`now-${m.offset}-${m.label}-${i}`}
+                    x={m.offset}
+                    stroke="none"
+                    ifOverflow="extendDomain"
+                    label={
+                      <ChartNowPinLabel
+                        text={
+                          chartOnly
+                            ? lang === "it"
+                              ? "Oggi"
+                              : "Today"
+                            : m.label
+                        }
+                      />
+                    }
+                  />
+                ))
+              : null}
+            {!alignedTile && companyFocus ? (
+              <ReferenceLine x={cdMarkerOffset} stroke="#2563eb" strokeDasharray="4 4" />
+            ) : !alignedTile ? (
               <ReferenceLine
-                key={`now-${m.offset}-${m.label}-${i}`}
-                x={m.offset}
-                stroke="none"
-                ifOverflow="extendDomain"
-                label={
-                  <ChartNowPinLabel text={m.label} />
-                }
-              />
-            ))}
-            {companyFocus ? (
-              <ReferenceLine x={-3} stroke="#2563eb" strokeDasharray="4 4" />
-            ) : (
-              <ReferenceLine
-                x={-3}
+                x={cdMarkerOffset}
                 stroke="#2563eb"
                 strokeDasharray="4 4"
                 label={{
@@ -729,7 +948,7 @@ export function SdsSupernovaCompareChart({
                   fill: "#2563eb",
                 }}
               />
-            )}
+            ) : null}
             {isVisible("mean") ? (
               <Line
                 type="monotone"
@@ -767,7 +986,7 @@ export function SdsSupernovaCompareChart({
                   name={key}
                   stroke={color}
                   strokeWidth={secondaryLineW}
-                  strokeDasharray="4 3"
+                  strokeDasharray={alignedTile ? undefined : "4 3"}
                   dot={{ r: 2, fill: color }}
                   isAnimationActive={false}
                 />
@@ -776,20 +995,22 @@ export function SdsSupernovaCompareChart({
             {overlayCurves.map((ovl) => {
               const key = overlayDataKey(ovl.ticker);
               if (!isVisible(key)) return null;
-              const peakChartIdx = chartOffsets.indexOf(ovl.peakOffset);
+              const peakChartIdx = plotOffsets.indexOf(ovl.peakOffset);
               const peakPlace = peakLabelPlacement(ovl.peakOffset, nowOffsets);
               return (
                 <Line
                   key={ovl.ticker}
-                  type="monotone"
+                  type={bridgeLineGaps ? "linear" : "monotone"}
                   dataKey={key}
                   name={key}
                   stroke={ovl.color}
-                  strokeWidth={mainLineW}
-                  strokeDasharray={companyFocus ? undefined : "6 3"}
-                  dot={{ r: tileChart ? 2 : 2.5, fill: ovl.color }}
+                  strokeWidth={assessmentTile ? 3 : alignedTile ? 2.75 : mainLineW}
+                  strokeDasharray={alignedTile || assessmentTile ? undefined : companyFocus ? undefined : "6 3"}
+                  dot={alignedTile || assessmentTile ? false : { r: tileChart ? 2 : 2.5, fill: ovl.color }}
+                  connectNulls={bridgeLineGaps}
                   isAnimationActive={false}
                 >
+                  {!chartOnly ? (
                   <LabelList
                     dataKey={key}
                     content={(props) => {
@@ -811,6 +1032,7 @@ export function SdsSupernovaCompareChart({
                       );
                     }}
                   />
+                  ) : null}
                 </Line>
               );
             })}
@@ -820,15 +1042,15 @@ export function SdsSupernovaCompareChart({
               return (
                 <Line
                   key={`blend-${blend.ticker}`}
-                  type="monotone"
+                  type="linear"
                   dataKey={key}
                   name={key}
                   stroke={blend.color}
-                  strokeWidth={blendLineW}
-                  strokeDasharray="3 5"
-                  strokeOpacity={0.9}
-                  connectNulls={false}
-                  dot={(props) => {
+                  strokeWidth={assessmentTile ? 2.25 : alignedTile ? 2.75 : blendLineW}
+                  strokeDasharray={alignedTile || assessmentTile ? "5 4" : "3 5"}
+                  strokeOpacity={assessmentTile ? 0.82 : 0.95}
+                  connectNulls={bridgeLineGaps}
+                  dot={alignedTile ? false : (props) => {
                     const { cx, cy, payload } = props;
                     if (cx == null || cy == null) return <g />;
                     const off = Number(payload?.offset);

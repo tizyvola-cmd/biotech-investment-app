@@ -19,6 +19,9 @@ import { getLang } from "../shared/i18n";
 import { FINANCIAL_SHEET_TABLE_CLASS } from "../sheet/sheetGridTable";
 import { financialColumnWidthStyle } from "../sheet/financialStyles";
 import { FinancialIndicatorGuide } from "./FinancialIndicatorGuide";
+import { isMedtechTicker } from "../sheet/medtechSymbols";
+import { RealTimeSheetUpdater } from "./RealTimeSheetUpdater";
+import { VirtualSheetGrid } from "./VirtualSheetGrid";
 
 const FINANCIAL_SHEET_ID = "Financial";
 
@@ -122,22 +125,31 @@ export function FinancialSheetView({
   const savedToolbar = loadTableViewPrefs(FINANCIAL_SHEET_ID).toolbarFilters;
   const [symbolFilter, setSymbolFilter] = useState(savedToolbar.symbol ?? "");
   const [sectorFilter, setSectorFilter] = useState(savedToolbar.sector ?? "");
+  const [medtechOnly, setMedtechOnly] = useState(savedToolbar.medtechOnly === "1");
   const [ipoModalOpen, setIpoModalOpen] = useState(false);
+  const [tableWithRealTime, setTableWithRealTime] = useState<SheetTable | null>(null);
 
-  const persistToolbarFilters = useCallback((symbol: string, sector: string) => {
-    const prefs = loadTableViewPrefs(FINANCIAL_SHEET_ID);
-    saveTableViewPrefs(FINANCIAL_SHEET_ID, {
-      ...prefs,
-      toolbarFilters: { symbol, sector },
-    });
-  }, []);
+  const persistToolbarFilters = useCallback(
+    (symbol: string, sector: string, medtech: boolean) => {
+      const prefs = loadTableViewPrefs(FINANCIAL_SHEET_ID);
+      saveTableViewPrefs(FINANCIAL_SHEET_ID, {
+        ...prefs,
+        toolbarFilters: {
+          symbol,
+          sector,
+          medtechOnly: medtech ? "1" : "",
+        },
+      });
+    },
+    [],
+  );
 
   useEffect(() => {
     const t = window.setTimeout(() => {
-      persistToolbarFilters(symbolFilter, sectorFilter);
+      persistToolbarFilters(symbolFilter, sectorFilter, medtechOnly);
     }, 400);
     return () => clearTimeout(t);
-  }, [symbolFilter, sectorFilter, persistToolbarFilters]);
+  }, [symbolFilter, sectorFilter, medtechOnly, persistToolbarFilters]);
 
   const portfolioTickers = useMemo(() => getPortfolioTickers(simTable ?? null), [simTable]);
   const watchTickers = useMemo(
@@ -170,13 +182,28 @@ export function FinancialSheetView({
     [table?.columns],
   );
 
+  const simRowByTicker = useMemo(() => {
+    const map = new Map<string, Record<string, unknown>>();
+    for (const row of simTable?.rows ?? []) {
+      const tk = String(row.Ticker ?? row.ticker ?? "").trim().toUpperCase();
+      if (tk) map.set(tk, row);
+    }
+    return map;
+  }, [simTable]);
+
+  const medtechCount = useMemo(
+    () => (table?.rows ?? []).filter((row) => isMedtechTicker(rowTicker(row))).length,
+    [table],
+  );
+
   const finStyleCtx = useMemo(
     () => ({
       ...buildFinancialStyleContext(sortedTable?.rows ?? []),
       portfolioTickers,
       watchTickers,
+      simRowByTicker,
     }),
-    [sortedTable?.rows, portfolioTickers, watchTickers],
+    [sortedTable?.rows, portfolioTickers, watchTickers, simRowByTicker],
   );
 
   const rowClassName = useCallback(
@@ -211,19 +238,45 @@ export function FinancialSheetView({
   const rowFilter = useMemo(() => {
     const symQ = symbolFilter.trim().toUpperCase();
     const secQ = sectorFilter.trim().toLowerCase();
-    if (!symQ && !secQ) return undefined;
+    if (!symQ && !secQ && !medtechOnly) return undefined;
     return (row: Record<string, unknown>) => {
       const sym = String(row.symbol ?? row.ticker ?? "").toUpperCase();
       const sec = String(row.sector ?? "").toLowerCase();
       if (symQ && !sym.includes(symQ)) return false;
       if (secQ && !sec.includes(secQ)) return false;
+      if (medtechOnly && !isMedtechTicker(sym)) return false;
       return true;
     };
-  }, [symbolFilter, sectorFilter]);
+  }, [symbolFilter, sectorFilter, medtechOnly]);
 
   const totalCount = table?.rows?.length ?? 0;
 
   const headerNote = <FinancialIndicatorGuide it={it} /> as ReactNode;
+
+  /** Dormant while SHEET_WS_REALTIME_ENABLED is false (FASE 1 Step 4). */
+  const handleRealTimeUpdate = useCallback((updates: Map<number, Record<string, unknown>>) => {
+    if (!sortedTable) return;
+    const nextRows = [...sortedTable.rows];
+    for (const [index, update] of updates) {
+      if (index < nextRows.length) {
+        nextRows[index] = { ...nextRows[index], ...update };
+      }
+    }
+    setTableWithRealTime({ ...sortedTable, rows: nextRows });
+  }, [sortedTable]);
+
+  const realTimeColumns = useMemo(() => [
+    "currentPrice",
+    "Prezzo Corrente ($)",
+    "dailyChange_%",
+    "Var. Giorn. %",
+  ], []);
+
+  // Use virtual scrolling for large datasets (>500 rows)
+  const useVirtualScroll = (sortedTable?.rows?.length ?? 0) > 500;
+
+  // Use real-time updated table if available, otherwise use sorted table
+  const displayTable = tableWithRealTime || sortedTable;
 
   return (
     <div className="flex flex-col flex-1 min-w-0">
@@ -244,61 +297,105 @@ export function FinancialSheetView({
         />
       )}
 
-      <ConfigurableSheetGrid
-        table={sortedTable}
-        loading={loading}
-        error={error}
-        onReload={onReload}
-        hideToolbarReload
-        sheetId={FINANCIAL_SHEET_ID}
-        feedPresentation
-        skipConditionalFormatColumns={FIN_CF_SKIP_COLUMNS}
-        tableClassName={FINANCIAL_SHEET_TABLE_CLASS}
-        columnWidthStyleFn={financialColumnWidthStyle}
-        headerNote={headerNote}
-        formatColumnHeader={formatFinancialColumnHeader}
-        headerCellClassForColumn={financialHeaderCellClass}
-        initialColumnOrder={initialColumnOrder}
-        rowFilter={rowFilter}
-        rowClassName={rowClassName}
-        rowId={(row) => rowTicker(row) || undefined}
-        renderCell={renderCell}
-        onClearToolbarFilters={() => {
-          setSymbolFilter("");
-          setSectorFilter("");
-        }}
-        filterPlaceholder={it ? "Filtra testo…" : "Filter text…"}
-        toolbarExtra={
-          <>
-            <input
-              className="input max-w-[8rem]"
-              placeholder={it ? "Ticker…" : "Ticker…"}
-              value={symbolFilter}
-              onChange={(e) => setSymbolFilter(e.target.value)}
-              aria-label="Filter by ticker"
-            />
-            <input
-              className="input max-w-[10rem]"
-              placeholder={it ? "Settore…" : "Sector…"}
-              value={sectorFilter}
-              onChange={(e) => setSectorFilter(e.target.value)}
-              aria-label="Filter by sector"
-            />
-            <button
-              type="button"
-              className="btn-ghost text-xs flex items-center gap-1"
-              onClick={() => setIpoModalOpen(true)}
-              title={
-                it
-                  ? "Scansiona nuove IPO biotech e uniscile all'universo"
-                  : "Scan new biotech IPO and merge into the universe"
-              }
-            >
-              <span aria-hidden>🧬</span> New Bio IPO
-            </button>
-          </>
-        }
-      />
+      {useVirtualScroll ? (
+        <VirtualSheetGrid
+          table={displayTable}
+          loading={loading}
+          error={error}
+          onReload={onReload}
+          sheetId={FINANCIAL_SHEET_ID}
+          rowHeight={36}
+          visibleRowCount={25}
+          bufferRowCount={5}
+          renderRow={(row, _index) => {
+            const cell = renderCell("", row, row);
+            return (
+              <div className="flex items-center border-b border-[rgb(var(--border))]/20 px-4 py-2 text-[11px]">
+                <div className="flex-1">{cell.content || cell.text}</div>
+              </div>
+            );
+          }}
+          renderHeader={() => (
+            <div className="flex items-center bg-slate-100 px-4 py-2 text-[11px] font-semibold border-b">
+              <div className="flex-1">Financial Data (Virtual Scroll)</div>
+            </div>
+          )}
+          className="h-[600px]"
+        />
+      ) : (
+        <ConfigurableSheetGrid
+          table={displayTable}
+          loading={loading}
+          error={error}
+          onReload={onReload}
+          hideToolbarReload
+          sheetId={FINANCIAL_SHEET_ID}
+          feedPresentation
+          skipConditionalFormatColumns={FIN_CF_SKIP_COLUMNS}
+          tableClassName={FINANCIAL_SHEET_TABLE_CLASS}
+          columnWidthStyleFn={financialColumnWidthStyle}
+          headerNote={headerNote}
+          formatColumnHeader={formatFinancialColumnHeader}
+          headerCellClassForColumn={financialHeaderCellClass}
+          initialColumnOrder={initialColumnOrder}
+          rowFilter={rowFilter}
+          rowClassName={rowClassName}
+          rowId={(row) => rowTicker(row) || undefined}
+          renderCell={renderCell}
+          onClearToolbarFilters={() => {
+            setSymbolFilter("");
+            setSectorFilter("");
+            setMedtechOnly(false);
+          }}
+          filterPlaceholder={it ? "Filtra testo…" : "Filter text…"}
+          toolbarExtra={
+            <>
+              <input
+                className="input max-w-[8rem]"
+                placeholder={it ? "Ticker…" : "Ticker…"}
+                value={symbolFilter}
+                onChange={(e) => setSymbolFilter(e.target.value)}
+                aria-label="Filter by ticker"
+              />
+              <input
+                className="input max-w-[10rem]"
+                placeholder={it ? "Settore…" : "Sector…"}
+                value={sectorFilter}
+                onChange={(e) => setSectorFilter(e.target.value)}
+                aria-label="Filter by sector"
+              />
+              <button
+                type="button"
+                className={medtechOnly ? "chip-btn-active" : "chip-btn"}
+                onClick={() => setMedtechOnly((v) => !v)}
+                title={
+                  it
+                    ? "Mostra solo ticker MedTech (monitor ECG)"
+                    : "Show MedTech tickers only (ECG monitor icon)"
+                }
+                aria-pressed={medtechOnly}
+              >
+                {it ? "Solo MedTech" : "MedTech only"}
+                {medtechCount > 0 ? (
+                  <span className="tabular-nums opacity-80"> · {medtechCount}</span>
+                ) : null}
+              </button>
+              <button
+                type="button"
+                className="btn-ghost text-xs flex items-center gap-1"
+                onClick={() => setIpoModalOpen(true)}
+                title={
+                  it
+                    ? "Scansiona nuove IPO biotech e uniscile all'universo"
+                    : "Scan new biotech IPO and merge into the universe"
+                }
+              >
+                <span aria-hidden>🧬</span> New Bio IPO
+              </button>
+            </>
+          }
+        />
+      )}
       <NewBioIpoModal
         open={ipoModalOpen}
         onClose={() => setIpoModalOpen(false)}
@@ -310,6 +407,12 @@ export function FinancialSheetView({
           }
           onReload();
         }}
+      />
+      {/* No-op until SHEET_WS_REALTIME_ENABLED — see RealTimeSheetUpdater FASE 1 Step 4 note. */}
+      <RealTimeSheetUpdater
+        realTimeColumns={realTimeColumns}
+        tableData={displayTable?.rows ?? []}
+        onUpdate={handleRealTimeUpdate}
       />
     </div>
   );

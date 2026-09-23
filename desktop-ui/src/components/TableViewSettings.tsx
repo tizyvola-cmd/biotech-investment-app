@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useRef, useState, type CSSProperties } from "react";
 import type { TableDensity, TableFontSize, TableViewPrefs } from "../sheet/tableViewPrefs";
 import { DEFAULT_TABLE_VIEW_PREFS, moveColumn } from "../sheet/tableViewPrefs";
+import { useLang } from "../shared/i18n";
 
 export function TableViewSettings({
   sheetId,
@@ -13,6 +14,8 @@ export function TableViewSettings({
   prefs: TableViewPrefs;
   onChange: (next: TableViewPrefs) => void;
 }) {
+  const { lang } = useLang();
+  const it = lang === "it";
   const [open, setOpen] = useState(false);
   const btnRef = useRef<HTMLButtonElement>(null);
   const panelRef = useRef<HTMLDivElement>(null);
@@ -81,25 +84,28 @@ export function TableViewSettings({
         type="button"
         className="btn-ghost text-xs"
         onClick={() => setOpen((v) => !v)}
-        title="Colonne, ordine e dimensioni testo"
+        title={it ? "Colonne, ordine e dimensioni testo" : "Columns, order and text sizes"}
       >
-        Layout tabella
+        {it ? "Layout tabella" : "Table layout"}
       </button>
       {open && (
         <>
           <button
             type="button"
             className="fixed inset-0 z-40 cursor-default"
-            aria-label="Chiudi pannello layout"
+            aria-label={it ? "Chiudi pannello layout" : "Close layout panel"}
             onClick={() => setOpen(false)}
           />
           <div ref={panelRef} className="rounded-xl border border-[rgb(var(--border))] bg-[rgb(var(--surface-elevated))] shadow-xl p-4 space-y-4 max-h-[min(70vh,32rem)] overflow-y-auto">
             <div className="flex items-start justify-between gap-2">
               <div>
-                <p className="text-sm font-semibold">Layout — {sheetId}</p>
+                <p className="text-sm font-semibold">
+                  {it ? "Layout" : "Layout"} — {sheetId}
+                </p>
                 <p className="text-[11px] text-ink-muted mt-0.5">
-                  Trascina le intestazioni in tabella o riordina qui. Le preferenze restano
-                  salvate su questo dispositivo.
+                  {it
+                    ? "Trascina le intestazioni in tabella o riordina qui. Le preferenze restano salvate su questo dispositivo."
+                    : "Drag column headers in the table or reorder here. Preferences are stored on this device."}
                 </p>
               </div>
               <button type="button" className="btn-ghost text-xs px-2" onClick={() => setOpen(false)}>
@@ -109,7 +115,7 @@ export function TableViewSettings({
 
             <div className="grid grid-cols-2 gap-3 text-xs">
               <label className="flex flex-col gap-1">
-                <span className="text-ink-muted">Dimensione testo</span>
+                <span className="text-ink-muted">{it ? "Dimensione testo" : "Text size"}</span>
                 <select
                   className="input text-xs py-1.5"
                   value={prefs.fontSize}
@@ -117,13 +123,13 @@ export function TableViewSettings({
                     onChange({ ...prefs, fontSize: e.target.value as TableFontSize })
                   }
                 >
-                  <option value="xs">Piccolo (10px)</option>
-                  <option value="sm">Medio (14px)</option>
-                  <option value="base">Grande (16px)</option>
+                  <option value="xs">{it ? "Piccolo (10px)" : "Small (10px)"}</option>
+                  <option value="sm">{it ? "Medio (14px)" : "Medium (14px)"}</option>
+                  <option value="base">{it ? "Grande (16px)" : "Large (16px)"}</option>
                 </select>
               </label>
               <label className="flex flex-col gap-1">
-                <span className="text-ink-muted">Spaziatura celle</span>
+                <span className="text-ink-muted">{it ? "Spaziatura celle" : "Cell spacing"}</span>
                 <select
                   className="input text-xs py-1.5"
                   value={prefs.density}
@@ -131,16 +137,16 @@ export function TableViewSettings({
                     onChange({ ...prefs, density: e.target.value as TableDensity })
                   }
                 >
-                  <option value="compact">Compatta</option>
-                  <option value="normal">Normale</option>
-                  <option value="comfortable">Ampia</option>
+                  <option value="compact">{it ? "Compatta" : "Compact"}</option>
+                  <option value="normal">{it ? "Normale" : "Normal"}</option>
+                  <option value="comfortable">{it ? "Ampia" : "Comfortable"}</option>
                 </select>
               </label>
             </div>
 
             <label className="flex flex-col gap-1 text-xs">
               <span className="text-ink-muted">
-                Larghezza max colonna: {prefs.maxColWidthRem} rem
+                {it ? "Larghezza max colonna" : "Max column width"}: {prefs.maxColWidthRem} rem
               </span>
               <input
                 type="range"
@@ -155,7 +161,9 @@ export function TableViewSettings({
             </label>
 
             <div>
-              <p className="text-xs font-medium mb-2">Colonne ({ordered.length})</p>
+              <p className="text-xs font-medium mb-2">
+                {it ? "Colonne" : "Columns"} ({ordered.length})
+              </p>
               <ul className="space-y-1 max-h-48 overflow-y-auto border border-[rgb(var(--border))]/60 rounded-lg p-1">
                 {ordered.map((col) => (
                   <li
@@ -166,7 +174,7 @@ export function TableViewSettings({
                       type="checkbox"
                       checked={!hidden.has(col)}
                       onChange={() => toggleColumn(col)}
-                      title="Mostra colonna"
+                      title={it ? "Mostra colonna" : "Show column"}
                     />
                     <span
                       className="flex-1 truncate text-[11px] leading-tight"
@@ -179,7 +187,7 @@ export function TableViewSettings({
                       className="btn-ghost px-1 py-0 text-[10px]"
                       disabled={ordered.indexOf(col) === 0}
                       onClick={() => shiftColumn(col, -1)}
-                      title="Sposta a sinistra"
+                      title={it ? "Sposta a sinistra" : "Move left"}
                     >
                       ↑
                     </button>
@@ -188,7 +196,7 @@ export function TableViewSettings({
                       className="btn-ghost px-1 py-0 text-[10px]"
                       disabled={ordered.indexOf(col) === ordered.length - 1}
                       onClick={() => shiftColumn(col, 1)}
-                      title="Sposta a destra"
+                      title={it ? "Sposta a destra" : "Move right"}
                     >
                       ↓
                     </button>
@@ -199,7 +207,7 @@ export function TableViewSettings({
 
             <div className="flex flex-wrap gap-2">
               <button type="button" className="btn-ghost text-xs" onClick={reset}>
-                Ripristina default
+                {it ? "Ripristina default" : "Reset to default"}
               </button>
               <button
                 type="button"
@@ -213,7 +221,7 @@ export function TableViewSettings({
                   })
                 }
               >
-                Mostra tutte
+                {it ? "Mostra tutte" : "Show all"}
               </button>
             </div>
           </div>

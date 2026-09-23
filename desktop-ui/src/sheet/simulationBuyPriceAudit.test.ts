@@ -99,7 +99,7 @@ describe("simulation buy price", () => {
     }
   });
 
-  it("aligns buy, shares, value and total when spot backfill is older than today", () => {
+  it("keeps stored entry buy when spot is unchanged (open gain = value − capital)", () => {
     const row = {
       Ticker: "OLMA",
       "Completion Date": "30/06/2026",
@@ -117,11 +117,10 @@ describe("simulation buy price", () => {
       },
     };
     const pos = computeSimulationPosition(row, inputs)!;
-    expect(pos.buyPrice).not.toBeCloseTo(13.68, 1);
-    expect(Math.abs(pos.shares * 13.68 - pos.valueNow)).toBeLessThan(2);
-    expect(Math.abs(pos.capital / pos.buyPrice - pos.shares)).toBeLessThan(0.02);
-    expect(pos.pnlEur).toBeCloseTo(pos.valueNow - pos.capital, 0);
-    expect(pos.pnlPct).toBeCloseTo(((13.68 - pos.buyPrice) / pos.buyPrice) * 100, 1);
+    // Do not reinvent a lower buy from stale Valore Attuale / Var. Giorn. %.
+    expect(pos.buyPrice).toBeCloseTo(13.68, 2);
+    expect(pos.pnlEur).toBeCloseTo(0, 1);
+    expect(pos.valueNow).toBeCloseTo(5000, 0);
   });
 
   it("audit flags inferred buy when display diverges from local", () => {

@@ -18,6 +18,7 @@ import json
 import os
 import re
 import threading
+import time
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any
@@ -52,6 +53,61 @@ _TICKER_EXTRA_DRUGS: dict[str, list[str]] = {
     "CNSP": ["Berubicin", "TPI-287", "TPI 287", "WP1244"],
     "ANIK": ["Cingal", "Hyaluronate"],
 }
+
+# MedTech / device product names for PubMed + AI search (may differ from simulation NCT)
+_TICKER_EXTRA_PRODUCTS: dict[str, list[str]] = {
+    "CERS": ["INTERCEPT", "S-303", "pathogen reduction", "INTERCEPT Blood System", "amustaline"],
+    "INBS": ["Intelligent Fingerprinting", "drug screening system"],
+    "LCTX": ["OpRegen", "VAC platform", "RPE cell"],
+    "NSPR": ["CGuard", "InspireMD"],
+    "ORGO": ["Apligraf", "PuraPly", "Affinity"],
+    "DXCM": ["G7", "Omnipod", "Stelo"],
+    "ISRG": ["da Vinci", "Ion"],
+    "PODD": ["Omnipod 5", "Omnipod"],
+    "XRAY": ["Primescan", "SureSmile", "Byte", "Dentsply Sirona", "orthodontic aligner"],
+}
+
+
+def _medtech_ticker_set() -> set[str]:
+    try:
+        from medtech_universe import CURATED_MEDTECH, MEDTECH_SYMBOLS_JSON, load_json_list
+
+        return set(load_json_list(MEDTECH_SYMBOLS_JSON)) | set(CURATED_MEDTECH)
+    except Exception:
+        return set()
+
+
+def _is_medtech_ticker(ticker: str) -> bool:
+    tk = str(ticker or "").strip().upper()
+    return bool(tk) and tk in _medtech_ticker_set()
+
+
+def _extra_search_tokens(ticker: str) -> list[str]:
+    tk = ticker.upper()
+    merged = (_TICKER_EXTRA_DRUGS.get(tk, []) or []) + (_TICKER_EXTRA_PRODUCTS.get(tk, []) or [])
+    return list(dict.fromkeys(t for t in merged if t))
+
+
+_DEVICE_KPI_ADDENDUM = """\
+=== MEDTECH / DEVICE KPI TAXONOMY (this ticker is a medical device company) ===
+Prioritize device-appropriate endpoints — NOT oncology ORR/PFS unless the study is oncology drug.
+
+Efficacy / performance:
+  Sensitivity · Specificity · PPV · NPV · Non-inferiority margin · Diagnostic accuracy ·
+  Time in range (TIR) · HbA1c reduction · Primary performance goal · Primary safety endpoint met ·
+  RBC recovery · Platelet recovery · Lifespan (radiolabeled) · Procedure success rate
+
+Safety:
+  SAE rate · Device-related AE · Malfunction rate · Thrombosis rate · Transfusion reaction rate
+
+Regulatory (device):
+  510(k) clearance · PMA approval · De Novo grant · CE mark · FDA acceptance · IDE approval ·
+  Breakthrough Device designation
+
+Congress / venues: FDA workshop · AACC · TCT · ADA (device) · AHA · DIA · company IR
+
+Use kpi_type "regulatory" for clearance/approval milestones; "efficacy" for performance endpoints.
+"""
 
 _STATUS: dict[str, Any] = {
     "running": False,
@@ -143,6 +199,166 @@ def _yf_close_bars(ticker: str, start: datetime, end_excl: datetime) -> list[tup
         return out
     except Exception:
         return []
+
+
+def _yf_hourly_bars(
+    ticker: str,
+    start: datetime,
+    end_excl: datetime,
+) -> list[tuple[datetime, float]]:
+    """Yahoo 1h closes (UTC-aware). Limited to ~60 calendar days by Yahoo."""
+    try:
+        import yfinance as yf
+        import pandas as pd
+    except Exception:
+        return []
+    try:
+        df = yf.download(
+            ticker,
+            start=start.strftime("%Y-%m-%d"),
+            end=end_excl.strftime("%Y-%m-%d"),
+            interval="1h",
+            progress=False,
+            auto_adjust=False,
+            group_by="column",
+        )
+        if df is None or len(df) == 0:
+            return []
+        if isinstance(df.columns, pd.MultiIndex):
+            close = df[("Close", ticker)]
+        else:
+            close = df["Close"]
+        out: list[tuple[datetime, float]] = []
+        for idx, v in close.items():
+            try:
+                c = float(v)
+            except Exception:
+                continue
+            if not (c == c and c > 0):
+                continue
+            d = idx.to_pydatetime() if hasattr(idx, "to_pydatetime") else datetime.fromisoformat(str(idx))
+            if d.tzinfo is None:
+                d = d.replace(tzinfo=timezone.utc)
+            else:
+                d = d.astimezone(timezone.utc)
+            out.append((d, c))
+        out.sort(key=lambda x: x[0])
+        return out
+    except Exception:
+        return []
+
+
+def _price_near(
+    bars: list[tuple[datetime, float]],
+    target: datetime,
+    *,
+    max_skew_hours: float = 3.0,
+) -> float | None:
+    """Closest bar within ``max_skew_hours`` of ``target`` (UTC)."""
+    if not bars:
+        return None
+    if target.tzinfo is None:
+        target = target.replace(tzinfo=timezone.utc)
+    else:
+        target = target.astimezone(timezone.utc)
+    best: float | None = None
+    best_skew = None
+    for ts, px in bars:
+        skew_h = abs((ts - target).total_seconds()) / 3600.0
+        if skew_h > max_skew_hours:
+            continue
+        if best_skew is None or skew_h < best_skew:
+            best_skew = skew_h
+            best = px
+    return best
+
+
+def _event_publish_dt(row: dict[str, Any], event_d: datetime) -> datetime:
+    """Publish instant for 12/24/36h windows (UTC)."""
+    raw = str(row.get("published_at") or "").strip()
+    if raw:
+        try:
+            # Handle trailing Z
+            iso = raw.replace("Z", "+00:00")
+            dt = datetime.fromisoformat(iso)
+            if dt.tzinfo is None:
+                dt = dt.replace(tzinfo=timezone.utc)
+            return dt.astimezone(timezone.utc)
+        except ValueError:
+            pass
+    # Date-only: assume US equity open ~13:30 UTC (09:30 ET approx, ignore DST).
+    return datetime(event_d.year, event_d.month, event_d.day, 13, 30, tzinfo=timezone.utc)
+
+
+def _attach_market_eis_horizons(
+    ticker: str,
+    row: dict[str, Any],
+    event_d: datetime,
+    *,
+    sentiment: float,
+    d1_fallback: float | None,
+) -> None:
+    """
+    Fill price.delta_p_{12,24,36}h and eis.horizons from hourly bars.
+    Falls back: 24h ≈ daily T+1 when hourly missing.
+    """
+    from prediction.event_impact_score import compute_eis
+
+    pub = _event_publish_dt(row, event_d)
+    now = datetime.now(timezone.utc)
+    hours = (12, 24, 36)
+    # Need bars spanning publish → publish+36h (+skew).
+    start = pub - timedelta(hours=6)
+    end = pub + timedelta(hours=48)
+    # Yahoo 1h only reliable for recent history (~60d).
+    if (now - pub).days > 55:
+        hourly: list[tuple[datetime, float]] = []
+    else:
+        hourly = _yf_hourly_bars(ticker, start, end + timedelta(days=1))
+
+    p0 = _price_near(hourly, pub, max_skew_hours=4.0)
+    price = dict(row.get("price") or {}) if isinstance(row.get("price"), dict) else {}
+    eis = dict(row.get("eis") or {}) if isinstance(row.get("eis"), dict) else {}
+    horizons: dict[str, Any] = {}
+    for h in hours:
+        target = pub + timedelta(hours=h)
+        key = f"h{h}"
+        price_key = f"delta_p_{h}h"
+        if target > now + timedelta(minutes=30):
+            # Horizon not elapsed yet.
+            price[price_key] = None
+            horizons[key] = {"score": None, "delta_pct": None, "pending": True}
+            continue
+        p1 = _price_near(hourly, target, max_skew_hours=4.0) if p0 is not None else None
+        delta = _pct(p0, p1) if p0 is not None and p1 is not None else None
+        if delta is None and h == 24 and d1_fallback is not None:
+            delta = d1_fallback
+        score = None
+        if delta is not None:
+            bd = compute_eis(
+                delta_p_1d=delta,
+                delta_p_3d=None,
+                vol_ratio=None,
+                sentiment=sentiment,
+            )
+            try:
+                score = float(bd.get("score")) if bd.get("score") is not None else None
+            except (TypeError, ValueError):
+                score = None
+        price[price_key] = delta
+        horizons[key] = {
+            "score": score,
+            "delta_pct": delta,
+            "pending": delta is None,
+        }
+    # Prefer 24h horizon score as the event's primary market EIS when available.
+    h24 = horizons.get("h24") or {}
+    if h24.get("score") is not None:
+        eis["score"] = h24["score"]
+        eis["delta_p_1d"] = h24.get("delta_pct")
+    eis["horizons"] = horizons
+    row["price"] = price
+    row["eis"] = eis
 
 
 def _close_before_and_after_sessions(
@@ -424,6 +640,118 @@ def _timeline_events_from_sec_k8(
     return out
 
 
+def _timeline_events_from_sec_10q(
+    ticker: str,
+    *,
+    window_start: str,
+    window_end: str,
+    drug: str | None,
+    vol_cache: dict[str, float | None],
+) -> list[dict[str, Any]]:
+    """10-Q MD&A / Recent Developments → EIS timeline (independent of 8-K)."""
+    from prediction.event_impact_score import compute_eis
+
+    try:
+        from sec_10q_extractor import load_10q_events_for_ticker
+    except Exception:
+        return []
+
+    ws = _parse_date(window_start)
+    we = _parse_date(window_end)
+    if not ws or not we:
+        return []
+
+    seen: set[str] = set()
+    out: list[dict[str, Any]] = []
+    for row in load_10q_events_for_ticker(ticker):
+        fd_raw = row.get("filing_date")
+        filing_date = _parse_date(fd_raw)
+        if not filing_date or not ws <= filing_date <= we:
+            continue
+        accession = str(row.get("accession") or "").strip()
+        dedupe = accession or f"10q|{filing_date.strftime('%Y-%m-%d')}|{row.get('section_kind')}"
+        if dedupe in seen:
+            continue
+        seen.add(dedupe)
+
+        iso = filing_date.strftime("%Y-%m-%d")
+        section_text = str(row.get("section_text") or "")
+        headline = str(row.get("headline") or "").strip() or "10-Q Recent Developments / MD&A"
+        # Light keyword sentiment on pipeline section (heuristic_sentiment is 8-K item-based).
+        low = section_text[:2000].lower()
+        pos = sum(
+            1
+            for k in (
+                "statistically significant",
+                "primary endpoint",
+                "pdufa",
+                "accepted for filing",
+                "positive topline",
+                "advanced into",
+                "initiated",
+            )
+            if k in low
+        )
+        neg = sum(
+            1
+            for k in (
+                "discontinued",
+                "clinical hold",
+                "terminated the",
+                "failed to meet",
+                "adverse",
+                "halted",
+            )
+            if k in low
+        )
+        sentiment = 0.0
+        if pos > neg:
+            sentiment = 1.0 if pos >= 2 else 0.5
+        elif neg > pos:
+            sentiment = -1.0 if neg >= 2 else -0.5
+        vol_key = f"{ticker}|{iso}|10q"
+        if vol_key not in vol_cache:
+            vol_cache[vol_key] = _volume_ratio_t1(ticker, filing_date)
+        vol_ratio = vol_cache.get(vol_key)
+        eis = compute_eis(
+            delta_p_1d=None,
+            delta_p_3d=None,
+            vol_ratio=vol_ratio,
+            sentiment=sentiment,
+        )
+        section_kind = str(row.get("section_kind") or "mda")
+        out.append(
+            {
+                "event_date": iso,
+                "event_type": "sec_10q",
+                "source_type": "sec_10q",
+                "event_title": f"10-Q · {section_kind.replace('_', ' ')}",
+                "asset": drug or "Pipeline / MD&A",
+                "summary": headline,
+                "section_text": section_text[:4000],
+                "section_kind": section_kind,
+                "accession": accession,
+                "items_raw": "",
+                "sentiment": sentiment,
+                "impact_note": "10-Q SEC · MD&A / Recent Developments",
+                "price": {
+                    "p_t0": None,
+                    "p_t1": None,
+                    "p_t3": None,
+                    "delta_p_1d": None,
+                    "delta_p_3d": None,
+                },
+                "link": row.get("filing_doc_url") or "",
+                "link_label": "SEC 10-Q" if row.get("filing_doc_url") else "SEC",
+                "eis": eis,
+                "sec_filing_verified": True,
+            }
+        )
+
+    out.sort(key=lambda e: e.get("event_date") or "")
+    return out
+
+
 def _timeline_ctgov_event(
     *,
     pub_date: str | None,
@@ -461,8 +789,10 @@ def _timeline_ctgov_event(
     return {
         "event_date": iso,
         "event_type": "clinicaltrials.gov",
+        "source_type": "ctgov",
         "event_title": "CT.gov registry update",
         "drug": drug,
+        "nct_id": nct_id,
         "summary": summary[:400] if summary else f"Registry update {nct_id}",
         "items_raw": "",
         "price": {
@@ -515,6 +845,35 @@ def _load_sec_k8_tickers() -> set[str]:
     return out
 
 
+_SIM_SCOPE_SKIP = frozenset({"TOTALE PORTAFOGLIO", "TOTAL PORTFOLIO", "TOTAL"})
+
+
+def _simulation_ticker_set() -> set[str]:
+    """Tickers listed on the Simulation sheet (excluding summary rows)."""
+    try:
+        from orchestrator_io_paths import SIMULATION_SHEET_SNAPSHOT_JSON
+
+        path = Path(SIMULATION_SHEET_SNAPSHOT_JSON)
+    except ImportError:
+        path = _DATA_DIR / "simulation_sheet_snapshot.json"
+    if not path.is_file():
+        return set()
+    try:
+        snap = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        return set()
+    out: set[str] = set()
+    for row in snap.get("rows") or []:
+        if not isinstance(row, dict):
+            continue
+        tk = str(row.get("Ticker") or row.get("ticker") or "").strip().upper()
+        if not tk or tk in _SIM_SCOPE_SKIP:
+            continue
+        if is_valid_feed_ticker(tk):
+            out.add(tk)
+    return out
+
+
 def _portfolio_ticker_set() -> set[str]:
     """Tickers with capital > 0 and buy price > 0 (invest_sim_inputs.json)."""
     try:
@@ -550,8 +909,180 @@ def _portfolio_ticker_set() -> set[str]:
     return out
 
 
+def _enrichment_scope_ticker_set() -> set[str]:
+    """Scheduled refresh scope: Simulation sheet ∪ open portfolio positions."""
+    return _simulation_ticker_set() | _portfolio_ticker_set()
+
+
+def _company_for_ticker(ticker: str) -> str:
+    try:
+        from medtech_universe import load_ticker_to_company
+
+        return load_ticker_to_company().get(ticker.upper(), ticker.upper())
+    except Exception:
+        return ticker.upper()
+
+
+def _load_simulation_cd_by_ticker() -> dict[str, dict[str, Any]]:
+    """Next CD (+ optional NCT metadata) per ticker from simulation_sheet_snapshot."""
+    try:
+        from orchestrator_io_paths import SIMULATION_SHEET_SNAPSHOT_JSON
+
+        path = Path(SIMULATION_SHEET_SNAPSHOT_JSON)
+    except ImportError:
+        path = _DATA_DIR / "simulation_sheet_snapshot.json"
+    if not path.is_file():
+        return {}
+    try:
+        snap = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        return {}
+    out: dict[str, dict[str, Any]] = {}
+    for row in snap.get("rows") or []:
+        if not isinstance(row, dict):
+            continue
+        tk = str(row.get("Ticker") or row.get("ticker") or "").strip().upper()
+        if not tk or tk in _SIM_SCOPE_SKIP:
+            continue
+        cd_raw = (
+            row.get("Completion Date")
+            or row.get("completion_date")
+            or row.get("Primary Completion Date")
+            or ""
+        )
+        cd = _parse_date(str(cd_raw).strip() if cd_raw else None)
+        if not cd:
+            continue
+        nct = _parse_nct(
+            row.get("NCT")
+            or row.get("nct_id")
+            or row.get("Nct")
+            or row.get("Link studio")
+        )
+        lead_sponsor = str(
+            row.get("Lead sponsor")
+            or row.get("lead_sponsor")
+            or row.get("Lead Sponsor")
+            or ""
+        ).strip() or None
+        phase = str(
+            row.get("Studio Phase")
+            or row.get("Phase")
+            or row.get("Fase")
+            or row.get("Clinical Phase")
+            or ""
+        ).strip() or None
+        sponsor_match = str(
+            row.get("sponsor_match")
+            or row.get("Sponsor match")
+            or row.get("Exact·Partial vs Unmatch")
+            or row.get("Relazione sponsor")
+            or ""
+        ).strip() or None
+        brief_title = str(
+            row.get("Brief Title")
+            or row.get("brief_title")
+            or row.get("Titolo studio")
+            or ""
+        ).strip() or None
+        prev = out.get(tk)
+        if prev and prev.get("_cd_dt") and cd >= prev["_cd_dt"]:
+            continue
+        out[tk] = {
+            "ticker": tk,
+            "cd_date": cd.strftime("%Y-%m-%d"),
+            "company": _company_for_ticker(tk),
+            "nct_id": nct,
+            "lead_sponsor": lead_sponsor,
+            "phase": phase,
+            "brief_title": brief_title,
+            "sponsor_match": sponsor_match,
+            "_cd_dt": cd,
+        }
+    return out
+
+
+def _seed_from_simulation(by_ticker: dict[str, dict[str, Any]]) -> None:
+    """Simulation row without clinical_sim match → seed NCT/CD from Simulation sheet."""
+    for tk, sim in _load_simulation_cd_by_ticker().items():
+        if tk in by_ticker:
+            continue
+        by_ticker[tk] = {
+            "ticker": tk,
+            "company": sim.get("company") or _company_for_ticker(tk),
+            "nct_id": sim.get("nct_id"),
+            "cd_date": sim.get("cd_date"),
+            "phase": sim.get("phase"),
+            "brief_title": sim.get("brief_title"),
+            "overall_status": None,
+            "conditions": None,
+            "interventions": None,
+            "last_update": None,
+            "sponsor_match": sim.get("sponsor_match"),
+        }
+
+
+def _seed_medtech_from_simulation(by_ticker: dict[str, dict[str, Any]]) -> None:
+    """Backward-compatible alias — seeds all Simulation tickers."""
+    _seed_from_simulation(by_ticker)
+
+
+def _simulation_nct_fallback(ticker: str, cd_date: str | None) -> dict[str, Any] | None:
+    """When a row lacks NCT, resolve nearest CT.gov sponsor study for the ticker."""
+    try:
+        from medtech_universe import discover_ctgov_sponsor_studies
+
+        _, rows = discover_ctgov_sponsor_studies(
+            tickers=[ticker.upper()],
+            horizon_days=365,
+            per_ticker_limit=20,
+            align_cd=cd_date,
+            align_cd_tolerance_days=150,
+        )
+        if not rows:
+            _, rows = discover_ctgov_sponsor_studies(
+                tickers=[ticker.upper()],
+                horizon_days=365,
+                per_ticker_limit=20,
+            )
+    except Exception:
+        return None
+    if not rows:
+        return None
+    target_cd = _parse_date(cd_date) if cd_date else None
+    best: dict[str, Any] | None = None
+    best_delta: int | None = None
+    for r in rows:
+        nct = str(r.get("nct_id") or "").strip().upper()
+        if not nct.startswith("NCT"):
+            continue
+        comp = _parse_date(r.get("completion_date"))
+        if target_cd and comp:
+            delta = abs((comp - target_cd).days)
+            if best_delta is None or delta < best_delta:
+                best_delta = delta
+                best = r
+        elif best is None:
+            best = r
+    if not best:
+        return None
+    return {
+        "nct_id": best["nct_id"],
+        "brief_title": best.get("brief_title"),
+        "cd_date": best.get("completion_date") or cd_date,
+        "sponsor_match": best.get("sponsor_match"),
+        "company": best.get("query_company") or _company_for_ticker(ticker),
+    }
+
+
+def _medtech_nct_fallback(ticker: str, cd_date: str | None) -> dict[str, Any] | None:
+    """Backward-compatible alias."""
+    return _simulation_nct_fallback(ticker, cd_date)
+
+
 def _build_work_list() -> list[dict[str, Any]]:
     sec_tickers = _load_sec_k8_tickers()
+    sim_scope = _simulation_ticker_set()
     by_ticker: dict[str, dict[str, Any]] = {}
     for row in _load_clinical_rows():
         ticker = str(row.get("ticker", "")).strip().upper()
@@ -559,7 +1090,12 @@ def _build_work_list() -> list[dict[str, Any]]:
             continue
         if not _study_row_sponsor_ok(row):
             continue
-        if sec_tickers and ticker not in sec_tickers:
+        if (
+            sec_tickers
+            and ticker not in sec_tickers
+            and not _is_medtech_ticker(ticker)
+            and ticker not in sim_scope
+        ):
             continue
         cd = _parse_date(row.get("primary_completion_date") or row.get("completion_date"))
         nct = _parse_nct(row.get("nct_id"))
@@ -582,6 +1118,13 @@ def _build_work_list() -> list[dict[str, Any]]:
             "last_update": row.get("last_update_posted_date"),
             "sponsor_match": row.get("sponsor_match"),
         }
+    _seed_from_simulation(by_ticker)
+    for tk, item in list(by_ticker.items()):
+        if item.get("nct_id"):
+            continue
+        fb = _simulation_nct_fallback(tk, item.get("cd_date"))
+        if fb:
+            item.update({k: v for k, v in fb.items() if v})
     return [x for x in by_ticker.values() if x.get("nct_id") and x.get("cd_date")]
 
 
@@ -666,6 +1209,10 @@ _CLINICAL_INDICATOR_JSON = """\
       "direction": "up | down | flat | unknown",
       "vs_prior_update": "improvement | stable | worsening | first_report | N/D",
       "vs_soc": "better | similar | worse | N/D",
+      "soc_name": "docetaxel | pembrolizumab | best supportive care | no approved treatment | N/D",
+      "soc_benchmark": "ORR ~15% | median OS ~10 mo | N/D",
+      "soc_flag": "beat | match | miss | unknown",
+      "soc_is_none": false,
       "n_patients": 48,
       "study_phase": "Phase 1 | Phase 2 | Phase 3",
       "endpoint_met": true,
@@ -676,6 +1223,9 @@ _CLINICAL_INDICATOR_JSON = """\
 
 _STUDY_CLINICAL_PROFILE_JSON = """\
   "study_clinical_profile": {{
+    "product_name": "lead asset / drug name for THIS trial (company product, not SoC)",
+    "product_technology": "modality / platform: mAb | ADC | small molecule | gene therapy | cell therapy | oligonucleotide | device | other",
+    "mechanism_of_action": "plain-language MoA for the company product (target + biological effect)",
     "study_success": "success | failure | ongoing | unknown",
     "primary_endpoint_label": "ORR | PFS",
     "primary_endpoint_value": "42%",
@@ -686,6 +1236,7 @@ _STUDY_CLINICAL_PROFILE_JSON = """\
     "fda_designation": "BreakthroughTherapy",
     "ema_designation": null,
     "blinding": "double_blind",
+    "study_design": "Double-blind · Placebo-controlled · Randomized (human-readable; prefer CT.gov when available)",
     "n_treatment_arm": 124,
     "n_control_arm": 121,
     "p_value_primary_numeric": 0.0003,
@@ -693,8 +1244,20 @@ _STUDY_CLINICAL_PROFILE_JSON = """\
     "p_value": "0.003 or N/D",
     "secondary_endpoints_summary": "PFS 8.2mo, OS NR, DCR 78%",
     "soc_comparison_note": "e.g. ORR 42% vs SOC ~15% in 2L NSCLC",
+    "disease_soc": {{
+      "disease": "2L NSCLC / indication in plain language — MUST match meta.conditions for THIS trial",
+      "usa_prevalence": "e.g. ~230k prevalent cases US / ~220k new cases/yr — published range or N/D",
+      "five_year_survival": "e.g. ~70% 5-year relative (all stages, SEER) or stage-specific — published range or N/D",
+      "soc_name": "docetaxel | pembrolizumab | best supportive care | no approved treatment",
+      "soc_is_none": false,
+      "soc_efficacy_benchmark": "median OS ~10 mo; ORR ~15% — published SoC for THIS line/setting",
+      "life_expectancy": "e.g. median OS ~10–12 months untreated / on SoC in this line",
+      "symptoms": "dominant symptoms of this disease/stage (short list)",
+      "source_note": "trial control arm | NCCN-class published SoC | no approved therapy"
+    }},
     "patients_enrolled": null,
     "patients_target": null,
+    "inclusion_criteria_summary": "2–4 key inclusion criteria in plain language (or N/D)",
     "serious_ae_rate_pct": 12,
     "grade3_ae_rate_pct": null,
     "discontinuation_rate_pct": null,
@@ -705,13 +1268,47 @@ _STUDY_CLINICAL_PROFILE_JSON = """\
 
 _EXTRACTION_RULES_EN = """\
 IMPORTANT extraction rules for new fields:
+- product_name / product_technology / mechanism_of_action: describe the COMPANY product
+  in THIS trial (not the disease SoC). mechanism_of_action must be plain language
+  (target + effect). If unknown, N/D — do not invent a novel MoA.
 - p_value_numeric: always extract as float (0.0003, not "< 0.001"). If reported as range, use upper bound.
 - hazard_ratio: extract only for time-to-event endpoints (PFS, OS, DFS). Range [0.1–2.0].
 - effect_size_delta_pp: comparator arm value must come from the SAME trial, not external SOC estimates.
+- disease_soc: define the DISEASE (not the company drug) for THIS trial's primary indication
+  (meta.conditions). NEVER copy SoC from a different disease or another ticker.
+  Research per indication: (1) USA prevalence/incidence range, (2) typical symptoms,
+  (3) life expectancy / prognosis on SoC, (4) 5-year relative survival when published
+  (SEER/ACS-class), (5) named SoC therapy(ies) in this line/setting,
+  (6) published SoC efficacy benchmark (ORR, PFS, OS, HiSCR, etc.) to compare readouts.
+  ALWAYS fill the structured disease_soc fields when you know them — do NOT dump the only
+  useful content into source_note while leaving usa_prevalence / five_year_survival /
+  soc_name / soc_efficacy_benchmark / life_expectancy / symptoms as N/D. source_note is a short
+  citation (e.g. "NCCN ovarian / platinum-resistant") not a substitute for those fields.
+  If no approved therapy exists, set soc_is_none=true and soc_name="no approved treatment"
+  or "best supportive care". soc_efficacy_benchmark must be the published SoC efficacy in
+  THIS line/setting, or N/D. Do not invent life_expectancy, five_year_survival, or symptoms —
+  use well-known published ranges or N/D. usa_prevalence: approximate US prevalence or annual
+  incidence. five_year_survival: 5-year relative (or overall) survival % with stage note when known.
+- soc_flag on efficacy KPIs: beat / match / miss vs that disease SoC benchmark (not vs
+  protocol endpoint). unknown if you cannot name the SoC or the benchmark. Populate
+  soc_name, soc_benchmark, vs_soc on each quantifiable efficacy KPI when readouts exist.
 - fda_designation: search the DATA SUMMARY text AND company IR/press release for these exact strings:
   "Fast Track", "Breakthrough Therapy Designation", "Priority Review", "Orphan Drug".
   Return null if not found — do NOT infer.
 - n_per_arm: extract from enrollment or randomization tables. Format: n_treatment_arm, n_control_arm integers.
+
+CONFIRMATION DISCIPLINE (mandatory on every event):
+- confirmation_status = "confirmed" ONLY if the event has already happened AND you can name a
+  real source: URL, DOI, PMID, NCT id or SEC filing. Put that source in "link".
+- Anything you infer — a congress the company will plausibly attend, an abstract that might be
+  submitted, a readout you project from the CD date — MUST be "anticipated".
+- NEVER invent an event_date for an anticipated event. Set "event_date": null and fill
+  "expected_window_start" / "expected_window_end" instead. A fabricated date is resolved against
+  real market prices downstream and would attribute an unrelated move to a non-event.
+- Anticipated rows are wanted, not penalised: they are queued for automatic re-verification when
+  their window opens. Report them honestly instead of dressing them up as facts.
+- "verification_hint": what to search later to confirm it (congress + year, expected abstract
+  title, registry field, filing type).
 """
 
 _PRE_CD_SYSTEM = (
@@ -722,6 +1319,17 @@ _PRE_CD_SYSTEM = (
     "Focus ONLY on clinical/scientific data — NOT pure financial/corporate-strategy events "
     "(those come from the SEC K-8 feed). "
     "For every event or KPI extract hard numbers (%, n, p-value, HR, months) when known. "
+    "Do not invent results; mark missing data in data_gaps. "
+    "Italian labels in trend_note and impact_note are preferred."
+)
+
+_PRE_CD_DEVICE_SYSTEM = (
+    "You are a senior medtech/device investment analyst. "
+    "Use registry data PLUS your knowledge of FDA clearances, PMA/510(k)/De Novo decisions, "
+    "company IR, and ClinicalTrials.gov for this medical device company. "
+    "Focus on clinical performance endpoints, safety, and regulatory milestones — "
+    "NOT pure financial events (those are in SEC K-8). "
+    "Extract hard numbers (sensitivity %, non-inferiority margin, SAE rate, n enrolled) when known. "
     "Do not invent results; mark missing data in data_gaps. "
     "Italian labels in trend_note and impact_note are preferred."
 )
@@ -780,6 +1388,10 @@ Return ONLY valid JSON:
       "source_type": "press_release | congress | publication | ctgov | company_site",
       "publication_venue": "ASCO 2024 | NEJM | company IR | N/D",
       "link": "URL or PMID or empty",
+      "confirmation_status": "confirmed | anticipated",
+      "expected_window_start": "YYYY-MM-DD or null (anticipated only)",
+      "expected_window_end": "YYYY-MM-DD or null (anticipated only)",
+      "verification_hint": "what to search later to confirm it, or null",
       "sentiment": 0,
       "impact_note": "breve nota IT su lettura clinica/mercato",
       "indicators": [
@@ -902,7 +1514,11 @@ Return ONLY valid JSON (no markdown fences):
       "milestones_kpis": "KPI or milestone reached/missed (positive, negative, or strategic)",
       "sentiment": "positive | negative | neutral | mixed",
       "venue": "company IR | Fierce Biotech | ASCO | NEJM | SEC 8-K | ...",
-      "url_hint": "DOI / NCT / PR reference if known else null"
+      "url_hint": "DOI / NCT / PR reference if known else null",
+      "confirmation_status": "confirmed | anticipated",
+      "expected_window_start": "YYYY-MM-DD or null (anticipated only)",
+      "expected_window_end": "YYYY-MM-DD or null (anticipated only)",
+      "verification_hint": "what to search later to confirm it, or null"
     }}
   ],
   "related_programs": [
@@ -926,6 +1542,13 @@ _DEEP_CLINICAL_SYSTEM = (
     "Combine registry data below with your knowledge of press releases, congress readouts "
     "(ASCO, ESMO, ASH, AACR, ADA, WCLC, SITC, …), peer-reviewed publications, and CT.gov. "
     "Extract quantified efficacy/safety KPIs (ORR, PFS, OS, HR, p-value, n). "
+    "Do not invent numbers; note gaps in data_gaps. Prefer Italian in trend_note / impact_note."
+)
+
+_DEEP_CLINICAL_DEVICE_SYSTEM = (
+    "You are a senior medtech/device analyst performing deep clinical diligence. "
+    "Combine registry data with FDA clearance/PMA/510(k) news, company IR, and CT.gov. "
+    "Extract device performance KPIs (sensitivity, specificity, non-inferiority, SAE rate, n). "
     "Do not invent numbers; note gaps in data_gaps. Prefer Italian in trend_note / impact_note."
 )
 
@@ -958,9 +1581,11 @@ Return ONLY valid JSON (same schema as standard pre-CD enrichment):
   "clinical_indicators": [
 """ + _CLINICAL_INDICATOR_JSON + """
   ],
-  "clinical_events": [{{ "event_date": "YYYY-MM-DD", "event_title": "...",
+  "clinical_events": [{{ "event_date": "YYYY-MM-DD (null if anticipated)", "event_title": "...",
     "summary": "with n=, p=, ORR/PFS/OS", "drug": "...", "source_type": "press_release | congress | publication | ctgov",
     "publication_venue": "...", "link": "URL/PMID or empty", "sentiment": 0,
+    "confirmation_status": "confirmed | anticipated",
+    "expected_window_start": null, "expected_window_end": null, "verification_hint": null,
     "impact_note": "IT", "indicators": [{{ "label": "ORR", "value": "38%", "numeric_value": 38, "p_value_numeric": 0.02, "kpi_type": "efficacy" }}] }}],
 """ + _STUDY_CLINICAL_PROFILE_JSON + """,
   "data_gaps": "...",
@@ -1108,15 +1733,21 @@ def _indicators_from_ctgov_extracted(extracted: dict[str, Any] | None) -> list[d
         return [row] if row else []
 
     rows: list[dict[str, Any]] = []
-    for om in (extracted.get("outcome_measures") or [])[:4]:
-        if not isinstance(om, dict):
-            continue
-        title = str(om.get("title") or "").strip()[:60]
+    oms = [om for om in (extracted.get("outcome_measures") or []) if isinstance(om, dict)]
+    primaries = [om for om in oms if "primary" in str(om.get("type") or "").lower()]
+    others = [om for om in oms if om not in primaries]
+    for om in (primaries + others)[:8]:
+        title = str(om.get("title") or "").strip()
+        desc = str(om.get("description") or "").strip()
+        time_frame = str(om.get("time_frame") or "").strip()
         vals = om.get("values") or []
-        val = str(vals[0])[:48] if vals else "N/D"
+        val = str(vals[0]).strip() if vals else ""
+        if not val:
+            val = time_frame or "planned"
         otype = str(om.get("type") or "").lower()
-        label = "Endpoint primario" if "primary" in otype else (title[:48] or "Endpoint")
+        label = title or ("Endpoint primario" if "primary" in otype else "Endpoint")
         reached = om.get("reached") if "reached" in om else None
+        note = " · ".join(p for p in (desc, time_frame) if p)
         rows.extend(
             _add(
                 label,
@@ -1125,6 +1756,7 @@ def _indicators_from_ctgov_extracted(extracted: dict[str, Any] | None) -> list[d
                 endpoint_met=reached if isinstance(reached, bool) else None,
                 direction="up" if reached is True else "down" if reached is False else "unknown",
                 source="ctgov",
+                trend_note=note or None,
             )
         )
 
@@ -1160,8 +1792,14 @@ def _indicators_from_ctgov_extracted(extracted: dict[str, Any] | None) -> list[d
 
 def _merge_ai_kpi_payload(base: dict[str, Any] | None, kpi: dict[str, Any]) -> dict[str, Any]:
     out = dict(base or {})
-    if kpi.get("study_clinical_profile") and not out.get("study_clinical_profile"):
-        out["study_clinical_profile"] = kpi["study_clinical_profile"]
+    base_prof = out.get("study_clinical_profile")
+    kpi_prof = kpi.get("study_clinical_profile")
+    if isinstance(base_prof, dict) and isinstance(kpi_prof, dict):
+        # Deep/second pass must fill gaps left by a sparse first profile —
+        # do not keep the first dict wholesale when the second has MoA / disease_soc.
+        out["study_clinical_profile"] = _merge_study_profiles(base_prof, kpi_prof)
+    elif isinstance(kpi_prof, dict):
+        out["study_clinical_profile"] = kpi_prof
     merged_inds = list(out.get("clinical_indicators") or [])
     seen = {
         f"{i.get('label','')}|{i.get('value','')}"
@@ -1288,6 +1926,9 @@ _EFFICACY_LABEL_HINTS = (
     "ORR", "PFS", "OS ", "OVERALL SURVIVAL", "DCR", "CBR", "CRR", "RESPONSE",
     "EASI", "IGA", "PASI",
     "ENDPOINT", "HAZARD", "SURVIVAL", "EFFICACY", "ESITO STUDIO",
+    "SENSITIVITY", "SPECIFICITY", "NON-INFERIOR", "NONINFERIOR",
+    "510(K)", "510K", "PMA", "DE NOVO", "CLEARANCE", "TIR", "TIME IN RANGE",
+    "RECOVERY", "LIFESPAN", "ACCURACY", "PERFORMANCE GOAL",
 )
 
 
@@ -1336,22 +1977,20 @@ def _backfill_event_indicators(
     events: list[dict[str, Any]],
     global_indicators: list[dict[str, Any]],
 ) -> list[dict[str, Any]]:
-    """Attach study-level **outcome** KPIs when events lack efficacy data (never enrollment-only)."""
-    if not global_indicators:
-        return events
-    efficacy_pool = [g for g in global_indicators if _is_outcome_indicator(g)]
+    """Do **not** stamp study-level outcomes onto every sparse press/news row.
+
+    Date-matched attach stays in ``_attach_indicators_to_events``. Study rollup
+    lives on ``clinical_indicators`` and is shown once in the feed header.
+    SEC 8-K rows still get an empty indicator list.
+    """
+    _ = global_indicators
     out: list[dict[str, Any]] = []
     for ev in events:
         row = dict(ev)
         if str(row.get("source_type") or "").lower() == "sec_8k":
             row["indicators"] = []
-            out.append(row)
-            continue
-        local = [i for i in (row.get("indicators") or []) if isinstance(i, dict)]
-        if _event_indicators_enrollment_only(local) and efficacy_pool:
-            merged = _dedupe_indicators(local + [dict(g) for g in efficacy_pool[:4]])
-            row["indicators"] = _prioritize_outcome_indicators(merged)
         else:
+            local = [i for i in (row.get("indicators") or []) if isinstance(i, dict)]
             row["indicators"] = _prioritize_outcome_indicators(local)
         out.append(row)
     return out
@@ -1362,8 +2001,15 @@ def _indicators_for_eis_scoring(
     global_indicators: list[dict[str, Any]] | None,
 ) -> list[dict[str, Any]]:
     """Outcome KPIs for EIS — event-local only (no global KPI backfill)."""
+    from prediction.event_impact_score import virtual_regulatory_indicator
+
+    _ = global_indicators
     local = [i for i in (row.get("indicators") or []) if isinstance(i, dict)]
-    return _prioritize_outcome_indicators(local)
+    pooled = _prioritize_outcome_indicators(local)
+    virtual = virtual_regulatory_indicator(row, pooled)
+    if virtual:
+        pooled = pooled + [virtual]
+    return pooled
 
 
 def _drug_tokens_from_item(item: dict[str, Any], extracted: dict[str, Any]) -> list[str]:
@@ -1458,7 +2104,7 @@ def _gather_multi_study_context(
             if p and p not in pmids_seen:
                 pmids_seen.add(str(p))
 
-    extra = _TICKER_EXTRA_DRUGS.get(ticker.upper(), [])
+    extra = _extra_search_tokens(ticker)
     drug_tokens = list(dict.fromkeys(drug_tokens + extra))[:10]
     indication = str(item.get("conditions") or "")[:140]
 
@@ -1755,11 +2401,91 @@ def annotate_events_reference_verification(
     return out
 
 
+def _queue_anticipated_for_verification(
+    events: list[dict[str, Any]],
+    *,
+    ticker: str,
+    company: str,
+    nct_id: str | None,
+) -> None:
+    """Park unconfirmed hypotheses in the registry so they get re-checked later."""
+    try:
+        from prediction.eis_pending_verification import upsert_hypotheses
+
+        stats = upsert_hypotheses(
+            events,
+            ticker=ticker,
+            company=company,
+            nct_id=str(nct_id or ""),
+        )
+        if stats.get("added"):
+            print(
+                f"[ClinicalPreCD] {ticker}: {stats['added']} ipotesi in attesa di verifica",
+                flush=True,
+            )
+    except Exception as exc:  # noqa: BLE001 — bookkeeping must never break a refresh
+        print(f"[ClinicalPreCD][WARN] registro ipotesi non aggiornato ({ticker}): {exc}", flush=True)
+
+
 def _normalize_event_row(ev: dict[str, Any]) -> dict[str, Any]:
+    """Normalize event fields without collapsing drug ≡ asset.
+
+    Corporate markers (``Corporate``, ``SEC 8-K``, earnings-ish labels) must
+    stay on ``asset`` when ``drug`` is empty — otherwise read-time ``assetRole``
+    cannot distinguish company news from a program.
+    Also stamps ``nct_id`` when an NCT appears in title/summary/link.
+    """
     row = dict(ev)
-    drug = (row.get("drug") or row.get("asset") or "—").strip() or "—"
-    row["drug"] = drug
-    row["asset"] = drug
+    raw_drug = row.get("drug")
+    raw_asset = row.get("asset")
+    drug_s = (str(raw_drug).strip() if raw_drug is not None else "") or ""
+    asset_s = (str(raw_asset).strip() if raw_asset is not None else "") or ""
+    if drug_s in ("—", "-", "None", "nan"):
+        drug_s = ""
+    if asset_s in ("—", "-", "None", "nan"):
+        asset_s = ""
+    # Law-firm solicitation tokens mistaken for product names (BBNX SHAREHOLDER ALERT).
+    _junk = {
+        "SHAREHOLDER",
+        "ALERT",
+        "INVESTOR",
+        "INVESTORS",
+        "INVESTIGATION",
+        "LAWSUIT",
+        "DEADLINE",
+        "SECURITIES",
+        "CLASS",
+        "ACTION",
+    }
+    if drug_s.upper() in _junk:
+        drug_s = ""
+    if asset_s.upper() in _junk:
+        asset_s = ""
+
+    if drug_s and asset_s:
+        row["drug"] = drug_s
+        row["asset"] = asset_s
+    elif drug_s and not asset_s:
+        row["drug"] = drug_s
+        # Do not invent asset from drug
+        if "asset" in row and not asset_s:
+            row["asset"] = None
+    elif asset_s and not drug_s:
+        row["asset"] = asset_s
+        row["drug"] = None
+    else:
+        row["drug"] = None
+        row["asset"] = None
+
+    if not row.get("nct_id"):
+        blob = " ".join(
+            str(row.get(k) or "")
+            for k in ("event_title", "summary", "link", "drug", "asset")
+        )
+        nct = _parse_nct(blob)
+        if nct:
+            row["nct_id"] = nct
+
     if not row.get("link_label") and row.get("source_type") == "sec_8k":
         row["link_label"] = "SEC EDGAR"
     elif not row.get("link_label") and row.get("source_type") == "publication":
@@ -1776,11 +2502,23 @@ def _enrich_clinical_events_market(
     skip_yfinance: bool = False,
 ) -> list[dict[str, Any]]:
     """Attach yfinance T/T+1/T+3 and EIS to each clinical event."""
+    from prediction.eis_feed_quality import (
+        ANTICIPATED,
+        annotate_event_confirmation,
+        neutralize_anticipated_event_score,
+    )
     from prediction.event_impact_score import compute_eis, kpi_intrinsic_score
 
     out: list[dict[str, Any]] = []
     for ev in events:
         row = _normalize_event_row(ev)
+        row = annotate_event_confirmation(row)
+        if row.get("confirmation_status") == ANTICIPATED:
+            # Hypothesis: the date is a guess, so reading yfinance at that date
+            # would attribute an unrelated market move to an event that may
+            # never have happened. Score stays neutral until verification.
+            out.append(neutralize_anticipated_event_score(row))
+            continue
         ed = _parse_date(row.get("event_date"))
         if not ed:
             row["price"] = {
@@ -1826,6 +2564,15 @@ def _enrich_clinical_events_market(
             sentiment=sent,
             kpi_score=kpi_sc,
         )
+        virtuals = [
+            i
+            for i in ind_for_eis
+            if isinstance(i, dict) and str(i.get("source") or "") == "virtual"
+        ]
+        if virtuals:
+            local = [i for i in (row.get("indicators") or []) if isinstance(i, dict)]
+            if not any(str(i.get("source") or "") == "virtual" for i in local):
+                row["indicators"] = local + virtuals
         row["price"] = {
             "p_t0": round(p0, 4) if p0 else None,
             "p_t1": round(p1, 4) if p1 else None,
@@ -1836,6 +2583,17 @@ def _enrich_clinical_events_market(
             "delta_p_7d": d7,
         }
         row["eis"] = eis
+        if not skip_yfinance:
+            try:
+                _attach_market_eis_horizons(
+                    ticker,
+                    row,
+                    ed,
+                    sentiment=sent,
+                    d1_fallback=d1,
+                )
+            except Exception:
+                pass
         out.append(row)
 
     out.sort(key=lambda e: e.get("event_date") or "")
@@ -1855,7 +2613,7 @@ def refresh_clinical_event_market_prices(
     if not records:
         return {"records_updated": 0, "events_with_price_1d": 0, "events_with_price_7d": 0}
 
-    portfolio = _portfolio_ticker_set() if portfolio_only else None
+    portfolio = _enrichment_scope_ticker_set() if portfolio_only else None
     vol_cache: dict[str, float | None] = {}
     prev_by_key = {_record_merge_key(r): r for r in records if isinstance(r, dict)}
     updated_records = 0
@@ -1947,6 +2705,7 @@ def _call_pre_cd_ai(
     if not ai_provider.is_available():
         return None
     drugs = ctx.get("drug_tokens") or []
+    medtech = _is_medtech_ticker(ticker)
     prompt = _PRE_CD_PROMPT.format(
         company=company,
         ticker=ticker,
@@ -1960,7 +2719,10 @@ def _call_pre_cd_ai(
         pubmed_text=ctx.get("pubmed_text", "(none)")[:6000],
         citations_text=ctx.get("citations_text", "(none)")[:1500],
     )
-    raw = ai_provider.call_ai(prompt, system=_PRE_CD_SYSTEM, max_tokens=4800, task="summary")
+    if medtech:
+        prompt = prompt + "\n\n" + _DEVICE_KPI_ADDENDUM
+    system = _PRE_CD_DEVICE_SYSTEM if medtech else _PRE_CD_SYSTEM
+    raw = ai_provider.call_ai(prompt, system=system, max_tokens=4800, task="summary")
     if not raw:
         return None
     parsed = _parse_ai_json(raw)
@@ -1982,6 +2744,7 @@ def _call_deep_clinical_ai(
     if not ai_provider.is_available():
         return None
     drugs = ctx.get("drug_tokens") or []
+    medtech = _is_medtech_ticker(ticker)
     prompt = _DEEP_CLINICAL_PROMPT.format(
         company=company,
         ticker=ticker,
@@ -1995,9 +2758,12 @@ def _call_deep_clinical_ai(
         pubmed_text=ctx.get("pubmed_text", "(none)")[:6000],
         citations_text=ctx.get("citations_text", "(none)")[:1500],
     )
+    if medtech:
+        prompt = prompt + "\n\n" + _DEVICE_KPI_ADDENDUM
+    deep_system = _DEEP_CLINICAL_DEVICE_SYSTEM if medtech else _DEEP_CLINICAL_SYSTEM
     raw = ai_provider.call_ai(
         prompt,
-        system=_DEEP_CLINICAL_SYSTEM,
+        system=deep_system,
         max_tokens=6000,
         task="deep_clinical",
     )
@@ -2032,7 +2798,7 @@ def _extract_first_number(text: str) -> float | None:
 
 
 def _indicator_value_display(raw: dict[str, Any], nv: float | None) -> str:
-    value = str(raw.get("value") or "").strip()[:48]
+    value = str(raw.get("value") or "").strip()[:96]
     if value and value.upper() not in ("", "N/D", "ND", "—", "-"):
         return value
     if nv is not None and nv == nv:
@@ -2061,7 +2827,7 @@ def _coerce_optional_float(v: Any) -> float | None:
 def _normalize_indicator_row(raw: dict[str, Any] | None) -> dict[str, Any] | None:
     if not isinstance(raw, dict):
         return None
-    label = str(raw.get("label") or raw.get("name") or "").strip()[:80]
+    label = str(raw.get("label") or raw.get("name") or "").strip()[:180]
     if not label:
         return None
     nv = raw.get("numeric_value")
@@ -2100,15 +2866,21 @@ def _normalize_indicator_row(raw: dict[str, Any] | None) -> dict[str, Any] | Non
         row["study_phase"] = str(raw.get("study_phase"))[:24]
     if raw.get("source"):
         row["source"] = str(raw.get("source"))[:32]
+    link_raw = raw.get("link") or raw.get("url") or raw.get("source_url")
+    if link_raw is not None and str(link_raw).strip().lower() not in ("", "null", "n/d", "nd"):
+        row["link"] = str(link_raw).strip()[:500]
     if raw.get("trend_note"):
-        row["trend_note"] = str(raw.get("trend_note"))[:120]
+        row["trend_note"] = str(raw.get("trend_note"))[:400]
     if raw.get("indicator_date") or raw.get("event_date"):
         row["indicator_date"] = str(raw.get("indicator_date") or raw.get("event_date"))[:10]
     for _f in ("kpi_type", "confidence_interval", "p_value", "data_maturity",
-               "vs_soc", "vs_prior_update", "publication_venue"):
+               "vs_soc", "vs_prior_update", "publication_venue",
+               "soc_name", "soc_benchmark", "soc_flag"):
         v = raw.get(_f)
         if v is not None and str(v).strip().lower() not in ("", "null", "n/d"):
             row[_f] = str(v)[:200]
+    if raw.get("soc_is_none") is True:
+        row["soc_is_none"] = True
     for _nf in (
         "p_value_numeric",
         "hazard_ratio",
@@ -2255,6 +3027,14 @@ def _kpi_press_releases_to_events(
             "impact_note": f"{ev_type.title()}: {venue}" if venue and ev_type else (venue or ev_type.title() or "KPI"),
             "_from_kpi_timeline": True,
         }
+        for field in (
+            "confirmation_status",
+            "expected_window_start",
+            "expected_window_end",
+            "verification_hint",
+        ):
+            if ev.get(field):
+                row[field] = ev[field]
         if milestone_inds:
             row["indicators"] = milestone_inds
         out.append(row)
@@ -2275,15 +3055,28 @@ def _attach_indicators_to_events(
     out: list[dict[str, Any]] = []
     for ev in events:
         row = dict(ev)
+        ev_link = str(row.get("link") or "").strip()
         local: list[dict[str, Any]] = []
         for raw in row.get("indicators") or []:
             norm = _normalize_indicator_row(raw if isinstance(raw, dict) else None)
             if norm:
+                if not norm.get("link") and ev_link:
+                    norm = {**norm, "link": ev_link[:500]}
                 local.append(norm)
         ed = str(row.get("event_date") or "")[:10]
         if ed and ed in by_date:
-            local.extend(by_date[ed])
-        row["indicators"] = _dedupe_indicators(local)
+            for g in by_date[ed]:
+                if not g.get("link") and ev_link:
+                    local.append({**g, "link": ev_link[:500]})
+                else:
+                    local.append(g)
+        stamped = []
+        for ind in _dedupe_indicators(local):
+            if not ind.get("link") and ev_link:
+                stamped.append({**ind, "link": ev_link[:500]})
+            else:
+                stamped.append(ind)
+        row["indicators"] = stamped
         out.append(row)
     return out
 
@@ -2540,15 +3333,45 @@ def _enrich_one(
         except Exception as exc:
             print(f"[ClinicalPreCD] Press fetch skip ({item['ticker']}): {exc}", flush=True)
 
-    sec_events = _timeline_events_from_sec_k8(
+    # SEC 8-K live in Financial dossier (EDGAR + migrate financial) — not Clinical feed.
+    # Still load snapshot 8-K rows only to reconcile AI-tagged dates → press_release.
+    sec_8k_for_reconcile = _timeline_events_from_sec_k8(
         item["ticker"],
         window_start=window_start,
         window_end=window_end,
         drug=drug_label,
         vol_cache=vol_cache,
     )
-    clinical_only = _reconcile_kpi_sec8k_against_filings(clinical_only, sec_events)
+    sec_events: list[dict[str, Any]] = []
+    # 10-Q path is independent — never fail the clinical enrich on 10-Q errors.
+    try:
+        sec_10q_events = _timeline_events_from_sec_10q(
+            item["ticker"],
+            window_start=window_start,
+            window_end=window_end,
+            drug=drug_label,
+            vol_cache=vol_cache,
+        )
+        if sec_10q_events:
+            sec_events = list(sec_10q_events)
+    except Exception as exc:
+        print(f"[ClinicalPreCD] 10-Q timeline skip ({item['ticker']}): {exc}", flush=True)
+
+    clinical_only = _reconcile_kpi_sec8k_against_filings(
+        clinical_only, sec_8k_for_reconcile
+    )
+    # Drop any leftover snapshot / AI sec_8k cards — Financial tab owns EDGAR 8-K.
+    clinical_only = [
+        ev
+        for ev in clinical_only
+        if str(ev.get("source_type") or "").lower() != "sec_8k"
+    ]
     clinical_events = _merge_clinical_and_sec_events(clinical_only, sec_events)
+    clinical_events = [
+        ev
+        for ev in clinical_events
+        if str(ev.get("source_type") or "").lower() != "sec_8k"
+    ]
     if press_events:
         press_events = annotate_events_reference_verification(
             press_events,
@@ -2560,6 +3383,12 @@ def _enrich_one(
         press_events = _filter_verified_feed_events(press_events)
         clinical_events = _merge_clinical_and_sec_events(clinical_events, press_events)
     clinical_events = _filter_verified_feed_events(clinical_events)
+    _queue_anticipated_for_verification(
+        clinical_events,
+        ticker=item["ticker"],
+        company=company_str,
+        nct_id=nct_id,
+    )
 
     ai_ok = bool(
         ai
@@ -2570,15 +3399,7 @@ def _enrich_one(
     sponsor_match = recompute_record_sponsor_match(
         {
             **item,
-            "meta": {
-                "brief_title": extracted.get("brief_title") or item.get("brief_title"),
-                "phase": extracted.get("phase") or item.get("phase"),
-                "overall_status": extracted.get("overall_status") or item.get("overall_status"),
-                "conditions": extracted.get("conditions") or item.get("conditions"),
-                "interventions": extracted.get("interventions") or item.get("interventions"),
-                "enrollment": extracted.get("enrollment"),
-                "lead_sponsor": extracted.get("lead_sponsor"),
-            },
+            "meta": _build_clinical_record_meta(extracted, item),
         }
     )
 
@@ -2590,15 +3411,7 @@ def _enrich_one(
         "last_ctgov_update": last_up,
         "update_in_pre_cd_window": in_window,
         "has_ctgov_results": bool(extracted.get("has_results")),
-        "meta": {
-            "brief_title": extracted.get("brief_title") or item.get("brief_title"),
-            "phase": extracted.get("phase") or item.get("phase"),
-            "overall_status": extracted.get("overall_status") or item.get("overall_status"),
-            "conditions": extracted.get("conditions") or item.get("conditions"),
-            "interventions": extracted.get("interventions") or item.get("interventions"),
-            "enrollment": extracted.get("enrollment"),
-            "lead_sponsor": extracted.get("lead_sponsor"),
-        },
+        "meta": _build_clinical_record_meta(extracted, item),
         "outcome_measures": extracted.get("outcome_measures") or [],
         "ae_summary": extracted.get("ae_summary") or [],
         "citations": citations,
@@ -2662,6 +3475,41 @@ def _indicator_richness(ind: dict[str, Any]) -> int:
     return score
 
 
+def _build_clinical_record_meta(
+    extracted: dict[str, Any],
+    item: dict[str, Any],
+) -> dict[str, Any]:
+    """Registry + design fields stored on ClinicalPreCdRecord.meta."""
+    meta: dict[str, Any] = {
+        "brief_title": extracted.get("brief_title") or item.get("brief_title"),
+        "phase": extracted.get("phase") or item.get("phase"),
+        "overall_status": extracted.get("overall_status") or item.get("overall_status"),
+        "conditions": extracted.get("conditions") or item.get("conditions"),
+        "interventions": extracted.get("interventions") or item.get("interventions"),
+        "enrollment": extracted.get("enrollment"),
+        "lead_sponsor": extracted.get("lead_sponsor"),
+    }
+    for key in (
+        "study_type",
+        "allocation",
+        "intervention_model",
+        "primary_purpose",
+        "masking",
+        "study_design",
+        "inclusion_criteria",
+        "start_date",
+        "primary_completion_date",
+        "completion_date",
+    ):
+        val = extracted.get(key)
+        if val is None:
+            continue
+        if isinstance(val, str) and not val.strip():
+            continue
+        meta[key] = val
+    return meta
+
+
 def _merge_indicator_lists(
     prev: list[dict[str, Any]],
     new: list[dict[str, Any]],
@@ -2679,7 +3527,31 @@ def _merge_indicator_lists(
 
 def _merge_study_profiles(prev: dict[str, Any], new: dict[str, Any]) -> dict[str, Any]:
     out = dict(new)
+    prev_soc = prev.get("disease_soc")
+    new_soc = out.get("disease_soc")
+    if isinstance(prev_soc, dict) or isinstance(new_soc, dict):
+        merged_soc: dict[str, Any] = {}
+        if isinstance(prev_soc, dict):
+            merged_soc.update(prev_soc)
+        if isinstance(new_soc, dict):
+            for sk, sv in new_soc.items():
+                if sv is True or sv is False:
+                    merged_soc[sk] = sv
+                    continue
+                if sv is not None and str(sv).strip().upper() not in (
+                    "",
+                    "N/D",
+                    "ND",
+                    "NONE",
+                    "NULL",
+                    "UNKNOWN",
+                ):
+                    merged_soc[sk] = sv
+        if merged_soc:
+            out["disease_soc"] = merged_soc
     for k, v in prev.items():
+        if k == "disease_soc":
+            continue
         pv = str(v or "").strip().upper()
         nv = str(out.get(k) or "").strip().upper()
         if pv and pv not in ("N/D", "ND", "—", "UNKNOWN", "NONE", "NULL") and nv in (
@@ -2770,7 +3642,15 @@ def _finalize_snapshot_records(
 
 
 def _write_snapshot(records: list[dict[str, Any]], *, partial: bool = False) -> None:
-    """Persiste su ``data/clinical_pre_cd_enrichment_snapshot.json`` (scrittura atomica)."""
+    """Persiste su ``data/clinical_pre_cd_enrichment_snapshot.json`` (scrittura atomica).
+
+    Terminal (``partial=False``) writes also regenerate the Learning Lab
+    overview snapshot on disk, so the ``/api/models/learning-lab/overview``
+    endpoint stays on the fast (snapshot-read) path. See
+    ``prediction.learning_lab.write_learning_lab_overview_snapshot``.
+    Draft (``partial=True``) writes are intermediate states — skipping them
+    avoids paying the 5–15 s rebuild dozens of times during a long refresh.
+    """
     _DATA_DIR.mkdir(parents=True, exist_ok=True)
     clean = filter_trusted_snapshot_records(records)
     snap = {
@@ -2785,7 +3665,29 @@ def _write_snapshot(records: list[dict[str, Any]], *, partial: bool = False) -> 
     payload = json.dumps(snap, ensure_ascii=False, indent=2, default=str)
     tmp_path = _SNAPSHOT_PATH.with_suffix(".json.tmp")
     tmp_path.write_text(payload, encoding="utf-8")
-    tmp_path.replace(_SNAPSHOT_PATH)
+    # Windows: antivirus / concurrent readers can make replace raise
+    # OSError [Errno 22] / WinError 5 — short retry loop.
+    last_exc: BaseException | None = None
+    for attempt in range(5):
+        try:
+            os.replace(str(tmp_path), str(_SNAPSHOT_PATH))
+            last_exc = None
+            break
+        except OSError as exc:
+            last_exc = exc
+            time.sleep(0.15 * (attempt + 1))
+    if last_exc is not None:
+        raise last_exc
+    if not partial:
+        try:
+            from prediction.learning_lab import write_learning_lab_overview_snapshot
+
+            write_learning_lab_overview_snapshot()
+        except Exception as exc:  # noqa: BLE001 — best-effort, must never break the write
+            print(
+                f"[ClinicalPreCD][WARN] learning-lab overview snapshot regen failed: {exc}",
+                flush=True,
+            )
 
 
 def _persist_snapshot_draft(
@@ -2807,12 +3709,22 @@ def run_clinical_pre_cd_refresh(
     portfolio_only: bool = True,
     force: bool = False,
     deep: bool = False,
+    tickers: list[str] | None = None,
 ) -> dict[str, Any]:
     try:
-        return _run(portfolio_only=portfolio_only, force=force, deep=deep)
+        return _run(
+            portfolio_only=portfolio_only,
+            force=force,
+            deep=deep,
+            tickers=tickers,
+        )
     except Exception as exc:
+        import traceback
+
+        tb = traceback.format_exc()
+        print(f"[ClinicalPreCD][ERROR] {exc}\n{tb}", flush=True)
         _set_status(running=False, error=str(exc), message=str(exc))
-        return {"error": str(exc)}
+        return {"error": str(exc), "traceback": tb}
 
 
 def _run(
@@ -2820,14 +3732,27 @@ def _run(
     portfolio_only: bool = True,
     force: bool = False,
     deep: bool = False,
+    tickers: list[str] | None = None,
 ) -> dict[str, Any]:
     work = _build_work_list()
-    if portfolio_only:
-        pt = _portfolio_ticker_set()
-        if pt:
-            work = [w for w in work if w.get("ticker") in pt]
+    want = {str(t).strip().upper() for t in (tickers or []) if str(t).strip()}
+    if want:
+        work = [w for w in work if str(w.get("ticker") or "").strip().upper() in want]
+        print(
+            f"[ClinicalPreCD] High Vol EIS scope: {sorted(want)} → {len(work)} studi",
+            flush=True,
+        )
+    elif portfolio_only:
+        scope = _enrichment_scope_ticker_set()
+        if scope:
+            work = [w for w in work if w.get("ticker") in scope]
+            print(
+                f"[ClinicalPreCD] scope Simulation+portfolio: {len(scope)} ticker, "
+                f"{len(work)} studi in coda",
+                flush=True,
+            )
         else:
-            print("[ClinicalPreCD] portfolio_only: nessun ticker in invest_sim_inputs — tutti gli studi", flush=True)
+            print("[ClinicalPreCD] scope vuoto — tutti gli studi", flush=True)
     _set_status(
         running=True,
         message="Caricamento studi clinici…",
@@ -2848,7 +3773,17 @@ def _run(
     except Exception:
         pass
 
-    pt = _portfolio_ticker_set() if portfolio_only else set()
+    # Rehydrate Deep Dive / EIS history for tickers back in the hot-zone / portfolio
+    try:
+        from clinical_deep_dive_history import rehydrate_historical_into_prev
+
+        reentry = {str(w.get("ticker") or "").strip().upper() for w in work}
+        reentry |= _enrichment_scope_ticker_set()
+        rehydrate_historical_into_prev(prev_by_key, reentry)
+    except Exception as exc:
+        print(f"[ClinicalPreCD][WARN] historical rehydrate failed: {exc}", flush=True)
+
+    scope = _enrichment_scope_ticker_set() if portfolio_only else set()
     records: list[dict[str, Any]] = []
     ai_ok = 0
     skipped = 0
@@ -2859,7 +3794,7 @@ def _run(
             prev = prev_by_key.get(key)
             run_deep = deep or (
                 portfolio_only
-                and tk in pt
+                and tk in scope
                 and needs_scheduled_deep_refresh(prev)
             )
             if should_skip_enrichment_refresh(prev, force=force, deep=run_deep):
@@ -2875,7 +3810,16 @@ def _run(
                 processed=i,
             )
             print(f"[ClinicalPreCD] {tk} {item['nct_id']} mode={mode}", flush=True)
-            rec = _enrich_one(item, deep=run_deep)
+            try:
+                rec = _enrich_one(item, deep=run_deep)
+            except OSError as _net_exc:
+                print(f"[ClinicalPreCD][WARN] Errore di rete per {tk} {item['nct_id']}: {_net_exc} — mantengo cache", flush=True)
+                if prev:
+                    records.append(prev)
+                    if prev.get("ai_ok"):
+                        ai_ok += 1
+                    _persist_snapshot_draft(records, prev_by_key)
+                continue
             if prev:
                 rec = _merge_enriched_record(prev, rec)
             if run_deep and not rec.get("deep_enriched_at"):
@@ -2890,6 +3834,16 @@ def _run(
         raise
 
     records = _finalize_snapshot_records(records, prev_by_key)
+    # Migrate past-catalyst Deep Dive cards (T+8+) out of the live snapshot
+    # into the historical library — keep open-book / hot-zone tickers live.
+    archived_n = 0
+    try:
+        from clinical_deep_dive_history import archive_past_catalyst_from_live
+
+        keep = _enrichment_scope_ticker_set()
+        records, archived_n = archive_past_catalyst_from_live(records, keep_tickers=keep)
+    except Exception as exc:
+        print(f"[ClinicalPreCD][WARN] historical archive failed: {exc}", flush=True)
     ai_ok = sum(1 for r in records if r.get("ai_ok"))
     _write_snapshot(records, partial=False)
     ts = datetime.now(timezone.utc).isoformat()
@@ -2898,10 +3852,11 @@ def _run(
         processed=len(records),
         ai_ok=ai_ok,
         message=f"Completato — {len(records)} studi, {ai_ok} con sintesi AI"
-        + (f", {skipped} da cache (<{__import__('clinical_cache_ttl').CLINICAL_CACHE_TTL_DAYS}g)" if skipped else ""),
+        + (f", {skipped} da cache (<{__import__('clinical_cache_ttl').CLINICAL_CACHE_TTL_DAYS}g)" if skipped else "")
+        + (f", {archived_n} archiviati in libreria storica" if archived_n else ""),
         finished_at=ts,
     )
-    return {"count": len(records), "ai_ok": ai_ok}
+    return {"count": len(records), "ai_ok": ai_ok, "archived_to_history": archived_n}
 
 
 def feed_lookup_key(rec: dict[str, Any]) -> str | None:

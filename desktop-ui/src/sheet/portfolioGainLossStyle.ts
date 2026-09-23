@@ -39,6 +39,17 @@ export function portfolioPnlTone(
   return "flat";
 }
 
+/** ↑/↓/→ for P&L total column — total MTM from entry only (not 24h fallback). */
+export function portfolioPnlDirectionGlyph(
+  pnlEur: number | null | undefined,
+  pnlPct?: number | null,
+): string {
+  const tone = portfolioPnlTone(pnlEur, pnlPct);
+  if (tone === "gain") return "↑";
+  if (tone === "loss") return "↓";
+  return "→";
+}
+
 /**
  * Ton per chip/righe/card: P&L totale; se pari (≈0), usa movimento giornaliero (24h).
  * Evita chip bianchi con (−$139) in parentesi quando il totale è ~0.
@@ -331,6 +342,31 @@ export const PORTFOLIO_TABLE_OUTLOOK_CLS: Record<PortfolioTableOutlook, string> 
   flat: "portfolio-row-flat",
 };
 
+/** Noise floor for 24h row tint on Trades (±0.01%). */
+const DAILY24H_ROW_EPS_PCT = 0.01;
+
+/**
+ * Trades / Decision Lab row outlook — strictly from 24h price move.
+ * Green only if dailyPct > 0; red only if dailyPct < 0; else neutral (no tint).
+ */
+export function resolveDaily24hTableOutlook(
+  dailyPct: number | null | undefined,
+): PortfolioTableOutlook {
+  if (dailyPct == null || !Number.isFinite(dailyPct)) return "flat";
+  if (dailyPct > DAILY24H_ROW_EPS_PCT) return "gain";
+  if (dailyPct < -DAILY24H_ROW_EPS_PCT) return "loss";
+  return "flat";
+}
+
+/** Row class for Trades: green/red from 24h only; flat/warn → no background tint. */
+export function daily24hTableRowClass(
+  outlook: PortfolioTableOutlook | null | undefined,
+): string {
+  if (outlook === "gain") return PORTFOLIO_TABLE_OUTLOOK_CLS.gain;
+  if (outlook === "loss") return PORTFOLIO_TABLE_OUTLOOK_CLS.loss;
+  return "";
+}
+
 export const PORTFOLIO_CARD_OUTLOOK_CLS: Record<PortfolioTableOutlook, string> = {
   gain: "portfolio-card-gain p-3 shadow-sm",
   loss: "portfolio-card-loss p-3 shadow-sm",
@@ -436,6 +472,23 @@ export function portfolioTableOutlookClass(
 ): string {
   if (!outlook) return "";
   return PORTFOLIO_TABLE_OUTLOOK_CLS[outlook];
+}
+
+/**
+ * Colore riga basato sul P&L corrente (convenzione classica):
+ * verde se la posizione è in profitto (Entry P&L ≥ 0), rosso se in perdita.
+ * Le righe non in portafoglio (nessuna posizione) restano neutre.
+ */
+export function resolvePnlRowOutlook(outlook: {
+  inPortfolio?: boolean;
+  pnlUnavailable?: boolean;
+  pnlEur?: number | null;
+  pnlPct?: number | null;
+}): PortfolioTableOutlook {
+  if (!outlook.inPortfolio || outlook.pnlUnavailable) return "flat";
+  return portfolioPnlTone(outlook.pnlEur ?? null, outlook.pnlPct) === "loss"
+    ? "loss"
+    : "gain";
 }
 
 /** Colore ticker allineato allo sfondo riga (non al P&L mark-to-market). */
@@ -880,6 +933,14 @@ export function piggyBankNeedsDayVsTotalNote(
   return Math.abs(dailyEur) > EPS_EUR;
 }
 
+/** Piggy chip border/bg from 24h move only (Home dashboard). */
+export function piggyChipToneFrom24h(
+  pnlEur24h?: number | null,
+  pnlPct24h?: number | null,
+): PortfolioChipTone {
+  return portfolioPnlTone(pnlEur24h, pnlPct24h);
+}
+
 export function portfolioPiggyBankChipDisplay(
   pnlEur: number | null | undefined,
   pnlPct: number | null | undefined,
@@ -893,7 +954,11 @@ export function portfolioPiggyBankChipDisplay(
   title: string;
 } {
   const entry = portfolioTotalDisplayValues(pnlEur, pnlPct);
-  const tone = portfolioPnlTone(pnlEur, pnlPct);
+  const daily = portfolioDailyPnlValues(pnlEur24h, pnlPct24h);
+  const totalFlat = entry.tone === "flat";
+  const dailyActive = daily.tone !== "flat";
+  const useDailyAsMain = totalFlat && dailyActive;
+  const tone: PortfolioPnlTone = useDailyAsMain ? daily.tone : entry.tone;
   const it = lang === "it";
   const totalLabel = it ? "Totale" : "Total";
   const todayLabel = it ? "oggi" : "24h";
@@ -908,16 +973,19 @@ export function portfolioPiggyBankChipDisplay(
       ? ` (${pnlPct24h >= 0 ? "+" : ""}${pnlPct24h.toFixed(1)}%)`
       : "";
   const hasDaily24h =
+    !useDailyAsMain &&
     pnlEur24h != null &&
     Number.isFinite(pnlEur24h) &&
     portfolioPnlTone(pnlEur24h, pnlPct24h) !== "flat";
-  const title = `${totalLabel}: ${fmtSignedEurPnl(entry.eur)}${pctLabel}${
-    hasDaily24h
-      ? ` · ${todayLabel}: ${fmtSignedEurPnl(pnlEur24h)}${dailyPctLabel}`
-      : ""
-  }`;
+  const title = useDailyAsMain
+    ? `${todayLabel}: ${fmtSignedEurPnl(daily.eur)}${dailyPctLabel}`
+    : `${totalLabel}: ${fmtSignedEurPnl(entry.eur)}${pctLabel}${
+        hasDaily24h
+          ? ` · ${todayLabel}: ${fmtSignedEurPnl(pnlEur24h)}${dailyPctLabel}`
+          : ""
+      }`;
   return {
-    mainUsd: fmtSignedEurPnl(entry.eur),
+    mainUsd: useDailyAsMain ? fmtSignedEurPnl(daily.eur) : fmtSignedEurPnl(entry.eur),
     dailySuffixUsd: hasDaily24h ? fmtSignedEurPnl(pnlEur24h) : null,
     tone,
     title,

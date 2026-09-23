@@ -1,8 +1,12 @@
 /**
- * Daily sim-loop evaluation (18:00 Rome) — solid BUY gate + synth risk capital.
+ * Daily sim-loop execution helpers — Soft BUY Home as BUY set + synth risk capital.
  *
- * Equal paper path: flat capitalPerTrade on accepted solid BUYs.
- * Synth paper execution: same BUY set, capital scaled by SDS + volatility + EIS + feed fragility.
+ * Auto paper follows Soft BUY (same suggestedAction as Home Pulse / Cutoff).
+ * Capital: SDS + vol + EIS safety, then Gen 4 Grade 3 Soft BUY gate tier
+ * (strong 100% · mid 70% · weak 40%).
+ *
+ * Legacy `filterEvaluationsForSolidDailyBuys` remains for stricter experiments;
+ * auto tick does not demote Soft BUY → HOLD.
  */
 import type { ChartPoint, SheetTable } from "../types";
 import type { SdsRow } from "../api/supernova";
@@ -20,13 +24,18 @@ import {
 import { buildCdPatternTickerRecommendation } from "./cdPatternRecommendation";
 import { buildSimRowByKeyMap, reconcileInvestSimInputs } from "./investSimKeys";
 import { type InvestSimInputs, loadInvestSimHistory } from "./investSimStorage";
+import {
+  evaluateSoftBuyGateStrength,
+  softBuyCapitalFromGateStrength,
+} from "./softBuyGateStrength";
 
 /** Rome daily evaluation hour — Mon–Fri once per session. */
 export const SIM_LOOP_DAILY_EVAL_H = 18;
 
 /**
- * Solid-confidence defaults for auto paper BUYs (stricter than manual register-buy policy).
- * P(plan) ≥ 55% · SDS ≥ 45 · composite ≥ 60 OR Top2 yes with P ≥ 55%.
+ * Legacy solid-confidence gate (stricter than Soft BUY Home).
+ * Not applied on auto tick — Soft BUY (SDS≥20 · P≥50 · ↑≥2d) is the buy set.
+ * Kept for optional experiments / tests.
  */
 export const SOLID_DAILY_BUY_DEFAULTS = {
   minPplanPct: 55,
@@ -230,12 +239,11 @@ export function filterEvaluationsForSolidDailyBuys(
 export function buildDailySimLoopExecution(
   baseCapitalEur: number,
   ctx: DailySimLoopExecutionContext,
-  gate: SolidDailyBuyGate = SOLID_DAILY_BUY_DEFAULTS,
 ): SimLoopExecutionOpts {
   const sdsRows = ctx.probOptions?.sdsRows ?? null;
 
-  const filterEvaluations = (evaluations: TickerSimEvaluation[]) =>
-    filterEvaluationsForSolidDailyBuys(evaluations, ctx.probOptions, gate);
+  /** Soft BUY Home already set suggestedAction — do not demote via solid gate. */
+  const filterEvaluations = (evaluations: TickerSimEvaluation[]) => evaluations;
 
   const resolveBuyCapital = (ev: TickerSimEvaluation): number => {
     const { sds } = sdsForTicker(ev.ticker, sdsRows);
@@ -247,7 +255,24 @@ export function buildDailySimLoopExecution(
       eisWindowScore,
       eisSuperScore,
     });
-    return synthCapitalFromSafety(baseCapitalEur, safetyScore);
+    const safetyCap = synthCapitalFromSafety(baseCapitalEur, safetyScore);
+    const simRow = ctx.simTable?.rows?.length
+      ? buildSimRowByKeyMap(ctx.simTable.rows).get(ev.key) ?? null
+      : null;
+    const sk = simRow ? simulationRowSeriesKey(simRow) : null;
+    const chartPts = sk ? ctx.pointsBySeriesKey.get(sk) ?? null : null;
+    const gate = evaluateSoftBuyGateStrength(
+      {
+        ticker: ev.ticker,
+        key: ev.key,
+        sdsScore: sds,
+        pplan: ev.probPct,
+        investVerdict: ev.investVerdict,
+        pnlPct24h: ev.pnlPct24h,
+      },
+      { simRow, chartPts },
+    );
+    return softBuyCapitalFromGateStrength(safetyCap, gate);
   };
 
   return { filterEvaluations, resolveBuyCapital };

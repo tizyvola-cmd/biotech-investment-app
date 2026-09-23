@@ -6,6 +6,7 @@ Post-refresh steps condivisi tra scheduler giornaliero e orchestrator settimanal
   2. scripts/investment_decision_cohort.py
   3. refresh_live_signals.py
   4. SDS light refresh (Cluster C+E da prezzi/live; A/B/D da cache)
+  5. Market context gate (XBI/TLT/VIX regime) + MCS snapshot (dashboard widget)
 
 Usato da ``scripts/daily_market_refresh.py`` e dopo ``data_orchestrator`` (WeeklyFull).
 """
@@ -124,31 +125,62 @@ def run_post_refresh_steps(
     else:
         log.info("live_signals SKIPPATO")
 
+    if os.environ.get("SKIP_CATALYST_PATTERN_LIBRARY", "").strip().lower() not in (
+        "1",
+        "true",
+        "yes",
+    ):
+        script = ROOT / "scripts" / "refresh_catalyst_pattern_library.py"
+        if script.is_file():
+            _run("catalyst_pattern_library", [py, "-u", str(script), "-q"], timeout_min=3)
+        else:
+            log.warning("catalyst_pattern_library: script assente, skip")
+
     sds_light_off = os.environ.get("SDS_LIGHT_REFRESH", "1").strip().lower() in (
         "0",
         "false",
         "no",
     )
     if not skip_sds_light and not sds_light_off:
+        sds_skip_min = float(os.environ.get("SDS_LIGHT_SKIP_IF_WITHIN_MIN", "55"))
+        skip_sds_recent = False
         try:
-            from prediction.sds_data import refresh_sds_cohort_light
+            from orch_refresh_gates import ran_within_minutes
 
-            result = refresh_sds_cohort_light()
+            skip_sds_recent = ran_within_minutes("sds_light", sds_skip_min)
+        except Exception:
+            skip_sds_recent = False
+        if skip_sds_recent:
             log.info(
-                "sds_light_refresh: n=%s mode=%s at=%s",
-                result.get("n"),
-                result.get("mode"),
-                result.get("generated_at"),
+                "sds_light_refresh SKIPPED — già eseguito negli ultimi %.0f min",
+                sds_skip_min,
             )
+        else:
             try:
-                from supernova_web_scheduler import bump_desktop_manifest
+                from prediction.sds_data import refresh_sds_cohort_light
 
-                bump_desktop_manifest()
+                result = refresh_sds_cohort_light()
+                log.info(
+                    "sds_light_refresh: n=%s mode=%s at=%s",
+                    result.get("n"),
+                    result.get("mode"),
+                    result.get("generated_at"),
+                )
+                try:
+                    from orch_refresh_gates import mark_run
+
+                    mark_run("sds_light", stats={"n": result.get("n"), "mode": result.get("mode")})
+                except Exception:
+                    pass
+                try:
+                    from supernova_web_scheduler import bump_desktop_manifest
+
+                    bump_desktop_manifest()
+                except Exception as exc:
+                    log.warning("sds_light_refresh manifest bump: %s", exc)
             except Exception as exc:
-                log.warning("sds_light_refresh manifest bump: %s", exc)
-        except Exception as exc:
-            log.warning("sds_light_refresh failed (non-fatal): %s", exc)
-            failures.append(f"sds_light_refresh ({exc})")
+                log.warning("sds_light_refresh failed (non-fatal): %s", exc)
+                failures.append(f"sds_light_refresh ({exc})")
     else:
         log.info("sds_light_refresh SKIPPATO")
 
@@ -165,6 +197,28 @@ def run_post_refresh_steps(
     except Exception as exc:
         log.warning("market_context_gate failed (non-fatal): %s", exc)
         failures.append(f"market_context_gate ({exc})")
+
+    # MCS snapshot (XBI/VIX/HYG/LQD) — dashboard Market Context widget; was scheduler-only
+    try:
+        from prediction.market_context_score import (
+            build_market_context_snapshot,
+            load_previous_snapshot,
+            save_market_context_snapshot,
+        )
+
+        prev = load_previous_snapshot()
+        mcs_doc = build_market_context_snapshot(previous=prev)
+        save_market_context_snapshot(mcs_doc)
+        latest = mcs_doc.get("latest") or {}
+        log.info(
+            "market_context_mcs: status=%s mcs=%s stale_days=%s",
+            mcs_doc.get("update_status"),
+            latest.get("mcs_global"),
+            mcs_doc.get("stale_days"),
+        )
+    except Exception as exc:
+        log.warning("market_context_mcs failed (non-fatal): %s", exc)
+        failures.append(f"market_context_mcs ({exc})")
 
     # Sync regime-tagged outcomes after live signals (lightweight, every refresh)
     try:
@@ -221,6 +275,78 @@ def run_post_refresh_steps(
             # left the dashboard stuck on "Collecting data" indefinitely.
             log.error("validation_feedback_loop failed: %s", exc, exc_info=True)
             failures.append(f"validation_feedback_loop ({exc})")
+
+    snap_on = os.environ.get("POST_REFRESH_ACCURACY_SNAPSHOT", "").strip().lower() in (
+        "1",
+        "true",
+        "yes",
+        "on",
+    )
+    if snap_on:
+        try:
+            from datetime import datetime, timezone
+
+            from data_orchestrator import _accuracy_monitor_load
+            from prediction.accuracy_monitor_run import run_accuracy_monitor_snapshot
+
+            entries = (_accuracy_monitor_load().get("entries") or [])
+            recent = False
+            if entries:
+                last_iso = entries[-1].get("run_iso")
+                if last_iso:
+                    try:
+                        last_dt = datetime.fromisoformat(str(last_iso))
+                        if last_dt.tzinfo is None:
+                            last_dt = last_dt.replace(tzinfo=timezone.utc)
+                        age_min = (
+                            datetime.now(timezone.utc) - last_dt.astimezone(timezone.utc)
+                        ).total_seconds() / 60.0
+                        recent = age_min < 45
+                    except (TypeError, ValueError):
+                        recent = False
+            if recent:
+                log.info(
+                    "accuracy_monitor_snapshot SKIPPED — entry recente (<45 min, orchestrator ok)"
+                )
+            else:
+                result = run_accuracy_monitor_snapshot(
+                    trigger="weekly_full_post",
+                    write_sheet=False,
+                )
+                if result.get("ok"):
+                    log.info(
+                        "accuracy_monitor_snapshot: entries %s → %s (trigger=weekly_full_post)",
+                        result.get("entries_before"),
+                        result.get("entries_after"),
+                    )
+                    try:
+                        from supernova_web_scheduler import bump_desktop_manifest
+
+                        bump_desktop_manifest()
+                    except Exception as exc:
+                        log.warning("accuracy_monitor_snapshot manifest bump: %s", exc)
+                else:
+                    log.warning(
+                        "accuracy_monitor_snapshot failed (non-fatal): %s",
+                        result.get("error") or result,
+                    )
+                    failures.append(
+                        f"accuracy_monitor_snapshot ({result.get('error') or 'unknown'})"
+                    )
+        except Exception as exc:
+            log.warning("accuracy_monitor_snapshot failed (non-fatal): %s", exc)
+            failures.append(f"accuracy_monitor_snapshot ({exc})")
+
+    if not failures and not skip_dircalib and not skip_cohort:
+        try:
+            from orch_refresh_gates import mark_post_pipeline_ok
+
+            mark_post_pipeline_ok(
+                "post_refresh_steps OK (dircalib + cohort + live signals)",
+                kind="full",
+            )
+        except Exception:
+            pass
 
     return failures
 

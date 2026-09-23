@@ -1,6 +1,7 @@
 import type { SheetTable } from "../types";
 import { formatSecK8ColumnHeader, secK8SheetCellRenderer } from "../sheet/secK8CellRender";
 import { SimulationPortfolioSheetView } from "./SimulationPortfolioSheetView";
+import { useLang } from "../shared/i18n";
 
 export function SecK8SimulationView({
   simTable,
@@ -19,16 +20,25 @@ export function SecK8SimulationView({
   initialTicker?: string | null;
   onInitialTickerConsumed?: () => void;
 }) {
+  const { lang } = useLang();
+  const it = lang === "it";
   return (
     <SimulationPortfolioSheetView
-      title="SEC Form 8-K — Simulation portfolio"
+      title={it ? "SEC Form 8-K — portafoglio Simulation" : "SEC Form 8-K — Simulation portfolio"}
       sourceHint={
-        <>
-          8-K filings from the{" "}
-          <code className="text-accent">SEC 8-K</code> sheet in the orchestrated workbook
-        </>
+        it ? (
+          <>
+            Filing 8-K dal foglio{" "}
+            <code className="text-accent">SEC 8-K</code> nella workbook orchestrata
+          </>
+        ) : (
+          <>
+            8-K filings from the{" "}
+            <code className="text-accent">SEC 8-K</code> sheet in the orchestrated workbook
+          </>
+        )
       }
-      countLabel="filings"
+      countLabel={{ en: "filings", it: "filing" }}
       simTable={simTable}
       dataTable={secK8Table}
       loading={loading}

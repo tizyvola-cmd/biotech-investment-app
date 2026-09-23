@@ -366,3 +366,44 @@ export function portfolioSummary(sheet: SheetTable | null, inputs: InvestSimInpu
     covered24h,
   };
 }
+
+export function closedDealsSummary(inputs: InvestSimInputs): { count: number; pnlEur: number } {
+  let count = 0;
+  let pnlEur = 0;
+  for (const e of Object.values(inputs)) {
+    if (e.closedPnlEur != null && Number.isFinite(e.closedPnlEur)) {
+      count++;
+      pnlEur += e.closedPnlEur;
+    } else if (e.soldAt && e.closedValue != null && e.closedCapital != null) {
+      count++;
+      pnlEur += e.closedValue - e.closedCapital;
+    }
+  }
+  return { count, pnlEur };
+}
+
+/** Local fallback when server snapshot has no portfolioCheck (mobile-only refresh). */
+export function buildLocalPortfolioCheckSnapshot(
+  sheet: SheetTable | null,
+  inputs: InvestSimInputs,
+  recommendations: MobileDashboardRecRow[],
+): MobilePortfolioCheckSnapshotRow[] {
+  const enrich = { recommendations };
+  const rows = buildPortfolioCheckRows(sheet, inputs, enrich);
+  const recByKey = new Map(recommendations.map((r) => [r.key, r]));
+
+  return rows.map((row) => {
+    const rec = recByKey.get(row.key);
+    const gainIdeaText =
+      rec?.gainIdeaText && rec.gainIdeaText !== "—" ? rec.gainIdeaText : null;
+    return {
+      key: row.key,
+      ticker: row.ticker,
+      ppi: row.ppi,
+      probPct: rec?.probPct ?? null,
+      gainIdeaText,
+      planReturnPct: row.roiTarget,
+      daysToTarget: row.roiTargetDays,
+    };
+  });
+}

@@ -1,10 +1,8 @@
 import { fetchProjectJson } from "./projectData";
 import {
   loadAccuracyMonitorDocument,
-  loadAccuracySummaryDocument,
   loadDirectionalCalibDoc,
   type AccuracyMonitorDoc,
-  type AccuracySummaryDoc,
   type DirectionalCalibDoc,
 } from "./accuracyModelData";
 import { loadSignalCalibration, type SignalCalibrationDoc } from "./signalCalibrationData";
@@ -12,11 +10,6 @@ import {
   loadInvestmentDecisionCohort,
   type DecisionCohortDoc,
 } from "./investmentDecisionData";
-import {
-  loadModelCohortAccuracyDoc,
-  type ModelCohortAccuracyDoc,
-} from "./cohortAccuracyData";
-import { loadSignCurveDailyDoc, type SignCurveDailyDoc } from "./signCurveDailyData";
 
 const CALIB_STATE_FILE = "model_calibration_state.json";
 const COHORT_HISTORY_FILE = "investment_decision_cohort_history.json";
@@ -77,9 +70,6 @@ export type ModelLearningsRaw = {
   cohortHistory: Awaited<ReturnType<typeof loadCohortHistory>>;
   signalCalib: Awaited<ReturnType<typeof loadSignalCalibration>>;
   directional: Awaited<ReturnType<typeof loadDirectionalCalibDoc>>;
-  cohortAccuracy: Awaited<ReturnType<typeof loadModelCohortAccuracyDoc>>;
-  accuracySummary: Awaited<ReturnType<typeof loadAccuracySummaryDocument>>;
-  signCurveDaily: Awaited<ReturnType<typeof loadSignCurveDailyDoc>>;
 };
 
 export type ModelLearningsSources = {
@@ -89,9 +79,6 @@ export type ModelLearningsSources = {
   cohortHistory: CohortHistoryDoc | null;
   signalCalib: SignalCalibrationDoc | null;
   directional: DirectionalCalibDoc | null;
-  cohortAccuracy: ModelCohortAccuracyDoc | null;
-  accuracySummary: AccuracySummaryDoc | null;
-  signCurveDaily: SignCurveDailyDoc | null;
 };
 
 export async function loadModelLearningsBundle(): Promise<{
@@ -99,7 +86,7 @@ export async function loadModelLearningsBundle(): Promise<{
   errors: string[];
   monitorSource: string;
 }> {
-  const [monitor, calibState, cohort, cohortHistory, signalCalib, directional, cohortAccuracy, accuracySummary, signCurveDaily] =
+  const [monitor, calibState, cohort, cohortHistory, signalCalib, directional] =
     await Promise.all([
       loadAccuracyMonitorDocument(),
       loadModelCalibrationState(),
@@ -107,9 +94,6 @@ export async function loadModelLearningsBundle(): Promise<{
       loadCohortHistory(),
       loadSignalCalibration(),
       loadDirectionalCalibDoc(),
-      loadModelCohortAccuracyDoc(),
-      loadAccuracySummaryDocument(),
-      loadSignCurveDailyDoc(),
     ]);
 
   const errors = [
@@ -119,9 +103,6 @@ export async function loadModelLearningsBundle(): Promise<{
     cohortHistory.error,
     signalCalib.error,
     directional.error,
-    cohortAccuracy.error,
-    accuracySummary.error,
-    signCurveDaily.error,
   ].filter((e): e is string => !!e);
 
   return {
@@ -132,9 +113,6 @@ export async function loadModelLearningsBundle(): Promise<{
       cohortHistory: cohortHistory.doc,
       signalCalib: signalCalib.doc,
       directional: directional.doc,
-      cohortAccuracy: cohortAccuracy.doc,
-      accuracySummary: accuracySummary.doc,
-      signCurveDaily: signCurveDaily.doc,
     },
     errors,
     monitorSource: monitor.source,

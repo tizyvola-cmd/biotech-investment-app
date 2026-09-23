@@ -11,6 +11,7 @@ import { useT } from "../shared/i18n";
 import { EisExpectedMoveCurveChart } from "./EisExpectedMoveCurveChart";
 import { ModelLabAccuracyUpdatedBar } from "./ModelLabAccuracyUpdatedBar";
 import { EisScatterRegressionChart, EisSignSplitByWindowChart, EisSlopeByCdWindowChart } from "./EisRegressionCharts";
+import { EisEvolutionSection } from "./EisEvolutionSection";
 
 function scatterPointCount(doc: EisMagnitudeAnalysisDoc | null | undefined): number {
   return (
@@ -163,8 +164,11 @@ export function EisSignalImpactPanel({
 
   if ((stableLoading || liveLoading) && !view.hasData) {
     return (
-      <div className="rounded-lg border border-dashed border-[rgb(var(--border))]/50 bg-surface/20 px-3 py-4">
-        <p className="text-[11px] text-ink-muted">{t("modelLab.qc.eisImpact.loading")}</p>
+      <div className="space-y-4">
+        <EisEvolutionSection reloadToken={reloadToken} />
+        <div className="rounded-lg border border-dashed border-[rgb(var(--border))]/50 bg-surface/20 px-3 py-4">
+          <p className="text-[11px] text-ink-muted">{t("modelLab.qc.eisImpact.loading")}</p>
+        </div>
       </div>
     );
   }
@@ -172,6 +176,7 @@ export function EisSignalImpactPanel({
   if (!view.hasData) {
     return (
       <div className="space-y-3">
+        <EisEvolutionSection reloadToken={reloadToken} />
         <div className="rounded-lg border border-[rgb(var(--border))]/60 bg-surface/40 px-3 py-2.5">
           <p className="text-[11px] font-medium text-ink">{t("modelLab.qc.eisMagnitude.captionTitle")}</p>
           <p className="text-[10px] text-ink-muted leading-snug mt-1">{t("modelLab.qc.eisMagnitude.captionBody")}</p>
@@ -202,6 +207,7 @@ export function EisSignalImpactPanel({
   return (
     <div className="rounded-lg border border-[rgb(var(--border))]/50 bg-surface/20 px-3 py-2.5 space-y-4">
       <ModelLabAccuracyUpdatedBar updatedAt={dataUpdatedAt} />
+      <EisEvolutionSection reloadToken={reloadToken} />
       <div className="rounded-lg border border-[rgb(var(--border))]/60 bg-surface/40 px-3 py-2.5 space-y-1.5">
         <p className="text-[11px] font-medium text-ink">{t("modelLab.qc.eisMagnitude.captionTitle")}</p>
         <p className="text-[10px] text-ink-muted leading-snug">{t("modelLab.qc.eisMagnitude.captionBody")}</p>

@@ -14,6 +14,7 @@ export type TickerEisSummary = {
 export type TickerEisEventDetail = {
   eventDate: string | null;
   title: string;
+  sourceType?: string | null;
   sourceLabel: string;
   nctId: string | null;
   studyTitle: string;
@@ -163,6 +164,7 @@ function collectTickerEvents(
       out.push({
         eventDate: ev.event_date ?? null,
         title: ev.event_title ?? ev.summary ?? (it ? "Evento clinico" : "Clinical event"),
+        sourceType: String(ev.source_type ?? "clinical"),
         sourceLabel: feedLabel(String(ev.source_type ?? "clinical"), it),
         nctId: evNct,
         studyTitle: recStudyTitle,
@@ -235,7 +237,7 @@ export function buildTickerEisDetail(
     return {
       ...summary,
       events,
-      sheetFallback: false,
+      sheetFallback: events.length === 0 && sheetClinicalKpi != null,
       company,
       nctId,
       studyTitle,
@@ -249,12 +251,19 @@ export function buildTickerEisDetail(
   if (sheetClinicalKpi != null && Number.isFinite(sheetClinicalKpi)) {
     return {
       score: sheetClinicalKpi,
-      eventCount: 0,
-      feedLabels: [],
-      breakdownHint: lang === "it" ? "Da colonna foglio Simulation" : "From Simulation sheet column",
-      heroBreakdown: null,
-      events: [],
-      sheetFallback: true,
+      eventCount: events.length,
+      feedLabels: events.some((e) => String(e.sourceType ?? "").toLowerCase() === "manual")
+        ? [lang === "it" ? "Manuale" : "Manual"]
+        : [],
+      breakdownHint:
+        events.length > 0
+          ? summary.breakdownHint
+          : lang === "it"
+            ? "EIS manuale / foglio Simulation"
+            : "Manual EIS / Simulation sheet column",
+      heroBreakdown: events[0]?.breakdown ?? null,
+      events,
+      sheetFallback: events.length === 0,
       company,
       nctId,
       studyTitle,

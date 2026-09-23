@@ -23,6 +23,7 @@ import {
   runNewBioIpoRefresh,
   type NewBioIpoSummary,
 } from "../api/supernova";
+import { useLang } from "../shared/i18n";
 
 type LifecycleState = "idle" | "starting" | "running" | "ok" | "error";
 
@@ -58,6 +59,8 @@ export function NewBioIpoModal({
   /** Called when refresh ends ok so the parent can reload Financial. */
   onCompleted?: (summary: NewBioIpoSummary) => void;
 }) {
+  const { lang } = useLang();
+  const it = lang === "it";
   const [state, setState] = useState<LifecycleState>("idle");
   const [message, setMessage] = useState<string>("");
   const [summary, setSummary] = useState<NewBioIpoSummary | null>(null);
@@ -149,7 +152,7 @@ export function NewBioIpoModal({
 
   const handleStart = useCallback(async () => {
     setState("starting");
-    setMessage("Starting…");
+    setMessage(it ? "Avvio…" : "Starting…");
     startedAtRef.current = new Date();
     setElapsedSec(0);
     completedRef.current = false;
@@ -162,15 +165,15 @@ export function NewBioIpoModal({
       }
       if (res.running === "true" && res.started !== "true") {
         // Another invocation was already running — just keep polling.
-        setMessage(res.message || "Refresh already in progress");
+        setMessage(res.message || (it ? "Refresh già in corso" : "Refresh already in progress"));
       }
     } catch (e) {
       setState("error");
       setMessage(
-        `Startup failed: ${e instanceof Error ? e.message : String(e)}`,
+        `${it ? "Avvio fallito" : "Startup failed"}: ${e instanceof Error ? e.message : String(e)}`,
       );
     }
-  }, []);
+  }, [it]);
 
   if (!open) return null;
 
@@ -191,15 +194,16 @@ export function NewBioIpoModal({
         <div className="flex items-start gap-3 border-b border-[rgb(var(--border))]/60 px-4 py-3">
           <div className="flex-1">
             <h3 className="text-base font-semibold flex items-center gap-2">
-              <span aria-hidden>🧬</span> New Bio IPO refresh
+              <span aria-hidden>🧬</span> {it ? "Refresh IPO biotech" : "New Bio IPO refresh"}
             </h3>
             <p className="text-xs text-ink-muted mt-0.5">
-              Scans Finnhub's IPO calendar from the first day of the previous
-              month and adds new biotech tickers to the local universe (then
-              refreshes yfinance for the new entries only).
+              {it
+                ? "Scansiona il calendario IPO di Finnhub dal primo giorno del mese precedente e aggiunge i nuovi ticker biotech all'universo locale (poi aggiorna yfinance solo per le nuove entry)."
+                : "Scans Finnhub's IPO calendar from the first day of the previous month and adds new biotech tickers to the local universe (then refreshes yfinance for the new entries only)."}
               <br />
-              Automatic run on the first of every month; click the button below
-              to run it manually.
+              {it
+                ? "Esecuzione automatica il primo di ogni mese; clicca il pulsante sotto per eseguirla manualmente."
+                : "Automatic run on the first of every month; click the button below to run it manually."}
             </p>
           </div>
           <button
@@ -207,7 +211,7 @@ export function NewBioIpoModal({
             className="btn-ghost text-xs disabled:opacity-50"
             onClick={onClose}
             disabled={inFlight}
-            title={inFlight ? "Refresh in progress — wait" : "Close"}
+            title={inFlight ? (it ? "Refresh in corso — attendere" : "Refresh in progress — wait") : (it ? "Chiudi" : "Close")}
           >
             ✕
           </button>
@@ -221,10 +225,10 @@ export function NewBioIpoModal({
                   <span className="inline-block text-base animate-spin" aria-hidden>
                     ⏳
                   </span>
-                  Scanning Finnhub IPO calendar…
+                  {it ? "Scansione calendario IPO Finnhub…" : "Scanning Finnhub IPO calendar…"}
                 </span>
                 <span className="text-ink-muted tabular-nums">
-                  ⏳ elapsed {fmtElapsed(elapsedSec)} · ETA ~1–3 min
+                  ⏳ {it ? "trascorso" : "elapsed"} {fmtElapsed(elapsedSec)} · ETA ~1–3 min
                 </span>
               </div>
               {message && (
@@ -235,7 +239,7 @@ export function NewBioIpoModal({
 
           {state === "error" && (
             <div className="rounded-lg border border-negative/40 bg-negative/5 p-3 text-xs">
-              <p className="font-semibold text-negative">✗ Error</p>
+              <p className="font-semibold text-negative">✗ {it ? "Errore" : "Error"}</p>
               <p className="text-[11px] text-ink-muted mt-1">{message}</p>
             </div>
           )}
@@ -243,53 +247,55 @@ export function NewBioIpoModal({
           {showResults && summary && (
             <>
               <div className="rounded-lg border border-[rgb(var(--border))]/60 bg-surface/30 p-3 text-xs space-y-1">
-                <p className="font-semibold text-ink">Summary</p>
+                <p className="font-semibold text-ink">{it ? "Riepilogo" : "Summary"}</p>
                 <p>
-                  <span className="text-ink-muted">Window:</span>{" "}
+                  <span className="text-ink-muted">{it ? "Finestra:" : "Window:"}</span>{" "}
                   <code>{fmtDateOnly(summary.window_from)}</code> →{" "}
                   <code>{fmtDateOnly(summary.window_to)}</code>
                 </p>
                 <p>
-                  <span className="text-ink-muted">Finnhub returned:</span>{" "}
-                  {summary.finnhub_total ?? 0} IPO total
+                  <span className="text-ink-muted">{it ? "Finnhub ha restituito:" : "Finnhub returned:"}</span>{" "}
+                  {summary.finnhub_total ?? 0} {it ? "IPO totali" : "IPO total"}
                 </p>
                 <p>
-                  <span className="text-ink-muted">New biotech added:</span>{" "}
+                  <span className="text-ink-muted">{it ? "Nuovi biotech aggiunti:" : "New biotech added:"}</span>{" "}
                   <span className="font-semibold text-positive">
                     {summary.added_count ?? 0}
                   </span>{" "}
-                  · <span className="text-ink-muted">already in universe:</span>{" "}
+                  · <span className="text-ink-muted">{it ? "già nell'universo:" : "already in universe:"}</span>{" "}
                   {summary.skipped_existing_count ?? 0} ·{" "}
-                  <span className="text-ink-muted">non-biotech filtered:</span>{" "}
+                  <span className="text-ink-muted">{it ? "non-biotech filtrati:" : "non-biotech filtered:"}</span>{" "}
                   {summary.skipped_non_biotech_count ?? 0}
                 </p>
                 {summary.yfinance_update?.ran && (
                   <p className="text-[11px] text-ink-muted">
-                    yfinance refreshed for{" "}
+                    {it ? "yfinance aggiornato per " : "yfinance refreshed for "}
                     <span className="font-semibold text-ink">
                       {summary.yfinance_update.fetched ?? 0}
                     </span>{" "}
-                    ticker(s)
+                    ticker
                     {typeof summary.yfinance_update.new_from_this_run === "number" &&
                     typeof summary.yfinance_update.backfilled_from_previous_runs === "number"
-                      ? ` (${summary.yfinance_update.new_from_this_run} new IPO + ` +
-                        `${summary.yfinance_update.backfilled_from_previous_runs} backfilled from previous runs)`
+                      ? ` (${summary.yfinance_update.new_from_this_run} ${it ? "nuovi IPO" : "new IPO"} + ` +
+                        `${summary.yfinance_update.backfilled_from_previous_runs} ${it ? "recuperati da run precedenti" : "backfilled from previous runs"})`
                       : ""}
                     .{" "}
                     {summary.yfinance_update.skipped_reason ?? (
                       <em className="text-ink-muted/80">
-                        Now visible in the Financial table.
+                        {it ? "Ora visibili nella tabella Financial." : "Now visible in the Financial table."}
                       </em>
                     )}
                   </p>
                 )}
                 {summary.yfinance_update?.error && (
                   <p className="text-[11px] text-warn">
-                    yfinance refresh error: {summary.yfinance_update.error}
+                    {it ? "errore yfinance refresh: " : "yfinance refresh error: "}
+                    {summary.yfinance_update.error}
                   </p>
                 )}
                 <p className="text-[10px] text-ink-muted/70 pt-1 border-t border-[rgb(var(--border))]/30">
-                  Completed in {fmtElapsed(summary.elapsed_sec ?? 0)} ·{" "}
+                  {it ? "Completato in " : "Completed in "}
+                  {fmtElapsed(summary.elapsed_sec ?? 0)} ·{" "}
                   {summary.finished_at}
                 </p>
               </div>
@@ -301,13 +307,13 @@ export function NewBioIpoModal({
                     <thead className="bg-[rgb(var(--surface-elevated))]">
                       <tr className="text-[10px] uppercase tracking-wide text-ink-muted/70">
                         <th className={gridTh("left", "py-2 font-medium")}>Ticker</th>
-                        <th className={gridTh("left", "py-2 font-medium")}>Company</th>
-                        <th className={gridTh("left", "py-2 font-medium")}>IPO date</th>
-                        <th className={gridTh("left", "py-2 font-medium")}>Exchange</th>
-                        <th className={gridTh("left", "py-2 font-medium")}>Sector · Industry</th>
-                        <th className={gridTh("left", "py-2 font-medium")}>Country</th>
-                        <th className={gridTh("center", "py-2 font-medium")}>Market cap</th>
-                        <th className={gridTh("center", "py-2 font-medium")}>Price $</th>
+                        <th className={gridTh("left", "py-2 font-medium")}>{it ? "Società" : "Company"}</th>
+                        <th className={gridTh("left", "py-2 font-medium")}>{it ? "Data IPO" : "IPO date"}</th>
+                        <th className={gridTh("left", "py-2 font-medium")}>{it ? "Borsa" : "Exchange"}</th>
+                        <th className={gridTh("left", "py-2 font-medium")}>{it ? "Settore · Industria" : "Sector · Industry"}</th>
+                        <th className={gridTh("left", "py-2 font-medium")}>{it ? "Paese" : "Country"}</th>
+                        <th className={gridTh("center", "py-2 font-medium")}>{it ? "Cap. di mercato" : "Market cap"}</th>
+                        <th className={gridTh("center", "py-2 font-medium")}>{it ? "Prezzo $" : "Price $"}</th>
                       </tr>
                     </thead>
                     <tbody>
@@ -326,7 +332,7 @@ export function NewBioIpoModal({
                                 target="_blank"
                                 rel="noreferrer"
                                 className="hover:underline text-accent"
-                                title={`${a.name ?? a.symbol} — open website`}
+                                title={`${a.name ?? a.symbol} — ${it ? "apri sito" : "open website"}`}
                               >
                                 {a.name ?? "—"}
                               </a>
@@ -363,8 +369,9 @@ export function NewBioIpoModal({
                 </div>
               ) : (
                 <p className="text-xs text-ink-muted px-3 py-2 border border-dashed border-[rgb(var(--border))]/50 rounded">
-                  No new biotech companies in this window. The universe is up to
-                  date.
+                  {it
+                    ? "Nessuna nuova società biotech in questa finestra. L'universo è aggiornato."
+                    : "No new biotech companies in this window. The universe is up to date."}
                 </p>
               )}
             </>
@@ -373,13 +380,15 @@ export function NewBioIpoModal({
           {state === "idle" && !summary && (
             <div className="rounded-lg border border-[rgb(var(--border))]/50 p-3 text-xs">
               <p className="text-ink-muted">
-                Click <span className="text-ink">Start refresh</span> to scan
-                the IPO calendar from{" "}
+                {it ? "Clicca " : "Click "}
+                <span className="text-ink">{it ? "Avvia refresh" : "Start refresh"}</span>
+                {it ? " per scansionare il calendario IPO da " : " to scan the IPO calendar from "}
                 <span className="text-ink">
-                  the first day of the previous month
+                  {it ? "il primo giorno del mese precedente" : "the first day of the previous month"}
                 </span>{" "}
-                up to today. Typical ETA: 1–3 minutes (depends on how many new
-                IPO Finnhub returned + yfinance throttling).
+                {it
+                  ? "fino a oggi. ETA tipico: 1–3 minuti (dipende da quanti nuovi IPO ha restituito Finnhub + throttling yfinance)."
+                  : "up to today. Typical ETA: 1–3 minutes (depends on how many new IPO Finnhub returned + yfinance throttling)."}
               </p>
             </div>
           )}
@@ -391,7 +400,7 @@ export function NewBioIpoModal({
                 className="btn-ghost text-xs"
                 onClick={onClose}
               >
-                Close
+                {it ? "Chiudi" : "Close"}
               </button>
             )}
             {!inFlight && (
@@ -400,7 +409,7 @@ export function NewBioIpoModal({
                 className="btn-primary text-xs"
                 onClick={() => void handleStart()}
               >
-                {summary ? "Run again" : "Start refresh"}
+                {summary ? (it ? "Riavvia" : "Run again") : (it ? "Avvia refresh" : "Start refresh")}
               </button>
             )}
           </div>

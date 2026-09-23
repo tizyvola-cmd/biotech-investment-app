@@ -13,7 +13,7 @@ Two **independent frontends** share only the **same API server** (VPS :8765). Th
 | Folder | `desktop-ui/` | `mobile-ui/` |
 | URL | `/` (root) | `/mobile/` |
 | Audience | Full product / power users | **Testers** of the desktop app — simplified companion |
-| Layout | Dense dashboards, wide tables, Piggy Bank, Pulse, many panels | **3 tabs:** Dashboard · Portfolio · Opportunities |
+| Layout | Dense dashboards, wide tables, Piggy Bank, Pulse, many panels | **Dashboard only** (BUY/SELL + open book); no Trades / Piggy tabs |
 | Components | `desktop-ui/src/components/*` | `mobile-ui/src/components/*` only |
 | CSS | `desktop-ui/src/index.css`, Tailwind in TSX | `mobile-ui/src/index.css`, `theme.css` |
 | Build | `cd desktop-ui && npm run build` | `cd mobile-ui && npm run build` |
@@ -24,18 +24,20 @@ Two **independent frontends** share only the **same API server** (VPS :8765). Th
 1. **Never import** `desktop-ui/` code into `mobile-ui/` (no shared React components).
 2. **Never apply** mobile compact styles to desktop (or desktop density to mobile) unless the user **explicitly** names both targets.
 3. **Desktop-only changes** (Piggy Bank, Actions table, charts row, panel-stack, simulation grid) → edit **`desktop-ui/` only**.
-4. **Mobile-only changes** (OpportunityCard, tab bar, touch forms) → edit **`mobile-ui/` only**.
+4. **Mobile-only changes** (Dashboard companion, detail drill-down, touch forms) → edit **`mobile-ui/` only**.
 5. **Shared backend contract** (OK to touch both sides when API changes):
    - `GET/PUT /api/mobile/dashboard-snapshot` — desktop publishes, mobile reads
    - `GET /api/sheets/simulation`, `GET/POST /api/investment/sim-inputs`
    - Types/logic duplicated or mirrored in `mobile-ui/src/` (`simLogic.ts`, `opportunityLogic.ts`) — do not refactor into a shared npm package unless asked.
+6. **Email accounts are desktop-owned; mobile links one email.** Desktop (Electron / EXE / VPS web) has login + switch/add second email (roster). Each email → per-tester book (`/api/tester-feedback/testers/{id}/sim-inputs`). Mobile stays a single-session companion: same email as the desktop account that user is using — no multi-account switcher on mobile. Soft BUY/SELL on mobile writes that tester book. Operator shared Pulse only with `?lab=1` + API token.
 
-## Mobile scope (tester MVP)
+## Mobile scope (tester companion — real-time)
 
-- Dashboard: KPI preview + few recommendations + links — **not** full desktop dashboard.
-- Portfolio: open positions + edit sim (price/capital).
-- Opportunities: filtered list/cards + add to simulator.
-- Settings sheet: API URL + token only.
+- **Only Dashboard:** Soft BUY/SELL actions + open positions / oscillations (+ signal banner / push).
+- **Identity:** same e-mail / `tester_id` as the desktop tester session for that person.
+- Detail drill-down from dashboard tickers (edit price/capital) still OK.
+- Settings sheet: API URL + token + action notifications.
+- **No mobile tabs for:** Trades, Piggy Bank / Investimenti, Opportunities list (desktop keeps those).
 - **Out of scope on mobile:** Piggy Bank bar, Pulse table, wide recommendation grid, Model Lab charts, clinical hub, full simulation sheet.
 
 See also: `.cursor/rules/mobile-simplicity.mdc`

@@ -3,8 +3,8 @@
 eis_morning_refresh.py — Aggiornamento EIS / feed clinico (Lun–Ven, 10:00 Europe/Rome).
 
 Esegue:
-  1. Arricchimento feed pre-CD portfolio (``clinical_pre_cd_enrichment``) con AI
-     — preferenza Claude (Anthropic), fallback Copilot (GitHub Models) se crediti esauriti.
+  1. Arricchimento feed pre-CD (``clinical_pre_cd_enrichment``) con AI
+     — scope: tutti i ticker in Simulation (+ posizioni portfolio).
   2. Rebuild ``signal_calibration.json`` (include ``eis_cohort_comparison`` per Performance tab).
   3. Report diff → ``data/clinical_feed_refresh_report.json`` (popup UI).
   4. bump ``desktop_data_manifest.json``
@@ -85,22 +85,51 @@ def main() -> int:
         )
         from clinical_pre_cd_enrichment import load_snapshot, run_clinical_pre_cd_refresh
 
-        logger.info("Step 1 — clinical pre-CD enrichment (portfolio_only=%s)", portfolio_only)
+        logger.info("Step 1 — clinical pre-CD enrichment (scope=Simulation+portfolio)")
         enrich = run_clinical_pre_cd_refresh(
             portfolio_only=portfolio_only,
             force=False,
             deep=False,
         )
-        if enrich.get("error"):
-            logger.error("Enrichment error: %s", enrich["error"])
+        enrich_error = enrich.get("error")
+        # "no work items" is not a real failure: it means the portfolio's tickers have no
+        # matching clinical trials in the current snapshot (either because the trials are
+        # closed/withdrawn, or because those tickers aren't tracked in the Simulation sheet).
+        # We still want the popup to render "no changes today" rather than "update failed".
+        soft_no_data = enrich_error == "no work items"
+        if enrich_error and not soft_no_data:
+            logger.error("Enrichment error: %s", enrich_error)
+            tb = enrich.get("traceback")
+            if tb:
+                logger.error("Enrichment traceback:\n%s", tb)
             write_refresh_report(
                 run_type="scheduled_morning_eis",
-                stats={"enrich": enrich},
+                stats={"enrich": {k: enrich.get(k) for k in ("error", "count", "ai_ok") if k in enrich}},
                 changes=[],
                 ai_provider=ai_provider.provider_info(),
-                error=str(enrich["error"]),
+                error=str(enrich_error),
             )
             return 1
+
+        if soft_no_data:
+            logger.info(
+                "Enrichment produced no work items — treating as soft success (0 studies match portfolio filter)."
+            )
+
+        logger.info("Step 1b — verifica ipotesi in attesa (finestra aperta)")
+        verify_stats: dict | None = None
+        try:
+            from prediction.eis_hypothesis_verifier import verify_pending_hypotheses
+
+            verify_stats = verify_pending_hypotheses()
+            logger.info(
+                "Verifica ipotesi — %s controllate, %s confermate, %s scadute",
+                verify_stats.get("checked"),
+                verify_stats.get("confirmed"),
+                verify_stats.get("expired"),
+            )
+        except Exception as exc:
+            logger.warning("Verifica ipotesi fallita (non-fatal): %s", exc)
 
         new_records = list(load_snapshot().get("records") or [])
         changes = diff_clinical_feed_records(prev_records, new_records)
@@ -139,6 +168,7 @@ def main() -> int:
         provider_info = ai_provider.provider_info()
         stats = {
             "enrich": enrich,
+            "hypothesis_verification": verify_stats,
             "signal_calibration_rebuilt": cal_ok,
             "signal_calibration_error": cal_err,
             "ai_primary": os.environ.get("AI_PROVIDER", "anthropic"),

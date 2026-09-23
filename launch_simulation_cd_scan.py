@@ -1,6 +1,8 @@
 #!/usr/bin/env python3
 """
 Scan CD Simulation (~2–8 min):
+  0. Universe medtech (IHI/XHE + curated + CT.gov device CD ≤120g) → medtech_symbols.json
+  0b. yfinance incrementale per nuovi ticker
   1. Fetch clinico incrementale (CT.gov / OpenFDA, cache 14 gg)
   2. Rigenera foglio Simulation (CD entro SIM_SHEET_DISPLAY_HORIZON_CAL_DAYS, default 120 gg)
   3. Esporta snapshot JSON desktop
@@ -61,6 +63,30 @@ def main() -> int:
     t0 = time.time()
     started = read_simulation_cd_scan_status().get("started_at")
     rows_before = _sim_row_count()
+    write_simulation_cd_scan_status(
+        state="running",
+        ok=None,
+        step="medtech",
+        message="Universe medtech (ETF + CT.gov device CD)…",
+        rows_before=rows_before,
+        rows_after=None,
+        workbook=FINAL_XLSX,
+        error=None,
+        started_at=started or None,
+    )
+
+    rc_medtech = _run_script("medtech_universe", "scripts/build_medtech_symbols.py", timeout_min=10)
+    if rc_medtech != 0:
+        print("[CD scan] medtech universe warning (continuo comunque)", flush=True)
+
+    write_simulation_cd_scan_status(
+        step="yfinance",
+        message="Quote yfinance per nuovi ticker medtech…",
+    )
+    rc_yf = _run_script("yfinance", "fetch_yfinance.py", timeout_min=20)
+    if rc_yf != 0:
+        print("[CD scan] yfinance warning (continuo con cache esistente)", flush=True)
+
     write_simulation_cd_scan_status(
         state="running",
         ok=None,

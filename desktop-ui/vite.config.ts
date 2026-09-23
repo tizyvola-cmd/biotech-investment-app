@@ -9,25 +9,74 @@ const INDEX_HTML = path.resolve(__dirname, "index.html");
 const PROJECT_ROOT = path.resolve(__dirname, "..");
 const DATA_DIR = path.join(PROJECT_ROOT, "data");
 
-/** Serve ``../data/*.json`` in dev (Windows-friendly absolute paths). */
+/** Public `/project-data/` allowlist — keep in sync with `cdn_snapshots.is_public_project_data_path`. */
+const PROJECT_DATA_PUBLIC_RE =
+  /(?:^|.*\/)(?:.*_snapshot\.json|desktop_data_manifest\.json|cdn_manifest\.json|market_context(?:_snapshot)?\.json|eis_super_score_learning\.json|catalyst_sim_entries\.json|catalyst_interest_watchlist\.json)$/i;
+const PROJECT_DATA_PRIVATE_RE =
+  /(?:^|.*\/)(?:tester_|invest_sim_inputs\.json|invest_sim_history\.json|desktop_ui_prefs\.json|ai_secrets|.*secret|.*credential|manual_feed|.*\.env|.*\.pem|.*\.key$)/i;
+
+function isPublicProjectDataPath(rel: string): boolean {
+  const clean = rel.replace(/\\/g, "/").replace(/^\//, "");
+  if (!clean || clean.split("/").includes("..") || !clean.toLowerCase().endsWith(".json")) {
+    return false;
+  }
+  if (PROJECT_DATA_PRIVATE_RE.test(clean)) return false;
+  return PROJECT_DATA_PUBLIC_RE.test(clean);
+}
+
+/** Serve allowlisted ``../data/*.json`` in dev (Windows-friendly absolute paths). */
 function serveProjectData(): Plugin {
   return {
     name: "serve-project-data",
     configureServer(server) {
       server.middlewares.use("/project-data", (req, res, next) => {
         const rel = (req.url || "/").replace(/^\//, "").split("?")[0];
-        if (!rel || rel.includes("..")) {
-          res.statusCode = 400;
-          res.end("bad path");
+        if (!isPublicProjectDataPath(rel)) {
+          res.statusCode = 404;
+          res.end("not found");
           return;
         }
         const filePath = path.join(DATA_DIR, rel);
         if (!filePath.startsWith(DATA_DIR) || !fs.existsSync(filePath)) {
-          next();
+          res.statusCode = 404;
+          res.end("not found");
           return;
         }
         res.setHeader("Content-Type", "application/json; charset=utf-8");
+        res.setHeader("Cache-Control", "public, max-age=60, stale-while-revalidate=300");
         fs.createReadStream(filePath).pipe(res);
+      });
+    },
+  };
+}
+
+/** Append browser debug NDJSON to `.cursor/debug-ae3756.log` in dev (same-origin, no CORS). */
+function debugIngestPlugin(): Plugin {
+  const logPath = path.join(PROJECT_ROOT, ".cursor", "debug-ae3756.log");
+  return {
+    name: "debug-ingest",
+    configureServer(server) {
+      server.middlewares.use("/debug-ingest", (req, res) => {
+        if (req.method !== "POST") {
+          res.statusCode = 405;
+          res.end();
+          return;
+        }
+        let body = "";
+        req.on("data", (chunk) => {
+          body += chunk;
+        });
+        req.on("end", () => {
+          try {
+            fs.mkdirSync(path.dirname(logPath), { recursive: true });
+            const line = body.trim();
+            if (line) fs.appendFileSync(logPath, `${line}\n`);
+          } catch {
+            /* ignore */
+          }
+          res.statusCode = 204;
+          res.end();
+        });
       });
     },
   };
@@ -40,7 +89,7 @@ export default defineConfig(({ mode }) => {
   return {
     root: __dirname,
     base: forElectron ? "./" : "/",
-    plugins: [react(), serveProjectData()],
+    plugins: [react(), serveProjectData(), debugIngestPlugin()],
     resolve: {
       alias: { "@": path.resolve(__dirname, "src") },
     },
@@ -55,7 +104,23 @@ export default defineConfig(({ mode }) => {
               // (es. investSim-XXXX.js mancante dopo ricompilazione parziale).
               inlineDynamicImports: true,
             }
-          : undefined,
+          : {
+              manualChunks(id) {
+                if (
+                  id.includes("node_modules/recharts") ||
+                  id.includes("node_modules/recharts-scale") ||
+                  id.includes("node_modules/victory-vendor")
+                ) {
+                  return "recharts";
+                }
+                if (
+                  id.includes("node_modules/chart.js") ||
+                  id.includes("node_modules/react-chartjs-2")
+                ) {
+                  return "chart.js";
+                }
+              },
+            },
       },
     },
     server: {

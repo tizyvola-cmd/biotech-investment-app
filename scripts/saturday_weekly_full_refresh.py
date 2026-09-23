@@ -1,4 +1,4 @@
-#!/usr/bin/env python3
+ryu#!/usr/bin/env python3
 """
 saturday_weekly_full_refresh.py — Orchestrator WeeklyFull automatico il sabato.
 
@@ -62,7 +62,26 @@ def _yf_json_ready() -> bool:
 def build_weekly_full_env(*, force_yfinance: bool = False) -> dict[str, str]:
     env = strip_daily_fast_env(dict(os.environ))
     env.update(weekly_full_env_patch())
-    if not force_yfinance and _yf_json_ready():
+    if force_yfinance:
+        env.pop("ORCH_SKIP_FETCH", None)
+        return env
+    skip_hours = 20.0
+    try:
+        skip_hours = float(env.get("WEEKLY_YF_SKIP_IF_WITHIN_HOURS", "20") or "20")
+    except ValueError:
+        skip_hours = 20.0
+    skip_yf = False
+    if skip_hours > 0:
+        try:
+            from orch_refresh_gates import ran_within_hours
+
+            if ran_within_hours("yfinance", skip_hours):
+                skip_yf = True
+        except ImportError:
+            pass
+    if not skip_yf and _yf_json_ready():
+        skip_yf = True
+    if skip_yf:
         env["ORCH_SKIP_FETCH"] = "1"
     else:
         env.pop("ORCH_SKIP_FETCH", None)

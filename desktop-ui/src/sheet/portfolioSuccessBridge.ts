@@ -104,11 +104,28 @@ export type DealUniverseRealizedSuccess = {
   tickerBreakdown: TickerRealizedBreakdown[];
 };
 
+/** Closed outcomes whose row_key or ticker belongs to the deal universe. */
+export function closedRowsInDealUniverse(
+  closedRows: SimOutcomeRow[],
+  deals: ComparisonDeal[],
+): SimOutcomeRow[] {
+  if (deals.length === 0) return [];
+  const keys = new Set(deals.map((d) => d.rowKey));
+  const tickers = new Set(deals.map((d) => d.ticker.toUpperCase()));
+  return closedRows.filter((r) => {
+    const rk =
+      r.row_key ?? `${String(r.ticker ?? "").trim()}|${r.completion_date ?? ""}`;
+    if (keys.has(rk)) return true;
+    const tk = String(r.ticker ?? "").trim().toUpperCase();
+    return tk.length > 0 && tickers.has(tk);
+  });
+}
+
 export function computeRealizedSuccessForDeals(
   closedRows: SimOutcomeRow[],
   deals: ComparisonDeal[],
-  /** Optional capital-weight per ticker (uppercase) — from scenario.capByTicker. */
-  capByTicker?: Map<string, number>,
+  /** Optional capital per ticker — from scenario.capByTicker. */
+  capByTicker?: Record<string, number> | Map<string, number>,
 ): DealUniverseRealizedSuccess {
   const empty: DealUniverseRealizedSuccess = {
     winRatePct: null,
@@ -121,8 +138,11 @@ export function computeRealizedSuccessForDeals(
   };
   if (closedRows.length === 0) return empty;
 
-  // Equal = global win rate across ALL closed rows (not filtered to current universe)
-  const allStats: TradeOutcomeStats | null = extractTradeStatsFromClosedOutcomes(closedRows);
+  const universeRows =
+    deals.length > 0 ? closedRowsInDealUniverse(closedRows, deals) : closedRows;
+
+  const allStats: TradeOutcomeStats | null =
+    extractTradeStatsFromClosedOutcomes(universeRows);
   if (!allStats) return empty;
 
   const equalWinRatePct = Math.round(allStats.winRate * 1000) / 10;
@@ -139,14 +159,15 @@ export function computeRealizedSuccessForDeals(
     };
   }
 
-  const capMap: Map<string, number> = capByTicker ?? new Map();
-  const totalCap = [...capMap.values()].reduce((s, v) => s + v, 0);
+  const capEntries: [string, number][] =
+    capByTicker instanceof Map
+      ? [...capByTicker.entries()]
+      : Object.entries(capByTicker ?? {});
+  const totalCap = capEntries.reduce((s, [, v]) => s + v, 0);
 
-  // Weighted = per-ticker historical win rate (from ALL closedRows) weighted by
-  // the capital allocation of the current portfolio for that ticker.
-  // Build per-ticker win rate from all closed history.
+  // Per-ticker historical win rate from universe-filtered closes.
   const winsByTicker = new Map<string, { wins: number; total: number }>();
-  for (const r of closedRows) {
+  for (const r of universeRows) {
     const tk = String(r.ticker ?? "").trim().toUpperCase();
     if (!tk) continue;
     const isWin = r.pnl_eur != null && r.pnl_eur > 0;
@@ -161,7 +182,7 @@ export function computeRealizedSuccessForDeals(
   if (totalCap > 0) {
     let weightedSum = 0;
     let weightSum = 0;
-    for (const [tk, cap] of capMap) {
+    for (const [tk, cap] of capEntries) {
       if (cap <= 0) continue;
       const tkUp = tk.toUpperCase();
       const hist = winsByTicker.get(tkUp);
@@ -180,7 +201,7 @@ export function computeRealizedSuccessForDeals(
 
   // Build per-ticker breakdown sorted by capital descending
   const tickerBreakdown: TickerRealizedBreakdown[] = [];
-  for (const [tk, cap] of capMap) {
+  for (const [tk, cap] of capEntries) {
     if (cap <= 0) continue;
     const tkUp = tk.toUpperCase();
     const hist = winsByTicker.get(tkUp);

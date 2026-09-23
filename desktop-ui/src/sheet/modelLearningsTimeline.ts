@@ -816,6 +816,7 @@ export function buildModelLearningsView(
     sources.signCurveDaily,
     sources.accuracySummary,
     sources.signalCalib?.curve_impact_cumulative,
+    entries,
   );
 
   const modelSizeError = buildModelSizeErrorView(entries);

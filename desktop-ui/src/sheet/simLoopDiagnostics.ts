@@ -5,6 +5,7 @@ import type { DecisionSimState, DecisionSimTick } from "./investDecisionSimLoop"
 import { sanitizeLiveExperimentPiggy } from "./decisionSimPnlResolve";
 import { sanitizePaperMovePct } from "./investDecisionSimExperiment";
 import { DECISION_SIM_MAX_TICKS } from "./investDecisionSimStorage";
+import { isDecisionSimMarketWindow } from "./investDecisionSimSchedule";
 
 export type SimLoopDiagnosticSeverity = "info" | "warn" | "critical";
 
@@ -208,6 +209,29 @@ export function auditDecisionSimState(
       severity: "warn",
       message: `Decision sim localStorage ~${(storageBytes / 1_000_000).toFixed(1)} MB.`,
     });
+  }
+
+  if (state.config.enabled && state.lastTickAt) {
+    const lastMs = Date.parse(state.lastTickAt);
+    const hoursAgo = Number.isFinite(lastMs) ? (Date.now() - lastMs) / 3_600_000 : null;
+    if (hoursAgo != null && hoursAgo > 30 && !state.config.experimentMode) {
+      findings.push({
+        id: "week_run_stale_tick",
+        severity: "warn",
+        message: `Week sim loop: last tick ${hoursAgo.toFixed(0)}h ago — needs app open Mon–Fri ~18:00 Rome.`,
+        detail: "Weekly mode runs one evaluation per weekday at 18:00 Europe/Rome only.",
+      });
+    }
+    if (hoursAgo != null && hoursAgo > 4 && state.config.experimentMode) {
+      if (isDecisionSimMarketWindow()) {
+        findings.push({
+          id: "experiment_stale_tick",
+          severity: "warn",
+          message: `Experiment sim loop: no tick for ${hoursAgo.toFixed(1)}h during market window.`,
+          detail: "Check tab visible (main/sim/decision lab), API ok, and no pending-trade block.",
+        });
+      }
+    }
   }
 
   if (!state.config.enabled && state.ticks.length > 0 && state.lastTickAt) {

@@ -9,9 +9,9 @@ param(
     [switch]$FullJsonEnrich
 )
 
-$Root = Split-Path -Parent (Split-Path -Parent $PSScriptRoot)
+$Root = Split-Path -Parent $PSScriptRoot
 if (-not (Test-Path (Join-Path $Root "data_orchestrator.py"))) {
-    $Root = Split-Path -Parent $PSScriptRoot
+    $Root = Split-Path -Parent $Root
 }
 $EnvFile = Join-Path $Root "config\profiles\v5_$Profile.env"
 if (-not (Test-Path $EnvFile)) {

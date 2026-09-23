@@ -171,22 +171,13 @@ export function qualifiesWatchZoneEnter(args: {
   );
   const strongDaily =
     args.dailyPct24h != null && args.dailyPct24h >= WATCH_DAILY_STRONG_MIN;
-  const strongMatch =
-    args.matchPct != null && args.matchPct >= WATCH_MATCH_STRONG_MIN;
   const gainerDrift =
     args.dailyPct24h != null && args.dailyPct24h >= WATCH_GAINER_DAILY_MIN;
-  const moderateMatch =
-    args.matchPct != null && args.matchPct >= WATCH_MATCH_MIN;
   const bypassTiming =
     (args.probPct ?? 0) >= th.pEntryMin &&
     args.forwardPct != null &&
     args.forwardPct >= th.fwdMin &&
-    ((strongMatch &&
-      args.targetProvisional === true &&
-      (strongDaily || (args.matchPct ?? 0) >= 58)) ||
-      (moderateMatch && args.targetProvisional === true && gainerDrift) ||
-      (moderateMatch && gainerDrift && (args.matchPct ?? 0) >= WATCH_MATCH_STRONG_MIN) ||
-      (gainerDrift && moderateMatch));
+    (strongDaily || gainerDrift);
 
   if (!bypassTiming && timingPred < th.timingPredMin) {
     return { qualified: false, reason: "low_timing_predictability" };
@@ -204,14 +195,7 @@ export function qualifiesWatchZoneEnter(args: {
     return { qualified: false, reason: "prob_below_min" };
   }
 
-  if (!strongDaily && !strongMatch) {
-    const matchFloor =
-      args.targetProvisional === true
-        ? Math.max(38, th.matchMin - 4)
-        : th.matchMin;
-    if (args.matchPct != null && args.matchPct < matchFloor) {
-      return { qualified: false, reason: "match_below_min" };
-    }
+  if (!strongDaily) {
     if (args.dailyPct24h == null || args.dailyPct24h < WATCH_GAINER_DAILY_MIN) {
       return { qualified: false, reason: "daily_momentum_low" };
     }
@@ -223,7 +207,6 @@ export function qualifiesWatchZoneEnter(args: {
 export function watchPrecatProbOverride(args: {
   daysToCd: number | null | undefined;
   probPct: number | null | undefined;
-  matchPct: number | null | undefined;
   precatKind: string;
   targetProvisional?: boolean;
   dailyPct24h?: number | null;
@@ -234,8 +217,5 @@ export function watchPrecatProbOverride(args: {
     args.targetProvisional === true ||
     (args.dailyPct24h != null && args.dailyPct24h >= WATCH_DAILY_MOMENTUM_MIN);
   if (!hasMomentum) return false;
-  return (
-    (args.probPct ?? 0) >= WATCH_PRECAT_PROB_OVERRIDE_MIN &&
-    (args.matchPct ?? 0) >= WATCH_PRECAT_MATCH_OVERRIDE_MIN
-  );
+  return (args.probPct ?? 0) >= WATCH_PRECAT_PROB_OVERRIDE_MIN;
 }

@@ -17,6 +17,7 @@
  */
 
 import type { AdviceFeedback } from "./adviceFeedback";
+import { saveAdviceFeedback } from "./adviceFeedback";
 import type { AdviceCalibrationSummary } from "./investDecisionSimAdviceCalibration";
 
 const STORAGE_KEY = "supernova.adviceLearning.history.v1";
@@ -25,6 +26,10 @@ export const ADVICE_LEARNING_HISTORY_CHANGED_EVENT =
 
 /** Hard cap on how many checkpoints we keep. */
 export const ADVICE_LEARNING_HISTORY_LIMIT = 365;
+/** Bump when advice-calibration pipeline changes — triggers one-time recalculation. */
+export const ADVICE_CALIB_PIPELINE_VERSION = 3;
+const ADVICE_CALIB_PIPELINE_STORAGE_KEY = "supernova.adviceCalib.pipeline.v";
+export const ADVICE_RECALCULATE_REQUEST_EVENT = "supernova-advice-recalculate-request";
 /** Only auto-snapshot once per calendar day. */
 export const ADVICE_LEARNING_AUTO_SNAPSHOT_INTERVAL_MS = 24 * 60 * 60 * 1000;
 /**
@@ -52,6 +57,16 @@ export type AdviceLearningSnapshot = {
   highProbSuccessRatePct: number | null;
   /** High-prob band scored count. */
   highProbScored: number;
+  /** Middle band success (P(plan) 60–69%). */
+  midProbSuccessRatePct: number | null;
+  /** Middle band scored count. */
+  midProbScored: number;
+  /** Portfolio-only overall success (open positions). */
+  portfolioSuccessRatePct: number | null;
+  portfolioScored: number;
+  /** Sim-loop / paper overall success. */
+  simLoopSuccessRatePct: number | null;
+  simLoopScored: number;
   /** Number of bucket multipliers active at snapshot time. */
   bucketCorrectionsActive: number;
   /** Number of action demotions active at snapshot time. */
@@ -64,6 +79,14 @@ export type AdviceLearningSnapshot = {
   paperBookReturnPct: number | null;
   /** Closed P&L win rate %, if available. */
   closedPnlWinRatePct: number | null;
+  /** BUY-only success (24h direction, same rule as Decision Sim BUY badge). */
+  buySuccessRatePct: number | null;
+  /** Scored BUY advice points (good + bad). */
+  buyScored: number;
+  /** SELL-only success (24h direction — stock fell after sell rec). */
+  sellSuccessRatePct?: number | null;
+  /** Scored SELL advice points (good + bad). */
+  sellScored?: number;
 };
 
 export type AdviceLearningHistory = {
@@ -75,10 +98,16 @@ export type AdviceLearningHistory = {
 export function buildAdviceLearningSnapshot(input: {
   summary: AdviceCalibrationSummary | null;
   feedback: AdviceFeedback | null;
+  portfolioSummary?: AdviceCalibrationSummary | null;
+  simLoopSummary?: AdviceCalibrationSummary | null;
   unifiedAdviceSuccessPct?: number | null;
   capturePct?: number | null;
   paperBookReturnPct?: number | null;
   closedPnlWinRatePct?: number | null;
+  buySuccessRatePct?: number | null;
+  buyScored?: number;
+  sellSuccessRatePct?: number | null;
+  sellScored?: number;
   manual?: boolean;
   now?: Date;
 }): AdviceLearningSnapshot {
@@ -86,6 +115,8 @@ export function buildAdviceLearningSnapshot(input: {
   const ts = now.toISOString();
   const day = ts.slice(0, 10);
   const s = input.summary;
+  const portfolio = input.portfolioSummary;
+  const simLoop = input.simLoopSummary;
   const fb = input.feedback;
   return {
     ts,
@@ -97,12 +128,22 @@ export function buildAdviceLearningSnapshot(input: {
     lowProbScored: (s?.lowProb.good ?? 0) + (s?.lowProb.bad ?? 0),
     highProbSuccessRatePct: s?.highProb.successRatePct ?? null,
     highProbScored: (s?.highProb.good ?? 0) + (s?.highProb.bad ?? 0),
+    midProbSuccessRatePct: s?.midProb.successRatePct ?? null,
+    midProbScored: (s?.midProb.good ?? 0) + (s?.midProb.bad ?? 0),
+    portfolioSuccessRatePct: portfolio?.overallSuccessRatePct ?? null,
+    portfolioScored: portfolio?.scoredCount ?? 0,
+    simLoopSuccessRatePct: simLoop?.overallSuccessRatePct ?? null,
+    simLoopScored: simLoop?.scoredCount ?? 0,
     bucketCorrectionsActive: fb?.bucketCorrections.size ?? 0,
     actionDemotionsActive: fb?.actionDemotions.size ?? 0,
     unifiedAdviceSuccessPct: input.unifiedAdviceSuccessPct ?? null,
     capturePct: input.capturePct ?? null,
     paperBookReturnPct: input.paperBookReturnPct ?? null,
     closedPnlWinRatePct: input.closedPnlWinRatePct ?? null,
+    buySuccessRatePct: input.buySuccessRatePct ?? null,
+    buyScored: input.buyScored ?? 0,
+    sellSuccessRatePct: input.sellSuccessRatePct ?? null,
+    sellScored: input.sellScored ?? 0,
   };
 }
 
@@ -221,6 +262,45 @@ export function clearAdviceLearningHistory(): void {
     }
   } catch {
     /* ignore */
+  }
+}
+
+export function markAdviceCalibPipelineVersion(version = ADVICE_CALIB_PIPELINE_VERSION): void {
+  const storage = safeStorage();
+  if (!storage) return;
+  try {
+    storage.setItem(ADVICE_CALIB_PIPELINE_STORAGE_KEY, String(version));
+  } catch {
+    /* ignore */
+  }
+}
+
+export function loadAdviceCalibPipelineVersion(): number {
+  const storage = safeStorage();
+  if (!storage) return 0;
+  try {
+    const raw = storage.getItem(ADVICE_CALIB_PIPELINE_STORAGE_KEY);
+    const n = raw != null ? parseInt(raw, 10) : 0;
+    return Number.isFinite(n) ? n : 0;
+  } catch {
+    return 0;
+  }
+}
+
+/**
+ * Persist recalculated bucket corrections + learning checkpoint.
+ * When resetHistory=true the timeline is replaced with a single fresh point.
+ */
+export function persistAdviceLearningsRecalculation(input: {
+  feedback: AdviceFeedback;
+  snapshot: AdviceLearningSnapshot;
+  resetHistory?: boolean;
+}): void {
+  saveAdviceFeedback(input.feedback);
+  if (input.resetHistory) {
+    saveAdviceLearningHistory({ schemaVersion: 1, snapshots: [input.snapshot] });
+  } else {
+    recordAdviceLearningSnapshot(input.snapshot);
   }
 }
 

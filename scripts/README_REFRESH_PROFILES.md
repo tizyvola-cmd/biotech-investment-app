@@ -6,7 +6,7 @@ Con `SUPERNOVA_SERVE_DESKTOP=1` e profilo `config/profiles/desktop_web_host.env`
 
 | Quando (Europe/Rome) | Script | Contenuto |
 |----------------------|--------|-----------|
-| **Lun–Ven 07:00** | `scripts/morning_research_refresh.py` | IPO biotech + fetch CT.gov + rigenera Simulation (+ sync SDS nuovi entranti) |
+| **Lun–Ven 07:00** | `scripts/morning_research_refresh.py` | IPO biotech + fetch CT.gov + rigenera Simulation (+ hype volume ≥400% + drop stale) |
 | **Lun–Ven 09:00** | `scripts/sds_cohort_refresh.py --mode full` | Ricalcolo completo coorte SDS Supernova (FMP + cluster A) |
 | **Lun–Ven 16:30** | `scripts/model_lab_accuracy_refresh.py` | Fast quotes + simulation charts + **SDS light** + **EIS magnitude** (prezzi T+1/T+7 + curva calibrazione) |
 | **Lun–Ven 10:00** | `scripts/eis_morning_refresh.py` | Feed clinico pre-CD + EIS + `signal_calibration.json` + popup report |

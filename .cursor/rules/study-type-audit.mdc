@@ -1,0 +1,76 @@
+---
+description: Audit drug vs medical device nella lista Simulation + icone ticker
+globs: desktop-ui/src/sheet/studyClassifier.ts,desktop-ui/src/components/StudyTypeTickerIcon.tsx,desktop-ui/scripts/auditSimulationStudyTypes.ts
+alwaysApply: false
+---
+
+# Study type — Drug vs Medical Device
+
+## Obiettivo
+
+Confermare che la lista biotech SuperNova contiene **sia farmaci/biologici sia medical device**, e segnalare ticker senza classificazione affidabile.
+
+## Moduli
+
+| File | Ruolo |
+|------|--------|
+| `desktop-ui/src/sheet/studyClassifier.ts` | `classifyStudy()`, keyword drug/device, `studyTextFromSimRow()` |
+| `desktop-ui/src/sheet/auditStudyTypes.ts` | `auditStudyTypes()`, `formatAuditReport()` |
+| `desktop-ui/src/components/StudyTypeTickerIcon.tsx` | Pillola rosso/giallo (drug) · monitor ECG teal (device) prima del ticker |
+| `desktop-ui/scripts/auditSimulationStudyTypes.ts` | Audit end-to-end su `data/simulation_sheet_snapshot.json` |
+
+## Audit lista (Cursor / terminale)
+
+```powershell
+cd "c:\coding\Biotech_Investment app 6\desktop-ui"
+npx tsx scripts/auditSimulationStudyTypes.ts
+```
+
+Interpretazione output:
+
+- `hasMixedPortfolio: true` → **drug + device** entrambi presenti
+- `needsReview` → testo studio ambiguo o senza keyword — **controllare a mano** (es. INBS senza 510(k) nel snapshot)
+- `summary.device === 0` → nessun device con keyword sufficienti nel testo disponibile
+- Lo script legge `data/simulation_sheet_snapshot.json` + `data/clinical_pre_cd_enrichment_snapshot.json`
+
+Testo studio = `Studio Phase` + sponsor + titoli NCT da enrichment (merge di tutti i record per ticker).
+
+## Universe medtech
+
+```powershell
+cd "c:\coding\Biotech_Investment app 6"
+py -3 scripts/build_medtech_symbols.py
+py -3 scripts/scan_medtech_device_cd.py --days 120
+```
+
+- `data/medtech_symbols.json` — IHI/XHE top holdings + curated small-cap device + CT.gov discovery
+- Sync automatico in `biotech_symbols.json` per yfinance / clinical fetch
+- `launch_simulation_cd_scan.py` esegue build medtech + yfinance prima del fetch clinico
+
+## UI — icone prima del ticker
+
+- **Farmaco**: pillola rossa/gialla — match keyword drug (Phase, BLA/NDA, dose escalation, …)
+- **Uncertain (solo farma)**: mostra comunque la **pillola** (default biotech) con tooltip “non classificato” — non lasciare lo slot vuoto in Top KPI / Simulation
+- **Device / MedTech**: monitor ECG teal — keyword device **oppure** ticker in `medtech_symbols.json` / curated (`ICU`, `PROF`, `GRAL`, …)
+
+**Dove:** `PortfolioTickerMark` + `StudyTypeTickerIcon` in:
+- Tab KPI / Check 24h (`PortfolioLossAnalysisView`)
+- Tabella Simulation (`InvestmentSimulationView`)
+- Dashboard Pulse + Recommendations (`DashboardPulseTable`, `DashboardRecommendationsTable`)
+- Feed AI + Feed clinico (`DashboardAiFeedCard`, `ClinicalPreCdFeedPanel`)
+
+Lista medtech: `data/medtech_symbols.json` → snapshot `medtech_symbols_snapshot.json` (export desktop).
+
+Tooltip: keyword matched (`formatStudyTypeTooltip`).
+
+## Keyword (estratte da studyClassifier)
+
+**Drug**: clinical phase, BLA/NDA/IND, pivotal, dose escalation, biologic/drug modality, placebo-controlled, …
+
+**Device**: 510(k), predicate device, PMA, de novo, medical device, IVD, diagnostic system, SaMD, …
+
+## Regole agent
+
+1. Non classificare Buy/sell solo su curva modello se `studySetupEvidenceSupportsBuy` richiede match+SDS+EIS.
+2. Se l’utente chiede “abbiamo device in lista?” → eseguire `auditSimulationStudyTypes.ts` e riportare drug/device/needsReview.
+3. Nuovi pattern device (es. “De Novo grant”) → aggiungere regola in `DEVICE_RULES` + test in `studyClassifier.test.ts`.

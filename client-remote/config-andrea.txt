@@ -1,0 +1,8 @@
+# SuperNova — client remoto (Andrea)
+# Stesso server del collegamento principale; profilo browser SEPARATO
+# così puoi tenere aperti contemporaneamente il tuo account e quello di Andrea.
+
+URL=http://91.99.15.48:8765/
+
+# Nome profilo Edge/Chrome (cartella isolata → localStorage/email separati)
+PROFILE=SuperNova-Andrea

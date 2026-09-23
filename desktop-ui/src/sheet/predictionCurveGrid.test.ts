@@ -4,6 +4,7 @@ import {
   displayPredChartPoints,
   PREDICTION_CALENDAR_OFFSETS,
   reconcileChartPointsWithSheet,
+  recalibPredValuesAtCalendarOffsets,
   roundPredPct,
   samplePredAtCalendarOffsets,
   snapshotSheetDrift,
@@ -87,7 +88,32 @@ describe("predictionCurveGrid", () => {
     const offsets = assessmentChartOffsetsForNow(nowOff);
     expect(offsets.some((o) => o < -60)).toBe(true);
     expect(offsets).toContain(-60);
+    expect(offsets).toContain(0);
     const grid = samplePredAtCalendarOffsets(STALE_SNAPSHOT, farRow);
     expect(grid.some((g) => g.offset < -60)).toBe(true);
+  });
+
+  it("interpolates every assessment knot even when snapshot starts at T−10", () => {
+    const sparse: ChartPoint[] = [
+      { offset: -10, nodo: "standard", pct_foglio: -1.7 },
+      { offset: -7, nodo: "standard", pct_foglio: -1.6 },
+      { offset: -5, nodo: "standard", pct_foglio: -1.6 },
+      { offset: -3, nodo: "standard", pct_foglio: -1.6 },
+      { offset: 4, nodo: "standard", pct_foglio: -1.5 },
+      { offset: 7, nodo: "standard", pct_foglio: -1.6 },
+    ];
+    const offsets = assessmentChartOffsetsForNow(-53);
+    const values = recalibPredValuesAtCalendarOffsets(sparse, ROW, {
+      extendedPostCd: true,
+      nowOffset: -53,
+      offsets,
+    });
+    expect(values).not.toBeNull();
+    expect(values!.length).toBe(offsets.length);
+    for (const off of [-53, -30, -10, 0, 4]) {
+      const idx = offsets.indexOf(off);
+      expect(idx).toBeGreaterThanOrEqual(0);
+      expect(values![idx]).not.toBeNull();
+    }
   });
 });

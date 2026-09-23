@@ -18,7 +18,7 @@ import {
   sortCdPatternByMatchScore,
 } from "../sheet/cdPatternPortfolioPriority";
 import { rowHasActivePortfolio } from "../sheet/simulationPosition";
-import { EisDetailDrawer } from "./EisDetailDrawer";
+import { openEisDeepDive } from "../sheet/eisDeepDiveFocusStore";
 import { CdPatternArcPanel } from "./CdPatternArcPanel";
 import { CdPatternEisPanel } from "./CdPatternEisPanel";
 import { PortfolioTickerMark } from "./PortfolioScopeToggle";
@@ -34,13 +34,6 @@ export type CdPatternRecommendationViewProps = {
   focusTicker?: string | null;
   onFocusTickerConsumed?: () => void;
   onOpenClinicalFeed?: (ticker: string) => void;
-  onNavigateToSimulation?: (ticker: string, action: "buy" | "sell", cd?: string) => void;
-  /** @deprecated prefer onNavigateToSimulation */
-  onOpenSimulationRow?: (focus: {
-    ticker: string;
-    cd?: string;
-    action?: "buy" | "sell";
-  }) => void;
   /** Parent page refresh — rilegge snapshot SDS/EIS. */
   parentReloadToken?: number;
 };
@@ -71,15 +64,12 @@ export function CdPatternRecommendationView({
   focusTicker,
   onFocusTickerConsumed,
   onOpenClinicalFeed,
-  onNavigateToSimulation,
-  onOpenSimulationRow,
   parentReloadToken = 0,
 }: CdPatternRecommendationViewProps) {
   const t = useT();
   const { lang } = useLang();
   const [sdsRows, setSdsRows] = useState<SdsRow[] | null>(null);
   const [selectedKey, setSelectedKey] = useState<string | null>(null);
-  const [eisDrawerTicker, setEisDrawerTicker] = useState<string | null>(null);
   const [eisSuperState, setEisSuperState] = useState<EisSuperScoreState | null>(null);
   const [recommendations, setRecommendations] = useState<CdPatternTickerRecommendation[]>([]);
   const [listBusy, setListBusy] = useState(true);
@@ -233,22 +223,6 @@ export function CdPatternRecommendationView({
     },
     [t],
   );
-
-  const openSimulationForRec = useCallback(
-    (rec: CdPatternTickerRecommendation) => {
-      const inPortfolio = portfolioByKey.get(rec.key) ?? false;
-      const action = inPortfolio ? "sell" : "buy";
-      const cd = rec.completionDate ?? undefined;
-      if (onNavigateToSimulation) {
-        onNavigateToSimulation(rec.ticker, action, cd);
-        return;
-      }
-      onOpenSimulationRow?.({ ticker: rec.ticker, cd, action });
-    },
-    [onNavigateToSimulation, onOpenSimulationRow, portfolioByKey],
-  );
-
-  const canOpenSimulationRow = Boolean(onNavigateToSimulation || onOpenSimulationRow);
 
   return (
     <div className="flex flex-col flex-1 min-w-0">
@@ -450,32 +424,13 @@ export function CdPatternRecommendationView({
                 <CdPatternEisPanel
                   rec={selected}
                   onOpenFeed={onOpenClinicalFeed}
-                  onOpenDetail={() => setEisDrawerTicker(selected.ticker)}
+                  onOpenDetail={() => openEisDeepDive({ ticker: selected.ticker })}
                 />
               </div>
-
-              {canOpenSimulationRow ? (
-                <button
-                  type="button"
-                  className="btn-ghost text-[11px] font-semibold border border-[rgb(var(--border))]/50"
-                  onClick={() => openSimulationForRec(selected)}
-                >
-                  {portfolioByKey.get(selected.key)
-                    ? t("decisionLab.pattern.openSimulationRowSell", { ticker: selected.ticker })
-                    : t("decisionLab.pattern.openSimulationRowBuy", { ticker: selected.ticker })}
-                </button>
-              ) : null}
             </div>
           ) : null}
         </div>
       )}
-
-      <EisDetailDrawer
-        open={!!eisDrawerTicker}
-        onClose={() => setEisDrawerTicker(null)}
-        ticker={eisDrawerTicker}
-        it={lang === "it"}
-      />
     </div>
   );
 }

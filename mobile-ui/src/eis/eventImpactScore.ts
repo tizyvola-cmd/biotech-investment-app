@@ -1,6 +1,7 @@
 /** Event Impact Score — mirrors prediction/event_impact_score.py */
 
 import type { ClinicalPublicationEvent, ClinicalStudyIndicator } from "../api";
+import { mergeVirtualRegulatoryIndicators } from "./regulatoryVirtualKpi";
 
 export type EisWeights = { w1: number; w2: number; w3: number; w4: number };
 
@@ -14,11 +15,20 @@ export type EisBreakdown = {
   vol_reaction_weight?: number;
   sentiment: number;
   kpi_score?: number | null;
+  eis_intrinsic?: number | null;
   sent_term: number;
   weights: EisWeights;
 };
 
 const DEFAULT_WEIGHTS: EisWeights = { w1: 0.35, w2: 0.35, w3: 0.15, w4: 0.15 };
+
+export const K_INTRINSIC = 10;
+
+export function eisIntrinsicFromKpi(kpiScore: number | null | undefined): number | null {
+  if (kpiScore == null || !Number.isFinite(kpiScore)) return null;
+  const clamped = Math.max(-2, Math.min(2, kpiScore));
+  return Math.round(clamped * K_INTRINSIC * 100) / 100;
+}
 
 const RATE_LABEL_RE =
   /\b(orr|dcr|cbr|crr|easi|iga|pasi|response\s*rate|overall\s*response)\b/i;
@@ -161,17 +171,23 @@ function volReactionWeight(d1: number, d3Eff: number): number {
 }
 
 export function resolveEventEis(
-  ev: Pick<ClinicalPublicationEvent, "eis" | "price" | "sentiment">,
+  ev: Pick<ClinicalPublicationEvent, "eis" | "price" | "sentiment"> &
+    Partial<Pick<ClinicalPublicationEvent, "event_title" | "summary" | "source_type" | "event_type">>,
   indicators: ClinicalStudyIndicator[] | undefined,
 ): EisBreakdown | null {
   const stored = ev.eis;
   const price = ev.price;
   const d1 = price?.delta_p_1d ?? stored?.delta_p_1d ?? null;
   const d3 = price?.delta_p_3d ?? stored?.delta_p_3d ?? null;
-  const outcomeIndicators = (indicators ?? []).filter(
-    (i) => i.kpi_type === "efficacy" || i.endpoint_met != null || RATE_LABEL_RE.test(i.label ?? ""),
+  const merged = mergeVirtualRegulatoryIndicators(ev, indicators);
+  const outcomeIndicators = merged.filter(
+    (i) =>
+      i.kpi_type === "efficacy" ||
+      i.kpi_type === "regulatory" ||
+      i.endpoint_met != null ||
+      RATE_LABEL_RE.test(i.label ?? ""),
   );
-  const kpiPool = outcomeIndicators.length ? outcomeIndicators : indicators ?? [];
+  const kpiPool = outcomeIndicators.length ? outcomeIndicators : merged;
   const kpiScore = kpiPool.length ? kpiIntrinsicScore(kpiPool) : (stored?.kpi_score ?? null);
   if (d1 == null && d3 == null && kpiScore == null && stored?.score == null) {
     return null;
@@ -227,6 +243,7 @@ function computeEisBreakdown(
     vol_reaction_weight: Math.round(volW * 1000) / 1000,
     sentiment: Math.round(sent * 100) / 100,
     kpi_score: kpiScore != null ? Math.round(kpiScore * 1000) / 1000 : null,
+    eis_intrinsic: eisIntrinsicFromKpi(kpiScore),
     sent_term: Math.round(sentTerm * 100) / 100,
     weights,
   };

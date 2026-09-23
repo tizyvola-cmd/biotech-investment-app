@@ -1,15 +1,24 @@
 import { useCallback, useEffect, useState } from "react";
 import {
+  fetchWeeklyFullStatus,
   fetchWorkbookStatus,
   type OrchestratorRunSummary,
+  type WeeklyFullServerStatus,
   type WorkbookStatus,
 } from "../api/refresh";
 import { fetchRefreshLog, fetchRefreshStatus } from "../api/supernova";
 import { useLang, useT } from "../shared/i18n";
 import {
+  formatOrchestratorSummaryMessage,
+  isCorruptOrchestratorSummary,
+  isOrchestratorSummaryMessage,
+} from "../sheet/orchestratorSummaryMessage";
+import {
   reopenSundayRefreshResult,
   useRefreshStatus,
 } from "../shared/refreshStatusStore";
+import { resolveWeeklyFullApiBase } from "../shared/remoteHost";
+import { isWeeklyFullActuallyRunning } from "../shared/weeklyFullServerWatch";
 
 /** Profiles on the Refresh tab only. */
 export const REFRESH_TAB_PROFILE_IDS = ["daily", "sunday"] as const;
@@ -35,12 +44,55 @@ function openExternal(href: string) {
   else window.open(href, "_blank", "noopener,noreferrer");
 }
 
+function serverFullDisplay(
+  status: WeeklyFullServerStatus | null,
+  lang: "it" | "en",
+): {
+  running: boolean;
+  ok: boolean | null;
+  finishedAt: string | null;
+  elapsedSec: number | null;
+  message: string;
+} | null {
+  if (!status) return null;
+  const last = status.last_run;
+  const sum = status.summary;
+  // Prefer last_run.finished_at — summary timestamps are often corrupt (start==end).
+  const finishedAt =
+    last?.finished_at?.trim() ||
+    sum?.finished_at_display?.trim() ||
+    sum?.finished_at?.trim() ||
+    null;
+  const elapsedSec =
+    last?.duration_sec != null
+      ? Math.round(last.duration_sec)
+      : sum?.elapsed_sec != null
+        ? Math.round(sum.elapsed_sec)
+        : null;
+  const running = isWeeklyFullActuallyRunning(status);
+  return {
+    running,
+    ok: running ? null : (last?.ok ?? sum?.ok ?? null),
+    finishedAt,
+    elapsedSec,
+    message: running
+      ? ""
+      : last?.message?.trim() ||
+        (sum && !isCorruptOrchestratorSummary(sum)
+          ? formatOrchestratorSummaryMessage(sum, lang)
+          : "") ||
+        "",
+  };
+}
+
 function RefreshRunSummary({
   wb,
   busy,
+  serverWeekly,
 }: {
   wb: WorkbookStatus;
   busy: boolean;
+  serverWeekly: WeeklyFullServerStatus | null;
 }) {
   const t = useT();
   const { lang } = useLang();
@@ -49,9 +101,20 @@ function RefreshRunSummary({
   const dailyMsg = wb.refresh_fast_status?.message;
   const dailyUpdated = wb.refresh_fast_status?.updated_at;
   const locale = lang === "it" ? "it-IT" : "en-US";
+  const langCode = lang === "it" ? "it" : "en";
+  const orchestratorMsg = formatOrchestratorSummaryMessage(sum, langCode);
+  const summaryCorrupt = isCorruptOrchestratorSummary(sum);
+  /** Weekly full overwrites refresh_fast_status — reformat from JSON, not stored IT string. */
+  const dailyDisplayMsg = isOrchestratorSummaryMessage(dailyMsg)
+    ? orchestratorMsg
+    : dailyMsg || "";
 
-  const fullInFlight = busy && life.profile === "sunday";
+  const fullInFlight =
+    (busy && life.profile === "sunday") ||
+    (serverWeekly != null && isWeeklyFullActuallyRunning(serverWeekly));
   const dailyInFlight = busy && life.profile === "daily";
+  const serverFull = serverFullDisplay(serverWeekly, langCode);
+  const vpsHost = resolveWeeklyFullApiBase().replace(/^https?:\/\//, "");
 
   return (
     <div className="text-sm rounded-lg border border-[rgb(var(--border))] bg-surface/50 p-3 space-y-3">
@@ -61,8 +124,8 @@ function RefreshRunSummary({
         </p>
         {dailyInFlight ? (
           <p className="text-xs text-accent">{t("refreshView.summary.running")}</p>
-        ) : dailyMsg ? (
-          <p className="text-xs leading-snug text-ink-muted">{dailyMsg}</p>
+        ) : dailyDisplayMsg ? (
+          <p className="text-xs leading-snug text-ink-muted">{dailyDisplayMsg}</p>
         ) : (
           <p className="text-xs text-ink-muted/70">{t("refreshView.summary.noDaily")}</p>
         )}
@@ -77,8 +140,51 @@ function RefreshRunSummary({
         <p className="text-[10px] uppercase tracking-wide text-ink-muted mb-1">
           {t("refreshView.summary.fullLabel")}
         </p>
-        {fullInFlight && life.profile === "sunday" ? (
+        <p className="text-[10px] text-ink-muted/70 mb-1.5">
+          {lang === "it"
+            ? `Fonte server: ${vpsHost} (WeeklyFull VPS — non il PC locale)`
+            : `Server source: ${vpsHost} (VPS WeeklyFull — not this PC)`}
+        </p>
+
+        {fullInFlight ? (
           <p className="text-xs text-violet-300">{t("refreshView.summary.fullRunning")}</p>
+        ) : serverFull?.finishedAt ? (
+          <div className="space-y-1">
+            <p
+              className={`text-xs leading-snug ${
+                serverFull.ok === false ? "text-negative" : "text-positive"
+              }`}
+            >
+              {serverFull.ok === false
+                ? t("refreshView.summary.fullErr")
+                : t("refreshView.summary.fullOk", {
+                    elapsed: fmtElapsed(serverFull.elapsedSec ?? 0),
+                  })}
+              {serverFull.message ? ` — ${serverFull.message}` : ""}
+            </p>
+            <p className="text-[10px] text-ink-muted tabular-nums">
+              {new Date(serverFull.finishedAt).toLocaleString(locale)}
+              {serverFull.elapsedSec != null ? (
+                <span>
+                  {" "}
+                  ·{" "}
+                  {t("refreshView.duration", {
+                    min: String(Math.floor(serverFull.elapsedSec / 60)),
+                    sec: String(serverFull.elapsedSec % 60),
+                  })}
+                </span>
+              ) : null}
+            </p>
+            {lastSundayResult ? (
+              <button
+                type="button"
+                className="btn-ghost text-[10px] px-2 py-0.5"
+                onClick={() => reopenSundayRefreshResult()}
+              >
+                {t("refreshView.summary.reopenFull")}
+              </button>
+            ) : null}
+          </div>
         ) : lastSundayResult ? (
           <div className="space-y-1">
             <p
@@ -107,21 +213,33 @@ function RefreshRunSummary({
             </button>
           </div>
         ) : sum?.finished_at_display || sum?.elapsed_sec != null ? (
-          <p className="text-xs text-ink">
-            {sum?.finished_at_display ? (
-              <span className="font-medium tabular-nums">{sum.finished_at_display}</span>
+          <div className="space-y-1">
+            <p className="text-[10px] text-amber-800 dark:text-amber-200 leading-snug">
+              {lang === "it"
+                ? "Solo metadati locali (PC) — il WeeklyFull gira sul VPS; aggiorna lo stato o attendi sync."
+                : "Local PC metadata only — WeeklyFull runs on the VPS; refresh status or wait for sync."}
+            </p>
+            {summaryCorrupt ? (
+              <p className="text-xs text-amber-800 dark:text-amber-200 leading-snug">
+                {t("refreshView.summary.fullCorrupt")}
+              </p>
             ) : null}
-            {sum?.elapsed_sec != null ? (
-              <span className="text-ink-muted">
-                {" "}
-                ·{" "}
-                {t("refreshView.duration", {
-                  min: String(Math.floor(sum.elapsed_sec / 60)),
-                  sec: String(sum.elapsed_sec % 60),
-                })}
-              </span>
-            ) : null}
-          </p>
+            <p className="text-xs text-ink">
+              {sum?.finished_at_display ? (
+                <span className="font-medium tabular-nums">{sum.finished_at_display}</span>
+              ) : null}
+              {sum?.elapsed_sec != null ? (
+                <span className="text-ink-muted">
+                  {" "}
+                  ·{" "}
+                  {t("refreshView.duration", {
+                    min: String(Math.floor(sum.elapsed_sec / 60)),
+                    sec: String(sum.elapsed_sec % 60),
+                  })}
+                </span>
+              ) : null}
+            </p>
+          </div>
         ) : (
           <p className="text-xs text-ink-muted/70">{t("refreshView.noFullSummary")}</p>
         )}
@@ -145,27 +263,43 @@ export function RefreshView({
 }) {
   const t = useT();
   const [wb, setWb] = useState<WorkbookStatus | null>(null);
+  const [serverWeekly, setServerWeekly] = useState<WeeklyFullServerStatus | null>(null);
   const [log, setLog] = useState("");
   const [error, setError] = useState<string | null>(null);
 
+  const refreshServerWeekly = useCallback(async () => {
+    try {
+      setServerWeekly(await fetchWeeklyFullStatus());
+    } catch {
+      /* VPS optional when offline */
+    }
+  }, []);
+
   const refreshStatus = useCallback(async () => {
     try {
-      const w = await fetchWorkbookStatus();
-      setWb(w);
-      const st = await fetchRefreshStatus();
-      if (st.running) onBusyChange(true);
-      else onBusyChange(false);
-      const lg = await fetchRefreshLog(8000);
-      setLog(lg.log);
+      await refreshServerWeekly();
+      if (apiOk === true) {
+        const w = await fetchWorkbookStatus();
+        setWb(w);
+        const st = await fetchRefreshStatus();
+        if (st.running) onBusyChange(true);
+        else onBusyChange(false);
+        const lg = await fetchRefreshLog(8000);
+        setLog(lg.log);
+      }
     } catch (e) {
       setError(e instanceof Error ? e.message : String(e));
     }
-  }, [onBusyChange]);
+  }, [apiOk, onBusyChange, refreshServerWeekly]);
 
   useEffect(() => {
-    if (apiOk !== true) return;
     void refreshStatus();
-  }, [apiOk, refreshStatus]);
+  }, [refreshStatus]);
+
+  useEffect(() => {
+    const id = window.setInterval(() => void refreshServerWeekly(), 45_000);
+    return () => window.clearInterval(id);
+  }, [refreshServerWeekly]);
 
   useEffect(() => {
     if (!busy || apiOk !== true) return;
@@ -214,21 +348,16 @@ export function RefreshView({
     },
   ];
 
-  if (apiOk === false) {
-    return (
-      <section className="card p-6 max-w-2xl">
-        <h2 className="text-lg font-semibold">{t("refreshView.title")}</h2>
-        <p className="text-sm text-negative mt-2">{t("refreshView.apiOffline")}</p>
-      </section>
-    );
-  }
-
   return (
-    <section className="card refresh-view-panel p-5 flex flex-col gap-4 max-w-3xl flex-1 min-h-0">
+    <section className="card refresh-view-panel p-5 flex flex-col gap-4 max-w-3xl w-full shrink-0">
       <div>
         <h2 className="text-lg font-semibold">{t("refreshView.title")}</h2>
         <p className="text-sm text-ink-muted mt-1">{t("refreshView.subtitle")}</p>
       </div>
+
+      {apiOk === false ? (
+        <p className="text-sm text-negative">{t("refreshView.apiOffline")}</p>
+      ) : null}
 
       <div>
         <p className="text-[10px] uppercase tracking-wide text-ink-muted mb-2">
@@ -251,11 +380,25 @@ export function RefreshView({
         </div>
       </div>
 
-      {wb ? <RefreshRunSummary wb={wb} busy={busy} /> : null}
+      {wb || serverWeekly ? (
+        <RefreshRunSummary
+          wb={
+            wb ?? {
+              workbook: "",
+              workbook_path: "",
+              workbook_locked: false,
+              staged_path: null,
+              staged_name: null,
+            }
+          }
+          busy={busy}
+          serverWeekly={serverWeekly}
+        />
+      ) : null}
 
       {error && <p className="text-sm text-negative">{error}</p>}
 
-      <div className="grid gap-3 sm:grid-cols-2">
+      <div className="grid gap-3 sm:grid-cols-2 shrink-0">
         {profileCards.map((card) => (
           <button
             key={card.id}
@@ -267,7 +410,7 @@ export function RefreshView({
                   ? "border-accent/60 bg-accent/10 hover:bg-accent/15 hover:border-accent"
                   : "border-[rgb(var(--border))] hover:border-accent/40 hover:bg-accent/5"
             }`}
-            disabled={busy}
+            disabled={busy || apiOk !== true}
             onClick={() => void startProfile(card.id)}
           >
             <div className="font-semibold text-base text-ink">{t(card.titleKey)}</div>
@@ -283,9 +426,9 @@ export function RefreshView({
         ))}
       </div>
 
-      <div className="flex-1 min-h-[12rem] flex flex-col">
+      <div className="shrink-0 flex flex-col">
         <h3 className="text-sm font-medium mb-2">{t("refreshView.logTitle")}</h3>
-        <pre className="flex-1 overflow-auto rounded-lg bg-surface p-3 text-xs text-ink-muted whitespace-pre-wrap">
+        <pre className="max-h-48 overflow-auto rounded-lg bg-surface p-3 text-xs text-ink-muted whitespace-pre-wrap">
           {log || (busy ? t("refreshView.log.running") : t("refreshView.log.empty"))}
         </pre>
       </div>

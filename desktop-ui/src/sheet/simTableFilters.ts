@@ -6,7 +6,7 @@
  * | All             | Tutte le righe del foglio |
  * | Portfolio       | Posizione aperta — **tutte**, anche fuori finestra CD attiva |
  * | Top opportunity | Chiavi hot Top pubblicate da Decision Lab (stesso elenco zona hot) |
- * | To sell now     | In portafoglio + decrescita verso CD (ROI ≤ 0 o pendenza in calo) |
+ * | To sell now     | Soft Soft SELL (Gen 4) **oppure** decrescita verso CD (ROI/slope) |
  * | Hot Zone        | CD entro 60 giorni (zona hot), indipendente da Top Opp |
  */
 import { simulationRowSeriesKey } from "../data/simulationCharts";
@@ -140,6 +140,8 @@ function rowCtxForPosition(
   topOpps: TopOppsSnapshot,
   chartPts: ChartPoint[] | null,
   columns: string[] | undefined,
+  /** Soft Soft SELL keys from ``buildOperationalRecResult`` (same as Home). */
+  softSellKeys?: ReadonlySet<string> | null,
 ): RowCtx {
   const inPortfolio = isActiveSimPortfolioPosition(p, simRow, inputs);
   const inp = inputs[p.key];
@@ -158,7 +160,7 @@ function rowCtxForPosition(
   const roiPerDay = roiPerDayFromPlan(planReturnPct, planDays ?? daysToCd);
   const inHotZone = isHotZone(daysToCd);
 
-  const sellNow = isSimTableSellNow(
+  const declineSell = isSimTableSellNow(
     inPortfolio,
     simRow,
     columns,
@@ -166,6 +168,8 @@ function rowCtxForPosition(
     planCdReturnPct,
     chartPts,
   );
+  const softSell = Boolean(inPortfolio && softSellKeys?.has(p.key));
+  const sellNow = declineSell || softSell;
 
   return {
     inPortfolio,
@@ -188,6 +192,8 @@ export function buildSimTableFilterCounts(
   columns: string[] | undefined,
   /** When set, portfolio count uses all open positions (ignores CD horizon pool). */
   allPositions?: SimulationPosition[],
+  /** Soft Soft SELL keys — same arbiter as Home Rec / Evaluation Lab Rec column. */
+  softSellKeys?: ReadonlySet<string> | null,
 ): SimTableFilterCounts {
   const portfolioPool = allPositions ?? positions;
   const counts: SimTableFilterCounts = {
@@ -202,7 +208,15 @@ export function buildSimTableFilterCounts(
     const simRow = simRowByKey.get(p.key);
     const sk = simRow ? simulationRowSeriesKey(simRow) : null;
     const chartPts = sk ? pointsBySeriesKey.get(sk) ?? null : null;
-    const ctx = rowCtxForPosition(p, simRow, inputs, topOpps, chartPts, columns);
+    const ctx = rowCtxForPosition(
+      p,
+      simRow,
+      inputs,
+      topOpps,
+      chartPts,
+      columns,
+      softSellKeys,
+    );
 
     if (ctx.topOppQuality) counts.topOpps += 1;
     if (ctx.sellNow) counts.sellNow += 1;
@@ -274,6 +288,7 @@ export function filterSimTablePositions(
   columns: string[] | undefined,
   /** When set, portfolio filter searches all open positions (ignores CD horizon pool). */
   allPositions?: SimulationPosition[],
+  softSellKeys?: ReadonlySet<string> | null,
 ): SimulationPosition[] {
   if (filter === "portfolio") {
     const pool = allPositions ?? positions;
@@ -286,7 +301,15 @@ export function filterSimTablePositions(
     const simRow = simRowByKey.get(p.key);
     const sk = simRow ? simulationRowSeriesKey(simRow) : null;
     const chartPts = sk ? pointsBySeriesKey.get(sk) ?? null : null;
-    const ctx = rowCtxForPosition(p, simRow, inputs, topOpps, chartPts, columns);
+    const ctx = rowCtxForPosition(
+      p,
+      simRow,
+      inputs,
+      topOpps,
+      chartPts,
+      columns,
+      softSellKeys,
+    );
 
     switch (filter) {
       case "topOpps":

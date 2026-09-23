@@ -127,15 +127,30 @@ def _save_json(path: Path, doc: Any) -> None:
     tmp.replace(path)
 
 
+def _logistic_pct(exp_arg: float) -> float:
+    """100 / (1 + exp(exp_arg)) with overflow-safe clamps."""
+    if exp_arg >= 700.0:
+        return 0.0
+    if exp_arg <= -700.0:
+        return 100.0
+    return 100.0 / (1.0 + math.exp(exp_arg))
+
+
 def _axis_pct(value: float | None, minimum: float, *, higher_is_better: bool = True) -> float:
+    """Continuous sigmoid axis score.
+
+    Returns ~50 when value equals the threshold, approaches 100 well above it,
+    and approaches 0 well below it — eliminating the old 0/100 binary behaviour.
+    k=4 (minimum>0): ~73% at 1.25× threshold, ~98% at 2× threshold.
+    k=3 (minimum≤0): gentle ramp centred at 0 for sign-only axes.
+    """
     if value is None or not math.isfinite(value):
         return 0.0
     if minimum <= 0:
-        if not higher_is_better:
-            return 100.0 if value <= minimum else 0.0
-        return 100.0 if value >= 0 else 0.0
-    ratio = value / minimum
-    return float(min(100.0, max(0.0, round(ratio * 100.0))))
+        x = value if higher_is_better else -value
+        return _logistic_pct(-3.0 * x)
+    ratio = value / minimum if higher_is_better else minimum / max(abs(value), 1e-9)
+    return _logistic_pct(-4.0 * (ratio - 1.0))
 
 
 def _resolve_window(offset: int) -> _PatternWindow | None:
@@ -204,16 +219,17 @@ def compute_polygon_match_pct(rec: dict[str, Any], offset: int) -> float | None:
     dbc = _days_before_cd(offset)
     sds = _retro_sds(rec, max(dbc, 3))
     ra = _float_or_none(rec.get("affidabilita_calib") or rec.get("affidabilita"))
-    calib = _float_or_none(rec.get("affidabilita_calib") or rec.get("affidabilita"))
     slope20 = _slope20_pp_per_day(rec, offset)
     mii = abs(slope20 or 0) * 15.0 if slope20 is not None else None
 
+    # NOTE: ra and calib were previously both sourced from affidabilita_calib,
+    # causing double-counting.  Now: ra = P(plan), sds, mii, slope20.
+    # Missing axes are counted as 0 so partial data does not inflate the score.
     axes = [
         _axis_pct(ra, window.ra_min),
         _axis_pct(sds, window.sds_min),
         _axis_pct(mii, window.mii_min),
-        _axis_pct(calib, window.calib_min),
-        _axis_pct(slope20, window.slope20_min) if slope20 is not None and slope20 >= window.slope20_min else _axis_pct(slope20, window.slope20_min),
+        _axis_pct(slope20, window.slope20_min),
     ]
     return round(sum(axes) / len(axes), 1)
 

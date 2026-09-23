@@ -8,9 +8,13 @@ export function portfolioPnlDeltaLooksLikeStaleBaseline(
   pnl24hEur: number,
   todayCovered: number,
 ): boolean {
-  if (todayCovered <= 0) return false;
   const delta = totalPnlEur - prevPnlEur;
   if (delta === 0) return false;
+  // A swing this large between visits is never a real market move — it signals a contaminated
+  // baseline snapshot (e.g. saved while history bug inflated P&L). Catches even when
+  // todayCovered=0 (market data not yet loaded, which would otherwise bypass all checks below).
+  if (Math.abs(delta) > 10_000) return true;
+  if (todayCovered <= 0) return false;
   if (Math.abs(delta) > Math.abs(pnl24hEur) + 200) return true;
   // Snapshot saved before history merge (MTM inflation vs leg-sum total).
   if (

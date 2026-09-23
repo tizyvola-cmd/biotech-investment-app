@@ -475,6 +475,152 @@ def read_simulation_table(*, xlsx_path: str | Path | None = None) -> dict[str, A
         wb.close()
 
 
+_MANUAL_SIM_ENTRIES_PATH = Path("data/manual_sim_entries.json")
+try:
+    from orchestrator_io_paths import DATA_DIR as _DATA_DIR
+
+    _HYPE_FUNNEL_ENTRIES_PATH = Path(_DATA_DIR) / "hype_volume_funnel_entries.json"
+    _CATALYST_SIM_ENTRIES_PATH = Path(_DATA_DIR) / "catalyst_sim_entries.json"
+    _DISCOVERY_CATALYST_SIM_ENTRIES_PATH = Path(_DATA_DIR) / "discovery_catalyst_sim_entries.json"
+except Exception:
+    _HYPE_FUNNEL_ENTRIES_PATH = Path("data/hype_volume_funnel_entries.json")
+    _CATALYST_SIM_ENTRIES_PATH = Path("data/catalyst_sim_entries.json")
+    _DISCOVERY_CATALYST_SIM_ENTRIES_PATH = Path("data/discovery_catalyst_sim_entries.json")
+
+
+def _normalize_cd_for_key(cd: Any) -> str:
+    """Match ``normalizeCompletionDateForKey`` in desktop-ui/src/sheet/investSimKeys.ts."""
+    if cd is None or cd == "" or cd == "—" or cd == "-":
+        return "—"
+    s = str(cd).strip()
+    if not s or s in ("—", "-"):
+        return "—"
+    m = re.match(r"^(\d{4}-\d{2}-\d{2})", s)
+    if m:
+        return m.group(1)
+    m = re.match(r"^(\d{1,2})[/.\-](\d{1,2})[/.\-](\d{4})$", s)
+    if m:
+        d, mo, y = m.groups()
+        return f"{y}-{mo.zfill(2)}-{d.zfill(2)}"
+    return s
+
+
+def _load_sidecar_sim_entries(path: Path) -> list[dict[str, Any]]:
+    if not path.is_file():
+        return []
+    try:
+        import json
+
+        doc = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return []
+    if not isinstance(doc, dict):
+        return []
+    raw = doc.get("entries") or []
+    if not isinstance(raw, list):
+        return []
+    out: list[dict[str, Any]] = []
+    for e in raw:
+        if isinstance(e, dict) and e.get("Ticker"):
+            out.append(e)
+    return out
+
+
+def _load_manual_sim_entries() -> list[dict[str, Any]]:
+    """Return persistent manual overrides for the Simulation sheet.
+
+    See ``data/manual_sim_entries.json``. Each entry is merged into the
+    sheet rows on every read *only* if no existing row already has the
+    same ``Ticker | Completion Date`` key. This survives snapshot
+    rewrites (``_write_simulation_snapshot_json``) and workbook
+    regenerations because it's applied at read time.
+    """
+    return _load_sidecar_sim_entries(_MANUAL_SIM_ENTRIES_PATH)
+
+
+def _load_hype_funnel_sim_entries() -> list[dict[str, Any]]:
+    """Volume-hype funnel rows (trusted next CD) — same merge as manual entries."""
+    return _load_sidecar_sim_entries(_HYPE_FUNNEL_ENTRIES_PATH)
+
+
+def _load_catalyst_sim_entries() -> list[dict[str, Any]]:
+    """Guidance-calendar catalyst rows — same sidecar pattern."""
+    return _load_sidecar_sim_entries(_CATALYST_SIM_ENTRIES_PATH)
+
+
+def _load_discovery_catalyst_sim_entries() -> list[dict[str, Any]]:
+    """Universe Discovery near-catalyst rows (≤20d exact SEC dates)."""
+    return _load_sidecar_sim_entries(_DISCOVERY_CATALYST_SIM_ENTRIES_PATH)
+
+
+def _merge_manual_sim_entries(payload: dict[str, Any]) -> dict[str, Any]:
+    """Merge manual overrides into a Simulation-sheet payload.
+
+    Skip any manual entry whose ``Ticker|CD`` (normalized) is already
+    present in the payload rows. Non-destructive: never overwrites an
+    existing row, only appends missing ones.
+    """
+    entries = (
+        _load_manual_sim_entries()
+        + _load_hype_funnel_sim_entries()
+        + _load_catalyst_sim_entries()
+        + _load_discovery_catalyst_sim_entries()
+    )
+    if not entries:
+        return payload
+    rows = list(payload.get("rows") or [])
+    existing_keys: set[str] = set()
+    existing_tickers: set[str] = set()
+    for r in rows:
+        if not isinstance(r, dict):
+            continue
+        tk = str(r.get("Ticker") or "").strip().upper()
+        cd_norm = _normalize_cd_for_key(r.get("Completion Date"))
+        if tk:
+            existing_keys.add(f"{tk}|{cd_norm}")
+            existing_tickers.add(tk)
+
+    added = 0
+    stamped = 0
+    for e in entries:
+        tk = str(e.get("Ticker") or "").strip().upper()
+        if not tk:
+            continue
+        if e.get("hype_volume_funnel") and tk in existing_tickers:
+            continue
+        cd_norm = _normalize_cd_for_key(e.get("Completion Date"))
+        key = f"{tk}|{cd_norm}"
+        if e.get("guidance_calendar_catalyst") and key in existing_keys:
+            for r in rows:
+                if not isinstance(r, dict):
+                    continue
+                rtk = str(r.get("Ticker") or "").strip().upper()
+                if rtk == tk and _normalize_cd_for_key(r.get("Completion Date")) == cd_norm:
+                    if r.get("guidance_calendar_catalyst") is not True:
+                        r["guidance_calendar_catalyst"] = True
+                        stamped += 1
+                    break
+            continue
+        if key in existing_keys:
+            continue
+        rows.append(dict(e))
+        existing_keys.add(key)
+        existing_tickers.add(tk)
+        added += 1
+
+    if added > 0 or stamped > 0:
+        payload = dict(payload)
+        payload["rows"] = rows
+        # Row count fields — best effort, keep pipeline in sync.
+        if "row_count" in payload:
+            try:
+                payload["row_count"] = int(payload["row_count"]) + added
+            except (TypeError, ValueError):
+                payload["row_count"] = len(rows)
+        payload.setdefault("manual_entries_merged", added)
+    return payload
+
+
 def read_simulation_table_from_snapshot() -> dict[str, Any]:
     """Legge ``data/simulation_sheet_snapshot.json`` (nessun accesso Excel)."""
     from data_orchestrator import SIMULATION_36_HEADERS
@@ -513,18 +659,196 @@ def read_simulation_table_from_snapshot() -> dict[str, Any]:
     out["source"] = "snapshot"
     if "sheet" not in out:
         out["sheet"] = "Simulation"
-    return out
+    return _overlay_liquidity_from_enrich_cache(_merge_manual_sim_entries(out))
+
+
+def _overlay_continuation_from_snapshot(payload: dict[str, Any]) -> dict[str, Any]:
+    """Copy ``cont_*`` / ``p_continuation`` (+ meta curves) from JSON snapshot onto workbook rows.
+
+    Excel never stores nested continuation curves; enrichment lives only in
+    ``simulation_sheet_snapshot.json``. Without this overlay the Home
+    P(continuation) chart sees empty ``cont_curve_pop`` whenever the API
+    serves the live workbook.
+    """
+    rows = payload.get("rows")
+    if not isinstance(rows, list) or not rows:
+        return payload
+    snap = read_simulation_table_from_snapshot()
+    snap_rows = snap.get("rows") if isinstance(snap, dict) else None
+    if not isinstance(snap_rows, list) or not snap_rows:
+        return payload
+
+    by_key: dict[str, dict[str, Any]] = {}
+    by_ticker: dict[str, dict[str, Any]] = {}
+    for sr in snap_rows:
+        if not isinstance(sr, dict):
+            continue
+        tk = str(sr.get("Ticker") or "").strip().upper()
+        if not tk:
+            continue
+        cd_norm = _normalize_cd_for_key(sr.get("Completion Date"))
+        by_key[f"{tk}|{cd_norm}"] = sr
+        by_ticker.setdefault(tk, sr)
+
+    merged_rows: list[Any] = []
+    n_overlay = 0
+    for r in rows:
+        if not isinstance(r, dict):
+            merged_rows.append(r)
+            continue
+        tk = str(r.get("Ticker") or "").strip().upper()
+        if not tk:
+            merged_rows.append(r)
+            continue
+        cd_norm = _normalize_cd_for_key(r.get("Completion Date"))
+        src = by_key.get(f"{tk}|{cd_norm}") or by_ticker.get(tk)
+        if src is None:
+            merged_rows.append(r)
+            continue
+        out = dict(r)
+        touched = False
+        for k, v in src.items():
+            if k != "p_continuation" and not (isinstance(k, str) and k.startswith("cont_")):
+                continue
+            # Prefer snapshot enrichment (curves / scores); skip empty clears.
+            if v is None or v == "" or v == []:
+                continue
+            out[k] = v
+            touched = True
+        if touched:
+            n_overlay += 1
+        merged_rows.append(out)
+
+    if n_overlay <= 0 and "continuation_curves" not in snap:
+        return payload
+    out_payload = dict(payload)
+    out_payload["rows"] = merged_rows
+    if isinstance(snap.get("continuation_curves"), dict):
+        out_payload["continuation_curves"] = snap["continuation_curves"]
+    if n_overlay:
+        out_payload["continuation_overlay_rows"] = n_overlay
+    return out_payload
+
+
+def _sim_cell_empty(val: Any) -> bool:
+    if val is None:
+        return True
+    s = str(val).strip()
+    return s in ("", "—", "-", "n.a.", "n/a", "N/A", "None")
+
+
+def _row_liquidity_display_empty(row: dict[str, Any]) -> bool:
+    for key in ("liquidita_fy", "Liquidità (FY)", "Liquidita (FY)", "Liquidity (FY)"):
+        if key in row and not _sim_cell_empty(row.get(key)):
+            return False
+    return True
+
+
+def _overlay_liquidity_from_enrich_cache(
+    payload: dict[str, Any],
+    *,
+    cache_dir: str | Path | None = None,
+) -> dict[str, Any]:
+    """Fill missing Liquidità (FY) / liquidity_score from ``data/enrich_cache``.
+
+    Catalyst / hype sidecar rows often have Yahoo beta but never received the
+    Orchestrator financial pass, so Evaluation Lab showed ``—`` despite FY
+    ratios already sitting in the enrich cache.
+    """
+    rows = payload.get("rows")
+    if not isinstance(rows, list) or not rows:
+        return payload
+    try:
+        from orchestrator_io_paths import DATA_DIR
+        from prediction.financial_liquidity import (
+            format_liquidity_display,
+            load_liquidity_from_enrich_cache,
+        )
+    except ImportError:
+        return payload
+
+    cdir = Path(cache_dir) if cache_dir is not None else Path(DATA_DIR) / "enrich_cache"
+    if not cdir.is_dir():
+        return payload
+
+    loaded: dict[str, dict[str, Any] | None] = {}
+    merged_rows: list[Any] = []
+    n_overlay = 0
+    for r in rows:
+        if not isinstance(r, dict):
+            merged_rows.append(r)
+            continue
+        fy_empty = _row_liquidity_display_empty(r)
+        score_empty = _sim_cell_empty(r.get("liquidity_score"))
+        if not fy_empty and not score_empty:
+            merged_rows.append(r)
+            continue
+        tk = str(r.get("Ticker") or r.get("ticker") or "").strip().upper()
+        if not tk:
+            merged_rows.append(r)
+            continue
+        if tk not in loaded:
+            try:
+                loaded[tk] = load_liquidity_from_enrich_cache(tk, cache_dir=cdir)
+            except Exception:
+                loaded[tk] = None
+        liq = loaded[tk]
+        if not liq:
+            merged_rows.append(r)
+            continue
+        out = dict(r)
+        touched = False
+        for src_key, dest_key in (
+            ("liquidity_score", "liquidity_score"),
+            ("current_ratio", "current_ratio"),
+            ("quick_ratio", "quick_ratio"),
+            ("cash_ratio", "cash_ratio"),
+        ):
+            val = liq.get(src_key)
+            if val is None or not _sim_cell_empty(out.get(dest_key)):
+                continue
+            out[dest_key] = val
+            touched = True
+        if fy_empty:
+            try:
+                disp = format_liquidity_display(row=liq)
+            except Exception:
+                disp = None
+            if disp and disp not in ("—", "N/D (sanity)"):
+                out["liquidita_fy"] = disp
+                out["Liquidità (FY)"] = disp
+                touched = True
+        if touched:
+            n_overlay += 1
+        merged_rows.append(out)
+
+    if n_overlay <= 0:
+        return payload
+    out_payload = dict(payload)
+    out_payload["rows"] = merged_rows
+    out_payload["liquidity_overlay_rows"] = n_overlay
+    return out_payload
 
 
 def read_simulation_table_cached(*, xlsx_path: str | Path | None = None) -> dict[str, Any]:
     """
     Preferisce Excel; se workbook bloccato/illeggibile usa snapshot JSON.
+
+    Manual overrides in ``data/manual_sim_entries.json`` are merged into
+    the returned payload regardless of source (workbook or snapshot) so
+    positions still open on tickers dropped from the clinical feed remain
+    visible in the Portfolio tab. See ``_merge_manual_sim_entries``.
+
+    Continuation scores/curves from the JSON snapshot are overlaid onto
+    workbook rows (Excel cannot carry nested ``cont_curve_*`` arrays).
     """
     try:
         payload = read_simulation_table(xlsx_path=xlsx_path)
         if payload.get("rows") or not payload.get("error"):
             payload["source"] = "workbook"
-            return payload
+            return _overlay_liquidity_from_enrich_cache(
+                _merge_manual_sim_entries(_overlay_continuation_from_snapshot(payload))
+            )
     except WorkbookReadError:
         snap = read_simulation_table_from_snapshot()
         if snap.get("rows"):
@@ -534,12 +858,14 @@ def read_simulation_table_cached(*, xlsx_path: str | Path | None = None) -> dict
     err = str(payload.get("error") or "")
     if payload.get("rows"):
         payload["source"] = "workbook"
-        return payload
+        return _overlay_liquidity_from_enrich_cache(
+            _merge_manual_sim_entries(_overlay_continuation_from_snapshot(payload))
+        )
     snap = read_simulation_table_from_snapshot()
     if snap.get("rows"):
         snap["workbook_note"] = err or "Dati da snapshot (Excel non disponibile)."
         return snap
-    return payload
+    return _overlay_liquidity_from_enrich_cache(_merge_manual_sim_entries(payload))
 
 
 def _find_accuracy_header_row(ws, max_scan: int = 8) -> int:
@@ -761,7 +1087,13 @@ def read_financial_table_cached(*, xlsx_path: str | Path | None = None) -> dict[
 
 
 def export_financial_snapshot(*, xlsx_path: str | Path | None = None) -> dict[str, Any]:
-    """CLI: rigenera ``data/financial_sheet_snapshot.json`` da Excel."""
+    """CLI: rigenera ``data/financial_sheet_snapshot.json`` da Excel.
+
+    Dopo l'export da workbook, riapplica le quote Yahoo da ``yf.json``:
+    il foglio Excel Financial resta spesso indietro rispetto all'hourly
+    ``sync_yf_quotes_into_financial_snapshot`` (bug: morning CD-scan
+    sovrascriveva prezzi corretti con valori stale del workbook).
+    """
     payload = read_financial_table(xlsx_path=xlsx_path)
     if payload.get("rows") and not payload.get("error"):
         _write_financial_snapshot_json(payload)
@@ -770,6 +1102,18 @@ def export_financial_snapshot(*, xlsx_path: str | Path | None = None) -> dict[st
             f"data/financial_sheet_snapshot.json",
             flush=True,
         )
+        try:
+            sync_result = sync_yf_quotes_into_financial_snapshot()
+            payload["yf_quote_sync"] = sync_result
+            if sync_result.get("updated"):
+                print(
+                    f"[Financial snapshot] re-synced Yahoo quotes: "
+                    f"{sync_result.get('updated')}/{sync_result.get('total')} tickers",
+                    flush=True,
+                )
+        except Exception as exc:
+            payload["yf_quote_sync"] = {"error": str(exc)}
+            print(f"[Financial snapshot] Yahoo quote re-sync skipped: {exc}", flush=True)
     else:
         print(f"[Financial snapshot] KO — {payload.get('error', 'nessuna riga')}", flush=True)
     return payload
@@ -1284,6 +1628,16 @@ def _load_clinical_records() -> tuple[list[dict[str, Any]], list[str], str | Non
 def _norm_nct_id(v) -> str | None:
     if v is None:
         return None
+    if isinstance(v, dict):
+        # {"text": "NCT12345678", "href": "https://clinicaltrials.gov/study/NCT12345678"} shape.
+        # Text has priority; fallback on the NCT extracted from href.
+        text = str(v.get("text") or "").strip().upper().replace(" ", "")
+        m = re.match(r"^(NCT\d{8,})", text)
+        if m:
+            return m.group(1)
+        href = str(v.get("href") or "").upper().replace(" ", "")
+        m = re.search(r"(NCT\d{8,})", href)
+        return m.group(1) if m else None
     s = str(v).strip().upper().replace(" ", "")
     m = re.match(r"^(NCT\d{8,})", s)
     return m.group(1) if m else None
@@ -1647,6 +2001,69 @@ def _tickers_from_simulation_snapshot_file() -> list[str]:
         return []
 
 
+def _tickers_from_sim_outcomes_snapshot_file() -> list[str]:
+    """Ticker dei closed sim deals — servono per le correlazioni Model Lab."""
+    from orchestrator_io_paths import INVESTMENT_SIM_OUTCOMES_JSON
+
+    p = Path(INVESTMENT_SIM_OUTCOMES_JSON)
+    if not p.is_file():
+        return []
+    try:
+        import json
+
+        doc = json.loads(p.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        return []
+
+    if isinstance(doc, dict):
+        rows = doc.get("outcomes") or doc.get("rows") or []
+    elif isinstance(doc, list):
+        rows = doc
+    else:
+        rows = []
+    if isinstance(rows, dict):
+        rows = list(rows.values())
+
+    out: list[str] = []
+    seen: set[str] = set()
+    for row in rows:
+        if not isinstance(row, dict):
+            continue
+        t = str(row.get("ticker") or row.get("Ticker") or "").strip().upper()
+        if not _looks_like_ticker(t) or t in seen:
+            continue
+        seen.add(t)
+        out.append(t)
+    return sorted(out)
+
+
+def _resilience_universe_tickers() -> list[str]:
+    """Union of tickers used by the Resilience Score snapshot.
+
+    We include:
+      * Simulation sheet tickers (open sim positions).
+      * Closed sim outcome tickers (used by Model Comparison correlations).
+
+    This ensures the resilience index covers every ticker the Model Lab
+    might correlate against, not just those currently held.
+    """
+    seen: set[str] = set()
+    out: list[str] = []
+    for tk in _tickers_from_simulation_snapshot_file():
+        u = tk.strip().upper()
+        if not u or u in seen:
+            continue
+        seen.add(u)
+        out.append(u)
+    for tk in _tickers_from_sim_outcomes_snapshot_file():
+        u = tk.strip().upper()
+        if not u or u in seen:
+            continue
+        seen.add(u)
+        out.append(u)
+    return sorted(out)
+
+
 def read_sec_k8_table(
     *,
     xlsx_path: str | Path | None = None,
@@ -1873,7 +2290,7 @@ def export_desktop_snapshots(
     salta Accuracy/Clinical/Financial e i rebuild cohort/outcomes (post-pipeline).
     """
     from datetime import datetime, timezone
-    from orchestrator_io_paths import DESKTOP_DATA_MANIFEST_JSON, FINAL_XLSX
+    from orchestrator_io_paths import DATA_DIR, DESKTOP_DATA_MANIFEST_JSON, FINAL_XLSX
 
     path = Path(xlsx_path or FINAL_XLSX)
     results: dict[str, Any] = {}
@@ -1940,6 +2357,46 @@ def export_desktop_snapshots(
             print(f"[Desktop snapshots] investment_sim_outcomes ERRORE: {exc}", flush=True)
             results["investment_sim_outcomes"] = {"error": str(exc)}
 
+        # Learning Lab overview: precomputed so the API handler is a snapshot
+        # read (~20 ms) instead of a 5–15 s rebuild. Its inputs (cluster/regime
+        # cal factors, signal calibration, clinical enrichment snapshot) have
+        # all just been refreshed above, so this is the correct point to
+        # regenerate. See prediction.learning_lab.write_learning_lab_overview_snapshot.
+        print("[Desktop snapshots] learning_lab_overview…", flush=True)
+        try:
+            from prediction.learning_lab import write_learning_lab_overview_snapshot
+
+            payload = write_learning_lab_overview_snapshot()
+            results["learning_lab_overview"] = {
+                "row_count": len((payload or {}).get("history", {}).get("weeks", []) or []),
+            }
+        except Exception as exc:
+            print(f"[Desktop snapshots] learning_lab_overview ERRORE: {exc}", flush=True)
+            results["learning_lab_overview"] = {"error": str(exc)}
+
+        # Resilience Score snapshot — intrinsic recovery & growth capacity per
+        # ticker (see prediction/resilience_score.py). Built from 5y ticker
+        # closes + XBI closes; independent from SDS and Regulatory scores.
+        # Persisted so the /api/tickers/resilience-snapshot endpoint answers
+        # from a static file rather than recomputing 5y series per request.
+        print("[Desktop snapshots] resilience_scores…", flush=True)
+        try:
+            from prediction.resilience_score import write_resilience_scores_snapshot
+
+            resilience_tickers = _resilience_universe_tickers()
+            print(
+                f"[Desktop snapshots] resilience_scores universe: {len(resilience_tickers)} tickers",
+                flush=True,
+            )
+            payload = write_resilience_scores_snapshot(resilience_tickers)
+            results["resilience_scores"] = {
+                "row_count": (payload or {}).get("ticker_count", 0),
+                "skipped_count": (payload or {}).get("skipped_count", 0),
+            }
+        except Exception as exc:
+            print(f"[Desktop snapshots] resilience_scores ERRORE: {exc}", flush=True)
+            results["resilience_scores"] = {"error": str(exc)}
+
     wb_m = None
     try:
         if path.is_file():
@@ -1964,6 +2421,61 @@ def export_desktop_snapshots(
         encoding="utf-8",
     )
     print("[Desktop snapshots] Manifest -> data/desktop_data_manifest.json", flush=True)
+
+    print("[Desktop snapshots] medtech_symbols…", flush=True)
+    try:
+        from medtech_universe import MEDTECH_SYMBOLS_JSON
+
+        def _load_medtech_list(path: str) -> list[str]:
+            import json as _json
+
+            with open(path, encoding="utf-8") as fh:
+                raw = _json.load(fh)
+            if not isinstance(raw, list):
+                return []
+            return sorted({str(t).strip().upper() for t in raw if str(t).strip()})
+
+        medtech_path = Path(MEDTECH_SYMBOLS_JSON)
+        medtech_tickers = _load_medtech_list(str(medtech_path)) if medtech_path.is_file() else []
+        snap_doc = {
+            "updated_at": datetime.now(timezone.utc).isoformat(),
+            "source": str(medtech_path),
+            "tickers": medtech_tickers,
+        }
+        snap_out = Path(DATA_DIR) / "medtech_symbols_snapshot.json"
+        snap_out.write_text(
+            __import__("json").dumps(snap_doc, ensure_ascii=False, indent=2),
+            encoding="utf-8",
+        )
+        results["medtech_symbols"] = {"count": len(medtech_tickers), "path": str(snap_out)}
+        print(
+            f"[Desktop snapshots] medtech_symbols -> {snap_out} ({len(medtech_tickers)} tickers)",
+            flush=True,
+        )
+    except Exception as exc:
+        print(f"[Desktop snapshots] medtech_symbols ERRORE: {exc}", flush=True)
+        results["medtech_symbols"] = {"error": str(exc)}
+
+    print("[Desktop snapshots] mobile_dashboard…", flush=True)
+    try:
+        from scripts.mobile_dashboard_snapshot_refresh import refresh_mobile_dashboard_snapshot
+
+        results["mobile_dashboard"] = refresh_mobile_dashboard_snapshot(quiet=True)
+        if results["mobile_dashboard"].get("ok"):
+            print(
+                "[Desktop snapshots] mobile_dashboard OK — "
+                f"{results['mobile_dashboard'].get('recommendation_count', '?')} recs",
+                flush=True,
+            )
+        else:
+            print(
+                f"[Desktop snapshots] mobile_dashboard skip: {results['mobile_dashboard'].get('error')}",
+                flush=True,
+            )
+    except Exception as exc:
+        print(f"[Desktop snapshots] mobile_dashboard ERRORE: {exc}", flush=True)
+        results["mobile_dashboard"] = {"ok": False, "error": str(exc)}
+
     return {"manifest": manifest, "sheets": results}
 
 

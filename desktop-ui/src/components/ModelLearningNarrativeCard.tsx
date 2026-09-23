@@ -19,6 +19,7 @@ import {
 import { SignAccuracyCurvePanel } from "./SignAccuracyCurvePanel";
 import type { AccuracySummaryDoc } from "../data/accuracyModelData";
 import { loadSignCurveDailyDoc, type SignCurveDailyDoc } from "../data/signCurveDailyData";
+import { ModelLabAccuracyUpdatedBar } from "./ModelLabAccuracyUpdatedBar";
 import { useLang, useT } from "../shared/i18n";
 
 function fmtPct(v: number | null | undefined, digits = 1): string {
@@ -250,6 +251,9 @@ export function ModelLearningNarrativeCard({
             {t("modelLab.qc.anticipatory.lead")}
           </p>
         </div>
+        <ModelLabAccuracyUpdatedBar
+          updatedAt={(signCurveDailyProp ?? signCurveDaily)?.generated_at ?? null}
+        />
         <AnticipatoryStrongSignal
           label={
             signPeak

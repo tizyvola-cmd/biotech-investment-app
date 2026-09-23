@@ -1105,6 +1105,43 @@ def build_curve_impact_cumulative(
     return result
 
 
+def load_eis_cohort_api_payload(*, force_refresh: bool = False) -> dict[str, Any]:
+    """Performance-tab payload — prefer ``signal_calibration.json`` cache over full rebuild."""
+    from prediction.eis_cohort_weekly_history import load_weekly_history
+    from prediction.signal_audit import SIGNAL_CALIB_PATH
+
+    weekly = load_weekly_history()
+
+    if not force_refresh and SIGNAL_CALIB_PATH.is_file():
+        try:
+            cal_doc = json.loads(SIGNAL_CALIB_PATH.read_text(encoding="utf-8"))
+            curve = cal_doc.get("curve_impact_cumulative") or {}
+            comparison = curve.get("eis_cohort_comparison") or {}
+            if comparison:
+                return {
+                    "eis_cohort_comparison": comparison,
+                    "eis_magnitude_analysis": curve.get("eis_magnitude_analysis") or {},
+                    "n_simulation_events": curve.get("n_simulation_events"),
+                    "n_with_eis_data": curve.get("n_with_eis_data"),
+                    "built_at": curve.get("built_at"),
+                    "weekly_history": weekly,
+                    "cache_source": "signal_calibration.json",
+                }
+        except (OSError, json.JSONDecodeError, TypeError):
+            pass
+
+    doc = build_curve_impact_cumulative(persist_state=False, auto_enrich=not force_refresh)
+    return {
+        "eis_cohort_comparison": doc.get("eis_cohort_comparison") or {},
+        "eis_magnitude_analysis": doc.get("eis_magnitude_analysis") or {},
+        "n_simulation_events": doc.get("n_simulation_events"),
+        "n_with_eis_data": doc.get("n_with_eis_data"),
+        "built_at": doc.get("built_at"),
+        "weekly_history": weekly,
+        "cache_source": "live_rebuild",
+    }
+
+
 def _scheduled_recalib_path(
     raw: list[float | None],
     actual: list[float | None],
@@ -1138,6 +1175,7 @@ __all__ = [
     "PATH_OFFSETS",
     "RECALIB_SCHEDULE",
     "build_curve_impact_cumulative",
+    "load_eis_cohort_api_payload",
     "_extract_event",
     "_scheduled_recalib_path",
 ]

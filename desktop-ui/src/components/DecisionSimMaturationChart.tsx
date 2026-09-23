@@ -30,7 +30,7 @@ import {
 import type { PortfolioDailyPnlLedger } from "../sheet/simulationPosition";
 import type { SheetTable } from "../types";
 import { useLang, useT } from "../shared/i18n";
-import { DECISION_SIM_PAIR_CHART_HEIGHT } from "./decisionSimChartLayout";
+import { DECISION_SIM_PAIR_CHART_HEIGHT, DECISION_SIM_EXPERIMENT_CHART_HEIGHT } from "./decisionSimChartLayout";
 
 function fmtEur(n: number | null | undefined): string {
   if (n == null || !Number.isFinite(n)) return "—";
@@ -224,6 +224,7 @@ function MaturationCurveToolbar({
   onToggleGroup,
   onShowAll,
   it,
+  minimal = false,
 }: {
   curves: MaturationCurveDef[];
   visible: Record<MaturationCurveKey, boolean>;
@@ -231,6 +232,7 @@ function MaturationCurveToolbar({
   onToggleGroup: (group: "portfolio" | "sim" | "synth" | "weight") => void;
   onShowAll: () => void;
   it: boolean;
+  minimal?: boolean;
 }) {
   const groupDefs = [
     { id: "portfolio" as const, labelIt: "Portfolio", labelEn: "Portfolio" },
@@ -240,10 +242,12 @@ function MaturationCurveToolbar({
   ].filter((g) => curves.some((c) => c.group === g.id));
 
   return (
-    <div className="flex flex-wrap items-center gap-x-2 gap-y-1 shrink-0">
+    <div className={`flex flex-wrap items-center shrink-0 ${minimal ? "gap-0.5" : "gap-x-2 gap-y-1"}`}>
+      {!minimal ? (
       <span className="text-[9px] uppercase tracking-wider text-ink-muted font-semibold">
         {it ? "Mostra" : "Show"}
       </span>
+      ) : null}
       {groupDefs.map((g) => {
         const keys = curves.filter((c) => c.group === g.id).map((c) => c.key);
         const allOn = keys.every((k) => visible[k]);
@@ -254,7 +258,9 @@ function MaturationCurveToolbar({
             type="button"
             aria-pressed={anyOn}
             onClick={() => onToggleGroup(g.id)}
-            className={`inline-flex items-center gap-1 rounded-full px-2 py-0.5 text-[9px] font-semibold border transition ${
+            className={`inline-flex items-center gap-1 rounded-full font-semibold border transition ${
+              minimal ? "px-1 py-0 text-[7px]" : "px-2 py-0.5 text-[9px]"
+            } ${
               anyOn
                 ? allOn
                   ? "border-slate-300 dark:border-slate-600 bg-white dark:bg-slate-800 text-ink"
@@ -278,10 +284,14 @@ function MaturationCurveToolbar({
       <button
         type="button"
         onClick={onShowAll}
-        className="rounded-full px-2 py-0.5 text-[9px] font-medium border border-slate-200/70 dark:border-slate-700/60 text-ink-muted hover:bg-slate-50 dark:hover:bg-slate-800/60 transition"
+        className={`rounded-full font-medium border border-slate-200/70 dark:border-slate-700/60 text-ink-muted hover:bg-slate-50 dark:hover:bg-slate-800/60 transition ${
+          minimal ? "px-1 py-0 text-[7px]" : "px-2 py-0.5 text-[9px]"
+        }`}
       >
         {it ? "Tutte" : "All"}
       </button>
+      {!minimal ? (
+      <>
       <span className="hidden sm:inline text-ink-muted/40">|</span>
       {curves.map((c) => {
         const on = visible[c.key];
@@ -307,6 +317,8 @@ function MaturationCurveToolbar({
         <span className="inline-block w-2 h-2 rounded-full bg-rose-500" aria-hidden />
         SELL
       </span>
+      </>
+      ) : null}
     </div>
   );
 }
@@ -450,6 +462,7 @@ export function DecisionSimMaturationChart({
   liveEvaluations,
   paperPortfolio,
   compact = false,
+  stripMode = false,
   className,
   compareTicks,
   compareLivePiggy,
@@ -463,12 +476,14 @@ export function DecisionSimMaturationChart({
   synthSizing = null,
   sizingVariant = "equal",
   onSizingVariantChange,
+  experimentChartHeight,
 }: {
   ticks: DecisionSimTick[];
   livePiggy: ExperimentPiggyBank;
   liveEvaluations: TickerSimEvaluation[];
   paperPortfolio: PaperPosition[];
   compact?: boolean;
+  stripMode?: boolean;
   className?: string;
   compareTicks?: DecisionSimTick[];
   compareLivePiggy?: ExperimentPiggyBank;
@@ -491,11 +506,19 @@ export function DecisionSimMaturationChart({
   } | null;
   sizingVariant?: SimLoopSizingVariant;
   onSizingVariantChange?: (v: SimLoopSizingVariant) => void;
+  /** Override chart height in strip / experiment row. */
+  experimentChartHeight?: number;
 }) {
   const t = useT();
   const { lang } = useLang();
   const it = lang === "it";
-  const chartHeight = compact ? Math.max(DECISION_SIM_PAIR_CHART_HEIGHT, 180) : 220;
+  const chartHeight = experimentChartHeight
+    ? experimentChartHeight
+    : stripMode
+      ? DECISION_SIM_EXPERIMENT_CHART_HEIGHT
+      : compact
+        ? Math.max(DECISION_SIM_PAIR_CHART_HEIGHT, 180)
+        : 220;
 
   const series = useMemo(
     () =>
@@ -687,27 +710,36 @@ export function DecisionSimMaturationChart({
 
   useEffect(() => {
     if (exclusiveSizingMode) {
-      setVisibleCurves((prev) => ({
-        ...prev,
-        simClosed: sizingVariant === "equal",
-        simOpen: sizingVariant === "equal",
-        weightClosed: sizingVariant === "weight" && hasWeight,
-        weightOpen: sizingVariant === "weight" && hasWeight,
-        synthClosed: sizingVariant === "synth" && hasSynth,
-        synthOpen: sizingVariant === "synth" && hasSynth,
-      }));
+      setVisibleCurves((prev) => {
+        const next = {
+          ...prev,
+          simClosed: sizingVariant === "equal",
+          simOpen: sizingVariant === "equal",
+          weightClosed: sizingVariant === "weight" && hasWeight,
+          weightOpen: sizingVariant === "weight" && hasWeight,
+          synthClosed: sizingVariant === "synth" && hasSynth,
+          synthOpen: sizingVariant === "synth" && hasSynth,
+        };
+        const keys = Object.keys(next) as MaturationCurveKey[];
+        if (keys.every((k) => next[k] === prev[k])) return prev;
+        return next;
+      });
       return;
     }
-    // Dashboard / multi-curve: equal + synth together (subtitle promises both).
-    setVisibleCurves((prev) => ({
-      ...prev,
-      simClosed: true,
-      simOpen: true,
-      synthClosed: hasSynth,
-      synthOpen: hasSynth,
-      weightClosed: false,
-      weightOpen: false,
-    }));
+    setVisibleCurves((prev) => {
+      const next = {
+        ...prev,
+        simClosed: true,
+        simOpen: true,
+        synthClosed: hasSynth,
+        synthOpen: hasSynth,
+        weightClosed: false,
+        weightOpen: false,
+      };
+      const keys = ["simClosed", "simOpen", "synthClosed", "synthOpen", "weightClosed", "weightOpen"] as const;
+      if (keys.every((k) => next[k] === prev[k])) return prev;
+      return next;
+    });
   }, [sizingVariant, exclusiveSizingMode, hasSynth, hasWeight]);
 
   const toggleCurve = (key: MaturationCurveKey) => {
@@ -755,7 +787,9 @@ export function DecisionSimMaturationChart({
   if (chartData.length < 1) {
     return (
       <div
-        className={`tester-monitor-panel rounded-xl flex items-center justify-center ${compact ? "p-2 min-h-[120px]" : "p-3 min-h-[160px]"} ${className ?? ""}`}
+        className={`tester-monitor-panel rounded-xl flex items-center justify-center ${
+          stripMode ? "p-2 h-full" : compact ? "p-2 min-h-[120px]" : "p-3 min-h-[160px]"
+        } ${className ?? ""}`}
       >
         <p className="tester-monitor-muted text-[10px] text-center leading-relaxed px-2">
           {t("testerMonitor.decisionSim.chart.maturationEmpty")}
@@ -766,22 +800,43 @@ export function DecisionSimMaturationChart({
 
   return (
     <div
-      className={`tester-monitor-panel rounded-xl flex flex-col min-w-0 ${compact ? "p-2 space-y-1" : "p-3 space-y-1.5"} ${className ?? ""}`}
+      className={`tester-monitor-panel rounded-xl flex flex-col min-w-0 ${
+        stripMode
+          ? "p-2 h-full overflow-hidden space-y-0.5"
+          : compact
+            ? "p-2 space-y-1"
+            : "p-3 space-y-1.5"
+      } ${className ?? ""}`}
     >
-      <div className="shrink-0 min-w-0 flex flex-wrap items-start justify-between gap-1.5">
+      <div className="shrink-0 min-w-0 flex flex-wrap items-start justify-between gap-1">
         <div className="min-w-0 flex-1">
-          <p className={`tester-monitor-text font-semibold truncate ${compact ? "text-[10px]" : "text-[11px]"}`}>
-            {raWhatIfActive
-              ? t("testerMonitor.decisionSim.chart.maturationTitleRa")
-              : t("testerMonitor.decisionSim.chart.maturationTitle")}
+          <p
+            className={`tester-monitor-text font-semibold truncate ${
+              stripMode || compact ? "text-[10px]" : "text-[11px]"
+            }`}
+            title={
+              stripMode
+                ? it
+                  ? "Maturazione titoli"
+                  : "Stock maturation"
+                : undefined
+            }
+          >
+            {stripMode
+              ? it
+                ? "Maturazione"
+                : "Maturation"
+              : raWhatIfActive
+                ? t("testerMonitor.decisionSim.chart.maturationTitleRa")
+                : t("testerMonitor.decisionSim.chart.maturationTitle")}
           </p>
-          {!compact ? (
+          {!compact && !stripMode ? (
             <p className="tester-monitor-muted text-[10px] mt-0.5 leading-snug">
               {t("testerMonitor.decisionSim.chart.maturationSub")}
             </p>
           ) : null}
         </div>
-        {onSizingVariantChange ? (
+        {onSizingVariantChange && !stripMode ? (
           <SimLoopSizingVariantToggle
             value={sizingVariant}
             onChange={onSizingVariantChange}
@@ -797,6 +852,7 @@ export function DecisionSimMaturationChart({
         onToggleGroup={toggleGroup}
         onShowAll={showAllCurves}
         it={it}
+        minimal={stripMode}
       />
 
       {/* Chart wrapper: ALWAYS pinned to an explicit pixel height so Recharts'
@@ -869,7 +925,7 @@ export function DecisionSimMaturationChart({
         </ResponsiveContainer>
       </div>
 
-      {overview.length > 0 ? (
+      {overview.length > 0 && !stripMode ? (
         <div
           className={`grid gap-1.5 shrink-0 ${
             overview.length >= 3

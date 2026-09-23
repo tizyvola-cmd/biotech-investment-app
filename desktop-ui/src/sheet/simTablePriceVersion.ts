@@ -1,25 +1,19 @@
 import type { SheetTable } from "../types";
-import type { InvestSimInputs } from "./investSimStorage";
-import { reconcileInvestSimInputs, normalizedRowKey } from "./investSimKeys";
+import { normalizedRowKey } from "./investSimKeys";
 import type { SimTablePriceRow } from "./priceReadingCache";
 
 /** Firma tabella Simulation per rilevare refresh prezzi (manifest / reload). */
 export function buildSimTablePriceVersion(
   simTable: SheetTable | null | undefined,
-  inputs: InvestSimInputs,
 ): string {
   if (!simTable?.rows?.length) return "";
-  const merged = reconcileInvestSimInputs(inputs, simTable.rows);
-  const inputParts = Object.keys(merged)
-    .sort()
-    .map((k) => `${k}:${merged[k]?.capital ?? ""}:${merged[k]?.buyPrice ?? ""}`);
   const parts = [String(simTable.row_count ?? simTable.rows.length)];
   for (const r of simTable.rows) {
     const tk = String(r.Ticker ?? "");
     if (!tk || tk.includes("TOTALE")) continue;
     parts.push(`${tk}:${String(r["Prezzo Corrente ($)"] ?? "")}`);
   }
-  return `${parts.join("|")}#${inputParts.join("|")}`;
+  return parts.join("|");
 }
 
 function parseDailyPctFromRow(row: Record<string, unknown>): number | null {

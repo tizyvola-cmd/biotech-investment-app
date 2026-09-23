@@ -18,8 +18,6 @@ import {
   WATCH_DAILY_STRONG_MIN,
   WATCH_FWD_PROVISIONAL_MIN,
   WATCH_GAINER_DAILY_MIN,
-  WATCH_MATCH_MIN,
-  WATCH_MATCH_STRONG_MIN,
   WATCH_P_ENTRY_MIN,
 } from "./watchZoneEntryPolicy";
 
@@ -177,7 +175,7 @@ export type MomentumPolygonTier = "strong" | "moderate";
 export function resolveWatchMomentumPolygonTier(
   ctx: Pick<
     RecoveryProbabilityInput,
-    "matchPct" | "dailyPct24h" | "forwardPct" | "daysToCd" | "inLoss"
+    "dailyPct24h" | "forwardPct" | "daysToCd" | "inLoss"
   >,
 ): MomentumPolygonTier | null {
   if (ctx.inLoss || !isWatchZoneEnterEnabled()) return null;
@@ -186,19 +184,16 @@ export function resolveWatchMomentumPolygonTier(
   const fwd = ctx.forwardPct;
   if (fwd == null || fwd < MOMENTUM_POLYGON_FWD_MIN || fwd >= 4) return null;
   const daily = ctx.dailyPct24h;
-  const match = ctx.matchPct;
-  if (match == null || daily == null) return null;
-  if (match >= WATCH_MATCH_STRONG_MIN && daily >= WATCH_DAILY_STRONG_MIN) return "strong";
-  if (match >= MOMENTUM_POLYGON_MATCH_MODERATE && daily >= MOMENTUM_POLYGON_DAILY_MODERATE) {
-    return "moderate";
-  }
+  if (daily == null) return null;
+  if (daily >= WATCH_DAILY_STRONG_MIN) return "strong";
+  if (daily >= MOMENTUM_POLYGON_DAILY_MODERATE) return "moderate";
   return null;
 }
 
 function watchGainerRelief(
   input: Pick<
     RecoveryProbabilityInput,
-    "forwardPct" | "dailyPct24h" | "daysToCd" | "inLoss" | "matchPct" | "targetProvisional"
+    "forwardPct" | "dailyPct24h" | "daysToCd" | "inLoss" | "targetProvisional"
   >,
 ): boolean {
   if (input.inLoss || !isWatchZoneEnterEnabled() || !inWatchEntryWindow(input.daysToCd)) {
@@ -206,17 +201,12 @@ function watchGainerRelief(
   }
   const fwd = input.forwardPct;
   const daily = input.dailyPct24h;
-  const match = input.matchPct;
   return (
     fwd != null &&
     fwd >= WATCH_FWD_PROVISIONAL_MIN &&
     daily != null &&
-    match != null &&
-    match >= WATCH_MATCH_MIN &&
-    ((daily >= WATCH_DAILY_MOMENTUM_MIN && match >= WATCH_MATCH_STRONG_MIN) ||
-      (daily >= WATCH_GAINER_DAILY_MIN &&
-        input.targetProvisional === true &&
-        match >= WATCH_MATCH_STRONG_MIN) ||
+    (daily >= WATCH_DAILY_MOMENTUM_MIN ||
+      (daily >= WATCH_GAINER_DAILY_MIN && input.targetProvisional === true) ||
       (daily >= WATCH_DAILY_STRONG_MIN && input.targetProvisional === true))
   );
 }
@@ -224,7 +214,7 @@ function watchGainerRelief(
 function watchProvisionalMatchRelief(
   input: Pick<
     RecoveryProbabilityInput,
-    "forwardPct" | "daysToCd" | "inLoss" | "matchPct" | "targetProvisional"
+    "forwardPct" | "daysToCd" | "inLoss" | "targetProvisional"
   >,
 ): boolean {
   if (input.inLoss || !isWatchZoneEnterEnabled() || !inWatchEntryWindow(input.daysToCd)) {
@@ -232,8 +222,6 @@ function watchProvisionalMatchRelief(
   }
   return (
     input.targetProvisional === true &&
-    input.matchPct != null &&
-    input.matchPct >= WATCH_MATCH_STRONG_MIN &&
     input.forwardPct != null &&
     input.forwardPct >= WATCH_FWD_PROVISIONAL_MIN
   );
@@ -242,7 +230,7 @@ function watchProvisionalMatchRelief(
 export function resolveMomentumPolygonTier(
   ctx: Pick<
     RecoveryProbabilityInput,
-    "matchPct" | "dailyPct24h" | "forwardPct" | "daysToCd" | "inLoss"
+    "dailyPct24h" | "forwardPct" | "daysToCd" | "inLoss"
   >,
 ): MomentumPolygonTier | null {
   if (ctx.inLoss) return null;
@@ -251,14 +239,9 @@ export function resolveMomentumPolygonTier(
   const fwd = ctx.forwardPct;
   if (fwd == null || fwd < MOMENTUM_POLYGON_FWD_MIN || fwd >= FWD_ENTRY_MIN) return null;
   const daily = ctx.dailyPct24h;
-  const match = ctx.matchPct;
-  if (match == null || daily == null) return null;
-  if (match >= MOMENTUM_POLYGON_MATCH_STRONG && daily >= MOMENTUM_POLYGON_DAILY_STRONG) {
-    return "strong";
-  }
-  if (match >= MOMENTUM_POLYGON_MATCH_MODERATE && daily >= MOMENTUM_POLYGON_DAILY_MODERATE) {
-    return "moderate";
-  }
+  if (daily == null) return null;
+  if (daily >= MOMENTUM_POLYGON_DAILY_STRONG) return "strong";
+  if (daily >= MOMENTUM_POLYGON_DAILY_MODERATE) return "moderate";
   return null;
 }
 
@@ -316,33 +299,26 @@ export function isForwardBelowEntryThreshold(
   if (
     isWatchZoneEnterEnabled() &&
     inWatchEntryWindow(ctx.daysToCd) &&
-    (ctx.targetProvisional || (ctx.matchPct ?? 0) >= WATCH_MATCH_STRONG_MIN) &&
+    ctx.targetProvisional &&
     forwardPct >= WATCH_FWD_PROVISIONAL_MIN
   ) {
     return false;
   }
 
-  // Multi-tier score exception: soften forward ROI gate based on technical setup quality
   const sds = ctx.sdsScore ?? 0;
-  const match = ctx.matchPct ?? 0;
   const eis = ctx.eisSuperScore ?? 0;
 
-  // Tier 1: Perfect scores (SDS≥70, Match≥75, EIS≥65) → forward≥0.5%
-  const hasPerfectScores = sds >= 70 && match >= 75 && eis >= 65;
+  const hasPerfectScores = sds >= 70 && eis >= 65;
   if (hasPerfectScores && forwardPct >= FWD_ENTRY_MIN_PERFECT_SCORES) {
     return false;
   }
 
-  // Tier 2: Good scores (SDS≥60, Match≥65, EIS≥55) → forward≥1.0%
-  // Captures BCAB (Match 66%), ENGNW (Match 67%, SDS likely good)
-  const hasGoodScores = sds >= 60 && match >= 65 && eis >= 55;
+  const hasGoodScores = sds >= 60 && eis >= 55;
   if (hasGoodScores && forwardPct >= FWD_ENTRY_MIN_GOOD_SCORES) {
     return false;
   }
 
-  // Tier 3: Moderate scores (SDS≥50, Match≥60, EIS≥45) → forward≥1.5%
-  // Safety net for borderline cases with decent fundamentals
-  const hasModerateScores = sds >= 50 && match >= 60 && eis >= 45;
+  const hasModerateScores = sds >= 50 && eis >= 45;
   if (hasModerateScores && forwardPct >= FWD_ENTRY_MIN_MODERATE_SCORES) {
     return false;
   }
@@ -350,13 +326,9 @@ export function isForwardBelowEntryThreshold(
   return forwardPct < FWD_ENTRY_MIN;
 }
 
-function momentumPolygonBoost(
-  tier: MomentumPolygonTier,
-  dailyPct24h: number,
-  matchPct: number,
-): number {
-  if (tier === "strong") return Math.min(14, dailyPct24h * 2.5 + matchPct / 30);
-  return Math.min(10, dailyPct24h * 2 + matchPct / 40);
+function momentumPolygonBoost(tier: MomentumPolygonTier, dailyPct24h: number): number {
+  if (tier === "strong") return Math.min(14, dailyPct24h * 2.5);
+  return Math.min(10, dailyPct24h * 2);
 }
 
 function clamp01(n: number): number {
@@ -464,20 +436,6 @@ function factorSlope(
   }
 }
 
-function factorMatch(matchPct: number | null): { factor: number; driver?: RecoveryDriver } {
-  if (matchPct == null || !Number.isFinite(matchPct)) return { factor: 0.58 };
-  const factor = clamp01(matchPct / 100);
-  if (factor >= 0.65) return { factor };
-  return {
-    factor,
-    driver: {
-      id: "match",
-      factor,
-      labelIt: `Match poligono ${Math.round(matchPct)}%`,
-      labelEn: `Polygon match ${Math.round(matchPct)}%`,
-    },
-  };
-}
 
 function factorSds(
   score: number | null,
@@ -528,10 +486,7 @@ function factorMii(angle: number | null): { factor: number; driver?: RecoveryDri
   };
 }
 
-function factorWindow(
-  daysToCd: number | null,
-  windowCorr: number | null | undefined,
-): { factor: number; driver?: RecoveryDriver } {
+function factorWindow(daysToCd: number | null): { factor: number; driver?: RecoveryDriver } {
   let base: number;
   if (daysToCd == null || !Number.isFinite(daysToCd)) base = 0.62;
   else if (daysToCd <= 7) base = 0.72;
@@ -539,10 +494,6 @@ function factorWindow(
   else if (daysToCd <= 45) base = 0.76;
   else if (daysToCd <= 90) base = 0.64;
   else base = 0.52;
-
-  if (windowCorr != null && Number.isFinite(windowCorr)) {
-    base = clamp01(base * 0.55 + (0.45 + windowCorr * 0.35));
-  }
   return { factor: base };
 }
 
@@ -735,15 +686,9 @@ function weakSetupDampener(
   const weakMii = input.miiAngleDeg != null && input.miiAngleDeg < -5;
   const deepGap = input.curveGapPct != null && input.curveGapPct < -4;
   const momTier = !input.inLoss ? resolveMomentumPolygonTier(input) : null;
-  const opRelief = !input.inLoss && operationalGainerRelief(input);
   const weakForward =
     !momTier && input.forwardPct != null && input.forwardPct < FWD_ENTRY_MIN;
-  const weakMatch =
-    opRelief || (inWatchEntryWindow(input.daysToCd) && watchGainerRelief(input))
-      ? false
-      : input.matchPct != null &&
-        input.matchPct < (inWatchEntryWindow(input.daysToCd) ? WATCH_MATCH_MIN : 62);
-  const weakCount = [weakSds, weakMii, weakMatch, deepGap, weakForward].filter(Boolean).length;
+  const weakCount = [weakSds, weakMii, deepGap, weakForward].filter(Boolean).length;
   let damp = 1;
   if (weakCount >= 3) damp *= 0.82;
   else if (weakCount >= 2) damp *= 0.9;
@@ -821,19 +766,13 @@ function entryDecision(
 
   // Multi-tier score exception: apply relaxed forward ROI thresholds based on score quality
   const sds = sdsScore ?? 0;
-  const match = matchPct ?? 0;
   const eis = eisSuperScore ?? 0;
 
-  // Tier 1: Perfect scores → forward ≥ 0.5%
-  if (sds >= 70 && match >= 75 && eis >= 65) {
+  if (sds >= 70 && eis >= 65) {
     fwdMin = Math.min(fwdMin, FWD_ENTRY_MIN_PERFECT_SCORES);
-  }
-  // Tier 2: Good scores → forward ≥ 1.0%
-  else if (sds >= 60 && match >= 65 && eis >= 55) {
+  } else if (sds >= 60 && eis >= 55) {
     fwdMin = Math.min(fwdMin, FWD_ENTRY_MIN_GOOD_SCORES);
-  }
-  // Tier 3: Moderate scores → forward ≥ 1.5%
-  else if (sds >= 50 && match >= 60 && eis >= 45) {
+  } else if (sds >= 50 && eis >= 45) {
     fwdMin = Math.min(fwdMin, FWD_ENTRY_MIN_MODERATE_SCORES);
   }
 
@@ -853,17 +792,16 @@ export function computeRecoveryOutlook(input: RecoveryProbabilityInput): Recover
 
   const gapPart = factorCurveGap(input.curveGapPct);
   const slopePart = factorSlope(input.stabilityVerdict, input.curveRisingHold);
-  const matchPart = factorMatch(input.matchPct);
   const sdsPart = factorSds(input.sdsScore, input.sdsVeto);
   const miiPart = factorMii(input.miiAngleDeg);
-  const windowPart = factorWindow(input.daysToCd, input.windowCorr);
+  const windowPart = factorWindow(input.daysToCd);
   const eisPart = factorEis(input.eisSuperScore);
   const forwardPart = factorForward(forward);
   const arcPart = factorArcMomentum(input.segmentRoiPct, input.dailyPct24h);
   const dailyPart = factorDailyMomentum(input.dailyPct24h);
 
   const pTrack = clamp01(gapPart.factor * 0.55 + slopePart.factor * 0.45);
-  const pSetup = clamp01(matchPart.factor * 0.45 + sdsPart.factor * 0.35 + miiPart.factor * 0.2);
+  const pSetup = clamp01(sdsPart.factor * 0.55 + miiPart.factor * 0.45);
   const pWindow = windowPart.factor;
   const pEis = eisPart.factor;
 
@@ -883,7 +821,7 @@ export function computeRecoveryOutlook(input: RecoveryProbabilityInput): Recover
       Math.min(
         100,
         probabilityPct +
-          momentumPolygonBoost(momTier, input.dailyPct24h ?? 0, input.matchPct ?? 0),
+          momentumPolygonBoost(momTier, input.dailyPct24h ?? 0),
       ),
     );
   } else if (!input.inLoss && operationalGainerRelief(input)) {
@@ -897,7 +835,6 @@ export function computeRecoveryOutlook(input: RecoveryProbabilityInput): Recover
   const drivers = pickDrivers([
     gapPart,
     slopePart,
-    matchPart,
     sdsPart,
     miiPart,
     eisPart,

@@ -2,9 +2,10 @@ import { useEffect, useMemo, useState } from "react";
 import type { ChartBundle, SheetTable } from "../types";
 import { chartPointsMapFromBundle, loadSimulationChartsBundle } from "../data/simulationCharts";
 import {
-  closedSimOutcomeRowsFromDoc,
   loadInvestmentSimOutcomes,
+  type SimOutcomeRow,
 } from "../data/investmentSimOutcomesData";
+import { closedValidationOutcomeRowsFromDoc } from "../sheet/simOutcomeCycleDedup";
 import { useInvestSimInputs } from "./useInvestSimInputs";
 import { useInvestSimPortfolioHistory } from "./useInvestSimPortfolioHistory";
 import { buildMigSolidityByKey } from "../sheet/entrySolidityMig";
@@ -42,7 +43,7 @@ export function usePortfolioSuccessBridge(
     null,
   );
   const [sdsRows, setSdsRows] = useState<SdsRow[] | null>(null);
-  const [closedRows, setClosedRows] = useState<ReturnType<typeof closedSimOutcomeRowsFromDoc>>([]);
+  const [closedRows, setClosedRows] = useState<SimOutcomeRow[]>([]);
   const [outcomesLoading, setOutcomesLoading] = useState(true);
 
   useEffect(() => {
@@ -56,7 +57,7 @@ export function usePortfolioSuccessBridge(
     setOutcomesLoading(true);
     void loadInvestmentSimOutcomes().then(({ doc }) => {
       if (cancelled) return;
-      setClosedRows(closedSimOutcomeRowsFromDoc(doc));
+      setClosedRows(closedValidationOutcomeRowsFromDoc(doc));
       setOutcomesLoading(false);
     });
     return () => {

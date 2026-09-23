@@ -1,9 +1,12 @@
 """Reference verification for AI feed clinical events."""
 from clinical_pre_cd_enrichment import annotate_events_reference_verification, verify_event_reference
+from data_orchestrator import _compute_sponsor_match
 from prediction.eis_feed_quality import (
     event_has_usable_reference_text,
     filter_verified_feed_events,
+    is_study_sponsor_trusted,
     is_valid_feed_ticker,
+    recompute_record_sponsor_match,
 )
 
 
@@ -59,6 +62,36 @@ def test_vera_contamination_pembrolizumab_rejected():
         drug_tokens=["atacicept", "MAU868"],
     )
     assert not ok and m is None
+
+
+def test_shared_soc_pembrolizumab_alone_rejected():
+    """Combo-trial SOC (Keytruda) must not attach Enfortumab/bladder papers."""
+    ok, m = verify_event_reference(
+        {
+            "source_type": "publication",
+            "event_title": "Perioperative Enfortumab Vedotin and Pembrolizumab in Bladder Cancer.",
+            "summary": "Phase 3 open-label trial in muscle-invasive bladder cancer.",
+        },
+        company="Eton Pharmaceuticals, Inc.",
+        ticker="ETON",
+        drug_tokens=["pembrolizumab", "rezatapopt"],
+        expected_nct_id="NCT04585750",
+    )
+    assert not ok and m is None
+
+
+def test_study_specific_drug_still_accepted():
+    ok, m = verify_event_reference(
+        {
+            "source_type": "publication",
+            "event_title": "Rezatapopt (PC14586) in TP53 Y220C solid tumors — PYNNACLE",
+            "summary": "Phase 1/2 efficacy and safety of rezatapopt monotherapy.",
+        },
+        company="PMV Pharmaceuticals, Inc.",
+        ticker="PMVP",
+        drug_tokens=["pembrolizumab", "rezatapopt"],
+    )
+    assert ok and m in ("drug", "company+drug", "company")
 
 
 def test_vera_company_phrase_and_drug_accepted():
@@ -143,3 +176,30 @@ def test_annotate_sets_fields():
     )
     assert events[0]["reference_verified"] is True
     assert events[0]["reference_match"] == "drug"
+
+
+def test_eton_pmv_not_sponsor_match():
+    """Shared «Pharmaceuticals Inc» must not yield Exact/Partial."""
+    assert _compute_sponsor_match(
+        "Eton Pharmaceuticals, Inc.",
+        "PMV Pharmaceuticals, Inc",
+    ) == "No match"
+    rec = {
+        "ticker": "ETON",
+        "company": "Eton Pharmaceuticals, Inc.",
+        "sponsor_match": "Exact",  # stale
+        "meta": {"lead_sponsor": "PMV Pharmaceuticals, Inc"},
+    }
+    assert recompute_record_sponsor_match(rec) == "No match"
+    assert is_study_sponsor_trusted(rec) is False
+
+
+def test_c4_therapeutics_exact_sponsor_trusted():
+    """C4 Therapeutics: Exact match but no len≥3 distinctive token besides generics."""
+    rec = {
+        "ticker": "CCCC",
+        "company": "C4 Therapeutics, Inc.",
+        "meta": {"lead_sponsor": "C4 Therapeutics, Inc."},
+    }
+    assert recompute_record_sponsor_match(rec) == "Exact"
+    assert is_study_sponsor_trusted(rec) is True

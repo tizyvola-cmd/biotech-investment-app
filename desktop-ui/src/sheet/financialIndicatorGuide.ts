@@ -58,7 +58,7 @@ export function financialIndicatorSections(it: boolean): FinGuideSection[] {
         id: "risk",
         title: "Rischio",
         entries: [
-          { id: "beta", title: "Beta", body: "Beta 5Y vs mercato. >2 ⚡ · 1,35–2 verde · <0,85 navy. Non è consulenza finanziaria." },
+          { id: "beta", title: "Beta", body: "Correlazione 5Y vs mercato (non direzione né rischio). β² ≈ quota varianza market-driven. Verde <0,85 = segnale company-specific più pulito · ambra >1,35 · ⚡ >2. Non è consulenza finanziaria." },
         ],
       },
     ];
@@ -107,7 +107,7 @@ export function financialIndicatorSections(it: boolean): FinGuideSection[] {
       id: "risk",
       title: "Risk",
       entries: [
-        { id: "beta", title: "Beta", body: "5Y beta vs market. >2 ⚡ · 1.35–2 green · <0.85 navy. Not financial advice." },
+        { id: "beta", title: "Beta", body: "5Y benchmark correlation (not direction or risk). β² ≈ market-driven variance share. Green <0.85 = cleaner company-specific signal · amber >1.35 · ⚡ >2. Not financial advice." },
       ],
     },
   ];

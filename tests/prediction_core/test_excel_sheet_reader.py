@@ -6,7 +6,37 @@ from zipfile import BadZipFile
 
 import pytest
 
-from excel_sheet_reader import WorkbookReadError, _load_workbook_readonly, _preflight_xlsx
+from excel_sheet_reader import (
+    WorkbookReadError,
+    _load_workbook_readonly,
+    _norm_nct_id,
+    _preflight_xlsx,
+)
+
+
+def test_norm_nct_id_handles_scalar() -> None:
+    assert _norm_nct_id("NCT04005690") == "NCT04005690"
+    assert _norm_nct_id("nct04005690") == "NCT04005690"
+    assert _norm_nct_id("  NCT04005690  ") == "NCT04005690"
+    assert _norm_nct_id(None) is None
+    assert _norm_nct_id("garbage") is None
+    assert _norm_nct_id("") is None
+
+
+def test_norm_nct_id_handles_link_dict() -> None:
+    """Rows loaded via _scalar_to_nct_link store NCT as {"text": ..., "href": ...}.
+
+    Regression guard for the bug that let mismatched NCTs slip past
+    _clinical_row_matches_catalyst (str(dict) never matched ^NCT\\d{8,}).
+    """
+    cell = {"text": "NCT04005690", "href": "https://clinicaltrials.gov/study/NCT04005690"}
+    assert _norm_nct_id(cell) == "NCT04005690"
+
+    cell_href_only = {"text": "", "href": "https://clinicaltrials.gov/study/NCT02035657"}
+    assert _norm_nct_id(cell_href_only) == "NCT02035657"
+
+    cell_empty = {"text": "—", "href": ""}
+    assert _norm_nct_id(cell_empty) is None
 
 
 def test_preflight_rejects_empty_file(tmp_path: Path) -> None:
@@ -296,3 +326,39 @@ def test_clinical_row_matches_catalyst_nct_or_date() -> None:
         nct_col="nct_id",
         cd_cols=["estimated_completion_date"],
     )
+
+
+def test_overlay_liquidity_from_enrich_cache_fills_catalyst_row(tmp_path: Path) -> None:
+    from excel_sheet_reader import _overlay_liquidity_from_enrich_cache
+
+    cache_dir = tmp_path / "enrich_cache"
+    cache_dir.mkdir()
+    (cache_dir / "PTGX.json").write_text(
+        '{"current_ratio": 12.71, "quick_ratio": 12.71, "cash_ratio": 22.15, "liquidity_score": 1.0}',
+        encoding="utf-8",
+    )
+    payload = {
+        "rows": [
+            {
+                "Ticker": "PTGX",
+                "guidance_calendar_catalyst": True,
+                "Beta (5Y vs mercato)": 1.79,
+            }
+        ]
+    }
+    out = _overlay_liquidity_from_enrich_cache(payload, cache_dir=cache_dir)
+    row = out["rows"][0]
+    assert row["liquidity_score"] == 1.0
+    assert "CR 12.71" in str(row.get("Liquidità (FY)") or "")
+    assert out["liquidity_overlay_rows"] == 1
+
+
+def test_overlay_liquidity_skips_rows_that_already_have_fy() -> None:
+    from excel_sheet_reader import _overlay_liquidity_from_enrich_cache
+
+    payload = {
+        "rows": [{"Ticker": "PTGX", "Liquidità (FY)": "CR 1.10 | QR 1.00", "liquidity_score": 0.55}]
+    }
+    out = _overlay_liquidity_from_enrich_cache(payload, cache_dir="/missing")
+    assert out is payload
+    assert "liquidity_overlay_rows" not in out

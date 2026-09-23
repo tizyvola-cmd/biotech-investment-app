@@ -1,10 +1,9 @@
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo } from "react";
 import type { ChartBundle, SheetTable } from "../types";
 import type { SdsRow } from "../api/supernova";
 import { buildSimRowByKeyMap } from "../sheet/investSimKeys";
 import { chartSeriesReady, peekSimulationChartsBundle } from "../data/simulationCharts";
-import { buildCdPatternTickerRecommendation } from "../sheet/cdPatternRecommendation";
-import { buildMigSolidityByKey, buildMigResultByKey, migSolidityKey } from "../sheet/entrySolidityMig";
+import { buildMigResultByKey, migSolidityKey } from "../sheet/entrySolidityMig";
 import { SimulationSparkline } from "../sheet/simulationSparkline";
 import { SlopeTrajectoryChart } from "./SlopeTrajectoryChart";
 import { buildSlopeTrajectory, canRenderSlopeTrajectory } from "../sheet/slopeRecalibCurve";
@@ -28,10 +27,8 @@ import { SlopeVerdictBanner } from "./SlopeVerdictBanner";
 import { slopeVerdictContextFromSlopes } from "../sheet/slopeVerdictContext";
 import { PortfolioTickerMark } from "./PortfolioScopeToggle";
 import { PlanProbHero } from "./PlanProbHero";
-import { CdPatternArcPanel } from "./CdPatternArcPanel";
 import { PortfolioPlanTargetChip } from "./PortfolioPlanTargetChip";
 import type { StabilityVerdict } from "../sheet/slopeStability";
-import { loadEisSuperScoreState, type EisSuperScoreState } from "../api/eisSuperScore";
 import { planProbDecisionForDisplay } from "../sheet/investDecisionSimLoop";
 import { topCompositeDrivers } from "../lib/scoring/compositeScore";
 import { useLang, useT } from "../shared/i18n";
@@ -42,7 +39,6 @@ import {
   modalGainPlanCaption,
   modalGainPlanMarkerLabel,
   modalMiiCaption,
-  modalPatternCaption,
   modalPredSparklineCaption,
   modalSlopeTrajectoryCaption,
 } from "../sheet/modalChartCaptions";
@@ -114,7 +110,6 @@ export function RecommendationAlertModal({
   chartsBundle: chartsBundleProp,
   sdsRows,
   onClose,
-  onOpenSimulationRow,
   onTrimToSynth,
 }: {
   open: boolean;
@@ -127,7 +122,6 @@ export function RecommendationAlertModal({
   chartsBundle?: ChartBundle | null;
   sdsRows?: SdsRow[] | null;
   onClose: () => void;
-  onOpenSimulationRow: (ticker: string, cd?: string, opts?: { syncToSynth?: boolean }) => void;
   onTrimToSynth?: (rowKey: string) => void;
 }) {
   const { lang } = useLang();
@@ -151,12 +145,6 @@ export function RecommendationAlertModal({
 
   const chartsReady = !alert?.seriesKey || chartSeriesReady(chartsBundle, alert.seriesKey);
 
-  const [eisSuperScoreState, setEisSuperScoreState] = useState<EisSuperScoreState | null>(null);
-
-  useEffect(() => {
-    void loadEisSuperScoreState().then(setEisSuperScoreState);
-  }, []);
-
   useEffect(() => {
     if (!open) return;
     const onKey = (e: KeyboardEvent) => {
@@ -165,11 +153,6 @@ export function RecommendationAlertModal({
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
   }, [open, onClose]);
-
-  const migSolidityByKey = useMemo(
-    () => buildMigSolidityByKey(simTable, chartsBundle, sdsRows),
-    [simTable, chartsBundle, sdsRows],
-  );
 
   const migResultByKey = useMemo(
     () => buildMigResultByKey(simTable, chartsBundle, sdsRows),
@@ -189,20 +172,6 @@ export function RecommendationAlertModal({
     }
     return buildSlopeTrajectory({ chartPoints: chartPts, simRow, daysToCd: days });
   }, [simRow, chartPts, alert?.completionDate, chartsReady]);
-
-  const patternRec = useMemo(() => {
-    if (!alert || !simRow || !simTable?.rows?.length) return null;
-    return buildCdPatternTickerRecommendation({
-      row: simRow,
-      chartPoints: chartPts,
-      investInputs: inputs,
-      sdsRows,
-      migByKey: migSolidityByKey,
-      lang: it ? "it" : "en",
-      includeEis: true,
-      eisSuperScoreState,
-    });
-  }, [alert, simRow, simTable, chartPts, inputs, sdsRows, migSolidityByKey, it, eisSuperScoreState]);
 
   const gainPlanRow = useMemo(() => {
     if (!alert || !simRow) return null;
@@ -461,20 +430,6 @@ export function RecommendationAlertModal({
             exitDecision={monitorRow.exitDecision}
           />
 
-          <div className="grid grid-cols-1 sm:grid-cols-2 gap-1.5">
-            {pipelineSteps.slice(0, 8).map((step) => (
-              <div
-                key={step.id}
-                className={`rounded-md border px-2 py-1.5 text-[10px] leading-snug ${stepToneClass(step.tone)}`}
-              >
-                <span className="font-semibold text-ink-muted uppercase tracking-wide text-[9px]">
-                  {it ? step.labelIt : step.labelEn}
-                </span>
-                <p className="mt-0.5 text-ink">{step.value}</p>
-              </div>
-            ))}
-          </div>
-
           {monitorRow.misalignmentLabels.length > 0 ? (
             <p className="text-[10px] text-amber-800 dark:text-amber-200 border border-amber-500/30 bg-amber-500/8 rounded-md px-2 py-1.5">
               {t("recommendationAlert.misalignments")}: {monitorRow.misalignmentLabels.join(" · ")}
@@ -548,25 +503,34 @@ export function RecommendationAlertModal({
             </ModalChartTile>
 
             <ModalChartTile
-              title={t("decisionLab.pattern.arcTitle")}
-              caption={modalPatternCaption(t, patternRec?.matchPct)}
+              title={t("testerMonitor.suggestionsMonitor.pipeline")}
+              caption={
+                it
+                  ? "Stessi blocchi della tab 24h — Precat, Top2, P(plan), exit, RA, Match…"
+                  : "Same blocks as 24h tab — Precat, Top2, P(plan), exit, RA, Match…"
+              }
               height={MODAL_CHART_H}
             >
-              {patternRec ? (
-                <div className="h-full w-full min-h-0 overflow-hidden flex items-center justify-center">
-                  <CdPatternArcPanel
-                    rec={patternRec}
-                    variant="mini"
-                    hideMetrics
-                    chartHeight={MODAL_CHART_H - 4}
-                    className="border-0 bg-transparent p-0 w-full shadow-none"
-                  />
+              <div className="h-full w-full min-h-0 overflow-y-auto px-1 py-0.5">
+                <div className="grid grid-cols-1 gap-1.5">
+                  {pipelineSteps.map((step) => (
+                    <div
+                      key={step.id}
+                      className={`rounded-md border px-2 py-1.5 text-[10px] leading-snug ${stepToneClass(step.tone)}`}
+                    >
+                      <span className="font-semibold text-ink-muted uppercase tracking-wide text-[9px]">
+                        {it ? step.labelIt : step.labelEn}
+                      </span>
+                      <p className="mt-0.5 text-ink">{step.value}</p>
+                    </div>
+                  ))}
                 </div>
-              ) : (
-                <p className="text-xs text-ink-muted h-full flex items-center justify-center px-2 text-center">
-                  {t("decisionLab.pattern.empty")}
-                </p>
-              )}
+                {monitorRow.exitReason ? (
+                  <p className="text-[10px] text-ink-muted mt-2 italic leading-snug px-0.5">
+                    {monitorRow.exitReason}
+                  </p>
+                ) : null}
+              </div>
             </ModalChartTile>
           </div>
 
@@ -611,18 +575,6 @@ export function RecommendationAlertModal({
               })}
             </button>
           ) : null}
-          <button
-            type="button"
-            className="btn-ghost text-xs border border-[rgb(var(--border))]/50"
-            onClick={() => {
-              onOpenSimulationRow(alert.ticker, alert.completionDate, {
-                syncToSynth: isSynthAlert,
-              });
-              onClose();
-            }}
-          >
-            {t("recommendationAlert.openSimulation")}
-          </button>
           <button type="button" className="btn-primary text-xs" onClick={onClose}>
             {t("recommendationAlert.acknowledge")}
           </button>

@@ -170,3 +170,41 @@ def test_verdict_corr_noise_band():
     assert _verdict_corr(0.5, n, mn) == "neutral"  # was "learning" before noise band
     assert _verdict_corr(2.5, n, mn) == "learning"
     assert _verdict_corr(5.0, n, mn) == "improving"
+
+
+def test_weeks_with_live_snapshot_appends_when_disk_lags(monkeypatch):
+    from datetime import date
+
+    from prediction import learning_lab as lab
+
+    disk_week = "2026-06-24"
+    today = date.today().isoformat()
+    if today <= disk_week:
+        pytest.skip("test needs today after 2026-06-24")
+
+    weeks = [{"week": disk_week, "n_outcomes": 120, "mae_with_all": 9.8, "dir_with_all": 0.5}]
+    monkeypatch.setattr(lab, "collect_resolved_outcomes_from_sources", lambda: [{"pred": 1.0, "actual": 2.0}] * 20)
+    monkeypatch.setattr(lab, "resolve_regime_outcomes_for_learning", lambda _o=None: [])
+    monkeypatch.setattr(
+        lab,
+        "compute_counterfactual_layer_metrics",
+        lambda _o, _r=None: {
+            "n_outcomes": 20,
+            "n_regime_outcomes": 20,
+            "mae_with_all": 9.5,
+            "dir_with_all": 0.52,
+            "mae_baseline": 9.6,
+            "mae_after_cluster": 9.4,
+            "mae_after_regime": 9.3,
+            "dir_after_cluster": 0.51,
+            "dir_after_regime": 0.53,
+        },
+    )
+    monkeypatch.setattr(lab, "get_global_cal_factor", lambda: 1.0)
+    monkeypatch.setattr(lab, "_load_json", lambda _p, _d: {"clusters": {}})
+
+    out = lab.weeks_with_live_snapshot_for_ui(weeks)
+    assert len(out) == 2
+    assert out[-1]["week"] == today
+    assert out[-1]["live_snapshot"] is True
+    assert out[-1]["mae_with_all"] == 9.5

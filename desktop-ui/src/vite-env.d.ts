@@ -37,6 +37,16 @@ interface SupernovaDesktopBridge {
    * Restituisce una funzione per rimuovere il listener.
    */
   onAccuracyMonitorUpdated?: (callback: () => void) => () => void;
+  /** Open a tab in a secondary Electron BrowserWindow (`#screen=…&popout=1`). */
+  openScreenWindow?: (screen: string) => Promise<{
+    ok: boolean;
+    reused?: boolean;
+    screen?: string;
+    error?: string;
+  }>;
+  /** Chromium layout zoom for this window (avoids CSS-zoom GPU blowups). */
+  setPageZoomFactor?: (zoom: number) => number;
+  getPageZoomFactor?: () => number;
   shell?: SupernovaDesktopShell;
 }
 

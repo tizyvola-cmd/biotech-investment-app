@@ -208,34 +208,3 @@ export async function loadInvestmentSimOutcomes(opts?: {
       `File missing (${OUTCOMES_FILE}). Set capital in Investment, then Reload in Decision Lab.`,
   };
 }
-
-export function isSimOutcomeOpen(r: SimOutcomeRow): boolean {
-  if (typeof r.decision_current_open === "boolean") return r.decision_current_open;
-  if (!r.exit_ts) return true;
-  return false;
-}
-
-/** One row per position key — keep latest exit when the log has duplicate closes. */
-export function dedupeClosedSimOutcomeRows(rows: SimOutcomeRow[]): SimOutcomeRow[] {
-  const closed = rows.filter((r) => !isSimOutcomeOpen(r));
-  const byKey = new Map<string, SimOutcomeRow>();
-  for (const r of closed) {
-    const prev = byKey.get(r.row_key);
-    if (!prev) {
-      byKey.set(r.row_key, r);
-      continue;
-    }
-    const aTs = Date.parse(r.exit_ts ?? "");
-    const bTs = Date.parse(prev.exit_ts ?? "");
-    const pick =
-      Number.isFinite(aTs) && Number.isFinite(bTs)
-        ? aTs > bTs
-        : (r.pnl_pct ?? -1e9) > (prev.pnl_pct ?? -1e9);
-    if (pick) byKey.set(r.row_key, r);
-  }
-  return [...byKey.values()];
-}
-
-export function closedSimOutcomeRowsFromDoc(doc: SimOutcomesDoc | null | undefined): SimOutcomeRow[] {
-  return dedupeClosedSimOutcomeRows(doc?.rows ?? []);
-}

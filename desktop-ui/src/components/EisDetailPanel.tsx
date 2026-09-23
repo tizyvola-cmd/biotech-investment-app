@@ -1,80 +1,80 @@
-import { buildTickerEisDetail, type TickerEisEventDetail } from "../sheet/tickerEisSummary";
-import { eisBarPercent, eisColor, type EisBreakdown } from "../sheet/eventImpactScore";
-import { openExternalUrl } from "../sheet/k8ChartLinks";
+import { useMemo, useState, type SyntheticEvent } from "react";
+import { buildTickerEisDetail, isCtgovRegistryFeedEvent, type TickerEisEventDetail } from "../sheet/tickerEisSummary";
+import { clinicalEventsLinkedToProduct, clinicalNewsEventsOnly, fdaBriefingEventsLinkedToProduct, isFdaBriefingEvent } from "../sheet/tickerImpactEvents";
+import { resolveEventMarketEisHorizons } from "../sheet/eventMarketEisHorizons";
+import { formatNewsDimScore } from "../sheet/newsDimensionScores";
+import { EisFreeNotesBox } from "./EisCompetitionNotesBox";
+import { ProductClinicalLeadBlock } from "./ProductClinicalLeadBlock";
+import { TickerCompany30dCatalystPanel } from "./ClinicalDevelopmentLaneChart";
+import { useTickerGuidanceEvents } from "./TickerCatalystEventsTable";
+import { collectDiseaseSocFromRecords } from "../sheet/clinicalSocCompare";
 import {
-  ClinicalIndicatorChips,
-  ClinicalIndicatorSummaryBlock,
-} from "./ClinicalIndicatorSummary";
-import { prepareClinicalIndicators } from "../sheet/clinicalIndicators";
+  collectEisProductBriefing,
+} from "../sheet/eisProductBriefing";
+import { EisEventDetailModal } from "./EisEventDetailModal";
+import { EventMarketEisHorizonChips } from "./EventMarketEisHorizonChips";
+import { eisScoreLegendCopy, ScoreChipTip } from "./EisScoreLegendHover";
+import { NctStudyLink } from "./EisStudyContextHeader";
+import { openExternalUrl, normalizeExternalHref } from "../sheet/k8ChartLinks";
+import type { ClinicalPreCdRecord, RegulatoryRiskSnapshot } from "../api/supernova";
+import {
+  dismissEisNews,
+  eisClinicalNewsStableId,
+  useDismissedEisNewsIds,
+} from "../sheet/eisNewsDismiss";
 
-function NctStudyLink({
-  nctId,
-  href,
+/** Green / red pill tone (readable on light + dark — not muted grey). */
+function dimTone(n: number): { color: string; border: string; bg: string } {
+  if (n > 0) {
+    return { color: "#16a34a", border: "rgba(22,163,74,0.55)", bg: "rgba(22,163,74,0.16)" };
+  }
+  if (n < 0) {
+    return { color: "#dc2626", border: "rgba(220,38,38,0.55)", bg: "rgba(220,38,38,0.14)" };
+  }
+  return { color: "#64748b", border: "rgba(100,116,139,0.45)", bg: "rgba(100,116,139,0.12)" };
+}
+
+function sumDimScores(
+  events: TickerEisEventDetail[],
+  pick: (ev: TickerEisEventDetail) => number | null | undefined,
+): number | null {
+  let sum = 0;
+  let n = 0;
+  for (const ev of events) {
+    const s = pick(ev);
+    if (s == null || !Number.isFinite(s)) continue;
+    sum += s;
+    n += 1;
+  }
+  return n > 0 ? Math.round(sum * 10) / 10 : null;
+}
+
+/** Header Σ chip — same layout as Financial “Σ Fin +0.3” (one dimension only). */
+function SumDimChip({
+  label,
+  sum,
+  tip,
 }: {
-  nctId: string;
-  href: string;
+  label: string;
+  sum: number | null;
+  tip: string;
 }) {
+  if (sum == null) return null;
+  const tone = dimTone(sum);
   return (
-    <a
-      href={href}
-      target="_blank"
-      rel="noopener noreferrer"
-      className="inline-flex items-center gap-1 text-[10px] font-semibold text-[rgb(var(--accent))] underline decoration-[rgb(var(--accent))]/50 underline-offset-2 hover:decoration-[rgb(var(--accent))]"
-      onClick={(e) => openExternalUrl(href, e)}
-    >
-      {nctId}
-      <span className="opacity-60 no-underline">↗</span>
-      <span className="font-normal text-ink-muted no-underline">
-        · ClinicalTrials.gov
+    <ScoreChipTip tip={tip} align="right">
+      <span
+        className="inline-flex items-center text-base font-bold px-2.5 py-1 rounded-full tabular-nums cursor-help"
+        style={{
+          color: tone.color,
+          border: `1px solid ${tone.border}`,
+          background: tone.bg,
+        }}
+      >
+        Σ {label} {formatNewsDimScore(sum)}
       </span>
-    </a>
+    </ScoreChipTip>
   );
-}
-
-function StudyMetaRow({
-  nctId,
-  studyUrl,
-  studyPhase,
-  feedLabels,
-  studyConditions,
-}: {
-  nctId: string | null;
-  studyUrl: string | null;
-  studyPhase: string | null;
-  feedLabels: string[];
-  studyConditions: string | null;
-}) {
-  if (!nctId && !studyPhase && !feedLabels.length && !studyConditions) return null;
-  return (
-    <div className="flex flex-wrap items-center gap-x-2 gap-y-1 mt-1.5 text-[10px] text-ink-muted">
-      {nctId && studyUrl ? (
-        <NctStudyLink nctId={nctId} href={studyUrl} />
-      ) : nctId ? (
-        <span className="font-mono">{nctId}</span>
-      ) : null}
-      {studyPhase ? (
-        <span className="rounded bg-[rgb(var(--surface-3))]/80 px-1.5 py-0.5 font-semibold uppercase tracking-wide">
-          {studyPhase}
-        </span>
-      ) : null}
-      {feedLabels.length ? <span>{feedLabels.join(" · ")}</span> : null}
-      {studyConditions ? (
-        <span className="w-full text-[10px] text-ink-muted/90 leading-snug line-clamp-2">
-          {studyConditions}
-        </span>
-      ) : null}
-    </div>
-  );
-}
-
-function fmtPct(v: number | null | undefined): string {
-  if (v == null || !Number.isFinite(v)) return "—";
-  return `${v >= 0 ? "+" : ""}${v.toFixed(1)}%`;
-}
-
-function fmtNum(v: number | null | undefined, digits = 2): string {
-  if (v == null || !Number.isFinite(v)) return "—";
-  return `${v >= 0 ? "+" : ""}${v.toFixed(digits)}`;
 }
 
 function fmtDate(iso: string | null, it: boolean): string {
@@ -88,157 +88,513 @@ function fmtDate(iso: string | null, it: boolean): string {
   });
 }
 
-function BreakdownGrid({ b, it }: { b: EisBreakdown; it: boolean }) {
-  const w = b.weights;
-  return (
-    <div className="grid grid-cols-2 sm:grid-cols-4 gap-2 text-[10px] tabular-nums">
-      <div className="rounded border border-[rgb(var(--border))]/40 bg-white/50 dark:bg-black/10 px-2 py-1">
-        <p className="text-ink-muted/80">{it ? "ΔP 1g" : "ΔP 1d"}</p>
-        <p className="font-semibold">{fmtPct(b.delta_p_1d)}</p>
-        <p className="text-[9px] text-ink-muted">×{(w.w1 * 100).toFixed(0)}%</p>
-      </div>
-      <div className="rounded border border-[rgb(var(--border))]/40 bg-white/50 dark:bg-black/10 px-2 py-1">
-        <p className="text-ink-muted/80">{it ? "ΔP 3g" : "ΔP 3d"}</p>
-        <p className="font-semibold">{fmtPct(b.delta_p_3d)}</p>
-        <p className="text-[9px] text-ink-muted">×{(w.w2 * 100).toFixed(0)}%</p>
-      </div>
-      <div className="rounded border border-[rgb(var(--border))]/40 bg-white/50 dark:bg-black/10 px-2 py-1">
-        <p className="text-ink-muted/80">{it ? "Volume" : "Volume"}</p>
-        <p className="font-semibold">{fmtNum(b.vol_term)}</p>
-        <p className="text-[9px] text-ink-muted">×{(w.w3 * 100).toFixed(0)}%</p>
-      </div>
-      <div className="rounded border border-[rgb(var(--border))]/40 bg-white/50 dark:bg-black/10 px-2 py-1">
-        <p className="text-ink-muted/80">KPI / sent</p>
-        <p className="font-semibold">
-          {b.kpi_score != null ? fmtNum(b.kpi_score) : fmtNum(b.sent_term)}
-        </p>
-        <p className="text-[9px] text-ink-muted">×{(w.w4 * 100).toFixed(0)}%</p>
-      </div>
-    </div>
-  );
-}
+export function EisEventCard({
+  ev,
+  it,
+  ticker,
+  compact = false,
+}: {
+  ev: TickerEisEventDetail;
+  it: boolean;
+  ticker?: string;
+  /** Lean card for dense lists. */
+  compact?: boolean;
+}) {
+  const [detailOpen, setDetailOpen] = useState(false);
+  /** Local hide so × always removes the card even if list filters lag. */
+  const [removed, setRemoved] = useState(false);
+  const dismissedNews = useDismissedEisNewsIds();
+  const horizons = resolveEventMarketEisHorizons(ev.rawEvent ?? {});
+  const bodyPreview = ev.summary?.trim() || ev.title;
+  const isTruncated = bodyPreview.length > 180;
+  const articleHref = normalizeExternalHref(ev.link);
+  const studyHref = normalizeExternalHref(ev.studyUrl);
+  const dismissId = eisClinicalNewsStableId({
+    ticker: ticker || "",
+    eventDate: ev.eventDate,
+    title: ev.title,
+    link: ev.link,
+    sourceType: ev.sourceType,
+  });
+  if (removed || dismissedNews.has(dismissId)) return null;
 
-function EventCard({ ev, it }: { ev: TickerEisEventDetail; it: boolean }) {
-  const color = eisColor(ev.breakdown.score);
-  const w = eisBarPercent(ev.breakdown.score);
-  const arrow = ev.breakdown.score >= 5 ? "↑" : ev.breakdown.score <= -5 ? "↓" : "–";
-  const eventIndicators = prepareClinicalIndicators(ev.indicators);
+  const clin = ev.clinicalScore;
+  const clinTone = clin != null && Number.isFinite(clin) ? dimTone(clin) : null;
+  const fin = ev.financialScore;
+  const corp = ev.corporateScore;
+  const acc = ev.marketAccessScore;
+  const showFin = fin != null && Number.isFinite(fin) && Math.abs(fin) >= 0.15;
+  const showCorp = corp != null && Number.isFinite(corp) && Math.abs(corp) >= 0.15;
+  const showAcc = acc != null && Number.isFinite(acc) && Math.abs(acc) >= 0.15;
+
+  const removeCard = (e: SyntheticEvent) => {
+    e.preventDefault();
+    e.stopPropagation();
+    setRemoved(true);
+    dismissEisNews(dismissId);
+  };
 
   return (
-    <article className="rounded-lg border border-[rgb(var(--border))]/45 bg-surface/60 p-3 space-y-2">
-      <div className="flex flex-wrap items-start justify-between gap-2">
-        <div className="min-w-0 flex-1">
-          <div className="flex flex-wrap items-center gap-2 mb-1">
-            <span className="text-[10px] font-semibold px-1.5 py-0.5 rounded bg-[rgb(var(--surface-3))]/80 text-ink-muted">
-              {ev.sourceLabel}
-            </span>
-            <span className="text-[10px] text-ink-muted tabular-nums">{fmtDate(ev.eventDate, it)}</span>
-          </div>
-          <h4 className="text-sm font-semibold text-ink leading-snug">{ev.title}</h4>
-          {ev.summary && ev.summary !== ev.title ? (
-            <p className="text-[11px] text-ink-muted mt-1 leading-snug line-clamp-3">{ev.summary}</p>
-          ) : null}
-          {ev.studyTitle ? (
-            <p className="text-[11px] font-medium text-ink/90 mt-1.5 leading-snug">{ev.studyTitle}</p>
-          ) : null}
-          {ev.nctId && ev.studyUrl ? (
-            <div className="mt-1">
-              <NctStudyLink nctId={ev.nctId} href={ev.studyUrl} />
+    <>
+      <article
+        className={`relative rounded-lg border border-[rgb(var(--border))]/45 bg-surface/60 space-y-2 ${
+          compact ? "p-2.5 pt-5" : "p-3 pt-6"
+        }`}
+      >
+        <button
+          type="button"
+          className="absolute left-1.5 top-1.5 z-20 flex h-5 w-5 items-center justify-center rounded border border-[rgb(var(--border))]/35 bg-[rgb(var(--surface-3))]/90 text-[12px] leading-none text-ink-muted hover:bg-rose-500/20 hover:text-rose-500 hover:border-rose-500/40 transition-colors cursor-pointer"
+          aria-label={it ? "Elimina questa news" : "Delete this news"}
+          title={it ? "Elimina dalla lista" : "Remove from list"}
+          onPointerDown={removeCard}
+          onClick={removeCard}
+        >
+          ×
+        </button>
+        <div className="flex flex-wrap items-start justify-between gap-2">
+          <div className="min-w-0 flex-1">
+            <div className="flex flex-wrap items-center gap-2 mb-1">
+              <span className="text-[10px] font-semibold px-1.5 py-0.5 rounded bg-[rgb(var(--surface-3))]/80 text-ink-muted">
+                {ev.sourceLabel}
+              </span>
+              <span className="text-[10px] text-ink-muted tabular-nums">{fmtDate(ev.eventDate, it)}</span>
             </div>
-          ) : ev.nctId ? (
-            <span className="text-[10px] font-mono text-ink-muted mt-1 inline-block">{ev.nctId}</span>
-          ) : null}
-        </div>
-        <div className="shrink-0 text-right">
-          <span
-            className="inline-flex items-center gap-1 text-[12px] font-bold px-2 py-0.5 rounded-full"
-            style={{ background: `${color}18`, color, border: `1px solid ${color}40` }}
-          >
-            {arrow} EIS {ev.breakdown.score >= 0 ? "+" : ""}
-            {ev.breakdown.score.toFixed(1)}
-          </span>
-          <div className="h-1.5 w-20 bg-slate-200/80 rounded-full mt-1.5 ml-auto overflow-hidden">
-            <div className="h-full rounded-full" style={{ width: `${w}%`, background: color }} />
+            <h4
+              className={`font-semibold text-ink leading-snug ${compact ? "text-[13px] line-clamp-2" : "text-sm"}`}
+            >
+              {ev.companyAffiliated ? (
+                <span
+                  className="mr-1 inline-block text-amber-300"
+                  title={
+                    it
+                      ? "Autore affiliato alla società"
+                      : "Author affiliated with the company"
+                  }
+                  aria-label={
+                    it
+                      ? "Autore affiliato alla società"
+                      : "Author affiliated with the company"
+                  }
+                >
+                  ★
+                </span>
+              ) : null}
+              {ev.title}
+            </h4>
+            {ev.isPaper || ev.abstract || (!compact && ev.summary && ev.summary !== ev.title) ? (
+              <div className="mt-2 space-y-1.5">
+                {ev.isPaper || ev.abstract ? (
+                  <>
+                    {(() => {
+                      const paperSecs = (ev.sectionSummaries || [])
+                        .map((s) => ({
+                          heading: (s.heading || "").trim(),
+                          summary: (s.summary || "").trim(),
+                        }))
+                        .filter((s) => s.summary)
+                        .filter((s) => {
+                          const h = s.heading;
+                          if (/^abstract$/i.test(h)) return false;
+                          if (/article\s*\/\s*brief/i.test(h)) return false;
+                          return /introduction|background|results?|discussion|conclusions?/i.test(
+                            h,
+                          );
+                        })
+                        .map((s) => {
+                          const h = s.heading;
+                          const label = /introduction|background/i.test(h)
+                            ? "Introduction"
+                            : /results?/i.test(h)
+                              ? "Results"
+                              : "Discussion";
+                          return { label, summary: s.summary };
+                        });
+                      const order = ["Introduction", "Results", "Discussion"] as const;
+                      const byLabel = new Map<string, string>();
+                      for (const s of paperSecs) {
+                        if (!byLabel.has(s.label)) byLabel.set(s.label, s.summary);
+                      }
+                      const ordered = order
+                        .filter((l) => byLabel.has(l))
+                        .map((l) => ({ label: l, summary: byLabel.get(l)! }));
+                      /** Company papers: full Intro/Results/Discussion in the main card. */
+                      const showFull = Boolean(ev.companyAffiliated) || !compact;
+                      if (ordered.length) {
+                        return ordered.map((sec) => (
+                          <div key={sec.label}>
+                            <p className="text-[9px] font-bold uppercase tracking-wide text-ink-muted">
+                              {sec.label}
+                            </p>
+                            <p
+                              className={`text-[11px] leading-snug mt-0.5 text-ink whitespace-pre-wrap ${
+                                showFull ? "" : "line-clamp-5"
+                              }`}
+                            >
+                              {sec.summary}
+                            </p>
+                          </div>
+                        ));
+                      }
+                      return (
+                        <div>
+                          <p className="text-[9px] font-bold uppercase tracking-wide text-ink-muted">
+                            Abstract
+                          </p>
+                          <p
+                            className={`text-[11px] text-ink leading-snug mt-0.5 whitespace-pre-wrap ${
+                              showFull ? "" : "line-clamp-6"
+                            }`}
+                          >
+                            {(ev.abstract || "").trim() ||
+                              (it
+                                ? "Abstract non disponibile."
+                                : "Abstract not available.")}
+                          </p>
+                        </div>
+                      );
+                    })()}
+                  </>
+                ) : (
+                  <p className="text-[11px] text-ink-muted leading-snug line-clamp-3">
+                    {ev.summary}
+                  </p>
+                )}
+              </div>
+            ) : null}
+            {!compact && ev.studyTitle ? (
+              <p className="text-[11px] font-medium text-ink/90 mt-1.5 leading-snug">{ev.studyTitle}</p>
+            ) : null}
+            {!compact && ev.nctId && studyHref ? (
+              <div className="mt-1">
+                <NctStudyLink nctId={ev.nctId} href={studyHref} />
+              </div>
+            ) : !compact && ev.nctId ? (
+              <span className="text-[10px] font-mono text-ink-muted mt-1 inline-block">{ev.nctId}</span>
+            ) : null}
+          </div>
+          <div className="shrink-0 text-right space-y-1.5">
+            <ScoreChipTip tip={eisScoreLegendCopy(it).clin} align="right">
+              <span
+                className="inline-flex items-center text-[12px] font-bold px-2 py-0.5 rounded-full tabular-nums cursor-help"
+                style={
+                  clinTone
+                    ? {
+                        background: clinTone.bg,
+                        color: clinTone.color,
+                        border: `1px solid ${clinTone.border}`,
+                      }
+                    : {
+                        background: "rgba(100,116,139,0.12)",
+                        color: "#64748b",
+                        border: "1px solid rgba(100,116,139,0.4)",
+                      }
+                }
+              >
+                Clin {formatNewsDimScore(clin ?? null)}
+              </span>
+            </ScoreChipTip>
+            {showFin || showCorp || showAcc ? (
+              <div className="flex flex-wrap justify-end gap-1">
+                {showFin ? (
+                  <ScoreChipTip tip={eisScoreLegendCopy(it).fin} align="right">
+                    <span
+                      className="inline-flex items-center text-[11px] font-bold px-1.5 py-0.5 rounded-full tabular-nums cursor-help"
+                      style={{
+                        background: dimTone(fin!).bg,
+                        color: dimTone(fin!).color,
+                        border: `1px solid ${dimTone(fin!).border}`,
+                      }}
+                    >
+                      Fin {formatNewsDimScore(fin)}
+                    </span>
+                  </ScoreChipTip>
+                ) : null}
+                {showCorp ? (
+                  <ScoreChipTip tip={eisScoreLegendCopy(it).corp} align="right">
+                    <span
+                      className="inline-flex items-center text-[11px] font-bold px-1.5 py-0.5 rounded-full tabular-nums cursor-help"
+                      style={{
+                        background: dimTone(corp!).bg,
+                        color: dimTone(corp!).color,
+                        border: `1px solid ${dimTone(corp!).border}`,
+                      }}
+                    >
+                      Corp {formatNewsDimScore(corp)}
+                    </span>
+                  </ScoreChipTip>
+                ) : null}
+                {showAcc ? (
+                  <ScoreChipTip tip={eisScoreLegendCopy(it).acc} align="right">
+                    <span
+                      className="inline-flex items-center text-[11px] font-bold px-1.5 py-0.5 rounded-full tabular-nums cursor-help"
+                      style={{
+                        background: dimTone(acc!).bg,
+                        color: dimTone(acc!).color,
+                        border: `1px solid ${dimTone(acc!).border}`,
+                      }}
+                    >
+                      Acc {formatNewsDimScore(acc)}
+                    </span>
+                  </ScoreChipTip>
+                ) : null}
+              </div>
+            ) : null}
+            <EventMarketEisHorizonChips horizons={horizons} it={it} />
           </div>
         </div>
-      </div>
-      <BreakdownGrid b={ev.breakdown} it={it} />
-      <div className="border-t border-[rgb(var(--border))]/30 pt-2 space-y-1.5">
-        <p className="text-[9px] uppercase tracking-wide font-semibold text-ink-muted/85">
-          {it ? "Indici clinici (componente KPI EIS)" : "Clinical indices (EIS KPI component)"}
-        </p>
-        <ClinicalIndicatorChips indicators={eventIndicators} it={it} maxShown={4} />
-      </div>
-      {ev.impactNote ? (
-        <p className="text-[10px] text-ink-muted leading-snug border-t border-[rgb(var(--border))]/30 pt-2">
-          {ev.impactNote}
-        </p>
+        {!compact && ev.impactNote ? (
+          <p className="text-[10px] text-ink-muted leading-snug border-t border-[rgb(var(--border))]/30 pt-2 line-clamp-2">
+            {ev.impactNote}
+          </p>
+        ) : null}
+        <div className="flex flex-wrap items-center gap-x-3 gap-y-1 pt-0.5">
+          {articleHref ? (
+            <a
+              href={articleHref}
+              target="_blank"
+              rel="noopener noreferrer"
+              className="text-[11px] font-semibold text-[rgb(var(--accent))] hover:underline underline-offset-2"
+              onClick={(e) => openExternalUrl(articleHref, e)}
+            >
+              {it
+                ? ev.isPaper
+                  ? "Apri articolo PubMed →"
+                  : "Apri news / fonte →"
+                : ev.isPaper
+                  ? "Open PubMed article →"
+                  : "Open news / source →"}
+            </a>
+          ) : null}
+          <button
+            type="button"
+            className="text-[11px] font-semibold text-[rgb(var(--accent))] hover:underline underline-offset-2"
+            onClick={(e) => {
+              e.preventDefault();
+              e.stopPropagation();
+              setDetailOpen(true);
+            }}
+          >
+            {compact
+              ? it
+                ? "Dettaglio →"
+                : "Detail →"
+              : isTruncated
+                ? it
+                  ? "Leggi testo completo →"
+                  : "Read full text →"
+                : it
+                  ? "Dettaglio completo EIS →"
+                  : "Full EIS detail →"}
+          </button>
+        </div>
+      </article>
+      {detailOpen ? (
+        <EisEventDetailModal
+          ev={ev}
+          ticker={ticker}
+          it={it}
+          onClose={() => setDetailOpen(false)}
+        />
       ) : null}
-    </article>
+    </>
   );
 }
 
 export function EisDetailPanel({
   ticker,
   clinicalKpi,
+  clinicalRecords,
+  simRow,
+  autoRegSnap,
+  sdsMechanismClass,
   it = false,
+  showStudyOutcomes = true,
 }: {
   ticker: string;
   clinicalKpi?: number | null;
+  clinicalRecords?: ClinicalPreCdRecord[];
+  simRow?: Record<string, unknown> | null;
+  autoRegSnap?: RegulatoryRiskSnapshot | null;
+  /** SDS mechanism_class fallback when AI profile has no MoA yet. */
+  sdsMechanismClass?: string | null;
   it?: boolean;
+  /** Hide when a parent already renders the product dossier. */
+  showStudyOutcomes?: boolean;
 }) {
-  const detail = buildTickerEisDetail(ticker, it ? "it" : "en", clinicalKpi);
-  const score = detail.score;
-  const color = score != null && Number.isFinite(score) ? eisColor(score) : null;
-  const w = score != null && Number.isFinite(score) ? eisBarPercent(score) : 0;
-  const arrow =
-    score != null && score >= 5 ? "↑" : score != null && score <= -5 ? "↓" : "–";
+  const resolvedTicker = ticker.trim().toUpperCase();
+  const dismissedNews = useDismissedEisNewsIds();
+  const guidanceEvents = useTickerGuidanceEvents(resolvedTicker);
+  const completionDate = simRow?.["Completion Date"];
+  const detail = useMemo(
+    () =>
+      buildTickerEisDetail(
+        ticker,
+        it ? "it" : "en",
+        clinicalKpi,
+        clinicalRecords,
+        completionDate,
+      ),
+    [ticker, it, clinicalKpi, clinicalRecords, completionDate],
+  );
+  const clinicalEvents = useMemo(
+    () => clinicalNewsEventsOnly(detail.events),
+    [detail.events],
+  );
+  const productBriefing = useMemo(
+    () =>
+      collectEisProductBriefing(clinicalRecords, {
+        ticker: resolvedTicker,
+        nctId: detail.nctId,
+        studyDrug: detail.studyDrug,
+        sdsMechanismClass,
+      }),
+    [clinicalRecords, resolvedTicker, detail.nctId, detail.studyDrug, sdsMechanismClass],
+  );
+  const productClinicalEvents = useMemo(
+    () =>
+      clinicalEventsLinkedToProduct(clinicalEvents, {
+        productName: productBriefing.productName || detail.studyDrug,
+        nctId: detail.nctId,
+      }).filter(
+        (ev) =>
+          !dismissedNews.has(
+            eisClinicalNewsStableId({
+              ticker: resolvedTicker,
+              eventDate: ev.eventDate,
+              title: ev.title,
+              link: ev.link,
+              sourceType: ev.sourceType,
+            }),
+          ),
+      ),
+    [
+      clinicalEvents,
+      productBriefing.productName,
+      detail.studyDrug,
+      detail.nctId,
+      dismissedNews,
+      resolvedTicker,
+    ],
+  );
+  const productFdaBriefings = useMemo(
+    () =>
+      fdaBriefingEventsLinkedToProduct(detail.events, {
+        productName: productBriefing.productName || detail.studyDrug,
+        nctId: detail.nctId,
+      }).filter(
+        (ev) =>
+          !dismissedNews.has(
+            eisClinicalNewsStableId({
+              ticker: resolvedTicker,
+              eventDate: ev.eventDate,
+              title: ev.title,
+              link: ev.link,
+              sourceType: ev.sourceType,
+            }),
+          ),
+      ),
+    [
+      detail.events,
+      productBriefing.productName,
+      detail.studyDrug,
+      detail.nctId,
+      dismissedNews,
+      resolvedTicker,
+    ],
+  );
+  const diseaseSoc = useMemo(
+    () =>
+      collectDiseaseSocFromRecords(clinicalRecords, detail.studyConditions, {
+        ticker: resolvedTicker,
+        nctId: detail.nctId,
+      }),
+    [clinicalRecords, detail.studyConditions, resolvedTicker, detail.nctId],
+  );
+
+  void autoRegSnap;
+  const [dossierPaperClinSum, setDossierPaperClinSum] = useState<number | null>(null);
+  /** Header: Σ Clin / Fin / Acc only — never Σ EIS. Clin includes PubMed product papers. */
+  const clinSumFeed = useMemo(
+    () => sumDimScores(productClinicalEvents, (e) => e.clinicalScore),
+    [productClinicalEvents],
+  );
+  const clinSum = useMemo(() => {
+    const parts = [clinSumFeed, dossierPaperClinSum].filter(
+      (x): x is number => x != null && Number.isFinite(x),
+    );
+    if (!parts.length) return null;
+    return Math.round(parts.reduce((a, b) => a + b, 0) * 10) / 10;
+  }, [clinSumFeed, dossierPaperClinSum]);
+  const finSum = useMemo(
+    () => sumDimScores(productClinicalEvents, (e) => e.financialScore),
+    [productClinicalEvents],
+  );
+  const accSum = useMemo(
+    () => sumDimScores(productClinicalEvents, (e) => e.marketAccessScore),
+    [productClinicalEvents],
+  );
+  const completionIso =
+    typeof completionDate === "string"
+      ? completionDate
+      : completionDate != null
+        ? String(completionDate)
+        : detail.cdDate;
 
   return (
     <div className="space-y-4">
-      <div className="rounded-xl border border-[rgb(var(--border))]/50 bg-[rgb(var(--accent))]/5 p-4 space-y-3">
+      <div className="eis-thermo-gloss rounded-xl p-4 space-y-3">
         <div className="flex flex-wrap items-start justify-between gap-3">
           <div>
             <p className="text-[11px] uppercase tracking-wide text-ink-muted font-semibold">
-              Event Impact Score
+              {it ? "R&D" : "R&D"}
             </p>
             <h3 className="text-xl font-bold text-ink">{ticker.toUpperCase()}</h3>
             {detail.company ? (
               <p className="text-[12px] text-ink-muted">{detail.company}</p>
             ) : null}
-            {detail.studyTitle ? (
-              <p className="text-[13px] font-semibold text-ink leading-snug mt-1.5 max-w-prose">
-                {detail.studyTitle}
+            {detail.catalystFit === "unexplained_readthrough" ? (
+              <p className="text-[12px] font-semibold text-amber-800 dark:text-amber-200 leading-snug mt-1.5 max-w-prose">
+                {it
+                  ? "Possibile lettura settoriale — nessuna news di trial del ticker spiega il movimento."
+                  : "Possible sector read-through — no own-ticker trial news explains the move."}
               </p>
             ) : null}
-            <StudyMetaRow
-              nctId={detail.nctId}
-              studyUrl={detail.studyUrl}
-              studyPhase={detail.studyPhase}
-              feedLabels={detail.feedLabels}
-              studyConditions={detail.studyConditions}
-            />
           </div>
-          {score != null && Number.isFinite(score) && color ? (
-            <div className="text-right shrink-0">
-              <span
-                className="inline-flex items-center gap-1 text-lg font-bold px-3 py-1 rounded-full"
-                style={{ background: `${color}18`, color, border: `1px solid ${color}40` }}
-              >
-                {arrow} EIS {score >= 0 ? "+" : ""}
-                {score.toFixed(1)}
-              </span>
-              <div className="h-2 w-28 bg-slate-200/80 rounded-full mt-2 ml-auto overflow-hidden">
-                <div className="h-full rounded-full" style={{ width: `${w}%`, background: color }} />
-              </div>
-              {detail.breakdownHint ? (
-                <p className="text-[10px] text-ink-muted mt-1 max-w-[12rem]">{detail.breakdownHint}</p>
-              ) : null}
+          <div className="text-right shrink-0 space-y-2">
+            <div className="flex flex-wrap items-center justify-end gap-1.5">
+              <ScoreChipTip tip={eisScoreLegendCopy(it).eis} align="right">
+                <span
+                  className="inline-flex items-center cursor-help rounded-full border border-[rgb(var(--border))]/50 bg-[rgb(var(--surface-3))]/40 px-2.5 py-1 text-[10px] font-bold uppercase tracking-wide text-ink-muted"
+                  aria-label={eisScoreLegendCopy(it).eis}
+                >
+                  EIS
+                </span>
+              </ScoreChipTip>
+              <SumDimChip label="Clin" sum={clinSum} tip={eisScoreLegendCopy(it).clin} />
+              <SumDimChip label="Fin" sum={finSum} tip={eisScoreLegendCopy(it).fin} />
+              <SumDimChip label="Acc" sum={accSum} tip={eisScoreLegendCopy(it).acc} />
             </div>
-          ) : (
-            <p className="text-sm text-ink-muted">EIS —</p>
-          )}
+            {productClinicalEvents.length > 0 ? (
+              <p className="text-[10px] text-ink-muted mt-1 max-w-[16rem] ml-auto">
+                {it
+                  ? `${productClinicalEvents.length} news · Clin, Fin e Acc sommati ciascuno a parte (EIS solo per evento)`
+                  : `${productClinicalEvents.length} news · Clin, Fin & Acc each summed separately (EIS per event only)`}
+              </p>
+            ) : detail.breakdownHint ? (
+              <p className="text-[10px] text-ink-muted mt-1 max-w-[14rem] ml-auto">{detail.breakdownHint}</p>
+            ) : null}
+          </div>
         </div>
+
+        <TickerCompany30dCatalystPanel
+          ticker={resolvedTicker}
+          completionDate={completionIso}
+          records={clinicalRecords}
+          guidanceEvents={guidanceEvents}
+          clinicalKpi={clinicalKpi}
+          simRow={simRow}
+          it={it}
+        />
 
         {detail.sheetFallback ? (
           <p className="text-[11px] text-[rgb(var(--warn))] bg-[rgb(var(--warn))]/10 border border-[rgb(var(--warn))]/25 rounded-md px-2.5 py-1.5">
@@ -247,55 +603,106 @@ export function EisDetailPanel({
               : "Score from Simulation sheet column — no clinical feed events. Refresh feed for full breakdown."}
           </p>
         ) : null}
-
-        <p className="text-[10px] text-ink-muted leading-snug">
-          EIS = 0.35×ΔP₁d + 0.35×ΔP₃d + 0.15×(vol−1)×20 + 0.15×KPI×10
-          {it
-            ? " · KPI da endpoint/ORR/EASI/IGA · fonti: Intelligence, PubMed, press, SEC 8-K, CD/CT.gov"
-            : " · KPI from endpoint/ORR/EASI/IGA · sources: Intelligence, PubMed, press, SEC 8-K, CD/CT.gov"}
-        </p>
-
-        <ClinicalIndicatorSummaryBlock
-          title={
-            it
-              ? "Riepilogo indici clinici (rollup pre-CD)"
-              : "Clinical indices summary (pre-CD rollup)"
-          }
-          indicators={detail.clinicalIndicators}
-          it={it}
-          maxShown={6}
-          note={
-            clinicalKpi != null && Number.isFinite(clinicalKpi)
-              ? it
-                ? `Clinical KPI foglio Simulation: ${clinicalKpi >= 0 ? "+" : ""}${clinicalKpi.toFixed(2)} (peso ×15% nella formula EIS quando presente nel feed).`
-                : `Simulation sheet Clinical KPI: ${clinicalKpi >= 0 ? "+" : ""}${clinicalKpi.toFixed(2)} (×15% EIS weight when present in feed).`
-              : it
-                ? "Gli indici quantificabili (ORR, PFS, enrollment, endpoint) alimentano il termine KPI×10 dell'EIS."
-                : "Quantifiable indices (ORR, PFS, enrollment, endpoints) feed the KPI×10 term in EIS."
-          }
-        />
       </div>
 
-      {detail.events.length > 0 ? (
+      <ProductClinicalLeadBlock
+        ticker={resolvedTicker}
+        company={detail.company}
+        productName={productBriefing.productName || detail.studyDrug}
+        nctId={detail.nctId}
+        briefing={productBriefing}
+        clinicalRecords={clinicalRecords}
+        eisEvents={productClinicalEvents}
+        clinicalNewsEvents={productClinicalEvents}
+        fdaBriefingEvents={productFdaBriefings}
+        diseaseSoc={diseaseSoc}
+        showStudyOutcomes={showStudyOutcomes}
+        focalProductOnly
+        it={it}
+        guidanceEvents={guidanceEvents}
+        cdIso={completionIso}
+        onDossierPaperClinSum={setDossierPaperClinSum}
+      />
+
+      {!showStudyOutcomes && (productClinicalEvents.length > 0 || productFdaBriefings.length > 0) ? (
         <div className="space-y-2">
-          <h4 className="text-sm font-semibold text-ink">
-            {it
-              ? `Eventi clinici (${detail.events.length})`
-              : `Clinical events (${detail.events.length})`}
-          </h4>
-          <div className="space-y-2">
-            {detail.events.map((ev, i) => (
-              <EventCard key={`${ev.eventDate}-${ev.title}-${i}`} ev={ev} it={it} />
-            ))}
-          </div>
+          {(() => {
+            const press = productClinicalEvents.filter(
+              (ev) =>
+                !isFdaBriefingEvent(ev) &&
+                (!ev.isPaper || isCtgovRegistryFeedEvent(ev)),
+            );
+            const papers = productClinicalEvents.filter(
+              (ev) => Boolean(ev.isPaper) && !isCtgovRegistryFeedEvent(ev),
+            );
+            return (
+              <>
+                {productFdaBriefings.length ? (
+                  <div className="space-y-2">
+                    <h4 className="text-sm font-semibold text-ink">
+                      {it
+                        ? `Briefing FDA (${productFdaBriefings.length})`
+                        : `FDA Briefings (${productFdaBriefings.length})`}
+                    </h4>
+                    {productFdaBriefings.map((ev, i) => (
+                      <EisEventCard
+                        key={`fda-${ev.eventDate}-${ev.title}-${i}`}
+                        ev={ev}
+                        it={it}
+                        ticker={resolvedTicker}
+                        compact={false}
+                      />
+                    ))}
+                  </div>
+                ) : null}
+                {press.length ? (
+                  <div className="space-y-2">
+                    <h4 className="text-sm font-semibold text-ink">
+                      {it
+                        ? `News del prodotto (${press.length})`
+                        : `Product news (${press.length})`}
+                    </h4>
+                    {press.map((ev, i) => (
+                      <EisEventCard
+                        key={`clin-${ev.eventDate}-${ev.title}-${i}`}
+                        ev={ev}
+                        it={it}
+                        ticker={resolvedTicker}
+                      />
+                    ))}
+                  </div>
+                ) : null}
+                {papers.length ? (
+                  <div className="space-y-2">
+                    <h4 className="text-sm font-semibold text-ink">
+                      {it
+                        ? `Articoli scientifici (${papers.length})`
+                        : `Scientific articles (${papers.length})`}
+                    </h4>
+                    {papers.map((ev, i) => (
+                      <EisEventCard
+                        key={`paper-${ev.eventDate}-${ev.title}-${i}`}
+                        ev={ev}
+                        it={it}
+                        ticker={resolvedTicker}
+                        compact={false}
+                      />
+                    ))}
+                  </div>
+                ) : null}
+              </>
+            );
+          })()}
         </div>
-      ) : !detail.sheetFallback ? (
+      ) : !showStudyOutcomes && !detail.sheetFallback ? (
         <p className="text-[12px] text-ink-muted text-center py-6 border border-dashed rounded-lg">
           {it
-            ? "Nessun evento con EIS calcolabile nel feed clinico per questo ticker."
-            : "No events with computable EIS in the clinical feed for this ticker."}
+            ? "Nessuna news clinica collegata a questo prodotto nel feed."
+            : "No clinical news in the feed linked to this product."}
         </p>
       ) : null}
+
+      <EisFreeNotesBox ticker={resolvedTicker} it={it} />
     </div>
   );
 }

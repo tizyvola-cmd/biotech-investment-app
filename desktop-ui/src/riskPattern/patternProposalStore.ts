@@ -30,6 +30,25 @@ import type {
 
 export type { PatternApprovalSource };
 
+/** Fired when a panel wants to surface the currently approved pattern.
+ *  CalibrationCenterView listens for it to switch to the "Approved weights" tab
+ *  and scroll itself into view. */
+export const SHOW_APPROVED_PATTERN_EVENT = "supernova:show-approved-pattern";
+
+/** Canonical, order-independent signature of a pattern's AND conditions.
+ *  Two patterns with the same buckets produce the same string regardless of
+ *  condition/value ordering — used to tell whether a synthesized candidate is
+ *  already the approved pattern. */
+export function patternSignature(
+  pattern: { conditions: { dimension: string; values: string[] }[] } | null | undefined,
+): string {
+  if (!pattern || pattern.conditions.length === 0) return "";
+  return pattern.conditions
+    .map((c) => `${c.dimension}=${[...c.values].sort().join(",")}`)
+    .sort()
+    .join(" & ");
+}
+
 export function patternApprovalSourceLabel(
   source: PatternApprovalSource | null | undefined,
   lang: "it" | "en",

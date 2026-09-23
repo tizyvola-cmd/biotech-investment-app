@@ -21,6 +21,16 @@ def test_from_env_defaults(monkeypatch):
     assert c.uvicorn_port == cfg.DEFAULT_PORT
 
 
+def test_cors_allow_origin_regex_includes_public_host(monkeypatch):
+    monkeypatch.delenv("SUPERNOVA_PUBLIC_HOST", raising=False)
+    monkeypatch.delenv("SUPERNOVA_PUBLIC_BASE_URL", raising=False)
+    assert "localhost" in cfg.cors_allow_origin_regex()
+    monkeypatch.setenv("SUPERNOVA_PUBLIC_HOST", "91.99.15.48")
+    rx = cfg.cors_allow_origin_regex()
+    assert "91\\.99\\.15\\.48" in rx
+    assert "localhost" in rx
+
+
 def test_bind_all_host(monkeypatch):
     monkeypatch.setenv("SUPERNOVA_BIND_ALL", "1")
     c = cfg.SupernovaConfig.from_env()
@@ -44,6 +54,28 @@ def test_model_lab_refresh_env(monkeypatch):
     c = cfg.SupernovaConfig.from_env()
     assert c.model_lab_refresh_enabled is True
     assert c.model_lab_refresh_time == "16:30"
+
+
+def test_precat_flags_default_and_override(monkeypatch):
+    cfg.reset_supernova_config()
+    monkeypatch.delenv("SUPERNOVA_PRECAT_CALENDAR", raising=False)
+    monkeypatch.delenv("SUPERNOVA_VOLUME_DELTA", raising=False)
+    monkeypatch.delenv("SUPERNOVA_TRENDS", raising=False)
+    c = cfg.SupernovaConfig.from_env()
+    assert c.precat_calendar_enabled is True
+    assert c.volume_delta_enabled is True
+    assert c.trends_enabled is True
+    assert c.trends_pilot_tickers == ""
+
+    monkeypatch.setenv("SUPERNOVA_PRECAT_CALENDAR", "0")
+    monkeypatch.setenv("SUPERNOVA_VOLUME_DELTA", "off")
+    monkeypatch.setenv("SUPERNOVA_TRENDS", "0")
+    monkeypatch.setenv("SUPERNOVA_TRENDS_TICKERS", "CANF,BDSX")
+    c2 = cfg.SupernovaConfig.from_env()
+    assert c2.precat_calendar_enabled is False
+    assert c2.volume_delta_enabled is False
+    assert c2.trends_enabled is False
+    assert c2.trends_pilot_tickers == "CANF,BDSX"
 
 
 def test_saturday_weekly_full_env(monkeypatch):

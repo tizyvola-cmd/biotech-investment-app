@@ -39,6 +39,19 @@ export type SimLoopTradeAlertBatch = {
   executeAfter?: string | null;
 };
 
+/** Stable id for queue dedupe / dismiss (same trades + pending window). */
+export function simLoopTradeAlertBatchSignature(batch: SimLoopTradeAlertBatch): string {
+  const trades = batch.alerts
+    .map((a) => `${a.side}:${a.key}`)
+    .sort()
+    .join("|");
+  return [
+    batch.pending ? "pending" : "done",
+    batch.executeAfter ?? "",
+    trades,
+  ].join("::");
+}
+
 export function completionDateFromRowKey(key: string): string {
   const sep = key.indexOf("|");
   return sep >= 0 ? key.slice(sep + 1) : "—";
@@ -75,6 +88,13 @@ function buildItemsByKey(
   return byKey;
 }
 
+function isEntryOnlyPhrase(s: string | null | undefined): boolean {
+  if (!s?.trim()) return false;
+  return /don't add|non aggiungere|do not add|do not enter|non entrare|no entry/i.test(
+    s,
+  );
+}
+
 function recommendationForTrade(
   trade: PaperTradeEvent,
   ev: TickerSimEvaluation | undefined,
@@ -83,16 +103,23 @@ function recommendationForTrade(
 ): { recommendation: string; detail: string } {
   const it = lang === "it";
   const commandLabel = trade.side === "buy" ? "BUY" : "SELL";
+  const inPaper = true; // sim-loop alerts are always paper-book moves
 
   if (item) {
     const explained =
       trade.side === "buy"
-        ? explainBuyReason(item, true, lang)
-        : explainSellReason(item, true, lang);
+        ? explainBuyReason(item, inPaper, lang)
+        : explainSellReason(item, inPaper, lang);
     if (explained) {
+      const detailRaw = trade.reason?.trim() || "";
       return {
         recommendation: `${commandLabel} · ${explained}`,
-        detail: trade.reason,
+        detail:
+          detailRaw && !isEntryOnlyPhrase(detailRaw)
+            ? detailRaw
+            : it
+              ? "Uscita paper sim loop (non è un ingresso)"
+              : "Paper sim-loop exit (not an entry)",
       };
     }
   }
@@ -101,7 +128,12 @@ function recommendationForTrade(
   if (ev?.probPct != null && Number.isFinite(ev.probPct)) {
     parts.push(`${it ? "P(plan)" : "P(plan)"} ${ev.probPct.toFixed(0)}%`);
   }
-  if (ev?.planReturnPct != null && Number.isFinite(ev.planReturnPct)) {
+  // Plan ROI is a model target — never imply it is locked-in P&L on a pending SELL.
+  if (
+    trade.side === "buy" &&
+    ev?.planReturnPct != null &&
+    Number.isFinite(ev.planReturnPct)
+  ) {
     parts.push(
       `${it ? "ROI atteso" : "Plan ROI"} ${ev.planReturnPct >= 0 ? "+" : ""}${ev.planReturnPct.toFixed(1)}%`,
     );
@@ -109,15 +141,29 @@ function recommendationForTrade(
   if (ev?.misalignmentLabels?.length) {
     parts.push(ev.misalignmentLabels.slice(0, 2).join(" · "));
   }
-  parts.push(trade.reason);
+  if (trade.reason && !isEntryOnlyPhrase(trade.reason)) {
+    parts.push(trade.reason);
+  } else if (trade.side === "sell") {
+    parts.push(
+      it
+        ? "uscita paper (pendenza / exit decision)"
+        : "paper exit (slope / exit decision)",
+    );
+  }
+
+  const detailCandidate =
+    (ev?.exitReason?.trim() && !isEntryOnlyPhrase(ev.exitReason)
+      ? ev.exitReason.trim()
+      : "") ||
+    (trade.side === "sell"
+      ? it
+        ? "Chiusura posizione paper — il P&L è MTM stimato, non un gain realizzato finché non scade la finestra."
+        : "Closing paper position — P&L is estimated MTM, not realized until the response window ends."
+      : trade.reason);
 
   return {
     recommendation: parts.filter(Boolean).join(" · "),
-    detail:
-      ev?.exitReason?.trim() ||
-      (trade.side === "sell" && trade.pnlEurSimulated != null
-        ? `${it ? "P&L sim" : "Sim P&L"} ${trade.pnlEurSimulated >= 0 ? "+" : ""}${Math.round(trade.pnlEurSimulated)} €`
-        : trade.reason),
+    detail: detailCandidate,
   };
 }
 
@@ -158,7 +204,7 @@ export function buildSimLoopTradeAlertsFromTick(
       commandLabel: trade.side === "buy" ? "BUY" : "SELL",
       recommendation,
       detail,
-      capital: trade.side === "buy" ? trade.capital : null,
+      capital: trade.capital ?? null,
       pnlEur: trade.pnlEurSimulated,
       pnlPct: trade.pnlPctSimulated,
       inRealPortfolio: isInRealPortfolio(trade.key, item, ev, inputs),

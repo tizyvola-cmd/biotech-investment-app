@@ -62,6 +62,13 @@ goto ui_ready
 
 :do_ui_build
 echo [2/4] Build UI ^(npm run build:electron^)...
+if exist "desktop-ui\dist" (
+  powershell -NoProfile -ExecutionPolicy Bypass -Command "try { Remove-Item -LiteralPath 'desktop-ui\dist' -Recurse -Force -ErrorAction Stop } catch { Write-Host '  AVVISO: impossibile rimuovere desktop-ui\dist — chiudi Electron/Explorer su quella cartella.' -ForegroundColor Yellow; exit 1 }"
+  if errorlevel 1 (
+    echo Build desktop-ui fallita ^(dist bloccata da un altro processo^).
+    call :sn_fail 1
+  )
+)
 cd desktop-ui
 if not exist "node_modules" (
   echo   npm install...

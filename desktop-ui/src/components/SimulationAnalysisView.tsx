@@ -53,6 +53,7 @@ import {
 } from "./SimulationCurveChart";
 import { SHEET_GRID_TABLE_CLASS, gridTd, gridTh, sheetGridAlignForLabel } from "../sheet/sheetGridTable";
 import { SheetGridColgroup } from "../sheet/SheetGridColgroup";
+import { useLang } from "../shared/i18n";
 
 const REF_COLORS: Record<string, string> = {
   "Cluster 0": "#9ca3af",
@@ -222,6 +223,8 @@ export function SimulationAnalysisView({
   focusTicker?: string | null;
   onFocusConsumed?: () => void;
 }) {
+  const { lang } = useLang();
+  const it = lang === "it";
   const [bundle, setBundle] = useState<ChartBundle | null>(null);
   const [loading, setLoading] = useState(false);
   const [source, setSource] = useState("");
@@ -682,29 +685,31 @@ export function SimulationAnalysisView({
         <div>
           <p className="text-xs text-ink-muted">
             {loading || simLoading
-              ? "Loading curves…"
-              : `${companies.length} companies · ${controls.length} μ curves`}
+              ? (it ? "Caricamento curve…" : "Loading curves…")
+              : (it
+                  ? `${companies.length} aziende · ${controls.length} curve μ`
+                  : `${companies.length} companies · ${controls.length} μ curves`)}
             {source && ` · ${source}`}
-            {bundle?.loaded_at && ` · data ${bundle.loaded_at}`}
+            {bundle?.loaded_at && ` · ${it ? "dati" : "data"} ${bundle.loaded_at}`}
             {manifest?.updated_at && ` · snapshot ${manifest.updated_at.slice(0, 10)}`}
             {tableMeta && (
               <>
                 {" · "}
-                {tableMeta.points.filter((p) => !p.nodo || p.nodo === "standard").length} nodes
+                {tableMeta.points.filter((p) => !p.nodo || p.nodo === "standard").length} {it ? "nodi" : "nodes"}
                 {companySlots.length > 1 && prefs.companyA ? " (A)" : ""}
               </>
             )}
             {companySlots.length > 1 && (
               <>
                 {" · "}
-                {companySlots.length} series
-                {portfolioOverlayActive ? " · 💼 portfolio" : ""}
+                {companySlots.length} {it ? "serie" : "series"}
+                {portfolioOverlayActive ? (it ? " · 💼 portafoglio" : " · 💼 portfolio") : ""}
               </>
             )}
           </p>
         </div>
         <button type="button" className="btn-ghost text-xs ml-auto" onClick={() => void reloadCharts()}>
-          Reload charts
+          {it ? "Ricarica grafici" : "Reload charts"}
         </button>
       </div>
 
@@ -714,14 +719,19 @@ export function SimulationAnalysisView({
 
       {!loading && !error && !bundle && (
         <p className="px-4 py-2 text-sm text-amber-600 dark:text-amber-400 shrink-0">
-          Chart snapshot missing — run <strong>Export_Desktop_Snapshots.bat</strong> (includes
-          simulation_charts) or Refresh tab, then Reload charts.
+          {it ? "Snapshot grafici mancante — esegui " : "Chart snapshot missing — run "}
+          <strong>Export_Desktop_Snapshots.bat</strong>
+          {it
+            ? " (include simulation_charts) o la tab Refresh, poi Ricarica grafici."
+            : " (includes simulation_charts) or Refresh tab, then Reload charts."}
         </p>
       )}
 
       {controls.length === 0 && bundle && !loading && (
         <p className="px-4 py-2 text-xs text-amber-600 dark:text-amber-400 shrink-0">
-          No μ control curve in JSON — regenerate simulation_charts_snapshot.json.
+          {it
+            ? "Nessuna curva μ di controllo nel JSON — rigenera simulation_charts_snapshot.json."
+            : "No μ control curve in JSON — regenerate simulation_charts_snapshot.json."}
         </p>
       )}
 
@@ -733,8 +743,9 @@ export function SimulationAnalysisView({
 
       {compareTruncated && (
         <p className="px-4 py-1.5 text-xs text-amber-600 dark:text-amber-400 shrink-0">
-          At most {MAX_CHART_COMPARE_SERIES} portfolio curves shown (
-          {portfolioSeriesKeys.length} open positions).
+          {it
+            ? `Al massimo ${MAX_CHART_COMPARE_SERIES} curve portafoglio mostrate (${portfolioSeriesKeys.length} posizioni aperte).`
+            : `At most ${MAX_CHART_COMPARE_SERIES} portfolio curves shown (${portfolioSeriesKeys.length} open positions).`}
         </p>
       )}
 
@@ -749,19 +760,29 @@ export function SimulationAnalysisView({
           }`}
         >
           {!tableMatchInfo.inTable
-            ? "Company A not present in Simulation sheet (table)."
+            ? (it
+                ? "Company A non presente nel foglio Simulation (tabella)."
+                : "Company A not present in Simulation sheet (table).")
             : tableMatchInfo.compared === 0
-              ? "No common node between Pred sheet and Δ% columns of Simulation sheet."
+              ? (it
+                  ? "Nessun nodo comune tra foglio Pred e colonne Δ% del foglio Simulation."
+                  : "No common node between Pred sheet and Δ% columns of Simulation sheet.")
               : tableMatchInfo.staleNodes > 0
-                ? `Snapshot JSON stale on ${tableMatchInfo.staleNodes}/${tableMatchInfo.compared} nodes (max Δ ${tableMatchInfo.maxDriftPp.toFixed(2)} pp) — chart uses Simulation sheet values (same grid as SuperNova). Regenerate simulation_charts_snapshot.json when convenient.`
-                : `Pred aligned with Simulation sheet (${tableMatchInfo.compared} nodes · grid T−60…T+7).`}
+                ? (it
+                    ? `Snapshot JSON stale su ${tableMatchInfo.staleNodes}/${tableMatchInfo.compared} nodi (max Δ ${tableMatchInfo.maxDriftPp.toFixed(2)} pp) — il grafico usa i valori del foglio Simulation (stessa griglia di SuperNova). Rigenera simulation_charts_snapshot.json quando conveniente.`
+                    : `Snapshot JSON stale on ${tableMatchInfo.staleNodes}/${tableMatchInfo.compared} nodes (max Δ ${tableMatchInfo.maxDriftPp.toFixed(2)} pp) — chart uses Simulation sheet values (same grid as SuperNova). Regenerate simulation_charts_snapshot.json when convenient.`)
+                : (it
+                    ? `Pred allineata al foglio Simulation (${tableMatchInfo.compared} nodi · griglia T−60…T+7).`
+                    : `Pred aligned with Simulation sheet (${tableMatchInfo.compared} nodes · grid T−60…T+7).`)}
         </p>
       )}
 
       <div className="flex flex-1 min-h-0 overflow-hidden">
         <aside className="w-56 shrink-0 border-r border-[rgb(var(--border))]/60 overflow-y-auto p-3 space-y-3 text-sm">
           <div>
-            <label className="text-xs font-medium text-ink-muted block mb-1">Search</label>
+            <label className="text-xs font-medium text-ink-muted block mb-1">
+              {it ? "Cerca" : "Search"}
+            </label>
             <input
               className="input w-full text-xs"
               placeholder="Ticker…"
@@ -782,11 +803,15 @@ export function SimulationAnalysisView({
               } disabled:opacity-45 disabled:cursor-not-allowed`}
               title={
                 portfolioSeriesKeys.length === 0
-                  ? "Nessuna posizione aperta in Simulation"
-                  : "Mostra tutte le curve delle posizioni aperte"
+                  ? (it
+                      ? "Nessuna posizione aperta in Simulation"
+                      : "No open position in Simulation")
+                  : (it
+                      ? "Mostra tutte le curve delle posizioni aperte"
+                      : "Show all curves for open positions")
               }
             >
-              💼 Curve portfolio
+              💼 {it ? "Curve portfolio" : "Portfolio curves"}
               {portfolioSeriesKeys.length > 0 ? ` (${portfolioSeriesKeys.length})` : ""}
             </button>
             {portfolioOverlayActive && (
@@ -795,13 +820,15 @@ export function SimulationAnalysisView({
                 onClick={exitPortfolioOverlay}
                 className="mt-1 w-full text-[10px] text-ink-muted hover:text-ink underline"
               >
-                Torna a confronto A/B
+                {it ? "Torna a confronto A/B" : "Back to A/B compare"}
               </button>
             )}
           </div>
 
           <div>
-            <label className="text-xs font-medium text-ink-muted block mb-1">Company A</label>
+            <label className="text-xs font-medium text-ink-muted block mb-1">
+              {it ? "Azienda A" : "Company A"}
+            </label>
             <select
               className="input w-full text-xs"
               value={prefs.companyA ?? ""}
@@ -819,7 +846,9 @@ export function SimulationAnalysisView({
           </div>
 
           <div>
-            <label className="text-xs font-medium text-ink-muted block mb-1">Company B</label>
+            <label className="text-xs font-medium text-ink-muted block mb-1">
+              {it ? "Azienda B" : "Company B"}
+            </label>
             <select
               className="input w-full text-xs"
               value={prefs.companyB ?? ""}
@@ -828,7 +857,7 @@ export function SimulationAnalysisView({
                 persist({ ...prefs, companyB: e.target.value || null });
               }}
             >
-              <option value="">— none —</option>
+              <option value="">— {it ? "nessuna" : "none"} —</option>
               {filteredCompanies.map((c) => (
                 <option key={c.id} value={c.id}>
                   {companyOptionLabel(c, portfolioSeriesIds, tableKeys)}
@@ -838,14 +867,16 @@ export function SimulationAnalysisView({
           </div>
 
           <div>
-            <label className="text-xs font-medium text-ink-muted block mb-1">Curve visibili</label>
+            <label className="text-xs font-medium text-ink-muted block mb-1">
+              {it ? "Curve visibili" : "Visible curves"}
+            </label>
             <div className="flex flex-col gap-1">
               {(
                 [
-                  ["showCurva",    "Prediction + Recalib."],
-                  ["showStorico",  "Price $ — real data"],
-                  ["showModello",  "Modello (no recalib.)"],
-                  ["showEisPlus",  "+EIS (shift feed)"],
+                  ["showCurva",    it ? "Predizione + Ricalib." : "Prediction + Recalib."],
+                  ["showStorico",  it ? "Prezzo $ — dati reali" : "Price $ — real data"],
+                  ["showModello",  it ? "Modello (no recalib.)" : "Model (no recalib.)"],
+                  ["showEisPlus",  it ? "+EIS (shift feed)" : "+EIS (shift feed)"],
                 ] as const
               ).map(([key, label]) => (
                 <button
@@ -865,7 +896,9 @@ export function SimulationAnalysisView({
           </div>
 
           <div>
-            <label className="text-xs font-medium text-ink-muted block mb-1">Curve µ distribuzione</label>
+            <label className="text-xs font-medium text-ink-muted block mb-1">
+              {it ? "Curve µ distribuzione" : "µ distribution curves"}
+            </label>
             <select
               className="input w-full text-xs"
               defaultValue=""
@@ -874,11 +907,13 @@ export function SimulationAnalysisView({
                 e.target.value = "";
               }}
             >
-              <option value="" disabled>— seleziona preset —</option>
+              <option value="" disabled>
+                {it ? "— seleziona preset —" : "— select preset —"}
+              </option>
               <option value="supernova">SuperNova</option>
-              <option value="postRialzo">Post + (rialzo)</option>
-              <option value="postRibasso">Post − (ribasso)</option>
-              <option value="postNeutro">Post ↔ (neutro)</option>
+              <option value="postRialzo">{it ? "Post + (rialzo)" : "Post + (up)"}</option>
+              <option value="postRibasso">{it ? "Post − (ribasso)" : "Post − (down)"}</option>
+              <option value="postNeutro">{it ? "Post ↔ (neutro)" : "Post ↔ (neutral)"}</option>
               <option value="postCd">Post-CD all</option>
               <option value="supernovaPostCd">SN + Post-CD</option>
               <option value="all">All µ</option>
@@ -913,18 +948,18 @@ export function SimulationAnalysisView({
 
           {prefs.showVarChart && (
             <VariationHorizonChart
-              title="Variations % (6M · 3M · 1M · 1d)"
+              title={it ? "Variazioni % (6M · 3M · 1M · 1g)" : "Variations % (6M · 3M · 1M · 1d)"}
               series={varSeries}
             />
           )}
 
           {prefs.showPricePath && (
             <PricePathChart
-              title="Price $ — real data"
+              title={it ? "Prezzo $ — dati reali" : "Price $ — real data"}
               lines={priceStorLines}
               field="price_storico_usd"
               overlayField="price_usd"
-              primaryLabel="historical close"
+              primaryLabel={it ? "chiusura storica" : "historical close"}
               overlayLabel={PREDICTION_CURVE_RECALIB_LABEL}
               aggregateByOffset
               nowMarkers={chartNowMarkers}
@@ -941,15 +976,15 @@ export function SimulationAnalysisView({
                   <tr>
                     {[
                       "Offset",
-                      "Node",
-                      "Type",
+                      it ? "Nodo" : "Node",
+                      it ? "Tipo" : "Type",
                       `% ${PREDICTION_CURVE_RECALIB_LABEL}`,
-                      "% seq raw",
-                      "% model",
-                      "% historical",
-                      "Price path $",
-                      "Price historical $",
-                      "Price model $",
+                      it ? "% seq raw" : "% seq raw",
+                      it ? "% modello" : "% model",
+                      it ? "% storica" : "% historical",
+                      it ? "Prezzo path $" : "Price path $",
+                      it ? "Prezzo storico $" : "Price historical $",
+                      it ? "Prezzo modello $" : "Price model $",
                     ].map((h) => (
                       <th key={h} className={`${gridTh(sheetGridAlignForLabel(h), "py-1 font-medium")} border-b`}>
                         {h}

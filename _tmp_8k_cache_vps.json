@@ -1,0 +1,1956 @@
+{
+  "entries": {
+    "ADCT": {
+      "updated_at": "2026-09-16T20:07:59.842502+00:00",
+      "digest_version": 2,
+      "dossier": {
+        "ticker": "ADCT",
+        "lookback_days": 62,
+        "filings": [
+          {
+            "filing_date": "2026-08-13",
+            "event_date": "2026-08-13",
+            "form": "8-K",
+            "title": "Regulation FD Disclosure: Primary endpoint met (significant)",
+            "link": "https://www.sec.gov/Archives/edgar/data/1771910/000095010326012287/dp251718_8k.htm",
+            "items_raw": "2.02, 7.01",
+            "sessions": [
+              {
+                "item": "2.02",
+                "item_title": "Results of Operations and Financial",
+                "title": "Q2 2026 Financial Results",
+                "summary": "Management reported second quarter 2026 net product revenue of $18.6 million for ZYNLONTA and ending cash and cash equivalents of $219.1 million as of June 30, 2026."
+              },
+              {
+                "item": "7.01",
+                "item_title": "Regulation FD Disclosure",
+                "title": "Pipeline and Regulatory Updates",
+                "summary": "The company submitted LOTIS-5, LOTIS-7, and MZL IIT data for ASH presentation. Following a pre-sBLA meeting, management is evaluating the regulatory path for ZYNLONTA full approval in DLBCL and considering a Phase 3 trial for ZYNLONTA plus glofitamab based on completed LOTIS-7 data."
+              }
+            ],
+            "financial_score": 0.35,
+            "clinical_score": 2.5,
+            "corporate_score": 0.0,
+            "eis_score": 2.5,
+            "news_kind": "financial",
+            "digest_method": "gemini"
+          }
+        ],
+        "count": 1,
+        "refresh": "wednesday_07:15_europe_rome",
+        "next_refresh": "2026-09-23T07:15:00+02:00",
+        "digest_version": 2
+      }
+    },
+    "ALMS": {
+      "updated_at": "2026-09-16T20:08:11.218585+00:00",
+      "digest_version": 2,
+      "dossier": {
+        "ticker": "ALMS",
+        "lookback_days": 62,
+        "filings": [
+          {
+            "filing_date": "2026-09-01",
+            "event_date": "2026-09-01",
+            "form": "8-K",
+            "title": "Other Events: Positive topline / interim results",
+            "link": "https://www.sec.gov/Archives/edgar/data/1847367/000110465926104145/tm2624540d1_8k.htm",
+            "items_raw": "8.01",
+            "sessions": [
+              {
+                "item": "8.01",
+                "item_title": "Other Events",
+                "title": "Envudeucitinib Phase 2b SLE Topline Data",
+                "summary": "On September 1, 2026, management released topline efficacy and safety results from the Phase 2b trial evaluating envudeucitinib in systemic lupus erythematosus, accompanied by a dedicated investor webcast presentation detailing the findings."
+              }
+            ],
+            "financial_score": 0.0,
+            "clinical_score": 1.12,
+            "corporate_score": 0.0,
+            "eis_score": 1.12,
+            "news_kind": "clinical",
+            "digest_method": "gemini"
+          },
+          {
+            "filing_date": "2026-08-13",
+            "event_date": "2026-08-13",
+            "form": "8-K",
+            "title": "Results of Operations / Financial Condition: Positive topline / interim results",
+            "link": "https://www.sec.gov/Archives/edgar/data/1847367/000184736726000016/alms-20260813x8k.htm",
+            "items_raw": "2.02, 9.01",
+            "sessions": [
+              {
+                "item": "2.02",
+                "item_title": "Results of Operations and Financial Condition",
+                "title": "Q2 2026 Financial Results",
+                "summary": "Alumis reported its financial results and operational highlights for the second quarter ended June 30, 2026, via an earnings press release issued on August 13, 2026."
+              },
+              {
+                "item": "9.01",
+                "item_title": "Financial Statements and Exhibits",
+                "title": "Envudeucitinib Pipeline Milestones",
+                "summary": "ONWARD3 trial showed 54% PASI 100 at 48 weeks. NDA submission for plaque psoriasis remains on track for Q4 2026. Topline Phase 2b LUMUS data in SLE expected in Q3 2026, with Phase 2 Parkinson's trial for A-005 slated for 1H 2027."
+              }
+            ],
+            "financial_score": 0.35,
+            "clinical_score": 0.75,
+            "corporate_score": 0.0,
+            "eis_score": 0.75,
+            "news_kind": "financial",
+            "digest_method": "gemini"
+          },
+          {
+            "filing_date": "2026-08-10",
+            "event_date": "2026-08-10",
+            "form": "8-K",
+            "title": "Other Events: Positive topline / interim results",
+            "link": "https://www.sec.gov/Archives/edgar/data/1847367/000110465926093353/tm2622655d1_8k.htm",
+            "items_raw": "8.01",
+            "sessions": [
+              {
+                "item": "8.01",
+                "item_title": "Other Events",
+                "title": "Positive Phase 3 Long-Term Data for Envudeucitinib in Plaque Psoriasis",
+                "summary": "Alumis announced 48-week ONWARD3 trial results for envudeucitinib in plaque psoriasis, showing 54 percent of continuous treatment patients achieved complete skin clearance (PASI 100), the highest reported among oral therapies. Safety remained consistent, supporting a planned FDA New Drug Application submission in fourth quarter 2026."
+              }
+            ],
+            "financial_score": 0.35,
+            "clinical_score": 1.12,
+            "corporate_score": 0.0,
+            "eis_score": 1.12,
+            "news_kind": "financial",
+            "digest_method": "gemini"
+          }
+        ],
+        "count": 3,
+        "refresh": "wednesday_07:15_europe_rome",
+        "next_refresh": "2026-09-23T07:15:00+02:00",
+        "digest_version": 2
+      }
+    },
+    "AMGN": {
+      "updated_at": "2026-09-16T20:08:18.109791+00:00",
+      "digest_version": 2,
+      "dossier": {
+        "ticker": "AMGN",
+        "lookback_days": 62,
+        "filings": [
+          {
+            "filing_date": "2026-08-04",
+            "event_date": "2026-08-04",
+            "form": "8-K",
+            "title": "Results of Operations / Financial Condition: Earnings reported",
+            "link": "https://www.sec.gov/Archives/edgar/data/318154/000031815426000124/amgn-20260804.htm",
+            "items_raw": "2.02, 9.01",
+            "sessions": [
+              {
+                "item": "2.02",
+                "item_title": "Results of Operations and Financial Condition",
+                "title": "Q2 2026 Financial Results",
+                "summary": "Amgen released its unaudited financial position and operating results for the second quarter ended June 30, 2026. Management provided non-GAAP financial metrics alongside GAAP measures, including adjusted earnings per share, operating income, and free cash flow, to aid investors in evaluating ongoing core business performance and liquidity."
+              },
+              {
+                "item": "9.01",
+                "item_title": "Financial Statements and Exhibits",
+                "title": "Exhibits Filing",
+                "summary": "The company filed the earnings press release for the second quarter ended June 30, 2026, as Exhibit 99.1, alongside the required interactive data file."
+              }
+            ],
+            "financial_score": 0.35,
+            "clinical_score": 0.0,
+            "corporate_score": 0.0,
+            "eis_score": 0.35,
+            "news_kind": "financial",
+            "digest_method": "gemini"
+          },
+          {
+            "filing_date": "2026-07-31",
+            "event_date": "2026-07-29",
+            "form": "8-K",
+            "title": "Item 1.05: Amgen Inc.",
+            "link": "https://www.sec.gov/Archives/edgar/data/318154/000031815426000119/amgn-20260729.htm",
+            "items_raw": "1.05",
+            "sessions": [
+              {
+                "item": "1.05",
+                "item_title": "Material Cybersecurity Incidents",
+                "title": "Cloud Environment Cybersecurity Breach",
+                "summary": "Amgen disclosed a material cybersecurity incident detected in July 2026 involving unauthorized data exfiltration from third-party cloud environments, including proprietary data and patient health information. Operations and financial results remain unaffected, and ongoing investigations continue to assess the full impact."
+              }
+            ],
+            "financial_score": 0.0,
+            "clinical_score": 0.0,
+            "corporate_score": 0.0,
+            "eis_score": null,
+            "news_kind": "other",
+            "digest_method": "gemini"
+          }
+        ],
+        "count": 2,
+        "refresh": "wednesday_07:15_europe_rome",
+        "next_refresh": "2026-09-23T07:15:00+02:00",
+        "digest_version": 2
+      }
+    },
+    "AXSM": {
+      "updated_at": "2026-09-16T20:08:23.036114+00:00",
+      "digest_version": 2,
+      "dossier": {
+        "ticker": "AXSM",
+        "lookback_days": 62,
+        "filings": [
+          {
+            "filing_date": "2026-08-10",
+            "event_date": "2026-08-10",
+            "form": "8-K",
+            "title": "Other Events: Earnings reported",
+            "link": "https://www.sec.gov/Archives/edgar/data/1579428/000119312526341206/axsm-20260810.htm",
+            "items_raw": "2.02, 8.01",
+            "sessions": [
+              {
+                "item": "2.02",
+                "item_title": "Results of Operations and Financial Condition",
+                "title": "Q2 2026 Financial Results",
+                "summary": "Axsome reported total second quarter 2026 net product revenue of $218.4 million, reflecting 46% year-over-year growth. Key product sales included $180.3 million for Auvelity, $35.8 million for Sunosi, and $2.3 million for Symbravo."
+              },
+              {
+                "item": "2.02",
+                "item_title": "Results of Operations and Financial Condition",
+                "title": "Commercial and Pipeline Update",
+                "summary": "Management highlighted the June 2026 launch of Auvelity for Alzheimer's disease agitation, FDA acceptance of the AXS-12 NDA for narcolepsy with a May 1, 2027 PDUFA date, and initiation of Phase 3 trials for solriamfetol in pediatric ADHD."
+              },
+              {
+                "item": "8.01",
+                "item_title": "Other Events",
+                "title": "Corporate Presentation Update",
+                "summary": "The company posted an updated corporate presentation to its website on August 10, 2026, which has been filed as an exhibit and incorporated by reference."
+              }
+            ],
+            "financial_score": 0.35,
+            "clinical_score": 0.75,
+            "corporate_score": 0.0,
+            "eis_score": 1.5,
+            "news_kind": "financial",
+            "digest_method": "gemini"
+          }
+        ],
+        "count": 1,
+        "refresh": "wednesday_07:15_europe_rome",
+        "next_refresh": "2026-09-23T07:15:00+02:00",
+        "digest_version": 2
+      }
+    },
+    "AZN": {
+      "updated_at": "2026-09-16T20:08:23.416287+00:00",
+      "digest_version": 2,
+      "dossier": {
+        "ticker": "AZN",
+        "lookback_days": 62,
+        "filings": [],
+        "count": 0,
+        "refresh": "wednesday_07:15_europe_rome",
+        "next_refresh": "2026-09-23T07:15:00+02:00",
+        "digest_version": 2
+      }
+    },
+    "BBNX": {
+      "updated_at": "2026-09-16T20:08:37.194583+00:00",
+      "digest_version": 2,
+      "dossier": {
+        "ticker": "BBNX",
+        "lookback_days": 62,
+        "filings": [
+          {
+            "filing_date": "2026-09-15",
+            "event_date": "2026-09-14",
+            "form": "8-K",
+            "title": "Regulation FD Disclosure: FDA / EMA approval",
+            "link": "https://www.sec.gov/Archives/edgar/data/1674632/000119312526392088/d153052d8k.htm",
+            "items_raw": "7.01, 8.01",
+            "sessions": [
+              {
+                "item": "7.01",
+                "item_title": "Regulation FD Disclosure",
+                "title": "Corporate Disclosures",
+                "summary": "Management issued a press release on September 14, 2026, announcing FDA clearance for the Mint patch pump and a 510(k) submission for the 3D Intelligence algorithm, alongside an updated corporate presentation."
+              },
+              {
+                "item": "8.01",
+                "item_title": "Other Events",
+                "title": "Mint FDA Clearance and Launch",
+                "summary": "The FDA cleared the Mint patch pump featuring a reusable-disposable architecture requiring no recharging. A full US commercial launch is slated for Q1 2027 through the pharmacy channel, backed by a 2027 manufacturing capacity of at least 1.5 million disposable units."
+              },
+              {
+                "item": "8.01",
+                "item_title": "Other Events",
+                "title": "3D Intelligence Algorithm Submission",
+                "summary": "Beta Bionics submitted a 510(k) application for its 3D Intelligence insulin dosing algorithm, offering Original, Optimized, and Conservative modes to power upcoming iLet 3D and Mint 3D systems upon regulatory clearance."
+              }
+            ],
+            "financial_score": 0.35,
+            "clinical_score": 3.0,
+            "corporate_score": -2.0,
+            "eis_score": 3.0,
+            "news_kind": "financial",
+            "digest_method": "gemini"
+          },
+          {
+            "filing_date": "2026-07-29",
+            "event_date": "2026-07-29",
+            "form": "8-K",
+            "title": "Results of Operations / Financial Condition: Earnings reported",
+            "link": "https://www.sec.gov/Archives/edgar/data/1674632/000117184326005010/f8k_072826.htm",
+            "items_raw": "2.02",
+            "sessions": [
+              {
+                "item": "2.02",
+                "item_title": "Results of Operations and Financial Condition",
+                "title": "Q2 2026 Financial Results Release",
+                "summary": "On July 29, 2026, the company published a press release detailing financial performance for the second quarter ending June 30, 2026. The full report is accessible via the attached exhibit."
+              }
+            ],
+            "financial_score": 0.35,
+            "clinical_score": 0.0,
+            "corporate_score": 0.0,
+            "eis_score": 0.35,
+            "news_kind": "financial",
+            "digest_method": "gemini"
+          }
+        ],
+        "count": 2,
+        "refresh": "wednesday_07:15_europe_rome",
+        "next_refresh": "2026-09-23T07:15:00+02:00",
+        "digest_version": 2
+      }
+    },
+    "BHVN": {
+      "updated_at": "2026-09-16T20:08:56.198350+00:00",
+      "digest_version": 2,
+      "dossier": {
+        "ticker": "BHVN",
+        "lookback_days": 62,
+        "filings": [
+          {
+            "filing_date": "2026-09-10",
+            "event_date": "2026-09-04",
+            "form": "8-K",
+            "title": "Other Events: Trial halted on safety",
+            "link": "https://www.sec.gov/Archives/edgar/data/1935979/000193597926000077/bhvn-20260904.htm",
+            "items_raw": "8.01",
+            "sessions": [
+              {
+                "item": "8.01",
+                "item_title": "Other Events",
+                "title": "BHV-7000 Phase 3 Enrollment Complete and Timeline",
+                "summary": "Management confirmed that enrollment for the BHV7000-303 pivotal focal epilepsy trial is complete. Dosing continues for over 600 active patients, and topline Phase 3 data readout remains on track for the second half of 2026, supported by a favorable safety profile across more than 1,200 participants."
+              },
+              {
+                "item": "8.01",
+                "item_title": "Other Events",
+                "title": "FDA Partial Clinical Hold on New Patient Enrollment",
+                "summary": "The FDA issued a partial clinical hold on September 4, 2026, pausing new patient enrollment for BHV-7000 pending additional nonclinical studies on a specific rodent metabolite. Existing patients continue dosing normally, and management expects to resolve this data gap within the coming weeks."
+              }
+            ],
+            "financial_score": 0.35,
+            "clinical_score": -3.0,
+            "corporate_score": 2.0,
+            "eis_score": -3.0,
+            "news_kind": "financial",
+            "digest_method": "gemini"
+          },
+          {
+            "filing_date": "2026-08-26",
+            "event_date": "2026-08-26",
+            "form": "8-K",
+            "title": "Regulation FD Disclosure: Partnership / licensing signed (with upfront)",
+            "link": "https://www.sec.gov/Archives/edgar/data/1935979/000193597926000072/bhvn-20260826.htm",
+            "items_raw": "1.01, 7.01, 9.01",
+            "sessions": [
+              {
+                "item": "1.01",
+                "item_title": "Entry into a Material Definitive Agreement",
+                "title": "Kv7 Platform Global License Agreement",
+                "summary": "Biohaven's subsidiary granted SK Biopharmaceuticals an exclusive worldwide license for its Kv7 channel platform, led by opakalim. The deal includes $400 million in upfront payments, up to $150 million in milestones, and tiered royalties. Biohaven retains development responsibilities for ongoing Phase 2/3 trials and regulatory filings."
+              },
+              {
+                "item": "7.01",
+                "item_title": "Regulation FD Disclosure",
+                "title": "Press Release and Transaction Announcement",
+                "summary": "Management issued a press release on August 26, 2026, announcing the strategic licensing partnership with SK Biopharmaceuticals for the Kv7 platform, alongside the assumption of specific financial and contractual obligations originally tied to Knopp."
+              },
+              {
+                "item": "9.01",
+                "item_title": "Financial Statements and Exhibits",
+                "title": "Exhibit Filing of License and Assignment Agreements",
+                "summary": "The company filed the definitive License Agreement, MIPA Assignment and Assumption Agreement, and the associated press release detailing the global epilepsy partnership for the opakalim program as exhibits to support the current report."
+              }
+            ],
+            "financial_score": 2.25,
+            "clinical_score": 0.45,
+            "corporate_score": 3.0,
+            "eis_score": 3.0,
+            "news_kind": "ma",
+            "digest_method": "gemini"
+          },
+          {
+            "filing_date": "2026-08-10",
+            "event_date": "2026-08-10",
+            "form": "8-K",
+            "title": "Results of Operations / Financial Condition: Earnings reported",
+            "link": "https://www.sec.gov/Archives/edgar/data/1935979/000193597926000067/bhvn-20260810.htm",
+            "items_raw": "2.02, 9.01",
+            "sessions": [
+              {
+                "item": "2.02",
+                "item_title": "Results of Operations and Financial Condition",
+                "title": "Q2 2026 Financial Results",
+                "summary": "Biohaven reported financial results for the second quarter ended June 30, 2026, disclosing $270.5 million in cash, cash equivalents, marketable securities, and restricted cash alongside R&D expenses of $100.8 million, down from $184.4 million in the prior year period."
+              },
+              {
+                "item": "9.01",
+                "item_title": "Financial Statements and Exhibits",
+                "title": "Extracellular Degrader Platform Progress",
+                "summary": "Management highlighted positive clinical biomarker and patient data from extracellular degraders BHV-1300 and BHV-1400, demonstrating rapid lowering of pathogenic antibodies in Graves' disease and IgA nephropathy, supporting a pivotal Phase 3 study initiation for BHV-1300 and a planned Phase 3 start for BHV-1400 in 2H 2026."
+              },
+              {
+                "item": "9.01",
+                "item_title": "Financial Statements and Exhibits",
+                "title": "Opakalim Clinical and Regulatory Milestones",
+                "summary": "Biohaven announced durable seizure control data for opakalim across multiple epilepsy populations and confirmed that topline results from the Phase 2/3 RISE3 trial in focal epilepsy remain on track for the second half of 2026."
+              },
+              {
+                "item": "9.01",
+                "item_title": "Financial Statements and Exhibits",
+                "title": "BHV-1530 Oncology Pipeline and Collaboration Update",
+                "summary": "New Phase 1 clinical data and activity signals for FGFR3 antibody-drug conjugate BHV-1530 will be presented at ESMO in October 2026, alongside a newly announced clinical supply agreement with Regeneron to evaluate combination therapy with cemiplimab."
+              }
+            ],
+            "financial_score": 0.35,
+            "clinical_score": 0.25,
+            "corporate_score": 0.0,
+            "eis_score": 0.35,
+            "news_kind": "financial",
+            "digest_method": "gemini"
+          },
+          {
+            "filing_date": "2026-08-07",
+            "event_date": "2026-08-03",
+            "form": "8-K",
+            "title": "Departure / Election of Directors or Officers: Key executive hire",
+            "link": "https://www.sec.gov/Archives/edgar/data/1935979/000193597926000060/bhvn-20260803.htm",
+            "items_raw": "5.02",
+            "sessions": [
+              {
+                "item": "5.02",
+                "item_title": "Departure of Directors or Certain Officers",
+                "title": "Director Appointment",
+                "summary": "John Yetimoglu joined the board effective August 6, 2026, with a term expiring in 2027, and joined the Nominating and Governance Committee. He received stock options valued at $713,875 vesting over four years and a $57,000 annual retainer, with no related-party transaction conflicts disclosed."
+              }
+            ],
+            "financial_score": 0.0,
+            "clinical_score": 0.0,
+            "corporate_score": 1.0,
+            "eis_score": 1.0,
+            "news_kind": "other",
+            "digest_method": "gemini"
+          }
+        ],
+        "count": 4,
+        "refresh": "wednesday_07:15_europe_rome",
+        "next_refresh": "2026-09-23T07:15:00+02:00",
+        "digest_version": 2
+      }
+    },
+    "BIIB": {
+      "updated_at": "2026-09-16T20:09:00.887190+00:00",
+      "digest_version": 2,
+      "dossier": {
+        "ticker": "BIIB",
+        "lookback_days": 62,
+        "filings": [
+          {
+            "filing_date": "2026-07-29",
+            "event_date": "2026-07-29",
+            "form": "8-K",
+            "title": "Results of Operations / Financial Condition: Primary endpoint met (significant)",
+            "link": "https://www.sec.gov/Archives/edgar/data/875045/000087504526000073/biib-20260729.htm",
+            "items_raw": "2.02, 9.01",
+            "sessions": [
+              {
+                "item": "2.02",
+                "item_title": "Results of Operations and Financial Condition",
+                "title": "Q2 2026 Financial Results",
+                "summary": "Biogen reported Q2 2026 total revenue of $2.7 billion, up 3% year-over-year. Growth Portfolio revenue reached $1.06 billion, surging 24% year-over-year. The company posted GAAP diluted EPS of $0.66 and Non-GAAP diluted EPS of $3.60, absorbing acquisition-related charges and ongoing Phase 3 pipeline investments."
+              },
+              {
+                "item": "9.01",
+                "item_title": "Financial Statements and Exhibits",
+                "title": "Exhibits Filing",
+                "summary": "The company furnished the Q2 2026 press release as Exhibit 99.1, alongside the required Inline XBRL data cover page."
+              }
+            ],
+            "financial_score": 0.35,
+            "clinical_score": 1.88,
+            "corporate_score": 0.0,
+            "eis_score": 1.88,
+            "news_kind": "financial",
+            "digest_method": "gemini"
+          }
+        ],
+        "count": 1,
+        "refresh": "wednesday_07:15_europe_rome",
+        "next_refresh": "2026-09-23T07:15:00+02:00",
+        "digest_version": 2
+      }
+    },
+    "BIOA": {
+      "updated_at": "2026-09-16T20:09:06.276679+00:00",
+      "digest_version": 2,
+      "dossier": {
+        "ticker": "BIOA",
+        "lookback_days": 62,
+        "filings": [
+          {
+            "filing_date": "2026-08-05",
+            "event_date": "2026-08-05",
+            "form": "8-K",
+            "title": "Results of Operations / Financial Condition: Earnings reported",
+            "link": "https://www.sec.gov/Archives/edgar/data/1709941/000119312526335368/bioa-20260805.htm",
+            "items_raw": "2.02",
+            "sessions": [
+              {
+                "item": "2.02",
+                "item_title": "Results of Operations and Financial Condition",
+                "title": "Q2 2026 Financial Results",
+                "summary": "Management reported financial results for the second quarter ended June 30, 2026, noting collaboration revenue of $2.4 million and research and development expenses rising to $24.4 million, driven primarily by increased clinical trial and direct costs for the BGE-102 program."
+              },
+              {
+                "item": "2.02",
+                "item_title": "Results of Operations and Financial Condition",
+                "title": "BGE-102 Clinical Pipeline Updates",
+                "summary": "BioAge dosed the first participant in the Phase 2 QUELL-CV trial of BGE-102 for cardiometabolic risk, with topline data expected in H2 2026. Additionally, the Phase 1b/2a QUELL-DME trial in diabetic macular edema is planned to initiate in mid-2026, with data anticipated in mid-2027."
+              }
+            ],
+            "financial_score": 0.26,
+            "clinical_score": 0.11,
+            "corporate_score": 0.0,
+            "eis_score": 0.26,
+            "news_kind": "financial",
+            "digest_method": "gemini"
+          }
+        ],
+        "count": 1,
+        "refresh": "wednesday_07:15_europe_rome",
+        "next_refresh": "2026-09-23T07:15:00+02:00",
+        "digest_version": 2
+      }
+    },
+    "BNTX": {
+      "updated_at": "2026-09-16T20:09:06.611015+00:00",
+      "digest_version": 2,
+      "dossier": {
+        "ticker": "BNTX",
+        "lookback_days": 62,
+        "filings": [],
+        "count": 0,
+        "refresh": "wednesday_07:15_europe_rome",
+        "next_refresh": "2026-09-23T07:15:00+02:00",
+        "digest_version": 2
+      }
+    },
+    "BTAI": {
+      "updated_at": "2026-09-16T20:09:52.097348+00:00",
+      "digest_version": 2,
+      "dossier": {
+        "ticker": "BTAI",
+        "lookback_days": 62,
+        "filings": [
+          {
+            "filing_date": "2026-09-01",
+            "event_date": "2026-08-31",
+            "form": "8-K",
+            "title": "Notice of Delisting / Failure to Satisfy Listing Rule: Delisting / non-compliance notice",
+            "link": "https://www.sec.gov/Archives/edgar/data/1720893/000110465926104106/tm2624539d1_8k.htm",
+            "items_raw": "2.03, 3.01",
+            "sessions": [
+              {
+                "item": "2.03",
+                "item_title": "Creation of a Direct Financial Obligation",
+                "title": "Chapter 11 DIP Financing",
+                "summary": "Following Chapter 11 bankruptcy filings on August 27, 2026, the company secured a $77.25 million debtor-in-possession credit agreement with Oaktree and Qatar Investment Authority. The facility includes up to $19 million in new money term loans across two draws and $58.25 million in prepetition debt roll-up loans."
+              },
+              {
+                "item": "3.01",
+                "item_title": "Notice of Delisting",
+                "title": "Nasdaq Delisting Notice",
+                "summary": "Due to the Chapter 11 bankruptcy proceedings, Nasdaq notified the company of its intent to delist its common stock. Trading suspension is scheduled for September 8, 2026, after which the stock is expected to trade on the OTC Pink Limited Market without a company appeal."
+              }
+            ],
+            "financial_score": 1.5,
+            "clinical_score": 0.0,
+            "corporate_score": -2.5,
+            "eis_score": -2.5,
+            "news_kind": "financial",
+            "digest_method": "gemini"
+          },
+          {
+            "filing_date": "2026-08-28",
+            "event_date": "2026-08-27",
+            "form": "8-K",
+            "title": "Entry into Material Agreement: M&A target (distressed valuation)",
+            "link": "https://www.sec.gov/Archives/edgar/data/1720893/000110465926102570/tm2624233d1_8k.htm",
+            "items_raw": "1.03",
+            "sessions": [
+              {
+                "item": "1.03",
+                "item_title": "of this Current Report on Form 8-K is incorporated herein by reference",
+                "title": "Chapter 11 Bankruptcy Filing",
+                "summary": "On August 27, 2026, BioXcel Therapeutics and subsidiaries filed voluntary Chapter 11 petitions in Delaware to pursue a value-maximizing sale of assets. The company operates as a debtor-in-possession, seeking first-day relief and up to $19 million in new-money DIP financing from Oaktree and Qatar Investment Authority."
+              }
+            ],
+            "financial_score": 0.0,
+            "clinical_score": 0.0,
+            "corporate_score": -1.0,
+            "eis_score": -1.0,
+            "news_kind": "financial",
+            "digest_method": "gemini"
+          },
+          {
+            "filing_date": "2026-08-25",
+            "event_date": "2026-08-24",
+            "form": "8-K",
+            "title": "Entry into Material Agreement: Non-dilutive funding (grant / milestone / royalty)",
+            "link": "https://www.sec.gov/Archives/edgar/data/1720893/000110465926100532/tm2623945d1_8k.htm",
+            "items_raw": "1.01",
+            "sessions": [
+              {
+                "item": "1.01",
+                "item_title": "Entry into a Material Definitive",
+                "title": "New Credit Agreement Amendment and Term Loans",
+                "summary": "BioXcel entered into a Fourteenth Amendment securing $1,250,000 in new term loans with a $250,000 upfront fee. Lenders lowered the minimum cash liquidity covenant to $250,000 from $3.0 million, tightened asset sale and licensing flexibilities, and mandated definitive transaction agreements for loan repayment or capital solutions by August 31, 2026."
+              }
+            ],
+            "financial_score": 1.5,
+            "clinical_score": 0.0,
+            "corporate_score": 0.0,
+            "eis_score": 1.5,
+            "news_kind": "financial",
+            "digest_method": "gemini"
+          },
+          {
+            "filing_date": "2026-08-24",
+            "event_date": "2026-08-21",
+            "form": "8-K",
+            "title": "Entry into Material Agreement: BioXcel Therapeutics, Inc.",
+            "link": "https://www.sec.gov/Archives/edgar/data/1720893/000110465926099900/tm2623861d1_8k.htm",
+            "items_raw": "1.01",
+            "sessions": [
+              {
+                "item": "1.01",
+                "item_title": "Entry into a Material Definitive Agreement",
+                "title": "Credit Agreement Thirteenth Amendment",
+                "summary": "BioXcel Therapeutics extended its deadline to August 28, 2026, to execute definitive agreements for loan repayment or an alternative capital solutions transaction acceptable to lenders under its Oaktree credit facility."
+              }
+            ],
+            "financial_score": 0.0,
+            "clinical_score": 0.0,
+            "corporate_score": 0.0,
+            "eis_score": null,
+            "news_kind": "financial",
+            "digest_method": "gemini"
+          },
+          {
+            "filing_date": "2026-08-11",
+            "event_date": "2026-08-10",
+            "form": "8-K",
+            "title": "Entry into Material Agreement: Debt refinanced on favorable terms",
+            "link": "https://www.sec.gov/Archives/edgar/data/1720893/000110465926093710/tm2622818d1_8k.htm",
+            "items_raw": "1.01",
+            "sessions": [
+              {
+                "item": "1.01",
+                "item_title": "Entry into a Material Definitive Agreement",
+                "title": "Twelfth Credit Agreement Amendment",
+                "summary": "BioXcel entered into a twelfth credit agreement amendment extending the deadline to August 21, 2026, to execute transactions repaying loans or securing alternative capital. Lenders also lowered the minimum cash liquidity covenant from $6.25 million to $3.0 million."
+              }
+            ],
+            "financial_score": 1.0,
+            "clinical_score": 0.0,
+            "corporate_score": 0.0,
+            "eis_score": 1.0,
+            "news_kind": "financial",
+            "digest_method": "gemini"
+          },
+          {
+            "filing_date": "2026-08-03",
+            "event_date": "2026-07-31",
+            "form": "8-K",
+            "title": "Entry into Material Agreement: Debt refinanced on favorable terms",
+            "link": "https://www.sec.gov/Archives/edgar/data/1720893/000110465926089436/tm2622012d1_8k.htm",
+            "items_raw": "1.01, 9.01",
+            "sessions": [
+              {
+                "item": "1.01",
+                "item_title": "Entry into a Material Definitive Agreement",
+                "title": "Credit Agreement Debt Deferral and Covenant Relief",
+                "summary": "Management secured an amendment deferring a principal and interest payment to August 31, 2026, totaling approximately $9.02 million, while lowering the minimum cash liquidity covenant to $6.25 million."
+              },
+              {
+                "item": "1.01",
+                "item_title": "Entry into a Material Definitive Agreement",
+                "title": "Strategic Transaction Deadline and Compensation Restrictions",
+                "summary": "The company extended its deadline to August 10, 2026, to execute a debt-repaying transaction or alternative capital solution acceptable to lenders, maintaining a temporary freeze on executive and employee compensation modifications."
+              },
+              {
+                "item": "9.01",
+                "item_title": "Financial Statements and Exhibits",
+                "title": "Filing of Credit Agreement Amendment",
+                "summary": "Management filed the Eleventh Amendment to the Credit Agreement and Guaranty as an exhibit to formalize the updated debt repayment terms, liquidity thresholds, and transaction milestones."
+              }
+            ],
+            "financial_score": 1.0,
+            "clinical_score": 0.0,
+            "corporate_score": 0.0,
+            "eis_score": 1.0,
+            "news_kind": "financial",
+            "digest_method": "gemini"
+          }
+        ],
+        "count": 6,
+        "refresh": "wednesday_07:15_europe_rome",
+        "next_refresh": "2026-09-23T07:15:00+02:00",
+        "digest_version": 2
+      }
+    },
+    "CADL": {
+      "updated_at": "2026-09-16T20:10:04.517652+00:00",
+      "digest_version": 2,
+      "dossier": {
+        "ticker": "CADL",
+        "lookback_days": 62,
+        "filings": [
+          {
+            "filing_date": "2026-09-10",
+            "event_date": "2026-09-06",
+            "form": "8-K",
+            "title": "Regulation FD Disclosure: Key executive hire",
+            "link": "https://www.sec.gov/Archives/edgar/data/1841387/000119312526387310/cadl-20260906.htm",
+            "items_raw": "5.02, 7.01",
+            "sessions": [
+              {
+                "item": "5.02",
+                "item_title": "Departure of Directors or Certain Officers",
+                "title": "Board Expansion and New Independent Director Appointment",
+                "summary": "Candel expanded its board from ten to eleven members, appointing Martine Zimmermann, Pharm.D., as an independent Class III director effective September 8, 2026. She receives a 64,000-share stock option vesting over three years and a $40,000 annual retainer, bringing extensive regulatory expertise from leadership roles at Inventiva, Ipsen, and Alexion."
+              },
+              {
+                "item": "7.01",
+                "item_title": "Regulation FD Disclosure",
+                "title": "Press Release Regarding Board Appointment",
+                "summary": "The company issued a press release on September 10, 2026, announcing the appointment of Dr. Zimmermann to the Board of Directors to support upcoming regulatory milestones, including a planned BLA submission in the fourth quarter of 2026."
+              }
+            ],
+            "financial_score": 0.35,
+            "clinical_score": 1.0,
+            "corporate_score": 1.0,
+            "eis_score": 1.0,
+            "news_kind": "financial",
+            "digest_method": "gemini"
+          },
+          {
+            "filing_date": "2026-09-09",
+            "event_date": "2026-09-09",
+            "form": "8-K",
+            "title": "Regulation FD Disclosure: Candel Therapeutics, Inc.",
+            "link": "https://www.sec.gov/Archives/edgar/data/1841387/000119312526386561/d738484d8k.htm",
+            "items_raw": "7.01",
+            "sessions": [
+              {
+                "item": "7.01",
+                "item_title": "Regulation FD Disclosure",
+                "title": "Investor Presentation",
+                "summary": "Management provided an updated corporate presentation for use in stakeholder discussions during September 2026, highlighting pipeline strategies and upcoming operational milestones aimed at strengthening immunotherapy responses against various cancers."
+              }
+            ],
+            "financial_score": 0.0,
+            "clinical_score": 0.0,
+            "corporate_score": 0.0,
+            "eis_score": null,
+            "news_kind": "financial",
+            "digest_method": "gemini"
+          },
+          {
+            "filing_date": "2026-08-13",
+            "event_date": "2026-08-13",
+            "form": "8-K",
+            "title": "Results of Operations / Financial Condition: Primary endpoint met (significant)",
+            "link": "https://www.sec.gov/Archives/edgar/data/1841387/000119312526347957/cadl-20260813.htm",
+            "items_raw": "2.02",
+            "sessions": [
+              {
+                "item": "2.02",
+                "item_title": "Results of Operations and Financial Condition",
+                "title": "Q2 2026 Financial Results",
+                "summary": "Candel Therapeutics reported its financial results for the second quarter ended June 30, 2026, alongside recent corporate highlights."
+              },
+              {
+                "item": "2.02",
+                "item_title": "Results of Operations and Financial Condition",
+                "title": "Aglatimagene Regulatory and Clinical Updates",
+                "summary": "Management plans to submit a BLA for aglatimagene in localized prostate cancer in Q4 2026, supported by positive phase 3 data in The Lancet Oncology, an AUA presentation, an ongoing global phase 3 NSCLC trial, and the appointment of a new Chief Commercial Officer."
+              },
+              {
+                "item": "2.02",
+                "item_title": "Results of Operations and Financial Condition",
+                "title": "Pipeline and Financial Runway",
+                "summary": "The company is advancing linoserpaturev toward a randomized phase 2 trial in recurrent glioblastoma. As of June 30, 2026, cash reserves totaled $201.6 million, funding operations into Q1 2028, covering the potential 2027 commercial launch of aglatimagene."
+              }
+            ],
+            "financial_score": 0.26,
+            "clinical_score": 1.88,
+            "corporate_score": 1.0,
+            "eis_score": 1.88,
+            "news_kind": "financial",
+            "digest_method": "gemini"
+          }
+        ],
+        "count": 3,
+        "refresh": "wednesday_07:15_europe_rome",
+        "next_refresh": "2026-09-23T07:15:00+02:00",
+        "digest_version": 2
+      }
+    },
+    "CCCC": {
+      "updated_at": "2026-09-16T20:10:07.927720+00:00",
+      "digest_version": 2,
+      "dossier": {
+        "ticker": "CCCC",
+        "lookback_days": 62,
+        "filings": [
+          {
+            "filing_date": "2026-08-11",
+            "event_date": "2026-08-11",
+            "form": "8-K",
+            "title": "Results of Operations / Financial Condition: Earnings reported",
+            "link": "https://www.sec.gov/Archives/edgar/data/1662579/000162828026055490/cccc-20260811.htm",
+            "items_raw": "2.02",
+            "sessions": [
+              {
+                "item": "2.02",
+                "item_title": "Results of Operations and Financial Condition",
+                "title": "Q2 2026 Financial Results",
+                "summary": "On August 11, 2026, the company published a press release detailing corporate business updates and financial performance for the second quarter ending June 30, 2026."
+              }
+            ],
+            "financial_score": 0.35,
+            "clinical_score": 0.0,
+            "corporate_score": 0.0,
+            "eis_score": 0.35,
+            "news_kind": "financial",
+            "digest_method": "gemini"
+          }
+        ],
+        "count": 1,
+        "refresh": "wednesday_07:15_europe_rome",
+        "next_refresh": "2026-09-23T07:15:00+02:00",
+        "digest_version": 2
+      }
+    },
+    "CERS": {
+      "updated_at": "2026-09-16T20:10:44.431148+00:00",
+      "digest_version": 2,
+      "dossier": {
+        "ticker": "CERS",
+        "lookback_days": 62,
+        "filings": [
+          {
+            "filing_date": "2026-07-30",
+            "event_date": "2026-07-30",
+            "form": "8-K",
+            "title": "Results of Operations / Financial Condition: Earnings reported",
+            "link": "https://www.sec.gov/Archives/edgar/data/1020214/000119312526326093/cers-20260730.htm",
+            "items_raw": "2.02, 9.01",
+            "sessions": [
+              {
+                "item": "2.02",
+                "item_title": "Results of Operations and Financial Condition",
+                "title": "Q2 2026 Financial Results",
+                "summary": "Cerus reported total revenue of $63.3 million for the second quarter ended June 30, 2026, which included product revenue of $57.4 million, reflecting a 10% year-over-year increase."
+              },
+              {
+                "item": "2.02",
+                "item_title": "Results of Operations and Financial Condition",
+                "title": "Raised 2026 Financial Guidance",
+                "summary": "Management raised the lower end of its full-year 2026 product revenue guidance to a range of $229 to $231 million and increased the INTERCEPT Fibrinogen Complex sales outlook to $23 to $25 million."
+              },
+              {
+                "item": "9.01",
+                "item_title": "Financial Statements and Exhibits",
+                "title": "Press Release Exhibit Filing",
+                "summary": "The company furnished the press release detailing its second quarter 2026 operational and financial results as Exhibit 99.1."
+              }
+            ],
+            "financial_score": 0.35,
+            "clinical_score": 0.0,
+            "corporate_score": 0.0,
+            "eis_score": 0.35,
+            "news_kind": "financial",
+            "digest_method": "gemini"
+          }
+        ],
+        "count": 1,
+        "refresh": "wednesday_07:15_europe_rome",
+        "next_refresh": "2026-09-23T07:15:00+02:00",
+        "digest_version": 2
+      }
+    },
+    "CHRS": {
+      "updated_at": "2026-09-16T20:11:01.741732+00:00",
+      "digest_version": 2,
+      "dossier": {
+        "ticker": "CHRS",
+        "lookback_days": 62,
+        "filings": [
+          {
+            "filing_date": "2026-08-28",
+            "event_date": "2026-08-28",
+            "form": "8-K",
+            "title": "Other Events: Shelf registration filed (no takedown)",
+            "link": "https://www.sec.gov/Archives/edgar/data/1512762/000110465926103316/chrs-20260828x8k.htm",
+            "items_raw": "8.01",
+            "sessions": [
+              {
+                "item": "8.01",
+                "item_title": "Other Events",
+                "title": "At-The-Market Equity Offering Facility",
+                "summary": "Coherus Oncology entered into an ATM sales agreement with Leerink Partners on August 28, 2026, allowing the company to opportunistically offer and sell up to $50.0 million in common stock. Leerink will receive a commission of up to 3.0% on gross proceeds."
+              }
+            ],
+            "financial_score": 0.0,
+            "clinical_score": 0.0,
+            "corporate_score": 0.0,
+            "eis_score": 0.0,
+            "news_kind": "financial",
+            "digest_method": "gemini"
+          },
+          {
+            "filing_date": "2026-08-17",
+            "event_date": "2026-08-17",
+            "form": "8-K",
+            "title": "Regulation FD Disclosure: Coherus Oncology, Inc.",
+            "link": "https://www.sec.gov/Archives/edgar/data/1512762/000110465926097951/chrs-20260817x8k.htm",
+            "items_raw": "7.01, 8.01",
+            "sessions": [
+              {
+                "item": "7.01",
+                "item_title": "Regulation FD Disclosure",
+                "title": "Special Dividend Press Release and FAQ",
+                "summary": "Management issued a press release and shareholder FAQ on August 17, 2026, announcing a board-declared special dividend of contingent value rights, available on the company investor relations website."
+              },
+              {
+                "item": "8.01",
+                "item_title": "Other Events",
+                "title": "Contingent Value Rights Distribution Terms",
+                "summary": "Common stockholders of record on September 30, 2026, will receive one CVR per share, entitling them to cash proceeds from any sale or monetization of legacy biosimilar assets between October 7, 2026, and October 7, 2028."
+              },
+              {
+                "item": "8.01",
+                "item_title": "Other Events",
+                "title": "CVR Structure and Asset Sale Process",
+                "summary": "The non-transferable CVRs are governed by an agreement with Equiniti Trust Company and an Innovatus loan agreement. An investment bank was hired to advise on monetizing the remaining biosimilar assets."
+              }
+            ],
+            "financial_score": 1.5,
+            "clinical_score": 0.0,
+            "corporate_score": 0.0,
+            "eis_score": 1.5,
+            "news_kind": "financial",
+            "digest_method": "gemini"
+          },
+          {
+            "filing_date": "2026-08-17",
+            "event_date": "2026-08-17",
+            "form": "8-K",
+            "title": "Entry into Material Agreement: Debt refinanced on favorable terms",
+            "link": "https://www.sec.gov/Archives/edgar/data/1512762/000110465926097949/chrs-20260817x8k.htm",
+            "items_raw": "1.01, 1.02",
+            "sessions": [
+              {
+                "item": "1.01",
+                "item_title": "Entry into a Material Definitive Agreement",
+                "title": "Senior Secured Term Loan Agreement",
+                "summary": "Coherus entered into a $55M senior secured term loan facility maturing in August 2031 with Innovatus Life Sciences. The financing extends debt maturity past upcoming pipeline launches, lowers interest rates, and provides optional tranches totaling $45M subject to conditions."
+              },
+              {
+                "item": "1.02",
+                "item_title": "Termination of a Material Definitive Agreement",
+                "title": "Termination of Prior Debt",
+                "summary": "Coherus repaid all outstanding obligations and terminated its prior loan agreement on August 14, 2026, releasing all associated security interests."
+              }
+            ],
+            "financial_score": 1.0,
+            "clinical_score": 0.0,
+            "corporate_score": 0.0,
+            "eis_score": 1.0,
+            "news_kind": "financial",
+            "digest_method": "gemini"
+          },
+          {
+            "filing_date": "2026-08-05",
+            "event_date": "2026-08-05",
+            "form": "8-K",
+            "title": "Results of Operations / Financial Condition: Earnings reported",
+            "link": "https://www.sec.gov/Archives/edgar/data/1512762/000110465926091188/chrs-20260805x8k.htm",
+            "items_raw": "2.02, 9.01",
+            "sessions": [
+              {
+                "item": "2.02",
+                "item_title": "Results of Operations and Financial Condition",
+                "title": "Q2 2026 Financial Results",
+                "summary": "Coherus reported financial results for the quarter ended June 30, 2026, disclosing these metrics via press release furnished under Item 2.02."
+              },
+              {
+                "item": "9.01",
+                "item_title": "Financial Statements and Exhibits",
+                "title": "LOQTORZI Q2 Commercial Performance",
+                "summary": "LOQTORZI net revenue reached $13.6 million in Q2 2026, marking a 37% year-over-year increase and a 15% sequential gain over Q1, driven by record new patient starts and stable discontinuation rates."
+              },
+              {
+                "item": "9.01",
+                "item_title": "Financial Statements and Exhibits",
+                "title": "Pipeline Clinical Updates",
+                "summary": "Management completed enrollment for casdozokitug in hepatocellular carcinoma and tagmokitug in head and neck and colorectal cancers, noting emerging clinical activity for tagmokitug combined with toripalimab and anticipating mature data disclosures in October."
+              }
+            ],
+            "financial_score": 0.35,
+            "clinical_score": 0.0,
+            "corporate_score": 0.0,
+            "eis_score": 0.35,
+            "news_kind": "financial",
+            "digest_method": "gemini"
+          }
+        ],
+        "count": 4,
+        "refresh": "wednesday_07:15_europe_rome",
+        "next_refresh": "2026-09-23T07:15:00+02:00",
+        "digest_version": 2
+      }
+    },
+    "COCP": {
+      "updated_at": "2026-09-16T20:11:41.469480+00:00",
+      "digest_version": 2,
+      "dossier": {
+        "ticker": "COCP",
+        "lookback_days": 62,
+        "filings": [
+          {
+            "filing_date": "2026-09-09",
+            "event_date": "2026-09-09",
+            "form": "8-K",
+            "title": "Regulation FD Disclosure: Dosing milestone (first / last patient dosed)",
+            "link": "https://www.sec.gov/Archives/edgar/data/1412486/000149315226041877/form8-k.htm",
+            "items_raw": "7.01",
+            "sessions": [
+              {
+                "item": "7.01",
+                "item_title": "Regulation FD Disclosure",
+                "title": "Phase 1b Norovirus Study Completion",
+                "summary": "Cocrystal Pharma completed dosing the final subject in the Phase 1b clinical trial of oral antiviral candidate CDI-988 for norovirus prevention and treatment. The trial showed a clean safety profile so far, with preliminary efficacy results anticipated in late 2026 or early 2027."
+              }
+            ],
+            "financial_score": 0.0,
+            "clinical_score": 0.1,
+            "corporate_score": 0.0,
+            "eis_score": 0.11,
+            "news_kind": "clinical",
+            "digest_method": "gemini"
+          },
+          {
+            "filing_date": "2026-08-18",
+            "event_date": "2026-08-12",
+            "form": "8-K",
+            "title": "Departure / Election of Directors or Officers: Key executive hire",
+            "link": "https://www.sec.gov/Archives/edgar/data/1412486/000149315226039023/form8-k.htm",
+            "items_raw": "5.02",
+            "sessions": [
+              {
+                "item": "5.02",
+                "item_title": "Departure of Directors or Certain Officers",
+                "title": "Board Appointment",
+                "summary": "Carol L. Brosgart joined the Board of Directors immediately on August 12, 2026. Management confirmed no hidden selection arrangements, family ties, or disclosable related party transactions exist regarding her appointment."
+              }
+            ],
+            "financial_score": 0.0,
+            "clinical_score": 0.0,
+            "corporate_score": 1.0,
+            "eis_score": 1.0,
+            "news_kind": "other",
+            "digest_method": "gemini"
+          },
+          {
+            "filing_date": "2026-08-17",
+            "event_date": "2026-08-17",
+            "form": "8-K",
+            "title": "Regulation FD Disclosure: Key executive hire",
+            "link": "https://www.sec.gov/Archives/edgar/data/1412486/000149315226038747/form8-k.htm",
+            "items_raw": "7.01",
+            "sessions": [
+              {
+                "item": "7.01",
+                "item_title": "Regulation FD Disclosure",
+                "title": "Board of Directors Appointment",
+                "summary": "Dr. Carol L. Brosgart joined the company's Board of Directors on August 12, 2026. Management highlights her extensive antiviral drug development and biopharma advisory experience, which will support the clinical advancement of the norovirus candidate CDI-988 and the broader antiviral pipeline."
+              }
+            ],
+            "financial_score": 0.0,
+            "clinical_score": 3.0,
+            "corporate_score": 1.0,
+            "eis_score": 3.0,
+            "news_kind": "clinical",
+            "digest_method": "gemini"
+          },
+          {
+            "filing_date": "2026-08-03",
+            "event_date": "2026-07-31",
+            "form": "8-K",
+            "title": "COCP — August 3, 2026 (event date July 31, 2026)",
+            "link": "https://www.sec.gov/Archives/edgar/data/1412486/000149315226035743/form8-k.htm",
+            "items_raw": "1.01, 3.02, 7.01",
+            "sessions": [
+              {
+                "item": "1.01",
+                "item_title": "Entry into Material Definitive Agreement",
+                "title": "OPKO Health Private Placement",
+                "summary": "Cocrystal Pharma sold 5,474,053 common shares to OPKO Health at $0.9134 per share on July 31, 2026, raising $5.0 million in gross proceeds. Funds will advance preclinical and clinical drug programs, general corporate purposes, and working capital."
+              },
+              {
+                "item": "3.02",
+                "item_title": "Unregistered Sale of Equity Securities",
+                "title": "Unregistered Equity Issuance",
+                "summary": "The $5.0 million share sale to accredited investor OPKO Health was executed via private placement under Section 4(a)(2) of the Securities Act of 1933 and Rule 506(b)."
+              },
+              {
+                "item": "7.01",
+                "item_title": "Regulation FD Disclosure",
+                "title": "Press Release Announcement",
+                "summary": "On August 3, 2026, Cocrystal issued a press release detailing the $5 million private placement with OPKO Health, intended to fund pipeline advancement toward anticipated Phase 1b norovirus data in late 2026."
+              }
+            ],
+            "financial_score": -1.5,
+            "clinical_score": 0.0,
+            "corporate_score": 0.0,
+            "eis_score": -1.5,
+            "news_kind": "financial",
+            "digest_method": "gemini"
+          },
+          {
+            "filing_date": "2026-07-17",
+            "event_date": "2026-07-14",
+            "form": "8-K",
+            "title": "Submission of Matters to a Vote of Security Holders: Cocrystal Pharma, Inc.",
+            "link": "https://www.sec.gov/Archives/edgar/data/1412486/000149315226033662/form8-k.htm",
+            "items_raw": "5.07",
+            "sessions": [
+              {
+                "item": "5.07",
+                "item_title": "Submission of Matters to a Vote",
+                "title": "Director Election Results",
+                "summary": "Stockholders elected five director nominees during the July 14, 2026 annual meeting to serve until the next annual meeting, with votes ranging from approximately 5.9 million to 6.3 million for each individual."
+              },
+              {
+                "item": "5.07",
+                "item_title": "Submission of Matters to a Vote",
+                "title": "Auditor Ratification",
+                "summary": "Investors overwhelmingly ratified Weinberg & Company as the independent accounting firm for the fiscal year ending December 31, 2026, recording over 9.1 million affirmative votes. An adjournment proposal was rendered moot."
+              }
+            ],
+            "financial_score": 0.0,
+            "clinical_score": 0.0,
+            "corporate_score": 0.0,
+            "eis_score": null,
+            "news_kind": "other",
+            "digest_method": "gemini"
+          }
+        ],
+        "count": 5,
+        "refresh": "wednesday_07:15_europe_rome",
+        "next_refresh": "2026-09-23T07:15:00+02:00",
+        "digest_version": 2
+      }
+    },
+    "CRDL": {
+      "updated_at": "2026-09-16T20:11:41.839506+00:00",
+      "digest_version": 2,
+      "dossier": {
+        "ticker": "CRDL",
+        "lookback_days": 62,
+        "filings": [],
+        "count": 0,
+        "refresh": "wednesday_07:15_europe_rome",
+        "next_refresh": "2026-09-23T07:15:00+02:00",
+        "digest_version": 2
+      }
+    },
+    "CRVO": {
+      "updated_at": "2026-09-16T20:17:50.248163+00:00",
+      "digest_version": 2,
+      "dossier": {
+        "ticker": "CRVO",
+        "lookback_days": 62,
+        "filings": [
+          {
+            "filing_date": "2026-09-10",
+            "event_date": "2026-09-10",
+            "form": "8-K",
+            "title": "Regulation FD Disclosure: Readout expected with guided window",
+            "link": "https://www.sec.gov/Archives/edgar/data/1053691/000143774926030073/crvo20260910_8k.htm",
+            "items_raw": "7.01, 8.01",
+            "sessions": [
+              {
+                "item": "7.01",
+                "item_title": "Regulation FD Disclosure",
+                "title": "Investor Presentation Availability",
+                "summary": "CervoMed has published an updated corporate presentation on its website detailing business updates, clinical pipelines, and financial status, intended for ongoing investor outreach and conference discussions."
+              },
+              {
+                "item": "8.01",
+                "item_title": "Other Events",
+                "title": "Phase 2a Late-Breaking Oral Presentation",
+                "summary": "Initial Phase 2a trial results for neflamapimod in nonfluent variant primary progressive aphasia will be presented as a late-breaking oral at the International Society of Frontotemporal Dementias Annual Meeting on October 8-11, 2026."
+              }
+            ],
+            "financial_score": 0.0,
+            "clinical_score": 0.45,
+            "corporate_score": 0.0,
+            "eis_score": 0.45,
+            "news_kind": "clinical",
+            "digest_method": "gemini"
+          },
+          {
+            "filing_date": "2026-08-10",
+            "event_date": "2026-08-10",
+            "form": "8-K",
+            "title": "CRVO — August 10, 2026",
+            "link": "https://www.sec.gov/Archives/edgar/data/1053691/000143774926026771/crvo20260810_8k.htm",
+            "items_raw": "2.02",
+            "sessions": [
+              {
+                "item": "2.02",
+                "item_title": "Results of Operations and Financial Condition",
+                "title": "Q2 2026 Financial Results Announcement",
+                "summary": "On August 10, 2026, CervoMed announced its financial results for the second quarter ended June 30, 2026, via press release."
+              }
+            ],
+            "financial_score": null,
+            "clinical_score": null,
+            "corporate_score": null,
+            "eis_score": null,
+            "news_kind": "financial",
+            "digest_method": "gemini"
+          },
+          {
+            "filing_date": "2026-08-04",
+            "event_date": "2026-08-04",
+            "form": "8-K",
+            "title": "CRVO — August 4, 2026",
+            "link": "https://www.sec.gov/Archives/edgar/data/1053691/000143774926025509/crvo20260803_8k.htm",
+            "items_raw": "7.01, 9.01",
+            "sessions": [
+              {
+                "item": "7.01",
+                "item_title": "Regulation FD Disclosure",
+                "title": "Regulation FD Disclosure",
+                "summary": "(the “Company”) issued a press release announcing that neflamapimod has been granted an Innovation Passport to enter the United Kingdom’s Innovative Licensing and Access Pathway for neflamapimod’s development in dementia with Lewy bodies. A copy of the press release is attached hereto as Exhibit 99.1 and incorporated herein by reference."
+              },
+              {
+                "item": "9.01",
+                "item_title": "Financial Statements and Exhibits",
+                "title": "Financial Statements and Exhibits",
+                "summary": "Item 9.01 — exhibits: 99.1 Press Release, issued August 4, 2026 104 Cover Page Interactive Data File (embed; 99.1 2 ex_997793; 99.1 ex_997793; 99.1 CervoMed Announces Neflamapimod Awarded Innovation Passport Designation Under th."
+              }
+            ],
+            "financial_score": null,
+            "clinical_score": null,
+            "corporate_score": null,
+            "eis_score": null,
+            "news_kind": "financial",
+            "digest_method": "sec_8k_items"
+          }
+        ],
+        "count": 3,
+        "refresh": "wednesday_07:15_europe_rome",
+        "next_refresh": "2026-09-23T07:15:00+02:00",
+        "digest_version": 2
+      }
+    },
+    "DRTS": {
+      "updated_at": "2026-09-16T20:17:50.726879+00:00",
+      "digest_version": 2,
+      "dossier": {
+        "ticker": "DRTS",
+        "lookback_days": 62,
+        "filings": [],
+        "count": 0,
+        "refresh": "wednesday_07:15_europe_rome",
+        "next_refresh": "2026-09-23T07:15:00+02:00",
+        "digest_version": 2
+      }
+    },
+    "DXCM": {
+      "updated_at": "2026-09-16T20:24:54.735662+00:00",
+      "digest_version": 2,
+      "dossier": {
+        "ticker": "DXCM",
+        "lookback_days": 62,
+        "filings": [
+          {
+            "filing_date": "2026-09-14",
+            "event_date": "2026-09-10",
+            "form": "8-K",
+            "title": "DXCM — September 14, 2026 (event date September 10, 2026)",
+            "link": "https://www.sec.gov/Archives/edgar/data/1093557/000109355726000175/dxcm-20260910.htm",
+            "items_raw": "5.02, 7.01, 9.01",
+            "sessions": [
+              {
+                "item": "5.02",
+                "item_title": "DEPARTURE OF DIRECTORS OR CERTAIN OFFICERS",
+                "title": "DEPARTURE OF DIRECTORS OR CERTAIN OFFICERS",
+                "summary": "; ELECTION OF DIRECTORS; APPOINTMENT OF CERTAIN OFFICERS; COMPENSATORY ARRANGEMENTS OF CERTAIN OFFICERS. On September 10, 2026, the Board of Directors (the “Board”) of DexCom, Inc."
+              },
+              {
+                "item": "7.01",
+                "item_title": "REGULATION FD DISCLOSURE",
+                "title": "REGULATION FD DISCLOSURE",
+                "summary": "Sylvain entered into an offer letter with the Company (the “Offer Letter”) providing for an annual base salary of $767,000 and annual target bonus opportunity equal to 75% of his base salary."
+              },
+              {
+                "item": "9.01",
+                "item_title": "FINANCIAL STATEMENTS AND EXHIBITS",
+                "title": "FINANCIAL STATEMENTS AND EXHIBITS",
+                "summary": "Item 9.01 — exhibits: 99.1 Press release dated September 14, 2026 104 Cover Page Interactive Data File (for; 99.1 2 dxcm20260914-exhibit991; 99.1 Document Exhibit 99."
+              }
+            ],
+            "financial_score": null,
+            "clinical_score": null,
+            "corporate_score": null,
+            "eis_score": null,
+            "news_kind": "financial",
+            "digest_method": "sec_8k_items"
+          },
+          {
+            "filing_date": "2026-09-10",
+            "event_date": "2026-09-10",
+            "form": "8-K",
+            "title": "DXCM — September 10, 2026",
+            "link": "https://www.sec.gov/Archives/edgar/data/1093557/000109355726000167/dxcm-20260910.htm",
+            "items_raw": "5.02, 7.01, 9.01",
+            "sessions": [
+              {
+                "item": "5.02",
+                "item_title": "DEPARTURE OF DIRECTORS OR CERTAIN OFFICERS",
+                "title": "DEPARTURE OF DIRECTORS OR CERTAIN OFFICERS",
+                "summary": "; ELECTION OF DIRECTORS; APPOINTMENT OF CERTAIN OFFICERS; COMPENSATORY ARRANGEMENTS OF CERTAIN OFFICERS. On September 10, 2026, the Board of Directors (the “Board”) of DexCom, Inc."
+              },
+              {
+                "item": "7.01",
+                "item_title": "REGULATION FD DISCLOSURE",
+                "title": "REGULATION FD DISCLOSURE",
+                "summary": "Boehnlein was granted an initial appointment equity grant of restricted stock units (“RSUs”) with a fair value of $500,000, vesting annually over the three years following the date of grant, subject to Mr."
+              },
+              {
+                "item": "9.01",
+                "item_title": "FINANCIAL STATEMENTS AND EXHIBITS",
+                "title": "FINANCIAL STATEMENTS AND EXHIBITS",
+                "summary": "Item 9.01 — exhibits: 99.1 Press release dated September 10, 2026 104 Cover Page Interactive Data File (for; 99.1 2 dxcm20260910-exhibit991; 99.1 Document Exhibit 99."
+              }
+            ],
+            "financial_score": null,
+            "clinical_score": null,
+            "corporate_score": null,
+            "eis_score": null,
+            "news_kind": "financial",
+            "digest_method": "sec_8k_items"
+          },
+          {
+            "filing_date": "2026-07-30",
+            "event_date": "2026-07-30",
+            "form": "8-K",
+            "title": "DXCM — July 30, 2026",
+            "link": "https://www.sec.gov/Archives/edgar/data/1093557/000109355726000142/dxcm-20260730.htm",
+            "items_raw": "2.02, 9.01",
+            "sessions": [
+              {
+                "item": "2.02",
+                "item_title": "RESULTS OF OPERATIONS AND FINANCIAL CONDITION",
+                "title": "RESULTS OF OPERATIONS AND FINANCIAL CONDITION",
+                "summary": "Second Quarter 2026 Financial Highlights: • Revenue grew 13% year-over-year to $1.308 billion on a reported basis and 12% year-over-year on an organic 1 basis. revenue grew 11% and international revenue grew 19% on a reported basis and 16% on an organic 1 basis, all on a year-over-year basis."
+              },
+              {
+                "item": "9.01",
+                "item_title": "FINANCIAL STATEMENTS AND EXHIBITS",
+                "title": "FINANCIAL STATEMENTS AND EXHIBITS",
+                "summary": "Item 9.01 — exhibits: 99.1 Press release dated July 30, 2026 104 Cover Page Interactive Data File (formatte; 99.1 2 dxcm06302026-exhibit991; 99.1 Document Exhibit 99; 18.3 million or 24; 28.3 million or 25; 5.25 billion (approximately 11-13% growth) • Non-GAAP Gross Profit Margin of approxim."
+              }
+            ],
+            "financial_score": null,
+            "clinical_score": null,
+            "corporate_score": null,
+            "eis_score": null,
+            "news_kind": "financial",
+            "digest_method": "sec_8k_items"
+          }
+        ],
+        "count": 3,
+        "refresh": "wednesday_07:15_europe_rome",
+        "next_refresh": "2026-09-23T07:15:00+02:00",
+        "digest_version": 2
+      }
+    },
+    "ENTA": {
+      "updated_at": "2026-09-16T20:27:16.076249+00:00",
+      "digest_version": 2,
+      "dossier": {
+        "ticker": "ENTA",
+        "lookback_days": 62,
+        "filings": [
+          {
+            "filing_date": "2026-08-10",
+            "event_date": "2026-08-10",
+            "form": "8-K",
+            "title": "ENTA — August 10, 2026",
+            "link": "https://www.sec.gov/Archives/edgar/data/1177648/000119312526342336/enta-20260810.htm",
+            "items_raw": "2.02, 9.01",
+            "sessions": [
+              {
+                "item": "2.02",
+                "item_title": "Results of Operations and Financial Condition",
+                "title": "Results of Operations and Financial Condition",
+                "summary": "On August 10, 2026, Enanta Pharmaceuticals, Inc. announced via press release its results for the fiscal quarter ended June 30, 2026. A copy of Enanta's press release is hereby furnished to the Commission and incorporated by reference herein as Exhibit 99.1."
+              },
+              {
+                "item": "9.01",
+                "item_title": "Financial Statements and Exhibits",
+                "title": "Financial Statements and Exhibits",
+                "summary": "Item 9.01 — exhibits: 99.1 Press Release of Enanta Pharmaceuticals, Inc; 99.1 2 enta-ex99_1; 99.1 EX-99; 99.1 Enanta Pharmaceuticals Reports Financial Results for its Fiscal Third Quarter En; 11.5 Million at June 30, 2026, as well as Continuing Retained Royalties, with Cash Ru; 14.4 million and consisted of royalty revenue…"
+              }
+            ],
+            "financial_score": null,
+            "clinical_score": null,
+            "corporate_score": null,
+            "eis_score": null,
+            "news_kind": "financial",
+            "digest_method": "sec_8k_items"
+          }
+        ],
+        "count": 1,
+        "refresh": "wednesday_07:15_europe_rome",
+        "next_refresh": "2026-09-23T07:15:00+02:00",
+        "digest_version": 2
+      }
+    },
+    "EWTX": {
+      "updated_at": "2026-09-16T20:31:58.470477+00:00",
+      "digest_version": 2,
+      "dossier": {
+        "ticker": "EWTX",
+        "lookback_days": 62,
+        "filings": [
+          {
+            "filing_date": "2026-08-06",
+            "event_date": "2026-08-06",
+            "form": "8-K",
+            "title": "EWTX — August 6, 2026",
+            "link": "https://www.sec.gov/Archives/edgar/data/1710072/000110465926091671/tm2621653d1_8k.htm",
+            "items_raw": "2.02, 9.01",
+            "sessions": [
+              {
+                "item": "2.02",
+                "item_title": "Results of Operations and Financial Condition",
+                "title": "Results of Operations and Financial Condition",
+                "summary": "By: /s/ Michael Nofi Michael Nofi Chief Financial Officer Date: August 6, 2026 EX-99.1 2 tm2621653d1_ex99-1.htm EXHIBIT 99.1 Exhibit 99.1 News Release Edgewise Therapeutics Reports Second Quarter 2026 Financial Results – Announced positive top-line data from 12-week Phase 2 CIRRUS-HCM trial with EDG-7500 in obstructive and nonobstructive hypertrophic cardiomyopathy (HCM)……"
+              },
+              {
+                "item": "9.01",
+                "item_title": "Financial",
+                "title": "Financial",
+                "summary": "Item 9.01 — exhibits: 99.1 Press Release of Edgewise Therapeutics, Inc; 99.1 2 tm2621653d1_ex99-1; 99.1 Exhibit 99; 2.65 billion in July 2026, strengthening the balance sheet, sharpening focus on the c; 1.55 billion in upfront cash consideration and up to $1; 2.65 billion."
+              }
+            ],
+            "financial_score": null,
+            "clinical_score": null,
+            "corporate_score": null,
+            "eis_score": null,
+            "news_kind": "financial",
+            "digest_method": "sec_8k_items"
+          },
+          {
+            "filing_date": "2026-07-16",
+            "event_date": "2026-07-16",
+            "form": "8-K/A",
+            "title": "EWTX — July 16, 2026",
+            "link": "https://www.sec.gov/Archives/edgar/data/1710072/000110465926084088/tm2620181d2_8ka.htm",
+            "items_raw": "9.01, 2.01",
+            "sessions": [
+              {
+                "item": "9.01",
+                "item_title": "Financial Statements and Exhibits",
+                "title": "Financial Statements and Exhibits",
+                "summary": "Item 9.01 — exhibits: 99.1 and is incorporated herein by reference; 99.1 Unaudited pro forma condensed financial information 104 Cover Page Interactive D; 99.1 2 tm2620181d2_ex99-1; 99.1 Exhibit 99; 1.55 billion in upfront cash consideration and is eligible to receive up to $1; 2.65 billion."
+              },
+              {
+                "item": "2.01",
+                "item_title": "of Form 8-K, the Company has prepared",
+                "title": "of Form 8-K, the Company has prepared",
+                "summary": "the following unaudited pro forma condensed financial information in accordance with Article 11 of Regulation S-X. The unaudited pro forma condensed balance sheet as of March 31, 2026 gives effect to the Transaction as if it had occurred on March 31, 2026."
+              }
+            ],
+            "financial_score": null,
+            "clinical_score": null,
+            "corporate_score": null,
+            "eis_score": null,
+            "news_kind": "ma",
+            "digest_method": "sec_8k_items"
+          }
+        ],
+        "count": 2,
+        "refresh": "wednesday_07:15_europe_rome",
+        "next_refresh": "2026-09-23T07:15:00+02:00",
+        "digest_version": 2
+      }
+    },
+    "GILD": {
+      "updated_at": "2026-09-16T20:34:20.156108+00:00",
+      "digest_version": 2,
+      "dossier": {
+        "ticker": "GILD",
+        "lookback_days": 62,
+        "filings": [
+          {
+            "filing_date": "2026-08-04",
+            "event_date": "2026-08-04",
+            "form": "8-K",
+            "title": "GILD — August 4, 2026",
+            "link": "https://www.sec.gov/Archives/edgar/data/882095/000088209526000028/gild-20260804.htm",
+            "items_raw": "2.02, 9.01",
+            "sessions": [
+              {
+                "item": "2.02",
+                "item_title": "Results of Operations and Financial Condition",
+                "title": "Results of Operations and Financial Condition",
+                "summary": "On August 4, 2026 , Gilead Sciences, Inc., a Delaware corporation (“Gilead”), announced its financial results for the quarter ended June 30, 2026. A copy of the press release is filed as Exhibit 99.1 to this report. Gilead has presented certain financial information in accordance with U.S."
+              },
+              {
+                "item": "9.01",
+                "item_title": "Financial Statements and Exhibits",
+                "title": "Financial Statements and Exhibits",
+                "summary": "Item 9.01 — exhibits: 99.1 Press Release, issued by Gilead Sciences, Inc; 99.1 Press Release, issued by Gilead Sciences, Inc; 99.1 2 exhibit991earningspressrel; 99.1 Document GILEAD SCIENCES ANNOUNCES SECOND QUARTER 2026 FINANCIAL RESULTS Product; 7.6 billion Biktarvy Sales Increased 7% Year-Over-Year to $3; 7.8 billion compared to the same period…"
+              }
+            ],
+            "financial_score": null,
+            "clinical_score": null,
+            "corporate_score": null,
+            "eis_score": null,
+            "news_kind": "financial",
+            "digest_method": "sec_8k_items"
+          }
+        ],
+        "count": 1,
+        "refresh": "wednesday_07:15_europe_rome",
+        "next_refresh": "2026-09-23T07:15:00+02:00",
+        "digest_version": 2
+      }
+    },
+    "GPCR": {
+      "updated_at": "2026-09-16T20:38:23.982334+00:00",
+      "digest_version": 2,
+      "dossier": {
+        "ticker": "GPCR",
+        "lookback_days": 62,
+        "filings": [
+          {
+            "filing_date": "2026-09-08",
+            "event_date": "2026-09-08",
+            "form": "8-K",
+            "title": "GPCR — September 8, 2026",
+            "link": "https://www.sec.gov/Archives/edgar/data/1888886/000110465926105688/tm2624945d1_8k.htm",
+            "items_raw": "7.01, 8.01, 9.01",
+            "sessions": [
+              {
+                "item": "7.01",
+                "item_title": "Regulation FD Disclosure",
+                "title": "Regulation FD Disclosure",
+                "summary": "On September 8, 2026, Structure Therapeutics Inc."
+              },
+              {
+                "item": "8.01",
+                "item_title": "Other Events",
+                "title": "Other Events",
+                "summary": "ACCG-2671 (Oral Small Molecule DACRA): Phase 1 SAD Topline Clinical Trial Results On September 8, 2026, the Company reported positive topline data for ACCG-2671, an oral, non-peptide, small molecule dual amylin and calcitonin receptor agonist (DACRA), from the SAD portion of the Phase 1/2a clinical trial."
+              },
+              {
+                "item": "9.01",
+                "item_title": "Financial Statements and Exhibits",
+                "title": "Financial Statements and Exhibits",
+                "summary": "Item 9.01 — exhibits: 99.1 Press Release, dated September 8, 2026; 99.2 Investor Presentation, dated September 8, 2026."
+              }
+            ],
+            "financial_score": null,
+            "clinical_score": null,
+            "corporate_score": null,
+            "eis_score": null,
+            "news_kind": "financial",
+            "digest_method": "sec_8k_items"
+          },
+          {
+            "filing_date": "2026-08-06",
+            "event_date": "2026-08-06",
+            "form": "8-K",
+            "title": "Results of Operations / Financial Condition: Key executive hire",
+            "link": "https://www.sec.gov/Archives/edgar/data/1888886/000110465926092017/tm2622407d1_8k.htm",
+            "items_raw": "2.02, 9.01",
+            "sessions": [
+              {
+                "item": "2.02",
+                "item_title": "Results of Operations and Financial Condition",
+                "title": "Results of Operations and Financial Condition",
+                "summary": "Chief Executive Officer EX-99.1 2 tm2622407d1_ex99-1.htm EXHIBIT 99.1 Exhibit 99.1 Structure Therapeutics Reports Second Quarter 2026 Financial Results and Recent Highlights First patients dosed in aleniglipron (oral small molecule GLP-1 receptor agonist) Phase 3 ACCOMPLISH program for chronic weight management Data from Phase 1 SAD clinical trial of ACCG-2671 (oral……"
+              },
+              {
+                "item": "9.01",
+                "item_title": "Financial Statements and Exhibits",
+                "title": "Financial Statements and Exhibits",
+                "summary": "Item 9.01 — exhibits: 99.1 Press Release dated August 6, 2026 104 Cover Page Interactive Data File (embedde; 99.1 2 tm2622407d1_ex99-1; 99.1 Exhibit 99; 1.3 billion as of June 30, 2026 expected to fund projected operations and key clinic; 2.5 mg starting dose with 4-week titration increments; 2.5 mg in…"
+              }
+            ],
+            "financial_score": 1.0,
+            "clinical_score": 0.2,
+            "corporate_score": 1.0,
+            "eis_score": 1.0,
+            "news_kind": "financial",
+            "digest_method": "sec_8k_items"
+          }
+        ],
+        "count": 2,
+        "refresh": "wednesday_07:15_europe_rome",
+        "next_refresh": "2026-09-23T07:15:00+02:00",
+        "digest_version": 2
+      }
+    },
+    "GRAL": {
+      "updated_at": "2026-09-16T20:40:45.713693+00:00",
+      "digest_version": 2,
+      "dossier": {
+        "ticker": "GRAL",
+        "lookback_days": 62,
+        "filings": [
+          {
+            "filing_date": "2026-08-05",
+            "event_date": "2026-08-05",
+            "form": "8-K",
+            "title": "GRAL — August 5, 2026",
+            "link": "https://www.sec.gov/Archives/edgar/data/1699031/000162828026053341/gral-20260805.htm",
+            "items_raw": "2.02, 9.01",
+            "sessions": [
+              {
+                "item": "2.02",
+                "item_title": "Results of operations and financial condition",
+                "title": "Results of operations and financial condition",
+                "summary": "Date: August 5, 2026 By: /s/ Aaron Freidin Name: Aaron Freidin Title: Chief Financial Officer EX-99.1 2 ex9912026q2earningspressre.htm EX-99.1 Document NEWS RELEASE Exhibit 99.1 GRAIL Reports Second Quarter 2026 Financial Results Q2 Galleri ® Test Volume Increased 35% to More Than 61,000 Year-Over-Year, and Galleri Revenue Grew 24% to $42.6…"
+              },
+              {
+                "item": "9.01",
+                "item_title": "Exhibits",
+                "title": "Exhibits",
+                "summary": "Item 9.01 — exhibits: 99.1 Press Release of GRAIL, Inc; 99.1 2 ex9912026q2earningspressre; 99.1 Document NEWS RELEASE Exhibit 99; 42.6 Million Galleri Test Volume and Revenue are up 42% and 30% Year-Over-Year, Respe; 44.7 million, and Galleri test revenue for the quarter grew 24% year-over-year to $42; 82.5 million."
+              }
+            ],
+            "financial_score": null,
+            "clinical_score": null,
+            "corporate_score": null,
+            "eis_score": null,
+            "news_kind": "financial",
+            "digest_method": "sec_8k_items"
+          }
+        ],
+        "count": 1,
+        "refresh": "wednesday_07:15_europe_rome",
+        "next_refresh": "2026-09-23T07:15:00+02:00",
+        "digest_version": 2
+      }
+    },
+    "GUTS": {
+      "updated_at": "2026-09-16T20:45:29.392908+00:00",
+      "digest_version": 2,
+      "dossier": {
+        "ticker": "GUTS",
+        "lookback_days": 62,
+        "filings": [
+          {
+            "filing_date": "2026-09-11",
+            "event_date": "2026-09-10",
+            "form": "8-K",
+            "title": "GUTS — September 11, 2026 (event date September 10, 2026)",
+            "link": "https://www.sec.gov/Archives/edgar/data/1572616/000119312526389291/guts-20260910.htm",
+            "items_raw": "3.01",
+            "sessions": [
+              {
+                "item": "3.01",
+                "item_title": "Notice of Delisting",
+                "title": "Notice of Delisting",
+                "summary": "or Failure to Satisfy a Continued Listing Rule or Standard; Transfer of Listing. As previously disclosed, on March 13, 2026, Fractyl Health, Inc."
+              }
+            ],
+            "financial_score": null,
+            "clinical_score": null,
+            "corporate_score": null,
+            "eis_score": null,
+            "news_kind": "other",
+            "digest_method": "sec_8k_items"
+          },
+          {
+            "filing_date": "2026-08-10",
+            "event_date": "2026-08-10",
+            "form": "8-K",
+            "title": "GUTS — August 10, 2026",
+            "link": "https://www.sec.gov/Archives/edgar/data/1572616/000119312526342343/guts-20260810.htm",
+            "items_raw": "2.02, 9.01",
+            "sessions": [
+              {
+                "item": "2.02",
+                "item_title": "Results of Operations and Financial Condition",
+                "title": "Results of Operations and Financial Condition",
+                "summary": "Second Quarter 2026 Financial Results • Research and Development Expenses: R&D expenses were $13.8 million for the quarter ended June 30, 2026, compared to $21.2 million for the same period in 2025. The decrease of $7.3 million was primarily related to reduced spending on Fractyl’s Revita and Rejuva programs."
+              },
+              {
+                "item": "9.01",
+                "item_title": "Financial Statements and Exhibits",
+                "title": "Financial Statements and Exhibits",
+                "summary": "Item 9.01 — exhibits: 99.1 Fractyl Health, Inc; 99.1 2 guts-ex99_1; 99.1 EX-99; 99.1 Fractyl Health Reports Second Quarter 2026 Financial Results and Business Update; 13.8 million for the quarter ended June 30, 2026, compared to $21; 7.3 million was primarily related to reduced spending on Fractyl’s Revita and Rejuva."
+              }
+            ],
+            "financial_score": null,
+            "clinical_score": null,
+            "corporate_score": null,
+            "eis_score": null,
+            "news_kind": "financial",
+            "digest_method": "sec_8k_items"
+          }
+        ],
+        "count": 2,
+        "refresh": "wednesday_07:15_europe_rome",
+        "next_refresh": "2026-09-23T07:15:00+02:00",
+        "digest_version": 2
+      }
+    },
+    "HAE": {
+      "updated_at": "2026-09-16T20:52:33.257180+00:00",
+      "digest_version": 2,
+      "dossier": {
+        "ticker": "HAE",
+        "lookback_days": 62,
+        "filings": [
+          {
+            "filing_date": "2026-08-18",
+            "event_date": "2026-08-18",
+            "form": "8-K",
+            "title": "HAE — August 18, 2026",
+            "link": "https://www.sec.gov/Archives/edgar/data/313143/000031314326000135/hae-20260818.htm",
+            "items_raw": "7.01",
+            "sessions": [
+              {
+                "item": "7.01",
+                "item_title": "Regulation FD Disclosure",
+                "title": "Regulation FD Disclosure",
+                "summary": "On August 14, 2026, Haemonetics Corporation (the “Company”) entered into a supply agreement with CSL Plasma Inc. (“CSL”) pursuant to which CSL may utilize the Company’s NexSys PCS ® devices with Persona ® PLUS technology and purchase related disposables in the United States."
+              }
+            ],
+            "financial_score": null,
+            "clinical_score": null,
+            "corporate_score": null,
+            "eis_score": null,
+            "news_kind": "financial",
+            "digest_method": "sec_8k_items"
+          },
+          {
+            "filing_date": "2026-08-06",
+            "event_date": "2026-08-06",
+            "form": "8-K",
+            "title": "HAE — August 6, 2026",
+            "link": "https://www.sec.gov/Archives/edgar/data/313143/000031314326000118/hae-20260806.htm",
+            "items_raw": "2.02, 9.01",
+            "sessions": [
+              {
+                "item": "2.02",
+                "item_title": "Results of Operations and Financial Condition",
+                "title": "Results of Operations and Financial Condition",
+                "summary": "Manager-Investor Relations (203) 733-4987 david.trenk@haemonetics.com Haemonetics R eports First Quarter Fiscal 2027 Results; Raises Total Company Fiscal 2027 Guidance Boston, MA, August 6, 2026 - Haemonetics Corporation (NYSE: HAE) reported financial results for its first quarter of fiscal 2027, which ended June 27, 2026: 1st Quarter 2027 n Revenue, increase……"
+              },
+              {
+                "item": "9.01",
+                "item_title": "Financial Statements and Exhibits",
+                "title": "Financial Statements and Exhibits",
+                "summary": "Item 9.01 — exhibits: 99.1 Press Release of Haemonetics Corporation dated August 6, 2026 announcing financi; 99.1 2 ex991-fy27q1earningsrelease; 99.1 Document Exhibit 99; 0.72 n Adjusted earnings per diluted share $1; 39.4 million, up 5; 45.3 million, up $7."
+              }
+            ],
+            "financial_score": null,
+            "clinical_score": null,
+            "corporate_score": null,
+            "eis_score": null,
+            "news_kind": "financial",
+            "digest_method": "sec_8k_items"
+          },
+          {
+            "filing_date": "2026-07-28",
+            "event_date": "2026-07-24",
+            "form": "8-K",
+            "title": "HAE — July 28, 2026 (event date July 24, 2026)",
+            "link": "https://www.sec.gov/Archives/edgar/data/313143/000031314326000095/hae-20260724.htm",
+            "items_raw": "5.02, 5.07, 9.01",
+            "sessions": [
+              {
+                "item": "5.02",
+                "item_title": "Departure of Directors or Certain Officers",
+                "title": "Departure of Directors or Certain Officers",
+                "summary": "; Election of Directors; Appointment of Certain Officers; Compensatory Arrangements of Certain Officers. (d) On July 24, 2026, the Board of Directors of Haemonetics Corporation (the “Company”) elected Martin Madaus as a director of the Company, effective immediately."
+              },
+              {
+                "item": "5.07",
+                "item_title": "below, on July 24, 2026, the shareholders of the Company approved an amendment an",
+                "title": "below, on July 24, 2026, the shareholders of the Company approved an amendment an",
+                "summary": "d restatement of the Haemonetics Corporation Amended and Restated 2019 Long-Term Incentive Compensation Plan (the “Amended Plan”), which authorizes 4,680,000 additional shares for issuance under the Amended Plan, extends the term of the Amended Plan through 2036 and makes certain other technical, immaterial and conforming changes."
+              },
+              {
+                "item": "9.01",
+                "item_title": "Financial Statements and Exhibits",
+                "title": "Financial Statements and Exhibits",
+                "summary": "Item 9.01 — exhibits: 10.1 Haemonetics Corporation Amended and Restated 2019 Long-Term Incentive Compensati; 10.2 Haemonetics Corporation Amended and Restated 2007 Employee Stock Purchase Plan 9; 9.1 Press release dated July 28, 2026 104 Cover Page Interactive Data File (embedded."
+              }
+            ],
+            "financial_score": null,
+            "clinical_score": null,
+            "corporate_score": null,
+            "eis_score": null,
+            "news_kind": "other",
+            "digest_method": "sec_8k_items"
+          }
+        ],
+        "count": 3,
+        "refresh": "wednesday_07:15_europe_rome",
+        "next_refresh": "2026-09-23T07:15:00+02:00",
+        "digest_version": 2
+      }
+    },
+    "IBRX": {
+      "updated_at": "2026-09-16T20:57:16.362469+00:00",
+      "digest_version": 2,
+      "dossier": {
+        "ticker": "IBRX",
+        "lookback_days": 62,
+        "filings": [
+          {
+            "filing_date": "2026-08-04",
+            "event_date": "2026-08-04",
+            "form": "8-K",
+            "title": "IBRX — August 4, 2026",
+            "link": "https://www.sec.gov/Archives/edgar/data/1326110/000132611026000077/ibrx-20260804.htm",
+            "items_raw": "2.02, 9.01",
+            "sessions": [
+              {
+                "item": "2.02",
+                "item_title": "Results of Operations and Financial Condition",
+                "title": "Results of Operations and Financial Condition",
+                "summary": "On August 4, 2026, ImmunityBio, Inc. (the Company) issued a press release providing a business update and announcing its financial results for the three and six months ended June 30, 2026, and its financial position as of June 30, 2026."
+              },
+              {
+                "item": "9.01",
+                "item_title": "Financial Statements and Exhibits",
+                "title": "Financial Statements and Exhibits",
+                "summary": "Item 9.01 — exhibits: 99.1 2 ibrx-202684x8kexhibit991; 99.1 Document EXHIBIT 99; 50.7 Million, Up 92% Year-Over-Year; First-Half Revenue Up 121% to $94; 50.7 million, up 92% year-over-year and 15% sequentially from Q1 2026, marking the ei; 94.8 million, up 121% compared with the first-half of 2025 • In July 2026…"
+              }
+            ],
+            "financial_score": null,
+            "clinical_score": null,
+            "corporate_score": null,
+            "eis_score": null,
+            "news_kind": "financial",
+            "digest_method": "sec_8k_items"
+          },
+          {
+            "filing_date": "2026-07-30",
+            "event_date": "2026-07-29",
+            "form": "8-K",
+            "title": "IBRX — July 30, 2026 (event date July 29, 2026)",
+            "link": "https://www.sec.gov/Archives/edgar/data/1326110/000132611026000071/ibrx-20260729.htm",
+            "items_raw": "7.01, 9.01",
+            "sessions": [
+              {
+                "item": "7.01",
+                "item_title": "Regulation FD Disclosure",
+                "title": "Regulation FD Disclosure",
+                "summary": "(“ImmunityBio” or the “Company”) issued a press release announcing that the Emirates Drug Establishment (“EDE”) of the United Arab Emirates (“UAE”) has granted marketing authorization for ANKTIVA ® across two indications."
+              },
+              {
+                "item": "9.01",
+                "item_title": "Financial Statements and Exhibits",
+                "title": "Financial Statements and Exhibits",
+                "summary": "Item 9.01 — exhibits: 99.1 2 ibrx-20267308xkexhibit991; 99.1 Document EXHIBIT 99; 0.4 mL (solution for intravesical instillation) in combination with Bacillus Calmett; 0.6 mL (solution for subcutaneous injection) in combination with immune checkpoint i; 14.6 months (95% CI: 12; 16.2 months (95% CI: 13."
+              }
+            ],
+            "financial_score": null,
+            "clinical_score": null,
+            "corporate_score": null,
+            "eis_score": null,
+            "news_kind": "financial",
+            "digest_method": "sec_8k_items"
+          }
+        ],
+        "count": 2,
+        "refresh": "wednesday_07:15_europe_rome",
+        "next_refresh": "2026-09-23T07:15:00+02:00",
+        "digest_version": 2
+      }
+    },
+    "REGN": {
+      "updated_at": "2026-09-18T08:51:08.593620+00:00",
+      "digest_version": 2,
+      "dossier": {
+        "ticker": "REGN",
+        "lookback_days": 62,
+        "filings": [
+          {
+            "filing_date": "2026-07-30",
+            "event_date": "2026-07-30",
+            "form": "8-K",
+            "title": "Results of Operations / Financial Condition: Primary endpoint missed",
+            "link": "https://www.sec.gov/Archives/edgar/data/872589/000087258926000023/regn-20260730.htm",
+            "items_raw": "2.02, 9.01",
+            "sessions": [
+              {
+                "item": "2.02",
+                "item_title": "Results of Operations and Financial Condition",
+                "title": "Q2 2026 Financial Results",
+                "summary": "Regeneron reported Q2 2026 total revenues of $4.3 billion, a 17% increase year-over-year. Key commercial drivers included Dupixent global net sales rising 38% to $6.0 billion, EYLEA HD U.S. sales growing 52% to $596 million, and Libtayo sales up 30% to $489 million. GAAP EPS was $12.23 and non-GAAP EPS…"
+              },
+              {
+                "item": "9.01",
+                "item_title": "Financial Statements and Exhibits",
+                "title": "Pipeline and Corporate Updates",
+                "summary": "The company announced full repayment of the Sanofi Development Balance by the end of Q2 2026. Additionally, regulatory submissions for cemdisiran in generalized myasthenia gravis were accepted for review by both the FDA and EMA."
+              }
+            ],
+            "financial_score": 0.35,
+            "clinical_score": -1.25,
+            "corporate_score": 0.0,
+            "eis_score": -1.24,
+            "news_kind": "financial",
+            "digest_method": "gemini"
+          }
+        ],
+        "count": 1,
+        "refresh": "wednesday_07:15_europe_rome",
+        "next_refresh": "2026-09-23T07:15:00+02:00",
+        "digest_version": 2
+      }
+    }
+  }
+}

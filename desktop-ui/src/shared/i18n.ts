@@ -146,6 +146,10 @@ const DICT = {
     en: "Reload",
     it: "Ricarica",
   },
+  "common.na": {
+    en: "n.a.",
+    it: "n.d.",
+  },
   "common.refreshPage": {
     en: "Refresh",
     it: "Aggiorna",
@@ -155,16 +159,16 @@ const DICT = {
     it: "Rilegge i dati di questa pagina dagli snapshot e ricalcola le metriche locali (~1s). Il server aggiorna in automatico; job pesanti in System → Refresh.",
   },
   "refresh.page.dashboard.tooltip": {
-    en: "Reload Dashboard from snapshots: Simulation, charts, SDS, SEC 8-K, AI feed and P&L. «Data updated» in the top bar is the last server pipeline run — use System → Refresh for new Yahoo prices.",
-    it: "Rilegge la Dashboard dagli snapshot: Simulation, grafici, SDS, SEC 8-K, feed AI e P&L. «Data updated» in alto = ultimo job server — per nuovi prezzi Yahoo usa Sistema → Refresh.",
+    en: "Updates live Yahoo prices (Var. Giorn. % / Prezzo Corrente), then reloads Simulation, charts, SDS, AI feed and P&L. Can take ~20–60s. «Data updated» in the top bar is still the last full server pipeline.",
+    it: "Aggiorna i prezzi Yahoo live (Var. Giorn. % / Prezzo Corrente), poi rilegge Simulation, grafici, SDS, feed AI e P&L. Può richiedere ~20–60s. «Data updated» in alto resta l’ultimo pipeline server completo.",
   },
   "refresh.page.catalyst.tooltip": {
-    en: "Reload Curves charts from the Simulation snapshot.",
-    it: "Aggiorna i grafici Curve dallo snapshot Simulation.",
+    en: "Reload Daily News search, Simulation snapshot, Soft BUY/SELL, and Catalyst desk columns (calendar, hourly market indices).",
+    it: "Ricarica search Daily News, snapshot Simulation, Soft BUY/SELL e colonne Catalyst (calendario, indici di mercato orari).",
   },
   "refresh.page.decisionLab.tooltip": {
-    en: "Reload Pick stocks: Simulation snapshot, charts, Top Opps store, and all tabs (Opportunities · SuperNova · Ticker focus). Live signals run in background if API is online.",
-    it: "Ricarica Scegli titoli: snapshot Simulation, grafici, store Top Opps e tutte le tab (Opportunità · SuperNova · Ticker focus). Live signals in background se l'API è online.",
+    en: "Reload Pick stocks: Simulation snapshot, charts, Top Opps store, and all tabs (Opportunities · SuperNova). Live signals run in background if API is online.",
+    it: "Ricarica Scegli titoli: snapshot Simulation, grafici, store Top Opps e tutte le tab (Opportunità · SuperNova). Live signals in background se l'API è online.",
   },
   "refresh.page.simulation.tooltip": {
     en: "Refresh Simulation: re-read snapshot, reload charts and recalculate P&L (~1s). New CD studies arrive via morning server job.",
@@ -185,6 +189,190 @@ const DICT = {
   "refresh.page.catalystFeed.tooltip": {
     en: "Reload Catalyst Feed snapshots and AI enrichment for this page.",
     it: "Ricarica snapshot Catalyst Feed e arricchimento AI per questa pagina.",
+  },
+  "manualFeed.title": {
+    en: "Manual news → EIS",
+    it: "News manuale → EIS",
+  },
+  "manualFeed.hint": {
+    en: "Paste news when automated EIS is missing. Quick: TICKER | DATE | TITLE | SOURCE | body — one line per news. Or labeled block (TICKER, DATE/DATA, SOURCE/FONTE, NEWS). Optional: SENTIMENT (−2…+2), DELTA_1D / DELTA_3D (%). After save, look for ✍ manual rows in the timeline below.",
+    it: "Incolla la news quando manca l'EIS automatico. Rapido: TICKER | DATA | TITOLO | FONTE | testo — una riga per news. Oppure blocco etichettato (TICKER, DATA/DATE, FONTE/SOURCE, NEWS). Opzionale: SENTIMENT (−2…+2), DELTA_1D / DELTA_3D (%). Dopo il salvataggio cerca le righe ✍ manuale nella timeline sotto.",
+  },
+  "manualFeed.preview.ticker": {
+    en: "Ticker",
+    it: "Ticker",
+  },
+  "manualFeed.preview.date": {
+    en: "Date",
+    it: "Data",
+  },
+  "manualFeed.preview.source": {
+    en: "Source",
+    it: "Fonte",
+  },
+  "manualFeed.submit": {
+    en: "Score & add to feed",
+    it: "Calcola EIS e aggiungi al feed",
+  },
+  "manualFeed.submitMany": {
+    en: "Add {n} to feed",
+    it: "Aggiungi {n} al feed",
+  },
+  "manualFeed.preview.count": {
+    en: "{n} news detected — preview",
+    it: "{n} news rilevate — anteprima",
+  },
+  "manualFeed.preview.catalyst": {
+    en: "Catalyst",
+    it: "Catalyst",
+  },
+  "manualFeed.preview.effects": {
+    en: "Score effects",
+    it: "Effetti sugli score",
+  },
+  "manualFeed.preview.filing": {
+    en: "Filing",
+    it: "Filing",
+  },
+  "manualFeed.preview.drugs": {
+    en: "Assets",
+    it: "Asset",
+  },
+  "manualFeed.success.added": {
+    en: "Added {n} news for {tickers}. Filter ticker below or look for ✍ manual in the timeline.",
+    it: "Aggiunte {n} news per {tickers}. Filtra il ticker sotto o cerca ✍ manuale nella timeline.",
+  },
+  "manualFeed.propagateHint": {
+    en: "Saved locally · syncs to 24h tab",
+    it: "Salvato in locale · visibile in tab 24h",
+  },
+  "manualFeed.remove": {
+    en: "Remove from feed",
+    it: "Rimuovi dal feed",
+  },
+  "manualFeed.remove.hideLocal": {
+    en: "Hide from this list — feed & EIS unchanged",
+    it: "Nascondi da questa lista — feed ed EIS restano",
+  },
+  "manualFeed.savedList.hint": {
+    en: "Saved research · click row for detail · × removes from feed everywhere",
+    it: "Ricerche salvate · clic sulla riga per il dettaglio · × rimuove dal feed ovunque",
+  },
+  "manualFeed.savedList.hintHideLocal": {
+    en: "Temporary checklist · click row for detail · × hides here only — Feed tab & EIS blocks keep the event · all rows for a ticker auto-hide on the next material 24h move",
+    it: "Checklist temporanea · clic per dettaglio · × nasconde solo qui — tab Feed e blocchi EIS restano · tutte le righe del ticker spariscono alla prossima variazione materiale (Var.24h)",
+  },
+  "manualFeed.error.parse": {
+    en: "Could not parse — need at least TICKER and DATE.",
+    it: "Parsing fallito — servono almeno TICKER e DATA.",
+  },
+  "manualFeed.error.incomplete": {
+    en: "Could not parse — add NEWS text, or click «No catalyst — market noise».",
+    it: "Non parsabile — aggiungi testo NEWS, oppure clicca «Nessuna causa — oscillazione».",
+  },
+  "manualFeed.quick.noCatalyst": {
+    en: "No catalyst — market noise",
+    it: "Nessuna causa — oscillazione",
+  },
+  "manualFeed.quick.negativeCatalyst": {
+    en: "Negative catalyst template",
+    it: "Template catalyst negativo",
+  },
+  "manualFeed.embeddedTitle": {
+    en: "Manual news — EIS",
+    it: "News manuale — EIS",
+  },
+  "manualFeed.embeddedHint": {
+    en: "Paste catalyst news (date + source + body). EIS score feeds the recommendation radar below.",
+    it: "Incolla la news (data + fonte + testo). Lo score EIS alimenta il radar raccomandazioni sotto.",
+  },
+  "manualFeed.globalHint": {
+    en: "Flagged tickers moved more than 4% in 24h (loss or gain, daily close) — add external research below. EIS is scored from news tone; results flow into each company EIS/Reg block and the Clinical Feed tab.",
+    it: "I ticker evidenziati hanno Var. 24h oltre ±4% (perdita o gain, chiusura giornaliera) — aggiungi qui la ricerca esterna. L'EIS deriva dal tono della news; il risultato va nel blocco EIS/Reg della company e nella tab Feed.",
+  },
+  "manualFeed.lossCandidates.title": {
+    en: "In loss — |24h| > 4% — needs manual research",
+    it: "In perdita — |24h| > 4% — ricerca manuale",
+  },
+  "manualFeed.lossCandidates.empty": {
+    en: "No open loss tickers pending manual news.",
+    it: "Nessun ticker in perdita in attesa di news manuale.",
+  },
+  "manualFeed.gainCandidates.title": {
+    en: "In gain — |24h| > 4% — needs manual research",
+    it: "In gain — |24h| > 4% — ricerca manuale",
+  },
+  "manualFeed.gainCandidates.empty": {
+    en: "No open gain tickers pending manual news.",
+    it: "Nessun ticker in gain in attesa di news manuale.",
+  },
+  "manualFeed.quick.positiveCatalyst": {
+    en: "Positive catalyst template",
+    it: "Template catalyst positivo",
+  },
+  "manualFeed.quick.research": {
+    en: "Claude research template (full)",
+    it: "Template ricerca Claude (completo)",
+  },
+  "manualFeed.gainStar.mark": {
+    en: "24h manual EIS today — one ★ (color rotates each new confirming day)",
+    it: "EIS manuale 24h oggi — una ★ (colore ruota ogni nuovo giorno confermato)",
+  },
+  "manualFeed.gainPrompt.directLink": {
+    en: "Add manual news for {ticker} (in gain)",
+    it: "Aggiungi news manuale per {ticker} (in gain)",
+  },
+  "manualFeed.detail.close": {
+    en: "Close",
+    it: "Chiudi",
+  },
+  "manualFeed.detail.noLink": {
+    en: "No web link saved for this note. When adding news, include a LINK: or URL: line with the article address.",
+    it: "Nessun link web salvato per questa nota. Quando aggiungi la news, includi una riga LINK: o URL: con l'indirizzo dell'articolo.",
+  },
+  "manualFeed.detail.openFull": {
+    en: "Read full article",
+    it: "Leggi news completa",
+  },
+  "manualFeed.dropPrompt.title": {
+    en: "{ticker} — investigate the market change?",
+    it: "{ticker} — indagare il movimento di mercato?",
+  },
+  "manualFeed.dropPrompt.subtitle": {
+    en: "Position or 24h move is negative — add manual news if a catalyst explains the move.",
+    it: "Posizione o var. 24h in negativo — aggiungi news manuale se un catalizzatore spiega il calo.",
+  },
+  "manualFeed.dropPrompt.body": {
+    en: "Automated EIS may miss same-day press. Paste the headline with date and source; we score it and merge into EIS for this ticker (decision chart + recommendations).",
+    it: "L'EIS automatico può non avere la stampa del giorno. Incolla titolo con data e fonte; calcoliamo lo score EIS e lo uniamo al ticker (decision chart + raccomandazioni).",
+  },
+  "manualFeed.dropPrompt.bulletFormat": {
+    en: "Same format as Clinical Feed: TICKER | DATE | TITLE | SOURCE | body",
+    it: "Stesso formato del Feed clinico: TICKER | DATA | TITOLO | FONTE | testo",
+  },
+  "manualFeed.dropPrompt.bulletEis": {
+    en: "EIS score computed from sentiment and optional ΔP 1d/3d",
+    it: "Score EIS da sentiment e opzionale ΔP 1g/3g",
+  },
+  "manualFeed.dropPrompt.bulletRec": {
+    en: "Updates EIS axis on the recommendation radar (24h tab)",
+    it: "Aggiorna l'asse EIS sul radar raccomandazioni (tab 24h)",
+  },
+  "manualFeed.dropPrompt.dismiss": {
+    en: "Not now (today)",
+    it: "Non ora (oggi)",
+  },
+  "manualFeed.dropPrompt.cta": {
+    en: "Add manual news",
+    it: "Aggiungi news manuale",
+  },
+  "manualFeed.dropPrompt.save": {
+    en: "Save manual EIS",
+    it: "Salva EIS manuale",
+  },
+  "manualFeed.dropPrompt.directLink": {
+    en: "Open {ticker} news box in 24h tab ↓",
+    it: "Apri box news {ticker} in tab 24h ↓",
   },
   "common.reloading": {
     en: "Reloading…",
@@ -325,16 +513,64 @@ const DICT = {
     it: "Grafici & curve",
   },
   "sidebar.item.simulation": {
-    en: "My portfolio",
-    it: "Il mio portafoglio",
+    en: "Deep Dive",
+    it: "Deep Dive",
+  },
+  "sidebar.eval.portfolio": {
+    en: "Portfolio",
+    it: "Portfolio",
+  },
+  "sidebar.eval.cd": {
+    en: "CD Opportunities",
+    it: "CD Opportunities",
+  },
+  "sidebar.eval.reg": {
+    en: "Regulatory Opportunities",
+    it: "Regulatory Opportunities",
+  },
+  "sidebar.item.flashTest": {
+    en: "Flash Test",
+    it: "Flash Test",
+  },
+  "sidebar.item.catalystDesk": {
+    en: "Catalyst",
+    it: "Catalyst",
+  },
+  "sidebar.item.wind": {
+    en: "Wind",
+    it: "Wind",
   },
   "sim.page.title": {
     en: "My portfolio",
     it: "Il mio portafoglio",
   },
   "sidebar.item.decisionLab": {
-    en: "Pick stocks",
-    it: "Scegli titoli",
+    en: "Trades",
+    it: "Trades",
+  },
+  "sidebar.item.piggyBank": {
+    en: "Piggy Bank",
+    it: "Piggy Bank",
+  },
+  "piggyBank.page.title": {
+    en: "Piggy Bank",
+    it: "Piggy Bank",
+  },
+  "piggyBank.page.subtitle": {
+    en: "P&L · Trend · Simulated portfolio",
+    it: "P&L · Trend · Portafoglio simulato",
+  },
+  "piggyBank.tab.pnl": {
+    en: "P&L",
+    it: "P&L",
+  },
+  "piggyBank.tab.trend": {
+    en: "Trend",
+    it: "Trend",
+  },
+  "piggyBank.tab.simPortfolio": {
+    en: "Sim portfolio",
+    it: "Portafoglio sim",
   },
   "sidebar.item.modelAnalysis": {
     en: "Model quality",
@@ -357,12 +593,92 @@ const DICT = {
     it: "Bilanci",
   },
   "sidebar.item.catalystFeed": {
-    en: "Catalyst news",
-    it: "Notizie catalyst",
+    en: "Feeds",
+    it: "Feeds",
+  },
+  "sidebar.item.eisDeepDive": {
+    en: "EIS detail",
+    it: "Dettaglio EIS",
+  },
+  "sidebar.item.calendar": {
+    en: "Calendar",
+    it: "Calendario",
+  },
+  "sidebar.item.discovery": {
+    en: "Discovery",
+    it: "Discovery",
+  },
+  "refresh.page.calendar.tooltip": {
+    en: "Reload guidance + FDA AdCom calendar snapshots for this page.",
+    it: "Ricarica gli snapshot del calendario guidance e FDA AdCom per questa pagina.",
   },
   "sidebar.item.testerMonitor": {
-    en: "Tester feedback",
-    it: "Feedback tester",
+    en: "Access",
+    it: "Access",
+  },
+  "sidebar.accessAlertTip": {
+    en: "{n} pending in Access (requests, messages, or UI issues)",
+    it: "{n} in coda in Access (richieste, messaggi o problemi UI)",
+  },
+  "testerMonitor.recoEngine.totalDeals": {
+    en: "Total deals scored",
+    it: "Totale deal valutati",
+  },
+  "testerMonitor.recoEngine.totalDealsSub": {
+    en: "{sim} sim · {portfolio} portfolio",
+    it: "{sim} sim · {portfolio} portafoglio",
+  },
+  "testerMonitor.recoEngine.totalPendingSub": {
+    en: "+{pending} awaiting 24h",
+    it: "+{pending} in attesa 24h",
+  },
+  "testerMonitor.recoEngine.avgAccuracy": {
+    en: "Average accuracy",
+    it: "Accuracy media",
+  },
+  "testerMonitor.recoEngine.avgAccuracySub": {
+    en: "weighted by n",
+    it: "ponderata per n",
+  },
+  "testerMonitor.recoEngine.bestZone": {
+    en: "Most reliable zone",
+    it: "Zona più affidabile",
+  },
+  "testerMonitor.recoEngine.reviewZone": {
+    en: "Zone to review",
+    it: "Zona da rivedere",
+  },
+  "testerMonitor.recoEngine.zoneAccuracyTitle": {
+    en: "Accuracy by recommendation zone",
+    it: "Accuracy per zona di raccomandazione",
+  },
+  "testerMonitor.recoEngine.distributionTitle": {
+    en: "Deal distribution by zone",
+    it: "Distribuzione deal per zona",
+  },
+  "testerMonitor.recoEngine.distributionCaption": {
+    en: "Bar = scored deals only (clear 24h outcome). Legend may show +pending.",
+    it: "Barra = solo deal valutati (esito 24h chiaro). Legenda può mostrare +attesa.",
+  },
+  "testerMonitor.recoEngine.zonePending": {
+    en: "+{pending} pending",
+    it: "+{pending} attesa",
+  },
+  "testerMonitor.recoEngine.scoredFootnote": {
+    en: "Cumulative on both sides: BUY = every closed paper round-trip scored on realized P&L + live BUY advice on ±0.5% 24h; SELL = paper SELL executions scored on post-sell 24h. HOLD/REVIEW = live advice on 24h band. Paper trades count as sim; live monitor rows as portfolio.",
+    it: "Cumulativo su entrambi i lati: BUY = ogni round-trip paper chiuso valutato sul P&L realizzato + i BUY live sul mosso 24h ±0,5%; SELL = i SELL paper eseguiti valutati sul mosso 24h post-vendita. HOLD/REVIEW = advice live sul mosso 24h. I trade paper contano come sim; le righe monitor live come portafoglio.",
+  },
+  "testerMonitor.recoEngine.pplanCalibTitle": {
+    en: "P(plan) calibration — accuracy by band",
+    it: "Calibrazione P(plan) — accuracy per fascia",
+  },
+  "testerMonitor.recoEngine.bucketAnomalyTitle": {
+    en: "Bucket calibration anomaly",
+    it: "Anomalia calibrazione bucket",
+  },
+  "testerMonitor.recoEngine.bucketAnomalyBody": {
+    en: "Anomaly in the {bucket} band: accuracy {rate} is lower than the previous band {prevBucket} ({prevRate}). Consistent with the anomalous bucket weight already identified in sizingRules.ts — fix in progress.",
+    it: "Anomalia nella fascia {bucket}: accuracy {rate} più bassa della fascia precedente {prevBucket} ({prevRate}). Coerente con il bucket weight anomalo già identificato in sizingRules.ts — fix in corso.",
   },
   "testerMonitor.decisionSim.title": {
     en: "Investment / divestment simulation loop",
@@ -685,8 +1001,16 @@ const DICT = {
     it: "Segnale rilevato alle {when} · esecuzione prevista {execute}",
   },
   "simLoopTradeAlert.pendingHint": {
-    en: "Market move applied first (entry weight). BUY/SELL runs after the 10-minute response window.",
-    it: "Prima colpisce il movimento di mercato (peso ingresso). BUY/SELL dopo 10 minuti di finestra di risposta.",
+    en: "This is a scheduled paper move (sim loop book), not your real portfolio. BUY/SELL executes after the 10-minute response window.",
+    it: "Mossa paper programmata (book sim loop), non il tuo portafoglio reale. BUY/SELL dopo 10 minuti di finestra di risposta.",
+  },
+  "simLoopTradeAlert.pnlPending": {
+    en: "Est. MTM {pnl} (not executed yet)",
+    it: "MTM stimato {pnl} (non ancora eseguito)",
+  },
+  "simLoopTradeAlert.pnlRealized": {
+    en: "P&L {pnl}",
+    it: "P&L {pnl}",
   },
   "simLoopTradeAlert.open24h": {
     en: "Open 24h assessment →",
@@ -762,6 +1086,10 @@ const DICT = {
   "testerMonitor.decisionSim.adviceCalib.title": {
     en: "P(plan) vs forecast error",
     it: "P(plan) vs errore stima",
+  },
+  "testerMonitor.decisionSim.adviceCalib.titleCompact": {
+    en: "Advice calibration",
+    it: "Calibrazione consigli",
   },
   "testerMonitor.decisionSim.adviceCalib.sub": {
     en: "24h direction metric — separate from portfolio € return. Circle = BUY · ▼ = SELL. Green ✓ = correct direction; red ✗ = wrong. X = P(plan); Y = forecast error vs actual 24h move.",
@@ -1011,6 +1339,14 @@ const DICT = {
     en: "System",
     it: "Sistema",
   },
+  "sidebar.openInNewWindow": {
+    en: "Open in new window",
+    it: "Apri in nuova finestra",
+  },
+  "sidebar.openInNewWindowTip": {
+    en: "Middle-click or right-click → open in a new window",
+    it: "Click centrale o destro → apri in una nuova finestra",
+  },
 
   // ── Top bar ────────────────────────────────────────────────────────────────
   "topbar.reloadJson": {
@@ -1093,16 +1429,16 @@ const DICT = {
     it: "Reload (senza Refresh data) rilegge solo gli snapshot JSON già in data/ — i prezzi P&L non si aggiornano finché un refresh completo non va a buon fine.",
   },
   "sundayRefresh.popup.titleOk": {
-    en: "Sunday full refresh completed",
-    it: "Refresh domenica full completato",
+    en: "Saturday weekly orchestrator completed",
+    it: "Orchestrator settimanale (sabato) completato",
   },
   "sundayRefresh.popup.titleErr": {
-    en: "Sunday full refresh ended with errors",
-    it: "Refresh domenica full terminato con errori",
+    en: "Saturday weekly orchestrator ended with errors",
+    it: "Orchestrator settimanale (sabato) terminato con errori",
   },
   "sundayRefresh.popup.subtitle": {
-    en: "Weekly orchestrator (Simulation + SEC 8-K + full data)",
-    it: "Orchestrator settimanale (Simulation + SEC 8-K + dati completi)",
+    en: "Automatic server run (Simulation + SEC 8-K + full data) — close this window when done",
+    it: "Run automatico sul server (Simulation + SEC 8-K + dati completi) — chiudi la finestra quando hai finito",
   },
   "sundayRefresh.popup.elapsed": {
     en: "Total time:",
@@ -1134,16 +1470,16 @@ const DICT = {
   },
 
   "clinicalFeed.apiKeys.title": {
-    en: "API keys (Claude / optional OpenAI · GitHub)",
-    it: "Chiavi API (Claude / opz. OpenAI · GitHub)",
+    en: "API keys (Gemini free / Claude)",
+    it: "Chiavi API (Gemini gratis / Claude)",
   },
   "clinicalFeed.apiKeys.notSet": {
     en: "Claude not set",
     it: "Claude non configurata",
   },
   "clinicalFeed.apiKeys.hint": {
-    en: "Keys are saved on the API server (data/ai_secrets.json) — no restart needed. For Copilot: fine-grained PAT with Models → Read, or classic PAT with scope models.",
-    it: "Le chiavi si salvano sul server API (data/ai_secrets.json) — niente restart. Per Copilot: PAT fine-grained con Models → Read, oppure PAT classic con scope models.",
+    en: "Keys are saved on the API server (data/ai_secrets.json). Use Gemini (free) or Claude.",
+    it: "Le chiavi si salvano sul server API (data/ai_secrets.json). Usa Gemini (gratis) o Claude.",
   },
   "clinicalFeed.apiKeys.copilotNotSet": {
     en: "Copilot not set",
@@ -1573,6 +1909,10 @@ const DICT = {
   "system.tab.settings": {
     en: "Settings",
     it: "Impostazioni",
+  },
+  "system.tab.ai": {
+    en: "AI keys",
+    it: "Chiavi AI",
   },
   "system.tab.coherence": {
     en: "Cross-tab",
@@ -2390,6 +2730,10 @@ const DICT = {
     en: "duration {min}m {sec}s",
     it: "durata {min}m {sec}s",
   },
+  "refreshView.summary.fullCorrupt": {
+    en: "Saved full-run metadata looks inconsistent (same start/end time with multi-hour duration). The last reliable WeeklyFull on this machine was likely earlier — use «Full orchestrator» to run a fresh one. Yesterday’s daily refresh may still have updated Simulation prices.",
+    it: "I metadati dell’ultimo full salvati sono incoerenti (stesso orario inizio/fine con durata di molte ore). L’ultimo WeeklyFull affidabile su questa macchina è probabilmente più vecchio — usa «Orchestrator completo» per un run nuovo. Il refresh giornaliero di ieri può comunque aver aggiornato i prezzi Simulation.",
+  },
   "refreshView.noFullSummary": {
     en: "No full orchestrator summary saved yet.",
     it: "Nessun riepilogo orchestrator completo salvato.",
@@ -2447,8 +2791,8 @@ const DICT = {
     it: "Violetto",
   },
   "settings.appearance.violetDesc": {
-    en: "Deep violet · rose · apple green accents",
-    it: "Violetto profondo · rosa · verde mela",
+    en: "Deep violet · rose · light aqua accents",
+    it: "Violetto profondo · rosa · verde acqua chiaro",
   },
   "settings.appearance.mint": {
     en: "Mint",
@@ -2457,6 +2801,14 @@ const DICT = {
   "settings.appearance.mintDesc": {
     en: "Mint green · ochre · rose accents",
     it: "Verde menta · ocra · rosa",
+  },
+  "settings.appearance.supernova": {
+    en: "SuperNova",
+    it: "SuperNova",
+  },
+  "settings.appearance.supernovaDesc": {
+    en: "Landing layout — deep space · violet star · cyan links",
+    it: "Layout landing — spazio profondo · stella viola · link ciano",
   },
   "settings.section.language": {
     en: "Language",
@@ -2677,6 +3029,10 @@ const DICT = {
   "topbar.closeMenu": {
     en: "Close menu",
     it: "Chiudi menu",
+  },
+  "topbar.signOut": {
+    en: "Sign out",
+    it: "Esci",
   },
   "settings.section.dailyLog": {
     en: "Daily refresh log",
@@ -2915,6 +3271,242 @@ const DICT = {
   "decisionLab.pattern.eis.title": {
     en: "Nearest EIS event",
     it: "Evento EIS più vicino",
+  },
+  "decisionLab.pattern.eis.impactOverview.title": {
+    en: "High-impact EIS & regulatory",
+    it: "EIS e regolatori ad alto impatto",
+  },
+  "decisionLab.pattern.eis.impactOverview.approachingCdTitle": {
+    en: "Clinical study · approaching CD",
+    it: "Studio clinico · CD in avvicinamento",
+  },
+  "decisionLab.pattern.eis.impactOverview.primaryEndpoint": {
+    en: "Primary endpoint",
+    it: "Endpoint primario",
+  },
+  "decisionLab.pattern.eis.impactOverview.noCdStudy": {
+    en: "No CT.gov trial linked to this CD yet — catalyst type only.",
+    it: "Nessun trial CT.gov collegato a questa CD — solo il tipo di catalizzatore.",
+  },
+  "decisionLab.pattern.eis.impactOverview.readthroughBanner": {
+    en: "Possible sector read-through",
+    it: "Possibile lettura settoriale",
+  },
+  "decisionLab.pattern.eis.impactOverview.readthroughHint": {
+    en: "No matching own-ticker trial news for this price/volume move — the driver may be a competitor or mechanism-class event.",
+    it: "Nessuna news di trial del ticker spiega questo movimento di prezzo/volume — il motore può essere un concorrente o un evento di classe meccanicistica.",
+  },
+  "decisionLab.pattern.eis.impactOverview.pipelineContext": {
+    en: "Pipeline context (not the move driver)",
+    it: "Contesto pipeline (non il motore del movimento)",
+  },
+  "decisionLab.pattern.eis.impactOverview.subtitle": {
+    en: "Top contributors to EIS score · {count} events in feed",
+    it: "Maggior contributo allo score EIS · {count} eventi nel feed",
+  },
+  "decisionLab.pattern.eis.impactOverview.peakScore": {
+    en: "Peak EIS",
+    it: "EIS max",
+  },
+  "decisionLab.pattern.eis.impactOverview.totalScore": {
+    en: "Total EIS",
+    it: "Score totale",
+  },
+  "decisionLab.pattern.eis.impactOverview.eisScore": {
+    en: "EIS score",
+    it: "Score EIS",
+  },
+  "decisionLab.pattern.eis.impactOverview.eisScoreDualHint": {
+    en: "Market = price/volume reaction · Clinical = KPI×10 (intrinsic, not added into market)",
+    it: "Mercato = reazione prezzo/volume · Clinico = KPI×10 (intrinseco, non sommato nel mercato)",
+  },
+  "decisionLab.pattern.eis.impactOverview.regScore": {
+    en: "Regulatory",
+    it: "Regolatorio",
+  },
+  "decisionLab.pattern.eis.impactOverview.regScoreHint": {
+    en: "K-8 risk index · −100 favorable · +100 risk",
+    it: "Indice rischio K-8 · −100 favorevole · +100 rischio",
+  },
+  "decisionLab.pattern.eis.impactOverview.regEventScoresHint": {
+    en: "News · market reaction",
+    it: "Notizie · reazione mercato",
+  },
+  "decisionLab.pattern.eis.impactOverview.regEventSum": {
+    en: "Σ",
+    it: "Σ",
+  },
+  "regulatoryScore.breakdown.title": {
+    en: "Regulatory score breakdown",
+    it: "Dettaglio punteggio regolatorio",
+  },
+  "regulatoryScore.breakdown.subtitle": {
+    en: "K-8 · Catalyst Hub · auto scan",
+    it: "K-8 · Catalyst Hub · scan automatico",
+  },
+  "regulatoryScore.breakdown.openHint": {
+    en: "Open regulatory score breakdown",
+    it: "Apri dettaglio punteggio regolatorio",
+  },
+  "regulatoryScore.breakdown.impactLabel": {
+    en: "Investment impact",
+    it: "Impatto investimento",
+  },
+  "regulatoryScore.breakdown.formulaHint": {
+    en: "Internal risk index: −100 favorable · +100 risk. The card shows investment impact (sign flipped: + favorable). News EIS scores below the headline are separate — they measure market reaction per feed event, not this index.",
+    it: "Indice rischio interno: −100 favorevole · +100 rischio. La card mostra l'impatto investimento (segno invertito: + favorevole). Gli score EIS delle news sotto il titolo sono separati — misurano la reazione di mercato per evento nel feed, non questo indice.",
+  },
+  "regulatoryScore.breakdown.componentsTitle": {
+    en: "Components",
+    it: "Componenti",
+  },
+  "regulatoryScore.breakdown.colComponent": {
+    en: "Signal",
+    it: "Segnale",
+  },
+  "regulatoryScore.breakdown.colPts": {
+    en: "Pts",
+    it: "Pt",
+  },
+  "regulatoryScore.breakdown.totalRisk": {
+    en: "Total (risk index)",
+    it: "Totale (indice rischio)",
+  },
+  "regulatoryScore.breakdown.impactRow": {
+    en: "Display (investment impact)",
+    it: "Visualizzato (impatto investimento)",
+  },
+  "regulatoryScore.breakdown.clamped": {
+    en: "clamped",
+    it: "saturato",
+  },
+  "regulatoryScore.breakdown.clampedHint": {
+    en: "Sum exceeded ±100 and was clamped",
+    it: "La somma ha superato ±100 ed è stata saturata",
+  },
+  "regulatoryScore.breakdown.pathActiveRisk": {
+    en: "Active risk path: CRL/PDUFA/CMC signals stop further favorable bonuses.",
+    it: "Percorso rischio attivo: segnali CRL/PDUFA/CMC bloccano ulteriori bonus favorevoli.",
+  },
+  "regulatoryScore.breakdown.pathFavorable": {
+    en: "No active risk: score from phase proxy, approvals, resolved CRL history, or clean scan.",
+    it: "Nessun rischio attivo: punteggio da fase clinica, approvazioni, CRL risolte o scan pulito.",
+  },
+  "regulatoryScore.breakdown.noComponents": {
+    en: "No contributing signals detected.",
+    it: "Nessun segnale contributivo rilevato.",
+  },
+  "regulatoryScore.breakdown.newsSectionTitle": {
+    en: "Regulatory feed events (EIS)",
+    it: "Eventi regolatori nel feed (EIS)",
+  },
+  "regulatoryScore.breakdown.newsSectionHint": {
+    en: "Per-event market reaction scores — informational only; not summed into the K-8 index above.",
+    it: "Score di reazione mercato per singola news — solo informativi; non sommati nell'indice K-8 sopra.",
+  },
+  "regulatoryScore.breakdown.newsNotInIndex": {
+    en: "not included in K-8 index",
+    it: "non inclusi nell'indice K-8",
+  },
+  "regulatoryScore.breakdown.item.crl_active": {
+    en: "Active CRL / regulatory flag",
+    it: "CRL / flag regolatorio attivo",
+  },
+  "regulatoryScore.breakdown.item.pdufa": {
+    en: "PDUFA date",
+    it: "Data PDUFA",
+  },
+  "regulatoryScore.breakdown.item.device_clearance": {
+    en: "510(k) / PMA clearance",
+    it: "Clearance 510(k) / PMA",
+  },
+  "regulatoryScore.breakdown.item.cmc": {
+    en: "CMC deficiency keywords",
+    it: "Keyword carenza CMC",
+  },
+  "regulatoryScore.breakdown.item.approved": {
+    en: "FDA approval hits",
+    it: "Hit approvazione FDA",
+  },
+  "regulatoryScore.breakdown.item.positive": {
+    en: "Positive catalyst keywords",
+    it: "Keyword catalizzatore positivo",
+  },
+  "regulatoryScore.breakdown.item.resolved_crl": {
+    en: "Resolved CRL history",
+    it: "Storico CRL risolte",
+  },
+  "regulatoryScore.breakdown.item.clinical_phase": {
+    en: "Clinical phase proxy",
+    it: "Proxy fase clinica",
+  },
+  "regulatoryScore.breakdown.item.clean_scan": {
+    en: "Clean auto scan (no signals)",
+    it: "Scan automatico pulito (nessun segnale)",
+  },
+  "regulatoryScore.breakdown.detail.clean_scan.No active CRL, PDUFA, CMC, or device clearance in auto scan": {
+    en: "No active CRL, PDUFA, CMC, or device clearance in auto scan",
+    it: "Nessun CRL, PDUFA, CMC o clearance dispositivo attivo nello scan automatico",
+  },
+  "regulatoryScore.breakdown.detail.clean_scan.Baseline favorable credit when risk signals are absent": {
+    en: "Baseline favorable credit when risk signals are absent",
+    it: "Credito favorevole di base quando non ci sono segnali di rischio attivi",
+  },
+  "regulatoryScore.breakdown.newsDetailHint": {
+    en: "Per-event detail: 8-K items, earnings summary, KPI and market reaction (ΔP) — informational EIS, not summed into K-8 above.",
+    it: "Dettaglio per evento: items 8-K, summary earnings, KPI e reazione mercato (ΔP) — EIS informativo, non sommato nel K-8 sopra.",
+  },
+  "decisionLab.pattern.eis.impactOverview.laneEmptyEis": {
+    en: "No clinical EIS events.",
+    it: "Nessun evento EIS clinico.",
+  },
+  "decisionLab.pattern.eis.impactOverview.laneEmptyReg": {
+    en: "No regulatory feed events.",
+    it: "Nessun evento regolatorio nel feed.",
+  },
+  "decisionLab.pattern.eis.impactOverview.topImpact": {
+    en: "Top impact",
+    it: "Maggior impatto",
+  },
+  "decisionLab.pattern.eis.impactOverview.latestNews": {
+    en: "Latest news · 24h / 7d",
+    it: "News recenti · 24h / 7g",
+  },
+  "decisionLab.pattern.eis.impactOverview.latestNewsHint": {
+    en: "Updates on first daily feed refresh",
+    it: "Si aggiorna al primo refresh della giornata",
+  },
+  "decisionLab.pattern.eis.impactOverview.latestNewsEmpty": {
+    en: "No events in the last 7 days.",
+    it: "Nessun evento negli ultimi 7 giorni.",
+  },
+  "decisionLab.pattern.eis.impactOverview.latestNewsManualEmpty": {
+    en: "No manual news saved for this ticker.",
+    it: "Nessuna news manuale salvata per questo ticker.",
+  },
+  "decisionLab.pattern.eis.impactOverview.eisTotal": {
+    en: "EIS total",
+    it: "Totale EIS",
+  },
+  "decisionLab.pattern.eis.impactOverview.last24h": {
+    en: "Last 24h",
+    it: "Ultime 24h",
+  },
+  "decisionLab.pattern.eis.impactOverview.last24hHint": {
+    en: "Updates on first daily feed refresh",
+    it: "Si aggiorna al primo refresh della giornata",
+  },
+  "decisionLab.pattern.eis.impactOverview.last24hEmpty": {
+    en: "No events in the last 24h.",
+    it: "Nessun evento nelle ultime 24h.",
+  },
+  "decisionLab.pattern.eis.impactOverview.openAll": {
+    en: "All events & detail",
+    it: "Tutti gli eventi e dettaglio",
+  },
+  "decisionLab.pattern.eis.impactOverview.openAllCount": {
+    en: "All events ({count}) — full breakdown",
+    it: "Tutti gli eventi ({count}) — dettaglio completo",
   },
   "decisionLab.pattern.eis.noEvent": {
     en: "No clinical feed events for this ticker.",
@@ -3191,6 +3783,14 @@ const DICT = {
   "decisionLab.sds.size": {
     en: "Size",
     it: "Size",
+  },
+  "decisionLab.sds.reliability": {
+    en: "Reliability",
+    it: "Affidabilità",
+  },
+  "decisionLab.sds.notReliable": {
+    en: "not reliable — outside the window, no estimate",
+    it: "non affidabile — fuori finestra, nessuna stima",
   },
   "decisionLab.sds.missingData": {
     en: "Missing data estimate: {pct}%",
@@ -6077,8 +6677,8 @@ const DICT = {
     it: "{n} chiuse",
   },
   "closedPiggy.pnlTip": {
-    en: "Since last reset (if any) — realized P&L from sold/closed opportunities. Ledger cumulative may differ; see note below.",
-    it: "Dall'ultimo azzeramento (se presente) — P&L realizzato da vendite/chiusure. Il totale ledger può differire; vedi nota sotto.",
+    en: "All-time realized P&L from sold/closed opportunities (not reduced by Reset).",
+    it: "P&L realizzato totale da vendite/chiusure (non ridotto dal Reset).",
   },
   "closedPiggy.onCapital": {
     en: "on capital",
@@ -6105,32 +6705,108 @@ const DICT = {
     it: "Azzera",
   },
   "closedPiggy.resetTip": {
-    en: "Set current cumulative as zero — start a fresh closed piggy bank counter",
-    it: "Imposta il cumulato attuale a zero — riparti con un nuovo contatore",
+    en: "Start a secondary «since reset» counter — the glass keeps showing all-time closed P&L",
+    it: "Avvia un contatore secondario «dal reset» — il bicchiere continua a mostrare il totale all-time",
   },
   "closedPiggy.resetConfirm": {
-    en: "Reset closed piggy bank?\n\nReading € {display} → €0 (counter only).\nLedger cumulative € {raw} stored as baseline.\nClosed positions stay in the ledger.",
-    it: "Azzerare il salvadanaio chiuso?\n\nLettura € {display} → €0 (solo contatore).\nCumulato ledger € {raw} salvato come baseline.\nLe posizioni chiuse restano nel ledger.",
+    en: "Start a since-reset counter?\n\nAll-time closed stays € {raw} on the glass.\nSecondary counter € {display} → €0.\nClosed positions stay in the ledger.",
+    it: "Avviare il contatore dal reset?\n\nIl totale all-time resta € {raw} sul bicchiere.\nContatore secondario € {display} → €0.\nLe posizioni chiuse restano nel ledger.",
   },
   "closedPiggy.resetConfirmFirst": {
-    en: "Reset closed piggy bank?\n\nCurrent cumulative € {amount} → €0.\nClosed positions stay in the ledger.",
-    it: "Azzerare il salvadanaio chiuso?\n\nCumulato attuale € {amount} → €0.\nLe posizioni chiuse restano nel ledger.",
+    en: "Start a since-reset counter?\n\nAll-time closed stays € {amount} on the glass.\nA secondary counter starts at €0.",
+    it: "Avviare il contatore dal reset?\n\nIl totale all-time resta € {amount} sul bicchiere.\nUn contatore secondario parte da €0.",
   },
   "closedPiggy.sinceResetNote": {
-    en: "Since last reset · ledger total € {raw}",
-    it: "Dall'ultimo azzeramento · totale ledger € {raw}",
+    en: "Since last reset: € {sinceReset}",
+    it: "Dall'ultimo azzeramento: € {sinceReset}",
   },
   "closedPiggy.compactTipSinceReset": {
-    en: "Closed P&L since last Reset: {sinceReset} €. All-time (matches Pulse · Gain closed): {allTime} €.",
-    it: "P&L chiuso dall'ultimo Reset: {sinceReset} €. Totale storico (come Pulse · Gain closed): {allTime} €.",
+    en: "All-time closed P&L: {allTime} € (shown). Since last Reset: {sinceReset} €.",
+    it: "P&L chiuso totale: {allTime} € (in evidenza). Dall'ultimo Reset: {sinceReset} €.",
   },
   "closedPiggy.compactTipAllTime": {
-    en: "All-time closed P&L: {allTime} € — same basis as Pulse · Gain closed.",
-    it: "P&L chiuso totale: {allTime} € — stessa base di Pulse · Gain closed.",
+    en: "All-time closed P&L: {allTime} € — same as Pulse · Gain closed.",
+    it: "P&L chiuso totale: {allTime} € — come Pulse · Gain closed.",
   },
   "closedPiggy.openLedger": {
     en: "Open closed P&L ledger in Simulation",
     it: "Apri ledger P&L chiuso in Simulation",
+  },
+  "closedPiggy.reinvested": {
+    en: "— of which ${amount} from gains (budget already used)",
+    it: "— di cui ${amount} da guadagni (budget già usato)",
+  },
+  "closedPiggy.reinvestedTip": {
+    en: "Only the open-book amount beyond the investment budget is counted as gains reinvested. Budget is used first; gains need confirmation.",
+    it: "Solo la quota del book aperto oltre il budget di investimento conta come guadagni reinvestiti. Si usa prima il budget; i guadagni richiedono conferma.",
+  },
+  "closedPiggy.budgetFunded": {
+    en: "Open book from investment budget · gains stay in the piggy",
+    it: "Aperti finanziati dal budget · i guadagni restano nel salvadanaio",
+  },
+  "closedPiggy.budgetFundedTip": {
+    en: "Investment budget still covers the open positions. Closed gains are parked here until the budget is exhausted (then the app asks before using them).",
+    it: "Il budget di investimento copre ancora le posizioni aperte. I guadagni chiusi restano qui finché il budget non è esaurito (poi l'app chiede conferma prima di usarli).",
+  },
+  "closedPiggy.gainsCash": {
+    en: "Gains cash: ${amount} — all in the piggy (not used in open)",
+    it: "Cassa guadagni: ${amount} — tutta nel salvadanaio (non usata negli aperti)",
+  },
+  "closedPiggy.gainsCashTip": {
+    en: "This is the closed P&L sitting in the piggy. Open positions are funded from the investment budget first — nothing was withdrawn from here for the current open book.",
+    it: "È il P&L chiuso che sta nel salvadanaio. Le posizioni aperte usano prima il budget di investimento — da qui non è stato prelevato nulla per gli aperti attuali.",
+  },
+  "closedPiggy.openFromBudgetLine": {
+    en: "Open ${amount} from budget — no draw from this cash",
+    it: "Aperti ${amount} dal budget — nessun prelievo da questa cassa",
+  },
+  "closedPiggy.cashShort": {
+    en: "cash ${amount}",
+    it: "cassa ${amount}",
+  },
+  "pulse.capCycle.label": {
+    en: "Allocated capital",
+    it: "Capitale allocato",
+  },
+  "pulse.capCycle.openMain": {
+    en: "{amount} in open positions",
+    it: "{amount} su investimenti aperti",
+  },
+  "pulse.capCycle.gainsRecycledSub": {
+    en: "{gains} from gains ({gainsPct}%) · {other} from budget",
+    it: "{gains} da guadagni ({gainsPct}%) · {other} dal budget",
+  },
+  "pulse.capCycle.recycledSub": {
+    en: "{amount} reinvested from prior gains ({pct}%)",
+    it: "{amount} riallocato da guadagni ({pct}%)",
+  },
+  "pulse.capCycle.freshOnlySub": {
+    en: "From investment budget · gains stay in piggy",
+    it: "Dal budget di investimento · guadagni nel salvadanaio",
+  },
+  "pulse.capCycle.noOpen": {
+    en: "No open positions",
+    it: "Nessuna posizione aperta",
+  },
+  "pulse.capCycle.returned": {
+    en: "{amount} released from {n} closed",
+    it: "{amount} da {n} chiusi",
+  },
+  "pulse.capCycle.reinvested": {
+    en: "{amount} reinvested · {fresh} fresh",
+    it: "{amount} reinvestito · {fresh} nuovo",
+  },
+  "pulse.capCycle.noClosed": {
+    en: "No closed deals yet",
+    it: "Nessuna chiusura",
+  },
+  "pulse.capCycle.tip": {
+    en: "Nominal capital in open positions. Budget is used first; \"from gains\" is only the amount beyond the investment budget (confirmed when investing).",
+    it: "Capitale nominale nelle posizioni aperte. Si usa prima il budget; \"da guadagni\" è solo la quota oltre il budget di investimento (con conferma in fase di investimento).",
+  },
+  "pulse.capCycle.tipSynth": {
+    en: "Same as equal-weight, but SELL capital is scaled by the causal synth share (matches Gain closed synth).",
+    it: "Come equal-weight, ma il capitale dei SELL è scalato per la quota synth causale (allineato al Gain closed synth).",
   },
   "sim.pnl.empty": {
     en: "Enter capital and buy price on at least one row in the portfolio simulation.",
@@ -6337,8 +7013,20 @@ const DICT = {
     it: "MII °",
   },
   "signals.mig.col.miiAngleTip": {
-    en: "How steeply the market is moving: price change weighted by volume. Green = rising interest, red = falling. Hover row values for Δ source (1M trend vs 24h).",
-    it: "Quanto è ripida la pendenza del mercato: variazione prezzo pesata sul volume. Verde = interesse in salita, rosso = in discesa. Passa il mouse sulla riga per la fonte del Δ (trend 1M vs 24h).",
+    en: "Market interest angle (°): price change × volume weight. Green = rising interest, red = falling. Click a cell to open the full decomposition (ΔP source, volume ratio, raw MII, penalties, final angle).",
+    it: "Angolo di interesse mercato (°): variazione prezzo × peso volume. Verde = interesse in salita, rosso = in discesa. Click su una cella per aprire il dettaglio completo (sorgente ΔP, rapporto volume, MII raw, penalty, angolo finale).",
+  },
+  "sim.mii.detail.title": {
+    en: "MII decomposition",
+    it: "Dettaglio MII",
+  },
+  "sim.mii.detail.subtitle": {
+    en: "How the market interest angle was assembled for this row.",
+    it: "Come è stato calcolato l'angolo di interesse mercato per questa riga.",
+  },
+  "sim.mii.detail.missing": {
+    en: "No MII data available for this row — the market interest gate did not evaluate it (missing simulation row or off-window).",
+    it: "Nessun dato MII disponibile per questa riga — il gate di interesse mercato non l'ha valutata (riga simulation assente o fuori finestra).",
   },
   "signals.mig.col.miiRaw": {
     en: "Idx",
@@ -6533,8 +7221,12 @@ const DICT = {
     it: "In attesa del primo refresh programmato (lun–ven 16:30 Europe/Rome).",
   },
   "modelLab.accuracyScheduleNote": {
-    en: "Scheduled refresh (Europe/Rome): RA Prediction Calibration, SDS Accuracy, and EIS Signal Impact Mon–Fri at 4:30 PM.",
-    it: "Refresh programmato (Europe/Rome): RA Prediction Calibration, SDS Accuracy e Impatto segnale EIS lun–ven alle 16:30.",
+    en: "Scheduled (Europe/Rome): RA / SDS / EIS Mon–Fri 4:30 PM · sign-curve + Model quality cohort charts Saturday WeeklyFull 07:00–14:00 (VPS).",
+    it: "Programmato (Europe/Rome): RA / SDS / EIS lun–ven 16:30 · curva segno + chart Model quality sabato WeeklyFull 07:00–14:00 (VPS).",
+  },
+  "modelLab.signCurveScheduleNote": {
+    en: "Direction / price accuracy curves rebuild every Saturday with WeeklyFull (VPS). Soft-refresh the tab after the weekly run finishes.",
+    it: "Le curve segno / accuratezza prezzo si ricostruiscono ogni sabato con WeeklyFull (VPS). Ricarica la tab dopo il run settimanale.",
   },
   "modelLab.subtitle.learningLab": {
     en: "Learning Lab — cluster CF, regime ×, effectiveness",
@@ -6544,6 +7236,199 @@ const DICT = {
     en: "Learning over time",
     it: "Impara nel tempo",
   },
+  "modelLab.performance.openFlashTest": {
+    en: "Flash Test",
+    it: "Flash Test",
+  },
+  "modelLab.subtitle.flashTest": {
+    en: "Flash Test — parallel Gen 0–4 auto paper books",
+    it: "Flash Test — libri paper automatici Gen 0–4 in parallelo",
+  },
+  "flashTest.title": {
+    en: "Flash Test",
+    it: "Flash Test",
+  },
+  "flashTest.lead": {
+    en: "Hands-off A/B: five Soft Logic gens auto-build Soft BUY/SELL lists, prioritize, and paper-trade on the same universe. After 7 days, which Gen performs best under 100% rule-following (external-use parity).",
+    it: "Loop automatico: cinque Gen Soft Logic costruiscono liste Soft BUY/SELL, le prioritizzano e tradano in paper sullo stesso universo. Dopo 7 giorni: quale Gen performa meglio seguendo le regole al 100% (parità di opportunità / uso esterno).",
+  },
+  "flashTest.sdsWait": {
+    en: "SDS loading… Soft BUY gates need SDS — wait for the green banner before Start.",
+    it: "SDS in caricamento… Soft BUY richiede SDS — aspetta il banner verde prima di Avvia.",
+  },
+  "flashTest.sdsReady": {
+    en: "SDS ready — Soft BUY gates active ({n} tickers)",
+    it: "SDS pronto — gate Soft BUY attivi ({n} ticker)",
+  },
+  "flashTest.autoLoopHint": {
+    en: "Auto-loop every 3 min while this tab stays open (no manual ticks needed).",
+    it: "Loop automatico ogni 3 min con questa tab aperta (niente tick manuali).",
+  },
+  "flashTest.lastTickBuys": {
+    en: "Filled Soft BUY: {n}",
+    it: "Soft BUY eseguiti: {n}",
+  },
+  "flashTest.activity24hSummary": {
+    en: "24h BUY {buy} / SELL {sell}",
+    it: "24h BUY {buy} / SELL {sell}",
+  },
+  "flashTest.activity24hTitle": {
+    en: "Last 24h — BUY / SELL fills",
+    it: "Ultime 24h — fill BUY / SELL",
+  },
+  "flashTest.activity24hEmpty": {
+    en: "No BUY/SELL fills in the last 24 hours for this Gen.",
+    it: "Nessun fill BUY/SELL nelle ultime 24 ore per questa Gen.",
+  },
+  "flashTest.activity24hNoSells": {
+    en: "none",
+    it: "nessuno",
+  },
+  "flashTest.signalSummary": {
+    en: "Lists BUY {buy} / SELL {sell} · filled {filled}",
+    it: "Liste BUY {buy} / SELL {sell} · eseguiti {filled}",
+  },
+  "flashTest.signalBuysTitle": {
+    en: "Soft BUY list ({n}) — prioritized",
+    it: "Lista Soft BUY ({n}) — prioritizzata",
+  },
+  "flashTest.signalSellsTitle": {
+    en: "Soft SELL list ({n})",
+    it: "Lista Soft SELL ({n})",
+  },
+  "flashTest.signalBuysEmpty": {
+    en: "No Soft BUY for this Gen on the last tick.",
+    it: "Nessun Soft BUY per questa Gen nell’ultimo tick.",
+  },
+  "flashTest.listDiff": {
+    en: "{unique} only this Gen · {shared} shared with other Gens",
+    it: "{unique} solo questa Gen · {shared} in comune con altre Gen",
+  },
+  "flashTest.missHint": {
+    en: "Near-miss (why not BUY)",
+    it: "Near-miss (perché non BUY)",
+  },
+  "flashTest.signalSellsEmpty": {
+    en: "No Soft SELL — open book empty or exits not triggered.",
+    it: "Nessun Soft SELL — libro vuoto o uscite non scattate.",
+  },
+  "flashTest.startWeek": {
+    en: "Start 7-day Flash Test",
+    it: "Avvia Flash Test 7 giorni",
+  },
+  "flashTest.stop": {
+    en: "Stop",
+    it: "Stop",
+  },
+  "flashTest.reset": {
+    en: "Reset",
+    it: "Reset",
+  },
+  "flashTest.runTick": {
+    en: "Run tick now",
+    it: "Esegui tick ora",
+  },
+  "flashTest.ticking": {
+    en: "Ticking…",
+    it: "Tick in corso…",
+  },
+  "flashTest.statusOn": {
+    en: "Running",
+    it: "In corso",
+  },
+  "flashTest.statusOff": {
+    en: "Idle — start to arm auto books",
+    it: "Inattivo — avvia per armare i libri auto",
+  },
+  "flashTest.started": {
+    en: "Started",
+    it: "Inizio",
+  },
+  "flashTest.ends": {
+    en: "Ends",
+    it: "Fine",
+  },
+  "flashTest.lastTick": {
+    en: "Last tick",
+    it: "Ultimo tick",
+  },
+  "flashTest.bankroll": {
+    en: "Bankroll",
+    it: "Bankroll",
+  },
+  "flashTest.perTrade": {
+    en: "Per trade",
+    it: "Per trade",
+  },
+  "flashTest.portfolioTitle": {
+    en: "Open book (held now)",
+    it: "Libro aperto (in posizione ora)",
+  },
+  "flashTest.portfolioEmpty": {
+    en: "No open positions for this Gen — Soft BUY fills land here; Soft SELL removes them.",
+    it: "Nessuna posizione aperta per questa Gen — i Soft BUY eseguiti finiscono qui; i Soft SELL li tolgono.",
+  },
+  "flashTest.tradesTitle": {
+    en: "Execution log (every BUY/SELL fill)",
+    it: "Log esecuzioni (ogni fill BUY/SELL)",
+  },
+  "flashTest.tradesEmpty": {
+    en: "No fills yet for this Gen. Start or Run tick now — empty means no Soft BUY/SELL passed the gates.",
+    it: "Nessun fill ancora per questa Gen. Avvia o Esegui tick ora — vuoto = nessun Soft BUY/SELL ha passato i gate.",
+  },
+  "flashTest.chartTitle": {
+    en: "Breakeven compare — Gen 0…4",
+    it: "Confronto breakeven — Gen 0…4",
+  },
+  "flashTest.chartLead": {
+    en: "Cumulative P&L ($/€) or % on shared bankroll for each Soft Logic generation.",
+    it: "P&L cumulato ($/€) o % sul bankroll condiviso per ciascuna generazione Soft Logic.",
+  },
+  "flashTest.chartEmpty": {
+    en: "Need at least two equity points — start the test and run ticks.",
+    it: "Servono almeno due punti equity — avvia il test ed esegui i tick.",
+  },
+  "flashTest.chartGenAll": {
+    en: "All",
+    it: "Tutte",
+  },
+  "flashTest.chartGenAllTip": {
+    en: "Show all Soft Logic generations on the breakeven chart",
+    it: "Mostra tutte le generazioni Soft Logic sul grafico breakeven",
+  },
+  "flashTest.col.ticker": {
+    en: "Ticker",
+    it: "Ticker",
+  },
+  "flashTest.col.capital": {
+    en: "Capital",
+    it: "Capitale",
+  },
+  "flashTest.col.mtm": {
+    en: "MTM",
+    it: "MTM",
+  },
+  "flashTest.col.entry": {
+    en: "Entry",
+    it: "Ingresso",
+  },
+  "flashTest.col.reason": {
+    en: "Reason",
+    it: "Motivo",
+  },
+  "flashTest.col.time": {
+    en: "Time",
+    it: "Ora",
+  },
+  "flashTest.col.side": {
+    en: "Side",
+    it: "Side",
+  },
+  "flashTest.col.pnl": {
+    en: "P&L",
+    it: "P&L",
+  },
+
   "modelLab.performance.openRaCalibration": {
     en: "RA calibration",
     it: "Calibra RA",
@@ -6553,8 +7438,104 @@ const DICT = {
     it: "Precisione SuperNova",
   },
   "modelLab.performance.openEisAnalysis": {
-    en: "Event impact",
-    it: "Impatto eventi",
+    en: "EIS accuracy",
+    it: "Accuratezza EIS",
+  },
+  "modelLab.performance.openContSellAccuracy": {
+    en: "Sell G10 / stretch",
+    it: "Sell G10 / stretch",
+  },
+  "modelLab.contSellAccuracy.loading": {
+    en: "Loading continuation-sell learning loop…",
+    it: "Caricamento loop apprendimento sell continuation…",
+  },
+  "modelLab.contSellAccuracy.title": {
+    en: "Continuation sell — prediction quality & stretch",
+    it: "Sell continuation — qualità predizioni e stretch",
+  },
+  "modelLab.contSellAccuracy.intro": {
+    en: "Freezes G10/edge sell signals, scores the 5-session drawdown label (≥5% from setup close), and proposes an edge stretch to improve hit rate. Applied stretch feeds live soft-SELL take-profit.",
+    it: "Congela i segnali sell G10/edge, valuta il drawdown a 5 sessioni (≥5% dal close di setup) e propone uno stretch sull’edge per migliorare l’hit rate. Lo stretch applicato alimenta il soft-SELL take-profit live.",
+  },
+  "modelLab.contSellAccuracy.kpi.raw": {
+    en: "Raw hit rate",
+    it: "Hit rate grezzo",
+  },
+  "modelLab.contSellAccuracy.kpi.stretch": {
+    en: "Stretched hit rate",
+    it: "Hit rate con stretch",
+  },
+  "modelLab.contSellAccuracy.kpi.delta": {
+    en: "Stretch delta",
+    it: "Delta stretch",
+  },
+  "modelLab.contSellAccuracy.verdict.improved": {
+    en: "Stretch improves quality",
+    it: "Stretch migliora la qualità",
+  },
+  "modelLab.contSellAccuracy.verdict.worse": {
+    en: "Stretch weaker than raw",
+    it: "Stretch peggiore del grezzo",
+  },
+  "modelLab.contSellAccuracy.verdict.neutral": {
+    en: "No material change",
+    it: "Nessun cambio materiale",
+  },
+  "modelLab.contSellAccuracy.proposal": {
+    en: "Stretch proposal",
+    it: "Proposta stretch",
+  },
+  "modelLab.contSellAccuracy.apply": {
+    en: "Apply stretch",
+    it: "Applica stretch",
+  },
+  "modelLab.contSellAccuracy.revert": {
+    en: "Dismiss",
+    it: "Ignora",
+  },
+  "modelLab.contSellAccuracy.resetStretch": {
+    en: "Reset stretch to baseline",
+    it: "Reset stretch a baseline",
+  },
+  "modelLab.contSellAccuracy.chartTitle": {
+    en: "Sell prediction quality — raw vs stretch",
+    it: "Qualità predizioni sell — grezzo vs stretch",
+  },
+  "modelLab.contSellAccuracy.chart.day": {
+    en: "By day",
+    it: "Per giorno",
+  },
+  "modelLab.contSellAccuracy.chart.week": {
+    en: "By week",
+    it: "Per settimana",
+  },
+  "modelLab.contSellAccuracy.series.raw": {
+    en: "Raw (edge > 0)",
+    it: "Grezzo (edge > 0)",
+  },
+  "modelLab.contSellAccuracy.series.stretch": {
+    en: "With stretch",
+    it: "Con stretch",
+  },
+  "modelLab.contSellAccuracy.empty": {
+    en: "No scored sell predictions yet. Signals freeze today and score after 5 sessions.",
+    it: "Nessuna predizione sell ancora scorata. I segnali si congelano oggi e si valutano dopo 5 sessioni.",
+  },
+  "modelLab.performance.openPolygonAccuracy": {
+    en: "Polygon accuracy",
+    it: "Accuratezza poligono",
+  },
+  "modelLab.performance.openComparison": {
+    en: "Model comparison",
+    it: "Confronto modelli",
+  },
+  "modelLab.performance.modelsEvalGroup": {
+    en: "Models evaluation",
+    it: "Valutazione modelli",
+  },
+  "modelLab.performance.openMissed": {
+    en: "Missed",
+    it: "Missed",
   },
   "modelLab.missedOpp.introTitle": {
     en: "Missed entry opportunities (24h)",
@@ -6853,8 +7834,8 @@ const DICT = {
     it: "Dimensione media in % del movimento che ha contraddetto la raccomandazione. Sopra lo 0 (errore +) = calo medio sui titoli con Enter consigliato. Sotto lo 0 (errore −) = rialzo medio sui titoli scartati, ribaltato di segno. La linea tratteggiata verde a 0 = nessun errore — entrambe le curve dovrebbero convergere verso lo 0 quando il loop learning migliora.",
   },
   "modelLab.missedOpp.errorTrendCloseTitle": {
-    en: "Deals ≤ 2 months from CD (T−14 → T−60)",
-    it: "Deal ≤ 2 mesi dalla CD (T−14 → T−60)",
+    en: "Deals ≤ 2 months from CD (T−0 → T−60)",
+    it: "Deal ≤ 2 mesi dalla CD (T−0 → T−60)",
   },
   "modelLab.missedOpp.errorTrendFarTitle": {
     en: "Deals 2–4 months from CD (T−61 → T−120)",
@@ -8601,8 +9582,24 @@ const DICT = {
     it: "Quanto il modello ha allungato o compresso le previsioni nel tempo.",
   },
   "modelLab.qc.modelStretch.historyCaption": {
-    en: "Y-axis = global scale multiplier (×). 1.00 = neutral (no change). Below 1 = compressed predictions; above 1 = elongated. Each dot = retro-pool recalibration.",
-    it: "Asse Y = moltiplicatore globale (×). 1,00 = neutro (nessun cambio). Sotto 1 = previsioni compresse; sopra 1 = allungate. Ogni punto = ricalib sul pool retro.",
+    en: "Y-axis = global scale multiplier (×). 1.00 = neutral. Filled dot = retro-pool recalibration · hollow dot = orchestrator monitor checkpoint (same cal_factor until next recal).",
+    it: "Asse Y = moltiplicatore globale (×). 1,00 = neutro. Punto pieno = ricalib pool retro · punto vuoto = checkpoint monitor orchestrator (stesso cal_factor fino alla prossima ricalib).",
+  },
+  "modelLab.qc.modelStretch.lastCheckpoint": {
+    en: "Last checkpoint: {when}",
+    it: "Ultimo checkpoint: {when}",
+  },
+  "modelLab.qc.modelStretch.sourceRecalibration": {
+    en: "Retro-pool recalibration",
+    it: "Ricalibrazione pool retro",
+  },
+  "modelLab.qc.modelStretch.sourceMonitor": {
+    en: "Monitor snapshot (orchestrator)",
+    it: "Snapshot monitor (orchestrator)",
+  },
+  "modelLab.qc.modelStretch.sourceHistory": {
+    en: "Archived calibration state",
+    it: "Stato calibrazione archiviato",
   },
   "modelLab.qc.modelStretch.yAxisLabel": {
     en: "Scale (×)",
@@ -8743,6 +9740,46 @@ const DICT = {
   "modelLab.qc.eisImpact.legendWithEis": {
     en: "EIS ≠ 0",
     it: "EIS ≠ 0",
+  },
+  "modelLab.qc.eisEvolution.title": {
+    en: "EIS evolution — weekly recap",
+    it: "Evoluzione EIS — recap settimanale",
+  },
+  "modelLab.qc.eisEvolution.lead": {
+    en: "How EIS cohort accuracy, super-score learning, and feed-event price coupling change over time — not just the current snapshot below.",
+    it: "Come cambiano nel tempo accuratezza coorti EIS, learning super-score e accoppiamento feed-eventi/prezzo — non solo lo snapshot corrente sotto.",
+  },
+  "modelLab.qc.eisEvolution.pnlRecapTitle": {
+    en: "Feed events — EIS vs T+3 move (Model Comparison logic)",
+    it: "Eventi feed — EIS vs movimento T+3 (logica Model Comparison)",
+  },
+  "modelLab.qc.eisEvolution.pnlRecapBody": {
+    en: "One point per scored feed event (incl. manual ✍): Pearson correlation ρ between EIS score and stock Δ% over ~3 days (not an error metric — closer to +1 = EIS predicts direction, 0 = no coupling, negative = anti-signal). Weekly buckets show whether coupling is improving.",
+    it: "Un punto per evento feed scored (incl. manual ✍): correlazione ρ di Pearson tra score EIS e Δ% azione in ~3 giorni (non è un errore — vicino a +1 = EIS prevede direzione, 0 = nessun accoppiamento, negativo = anti-segnale). I bucket settimanali mostrano se l'accoppiamento migliora.",
+  },
+  "modelLab.qc.eisEvolution.pnlRecapRho": {
+    en: "Overall ρ (events)",
+    it: "ρ complessivo (eventi)",
+  },
+  "modelLab.qc.eisEvolution.pnlRecapEvents": {
+    en: "Scored events",
+    it: "Eventi scored",
+  },
+  "modelLab.qc.eisEvolution.pnlRecapWeekRho": {
+    en: "This week ρ",
+    it: "ρ settimana corrente",
+  },
+  "modelLab.qc.eisEvolution.pnlRecapWeekDelta": {
+    en: "Δρ vs prev week",
+    it: "Δρ vs sett. prec.",
+  },
+  "modelLab.qc.eisEvolution.pnlRecapEmpty": {
+    en: "No feed events with EIS + T+3 price yet — enrich clinical feed or add manual news with DELTA_3D.",
+    it: "Nessun evento feed con EIS + prezzo T+3 — arricchisci il feed clinico o aggiungi news manuali con DELTA_3D.",
+  },
+  "modelLab.qc.eisEvolution.pnlRecapTrendEmpty": {
+    en: "Weekly ρ trend needs ≥2 ISO weeks with ≥3 events each.",
+    it: "Il trend ρ settimanale richiede ≥2 settimane ISO con ≥3 eventi ciascuna.",
   },
   "modelLab.qc.eisMagnitude.captionTitle": {
     en: "Caption — EIS score vs market reaction",
@@ -9612,6 +10649,10 @@ const DICT = {
     en: "Downward slope = model learning to match price magnitude better week over week.",
     it: "Pendenza verso il basso = il modello avvicina meglio la grandezza del prezzo settimana dopo settimana.",
   },
+  "modelLab.qc.modelSizeError.lastSnapshot": {
+    en: "Last monitor snapshot: {when}",
+    it: "Ultimo snapshot monitor: {when}",
+  },
   "modelLab.qc.modelSizeError.lineMae": {
     en: "MAE size (pp)",
     it: "MAE grandezza (pp)",
@@ -9880,6 +10921,34 @@ const DICT = {
     en: "Sim portfolio",
     it: "Portafoglio sim",
   },
+  "modelLab.tab.sells": {
+    en: "Sells",
+    it: "Vendite",
+  },
+  "modelLab.tab.comparison": {
+    en: "Model comparison",
+    it: "Confronto modelli",
+  },
+  "modelLab.subtitle.comparison": {
+    en: "Predictive power analysis",
+    it: "Analisi potere predittivo",
+  },
+  "modelLab.tab.calibration": {
+    en: "Model calibration",
+    it: "Calibrazione modello",
+  },
+  "modelLab.subtitle.calibration": {
+    en: "Capital & diversification · Prediction & recommendation engine calibration",
+    it: "Capitale & diversificazione · Calibrazione motore predizioni e raccomandazioni",
+  },
+  "modelLab.calibration.subNav.diversify": {
+    en: "Capital & diversification",
+    it: "Capitale & diversificazione",
+  },
+  "modelLab.calibration.subNav.prediction": {
+    en: "Prediction",
+    it: "Prediction",
+  },
   "modelLab.page.title": {
     en: "Model quality",
     it: "Qualità modello",
@@ -9887,6 +10956,10 @@ const DICT = {
   "modelLab.subtitle.portfolio": {
     en: "Your portfolio = decision tracking · capital invested/divested · curve slope + reliability vs P&L",
     it: "Tuo portafoglio = tracciamento decisioni · capitale investito/disinvestito · pendenza curva + affidabilità vs P&L",
+  },
+  "modelLab.subtitle.sells": {
+    en: "Sells = exit-error taxonomy (premature / missed) · open-gain impact · recommendation adherence",
+    it: "Vendite = tassonomia errori di uscita (precoci / mancate) · impatto sul gain open · adesione alle raccomandazioni",
   },
   "modelLab.subtitle.qc": {
     en: "Quality & control — validation, learnings and pre-CD signal audit",
@@ -10243,6 +11316,66 @@ const DICT = {
   "learningLab.eisSuper.kpiEvents": {
     en: "Scored events",
     it: "Eventi scored",
+  },
+  "learningLab.eisSuper.kpiMaeLift": {
+    en: "Mean Δ MAE T+7",
+    it: "Media Δ MAE T+7",
+  },
+  "learningLab.eisSuper.kpiLsLift": {
+    en: "Mean Δ L-S T+7",
+    it: "Media Δ L-S T+7",
+  },
+  "learningLab.eisSuper.kpiMonoSpearman": {
+    en: "Mono ρ(raw,super)",
+    it: "Mono ρ(raw,super)",
+  },
+  "learningLab.eisSuper.diagnosticMonotoneWarning": {
+    en: "ρ(raw) ≈ ρ(super) because calibration is monotone (Spearman raw↔super ≈ 1). Pearson ρ cannot reveal calibration value — use Δ MAE or long-short spread instead.",
+    it: "ρ(raw) ≈ ρ(super) perché la calibrazione è monotona (Spearman raw↔super ≈ 1). Il ρ di Pearson non rivela valore aggiunto — usa Δ MAE o spread long-short.",
+  },
+  "learningLab.eisSuper.diagnosticLikelyMonotoneWarning": {
+    en: "Δρ ≈ 0 but Δ MAE is positive (super error < raw). This is consistent with a monotone recalibration: the ranking is unchanged, only the scale is better aligned. Mono-Spearman is not yet computable — look at Δ MAE (highlighted) instead of the flat Δρ bars below.",
+    it: "Δρ ≈ 0 ma Δ MAE è positivo (errore super < raw). È coerente con una ricalibrazione monotona: il ranking non cambia, cambia solo la scala meglio allineata al reale. Mono-Spearman non è ancora calcolabile — guarda il Δ MAE (evidenziato) invece delle barre Δρ piatte qui sotto.",
+  },
+  "learningLab.eisSuper.diagnosticGateNote": {
+    en: "Hollow red markers = bucket n < {minN} (line segments dropped). Grey/red bars = below trust gate.",
+    it: "Marcatori rossi vuoti = bucket n < {minN} (segmenti linea omessi). Barre grigie/rosse = sotto soglia fiducia.",
+  },
+  "learningLab.eisSuper.panel1Title": {
+    en: "1 · Does the score predict the move?",
+    it: "1 · Lo score predice il movimento?",
+  },
+  "learningLab.eisSuper.panel1Subtitle": {
+    en: "Pearson ρ (super) — solid T+7, dashed T+1 · shaded band = 95% CI",
+    it: "Correlazione ρ (super) — solido T+7, tratteggio T+1 · fascia = IC 95%",
+  },
+  "learningLab.eisSuper.panel2Title": {
+    en: "2 · Is the learned blend worth it?",
+    it: "2 · Il blend appreso vale la pena?",
+  },
+  "learningLab.eisSuper.panel2Subtitle": {
+    en: "Δρ = super − raw · zero = no gain · bars T+7, thin line T+1",
+    it: "Δρ = super − raw · zero = nessun guadagno · barre T+7, linea sottile T+1",
+  },
+  "learningLab.eisSuper.panel3Title": {
+    en: "3 · How many events do I trust?",
+    it: "3 · Di quanti eventi mi fido?",
+  },
+  "learningLab.eisSuper.panel3Subtitle": {
+    en: "n events per bucket (T+7) · red = below gate (n<{minN})",
+    it: "n eventi per bucket (T+7) · rosso = sotto soglia (n<{minN})",
+  },
+  "learningLab.eisSuper.horizonTransient": {
+    en: "T+1 transient",
+    it: "T+1 transitorio",
+  },
+  "learningLab.eisSuper.horizonPersistent": {
+    en: "T+7 persistent",
+    it: "T+7 persistente",
+  },
+  "learningLab.eisSuper.horizonFootnote": {
+    en: "T+1 ≈ pop day-after; T+7 ≈ ~5 sessions (re-rating proxy). T+20 pipeline pending — use T+7 for HOLD/TRIM timing until enriched.",
+    it: "T+1 ≈ pop giorno dopo; T+7 ≈ ~5 sedute (proxy re-rating). Pipeline T+20 in arrivo — usa T+7 per timing HOLD/TRIM finché non arricchito.",
   },
   "learningLab.eisSuper.timelineTitle": {
     en: "Correlation vs distance to CD",
@@ -11520,6 +12653,10 @@ const DICT = {
     en: "P&L tab →",
     it: "Tab P&L →",
   },
+  "simOutcomes.open.movedNote": {
+    en: "The per-position exit verdict (EXIT / HOLD / WATCH) now lives in the unified Pick stocks portfolio table, next to the Sell button — no longer duplicated here. Use the P&L tab for the curve deep-dive.",
+    it: "Il verdetto d'uscita per posizione (EXIT / HOLD / WATCH) è ora nella tabella portafoglio unica di Pick stocks, accanto al pulsante Sell — non più duplicato qui. Usa la tab P&L per l'analisi della curva.",
+  },
   "simOutcomes.closed.title": {
     en: "Closed positions — what worked",
     it: "Posizioni chiuse — cosa ha funzionato",
@@ -12044,6 +13181,14 @@ const DICT = {
     en: "Could not close the position. Try again from the Simulation tab.",
     it: "Impossibile chiudere la posizione. Riprova dal tab Simulation.",
   },
+  "sim.pnl.sellDiskPersistFailed": {
+    en:
+      "The position was closed on this device, but saving to the server failed. " +
+      "Do not reload the page — try Sell again or check your connection so the sale is not lost on refresh.",
+    it:
+      "La posizione risulta chiusa su questo dispositivo, ma il salvataggio sul server non è riuscito. " +
+      "Non ricaricare la pagina — riprova Vendi o verifica la connessione, altrimenti la vendita potrebbe annullarsi al refresh.",
+  },
   "sim.pnl.field.priceUsd": {
     en: "Price $",
     it: "Prezzo $",
@@ -12205,16 +13350,20 @@ const DICT = {
     it: "Opportunità fuori portafoglio entro {days} giorni dal CD (hot zone) — deep-dive 24h: timing entry, RA score, MII e blend SDS.",
   },
   "sim.lossAnalysis.subtitleOpportunitiesWatch": {
-    en: "Early off-portfolio opportunities — CD between {min} and {max} days (watch zone, 4–2 months). Target ROI calibrates when entering hot zone.",
-    it: "Opportunità anticipate fuori portafoglio — CD tra {min} e {max} giorni (watch zone, 4–2 mesi). ROI target si calibra entrando in hot zone.",
+    en: "Off book — CD more than 2 months out, plus names already past CD rescued by High Vol (VOL vs prev ≥ 150%).",
+    it: "Off book — CD oltre 2 mesi, più titoli con CD già passata ripescati per High Vol (VOL vs prev ≥ 150%).",
   },
   "sim.lossAnalysis.profile.portfolio": {
     en: "Portfolio",
     it: "Portfolio",
   },
   "sim.lossAnalysis.profile.opportunities": {
-    en: "Other opportunities",
-    it: "Altre opportunità",
+    en: "CD Opportunities",
+    it: "CD Opportunities",
+  },
+  "sim.lossAnalysis.profile.catalysts": {
+    en: "Regulatory Opportunities",
+    it: "Regulatory Opportunities",
   },
   "sim.lossAnalysis.emptyOpportunities": {
     en: "No off-portfolio opportunities in the hot CD window. Check Simulation rows with CD within 2 months and no capital allocated.",
@@ -12225,8 +13374,8 @@ const DICT = {
     it: "Nessuna opportunità fuori portafoglio entro 2 mesi dal CD. Controlla righe Simulation con CD ≤ 60 giorni e senza capitale allocato.",
   },
   "sim.lossAnalysis.emptyOpportunitiesWatch": {
-    en: "No off-portfolio opportunities in the watch window (CD 61–120 days). Switch to «Within 2 mo» or add Simulation rows with catalyst 4–2 months out.",
-    it: "Nessuna opportunità fuori portafoglio nella finestra watch (CD 61–120 giorni). Passa a «Entro 2 mesi» o aggiungi righe Simulation con CD tra 4 e 2 mesi.",
+    en: "No off-book names (CD more than 2 months out, or past CD with High Vol). Switch to «Within 2 mo».",
+    it: "Nessun titolo off book (CD oltre 2 mesi, o CD già passata con High Vol). Passa a «Entro 2 mesi».",
   },
   "sim.lossAnalysis.oppHorizon.label": {
     en: "CD window",
@@ -12241,12 +13390,12 @@ const DICT = {
     it: "Hot zone — CD entro {days} giorni (timing operativo, ROI target completo)",
   },
   "sim.lossAnalysis.oppHorizon.watch": {
-    en: "Early 4–2 mo",
-    it: "Anticipate 4–2 mesi",
+    en: "Off Book",
+    it: "Off Book",
   },
   "sim.lossAnalysis.oppHorizon.watchTip": {
-    en: "Watch zone — CD between {min} and {max} days (4–2 months out, lower timing weight)",
-    it: "Watch zone — CD tra {min} e {max} giorni (da 4 a 2 mesi, peso timing minore)",
+    en: "Off book: catalyst more than {days} days out, plus Simulation names already past CD rescued by High Vol (volume ≥ 150% vs previous session).",
+    it: "Off book: CD oltre {days} giorni, più titoli Simulation con CD già passata ripescati per High Vol (volume ≥ 150% vs seduta precedente).",
   },
   "sim.lossAnalysis.opportunity.planCap": {
     en: "Plan €{eur} (not in portfolio)",
@@ -12272,25 +13421,65 @@ const DICT = {
     en: "Buy blocked — same rule as sim loop / suggestion monitor:\n{reason}",
     it: "Buy bloccato — stessa regola del loop sim / monitor suggerimenti:\n{reason}",
   },
+  "sim.lossAnalysis.subTab.decisionChart": {
+    en: "Decision chart",
+    it: "Decision chart",
+  },
+  "sim.lossAnalysis.subTab.topKpi": {
+    en: "Top KPI",
+    it: "Top KPI",
+  },
   "sim.lossAnalysis.summaryTable.title": {
-    en: "Top KPI snapshot",
-    it: "Snapshot KPI principali",
+    en: "Top KPI",
+    it: "Top KPI",
+  },
+  "sim.lossAnalysis.pane.kpi": {
+    en: "Top KPI",
+    it: "Top KPI",
+  },
+  "sim.lossAnalysis.pane.diveTip": {
+    en: "Company deep dive",
+    it: "Scheda società",
+  },
+  "sim.lossAnalysis.pane.eis": {
+    en: "R&D",
+    it: "R&D",
+  },
+  "sim.lossAnalysis.pane.eisTip": {
+    en: "R&D pipeline, clinical news, trials, CT.gov, CD",
+    it: "Pipeline R&D, news cliniche, trial, CT.gov, CD",
+  },
+  "sim.lossAnalysis.pane.financial": {
+    en: "Financial",
+    it: "Financial",
+  },
+  "sim.lossAnalysis.pane.financialTip": {
+    en: "Company 8-K filings with financial scores",
+    it: "Report 8-K della società con score finanziario",
+  },
+  "sim.lossAnalysis.pane.close": {
+    en: "Back to Catalyst Days",
+    it: "Torna a Catalyst Days",
+  },
+  "sim.lossAnalysis.pane.missing": {
+    en: "This ticker is no longer in the current list. Close and pick another from Catalyst Days.",
+    it: "Questo ticker non è più in lista. Chiudi e scegline un altro da Catalyst Days.",
   },
   "sim.lossAnalysis.summaryTable.hint": {
-    en: "Click ticker to jump to the deep-dive panel below.",
-    it: "Clicca il ticker per scendere al pannello deep-dive sotto.",
+    en: "Click ticker to open the company tab.",
+    it: "Clicca il ticker per aprire la tab della società.",
   },
-  "sim.lossAnalysis.summaryTable.hintPolygonSort": {
-    en: "Sorted by polygon match % — highest fit to the target profile first.",
-    it: "Ordinato per match % poligono — miglior aderenza al profilo target per primo.",
+  "sim.lossAnalysis.summaryTable.hintHighVolSort": {
+    en: "Sorted by vol% — highest volume vs last market close first.",
+    it: "Ordinato per vol% — volume vs ultima chiusura di mercato più alto per primo.",
   },
-  "sim.lossAnalysis.summaryTable.polygon": {
-    en: "Polygon",
-    it: "Poligono",
+  "sim.lossAnalysis.summaryTable.sortHighVol": {
+    en: "High Vol",
+    it: "High Vol",
   },
-  "sim.lossAnalysis.summaryTable.polygonTip": {
-    en: "CD pattern sketch (purple = current, dashed green = target) and PPI — higher = review first.",
-    it: "Sketch poligono CD (viola = attuale, verde tratteggiato = target) e PPI — più alto = da rivedere prima.",
+  "sim.lossAnalysis.summaryTable.sortHighVolTip": {
+    en: "Prioritize rows by vol% vs the last market close (highest first).",
+    it: "Prioritizza per vol% rispetto all'ultima chiusura di mercato (più alto in cima).",
   },
   "sim.lossAnalysis.summaryTable.collapse": {
     en: "Collapse KPI table",
@@ -12300,25 +13489,17 @@ const DICT = {
     en: "Expand KPI table",
     it: "Apri tabella KPI",
   },
-  "sim.lossAnalysis.summaryTable.sortPolygon": {
-    en: "Sort · Match %",
-    it: "Ordina · Match %",
-  },
-  "sim.lossAnalysis.summaryTable.sortPolygonTip": {
-    en: "Prioritize rows by polygon match score — table and cards below follow this order",
-    it: "Prioritizza per match % poligono — tabella e schede sotto seguono questo ordine",
-  },
   "sim.lossAnalysis.summaryTable.sortActionSolidity": {
     en: "Sort · Buy / Sell",
     it: "Ordina · Buy / Sell",
   },
   "sim.lossAnalysis.summaryTable.sortActionSolidityTip": {
-    en: "Solid BUY recommendations first (Top2, P(plan), precat), then solid SELL (exit, slope), then the rest. Combine with Match % to sort within each group.",
-    it: "Prima BUY solidi (Top2, P(plan), precat), poi SELL solidi (exit, slope), poi il resto. Combina con Match % per ordinare dentro ogni gruppo.",
+    en: "All BUY recommendations first (including Soft BUY), then SELL, then hold/uncertain.",
+    it: "Prima tutte le raccomandazioni BUY (incluso Soft BUY), poi SELL, poi hold/incerto.",
   },
   "sim.lossAnalysis.summaryTable.hintActionSort": {
-    en: "Sorted: solid BUY → solid SELL → hold/review. Click ticker to jump to the card below.",
-    it: "Ordinato: BUY solidi → SELL solidi → hold/review. Clicca il ticker per la scheda sotto.",
+    en: "Sorted: BUY (incl. Soft BUY) → SELL → hold/uncertain. Click ticker to open the company tab.",
+    it: "Ordinato: BUY (incluso Soft BUY) → SELL → hold/incerto. Clicca il ticker per aprire la tab.",
   },
   "sim.lossAnalysis.summaryTable.planProb": {
     en: "P(plan)",
@@ -12329,8 +13510,8 @@ const DICT = {
     it: "P(rec)",
   },
   "sim.lossAnalysis.summaryTable.planProbTip": {
-    en: "Model probability the suggested action is correct (Enter / Wait / Skip or Hold / Review / Exit) — curve, polygon match, SDS, MII, CD window, EIS.",
-    it: "Probabilità stimata che il suggerimento sia corretto (Entra / Attendi / Evita o Mantieni / Rivedi / Esci) — curva, match poligono, SDS, MII, finestra CD, EIS.",
+    en: "Model probability the suggested action is correct (Enter / Wait / Skip or Hold / Review / Exit) — curve, SDS, MII, CD window, EIS.",
+    it: "Probabilità stimata che il suggerimento sia corretto (Entra / Attendi / Evita o Mantieni / Rivedi / Esci) — curva, SDS, MII, finestra CD, EIS.",
   },
   "sim.lossAnalysis.summaryTable.eisCumulative": {
     en: "EIS cumul.",
@@ -12344,6 +13525,278 @@ const DICT = {
     en: "Ticker",
     it: "Ticker",
   },
+  "sim.lossAnalysis.summaryTable.productDesig": {
+    en: "Product · Desig.",
+    it: "Product · Desig.",
+  },
+  "sim.lossAnalysis.summaryTable.productDesigTip": {
+    en: "Product name + FDA designations from Discovery and company Daily News (e.g. NEO100 · Orphan Drug, Fast Track).",
+    it: "Nome prodotto + designazioni FDA da Discovery e dalle news della società (es. NEO100 · Orphan Drug, Fast Track).",
+  },
+  "sim.lossAnalysis.summaryTable.newsScores": {
+    en: "EIS scores",
+    it: "Score EIS",
+  },
+  "sim.lossAnalysis.summaryTable.newsScoresTip": {
+    en: "EIS = Σ of all Deep Dive EIS events for the ticker (not today-only). Clin/Fin/Corp/Access = Σ of taxonomy legs. Display only — not Soft BUY/SELL.",
+    it: "EIS = Σ di tutti gli eventi EIS in Deep Dive per il titolo (non solo oggi). Clin/Fin/Soc/Access = Σ delle dimensioni. Solo display — non è Soft BUY/SELL.",
+  },
+  "sim.lossAnalysis.summaryTable.momentum": {
+    en: "Momentum",
+    it: "Momentum",
+  },
+  "sim.lossAnalysis.summaryTable.momentumTip": {
+    en: "Same as Catalyst Days Momentum: RR / price-vol / insider / vs XBI direction (arbitrary weights). Green = bullish build, red = fear/hedge. Display only — not Soft BUY/SELL.",
+    it: "Come Momentum in Catalyst Days: direzione da RR / prezzo-vol / insider / vs XBI (pesi arbitrari). Verde = build rialzista, rosso = paura/hedge. Solo display — non è Soft BUY/SELL.",
+  },
+  "sim.lossAnalysis.summaryTable.asset": {
+    en: "Product",
+    it: "Product",
+  },
+  "sim.lossAnalysis.summaryTable.assetTip": {
+    en: "Product name from the associated ClinicalTrials.gov study (intervention / AI product).",
+    it: "Nome prodotto dallo studio ClinicalTrials.gov associato (intervento / prodotto AI).",
+  },
+  "sim.lossAnalysis.summaryTable.designation": {
+    en: "Designation",
+    it: "Designation",
+  },
+  "sim.lossAnalysis.summaryTable.designationTip": {
+    en: "FDA designations (Breakthrough, Fast Track, Orphan, RMAT…) from Discovery, FDA.gov product search, and company Daily News.",
+    it: "Designazioni FDA (Breakthrough, Fast Track, Orphan, RMAT…) da Discovery, ricerca FDA.gov e dalle news della società.",
+  },
+  "sim.lossAnalysis.summaryTable.catalyst": {
+    en: "Catalyst",
+    it: "Catalyst",
+  },
+  "sim.lossAnalysis.summaryTable.catalystTip": {
+    en: "Next catalyst type (PDUFA, Readout, Primary CD, AdCom…). Display only — not Soft BUY/SELL.",
+    it: "Tipo del prossimo catalyst (PDUFA, Readout, CD primaria, AdCom…). Solo display — non è Soft BUY/SELL.",
+  },
+  "sim.lossAnalysis.summaryTable.daysToCatalyst": {
+    en: "Days",
+    it: "Giorni",
+  },
+  "sim.lossAnalysis.summaryTable.daysToCatalystTip": {
+    en: "Days until the next catalyst (green = peak zone). Past catalysts show +Nd in orange.",
+    it: "Giorni al prossimo catalyst (verde = peak zone). Catalyst passati: +Ng in arancione.",
+  },
+  "sim.lossAnalysis.summaryTable.trend": {
+    en: "G-Trends",
+    it: "G-Trends",
+  },
+  "sim.lossAnalysis.summaryTable.trendTip": {
+    en: "Google Trends: main line = day-vs-day % (~3 months); below = 24h when available. Green up / red down. Double-click header for how to read. Separate index — not Soft BUY/SELL.",
+    it: "Google Trends: riga principale = Δ% giorno-su-giorno (~3 mesi); sotto = 24h se disponibile. Verde su / rosso giù. Doppio click sul titolo per come si legge. Indice a parte — non è Soft BUY/SELL.",
+  },
+  "sim.lossAnalysis.summaryTable.cycle": {
+    en: "Cycle",
+    it: "Ciclo",
+  },
+  "sim.lossAnalysis.summaryTable.cycleTip": {
+    en: "Catalyst cycle — Setup · Buy · Sell from historical patterns. Hidden when it contradicts operational Rec (Buy=growth, Sell=decline) or your book (no Buy entry if already in portfolio).",
+    it: "Ciclo catalyst — Setup · Buy · Sell da pattern storici. Nascosto se contraddice la Rec operativa (Buy=crescita, Sell=decrescita) o il book (niente Buy se già in portafoglio).",
+  },
+  "sim.lossAnalysis.summaryTable.currentPrice": {
+    en: "Price",
+    it: "Prezzo",
+  },
+  "sim.lossAnalysis.summaryTable.currentPriceTip": {
+    en: "Current spot (USD). Green = below 24h low; bolt above = also below 7d low.",
+    it: "Spot corrente (USD). Verde = sotto min 24h; fulmine sopra = anche sotto min 7g.",
+  },
+  "sim.lossAnalysis.summaryTable.priceLow": {
+    en: "Low",
+    it: "Min",
+  },
+  "sim.lossAnalysis.summaryTable.priceLowTip": {
+    en: "$ on price: green = below 7d/24h low · yellow = near · Low colors: green/yellow/red vs spot",
+    it: "$ sul prezzo: verde = sotto min 7g/24h · giallo = vicino · Low: verde/giallo/rosso vs prezzo",
+  },
+  "sim.lossAnalysis.residual.title": {
+    en: "Move attribution (24h)",
+    it: "Attribuzione movimento (24h)",
+  },
+  "sim.lossAnalysis.residual.titleShort": {
+    en: "Why today moved",
+    it: "Perché oggi",
+  },
+  "sim.lossAnalysis.residual.observed": {
+    en: "Observed",
+    it: "Osservato",
+  },
+  "sim.lossAnalysis.residual.lead": {
+    en: "How today’s move splits across sector estimate, news events, and model gap. High sector % with empty news/model is a weak estimate — not proven cause.",
+    it: "Come si spezza il movimento di oggi tra stima settore, news e gap modello. % settore alta con news/modello vuoti = stima debole, non causa dimostrata.",
+  },
+  "sim.lossAnalysis.residual.channelMarket": {
+    en: "Market",
+    it: "Mercato",
+  },
+  "sim.lossAnalysis.residual.channelMarketShort": {
+    en: "Biotech sector",
+    it: "Settore biotech",
+  },
+  "sim.lossAnalysis.residual.channelMarketHint": {
+    en: "Share of this ticker’s move assigned to the sector (estimate)",
+    it: "Quota del movimento di questo titolo assegnata al settore (stima)",
+  },
+  "sim.lossAnalysis.residual.channelMarketHintAlignmentOnly": {
+    en: "Estimated share on this ticker — not the XBI % itself",
+    it: "Quota stimata su questo titolo — non la % di XBI",
+  },
+  "sim.lossAnalysis.residual.xbiToday": {
+    en: "XBI today (biotech ETF): {pct}",
+    it: "XBI oggi (ETF biotech): {pct}",
+  },
+  "sim.lossAnalysis.residual.xbiTodayMissing": {
+    en: "XBI today: n/a",
+    it: "XBI oggi: n/d",
+  },
+  "sim.lossAnalysis.residual.channelEis": {
+    en: "EIS feed",
+    it: "Feed EIS",
+  },
+  "sim.lossAnalysis.residual.channelEisShort": {
+    en: "News / EIS",
+    it: "News / EIS",
+  },
+  "sim.lossAnalysis.residual.channelEisHint": {
+    en: "{n} events · ΔP T+1 sum",
+    it: "{n} eventi · somma ΔP T+1",
+  },
+  "sim.lossAnalysis.residual.channelEmptyEis": {
+    en: "no events today",
+    it: "nessun evento",
+  },
+  "sim.lossAnalysis.residual.channelModel": {
+    en: "Model",
+    it: "Modello",
+  },
+  "sim.lossAnalysis.residual.channelModelShort": {
+    en: "Model",
+    it: "Modello",
+  },
+  "sim.lossAnalysis.residual.channelModelHint": {
+    en: "Curve gap → P(plan)",
+    it: "Gap curva → P(plan)",
+  },
+  "sim.lossAnalysis.residual.channelEmptyModel": {
+    en: "no curve signal",
+    it: "nessun segnale curva",
+  },
+  "sim.lossAnalysis.residual.residualShortHint": {
+    en: "not assigned yet",
+    it: "non ancora assegnato",
+  },
+  "sim.lossAnalysis.residual.totals": {
+    en: "Sum of channels {explained} ({share}% of |move|) · residual {residual}",
+    it: "Somma canali {explained} ({share}% di |mov|) · residuo {residual}",
+  },
+  "sim.lossAnalysis.residual.lowConfidence": {
+    en: "Low confidence — missing market/EIS inputs, or only alignment share with EIS and model at 0 (not independent proof).",
+    it: "Bassa confidenza — mancano input mercato/EIS, oppure c’è solo la quota di allineamento con EIS e modello a 0 (non è una prova indipendente).",
+  },
+  "sim.lossAnalysis.residual.marketOnlyHint": {
+    en: "Market-only day: the ~% is SDS external-alignment share assigned to the move — EIS/Model channels have no data. Do not read it as “80% proven market cause”.",
+    it: "Giorno solo-mercato: la ~% è la quota di allineamento SDS assegnata al movimento — i canali EIS/Modello non hanno dati. Non leggerla come “80% causa mercato dimostrata”.",
+  },
+  "sim.lossAnalysis.residual.marketOnlyHintShort": {
+    en: "This % is “how sector-like” the move looks (vs biotech ETF XBI) — not proof XBI caused it. News and model have no data today.",
+    it: "Questa % dice quanto il movimento “sembra da settore” (ETF biotech XBI) — non prova che XBI l’abbia causato. Oggi news e modello non hanno dati.",
+  },
+  "sim.lossAnalysis.residual.investigateHint": {
+    en: "Large residual with little explained share — add a manual note below or check for missing catalyst.",
+    it: "Residuo ampio con poca quota spiegata — aggiungi una nota manuale sotto o verifica catalizzatori mancanti.",
+  },
+  "sim.lossAnalysis.residual.investigateHintShort": {
+    en: "Large unexplained move — check for a missing catalyst or add a note.",
+    it: "Movimento poco spiegato — cerca un catalizzatore o aggiungi una nota.",
+  },
+  "sim.lossAnalysis.residual.notesTitle": {
+    en: "Your research notes",
+    it: "Le tue note di ricerca",
+  },
+  "sim.lossAnalysis.residual.notesLead": {
+    en: "Stored locally on this browser only (Feed tab or 24h investigation). Not sent to the server.",
+    it: "Salvate solo in locale su questo browser (tab Feed o indagine 24h). Non inviate al server.",
+  },
+  "sim.lossAnalysis.residual.notesEmpty": {
+    en: "No notes for this ticker — paste research in the Feed tab or use the 24h investigation box.",
+    it: "Nessuna nota per questo ticker — incolla la ricerca nel tab Feed o nel box indagine 24h.",
+  },
+  "sim.lossAnalysis.residual.notesEmptyShort": {
+    en: "No research note yet — add one in Feed or the 24h box.",
+    it: "Nessuna nota — aggiungila nel Feed o nel box 24h.",
+  },
+  "sim.lossAnalysis.residual.notesCount": {
+    en: "{n} note(s)",
+    it: "{n} nota/e",
+  },
+  "sim.lossAnalysis.residual.detailModal.headline": {
+    en: "How much is market, EIS and model — with the events behind the score",
+    it: "Quanto è mercato, EIS e modello — con gli eventi dietro allo score",
+  },
+  "sim.lossAnalysis.residual.detailModal.channelsTitle": {
+    en: "Channels breaking down the observed move",
+    it: "Canali che scompongono il movimento osservato",
+  },
+  "sim.lossAnalysis.residual.detailModal.dominant": {
+    en: "Dominant channel: {label}",
+    it: "Canale dominante: {label}",
+  },
+  "sim.lossAnalysis.residual.detailModal.residualRow": {
+    en: "Residual",
+    it: "Residuo",
+  },
+  "sim.lossAnalysis.residual.detailModal.residualHint": {
+    en: "Not yet attributed to any channel",
+    it: "Non ancora attribuito ad alcun canale",
+  },
+  "sim.lossAnalysis.residual.detailModal.splitWarning": {
+    en: "Move magnitude looks like a split/reverse-split — validate the price series first.",
+    it: "L'ampiezza del movimento sembra uno split/reverse-split — verifica prima la serie prezzi.",
+  },
+  "sim.lossAnalysis.residual.detailModal.eventsTitle": {
+    en: "EIS events in the 7-day window ({n})",
+    it: "Eventi EIS nella finestra 7g ({n})",
+  },
+  "sim.lossAnalysis.residual.detailModal.eventsLead": {
+    en: "Each event's contribution to EIS % — sourced from SEC 8-K / CT.gov / press / manual feed. ΔP₁d = 1-day price reaction on release, KPI = clinical / regulatory quality term, sent/vol = sentiment and volume anomalies.",
+    it: "Contributo di ciascun evento alla % EIS — dalle fonti SEC 8-K / CT.gov / press / feed manuale. ΔP₁d = reazione prezzo 1 giorno sulla pubblicazione, KPI = qualità clinico/regolatoria, sent/vol = sentiment e anomalie volume.",
+  },
+  "sim.lossAnalysis.residual.detailModal.eventsEmpty": {
+    en: "No EIS events in the last 7 days — EIS channel contribution is 0%.",
+    it: "Nessun evento EIS negli ultimi 7 giorni — contributo canale EIS a 0%.",
+  },
+  "sim.lossAnalysis.residual.detailModal.olderEvents": {
+    en: "Recent older events (outside window) — {n}",
+    it: "Eventi più vecchi recenti (fuori finestra) — {n}",
+  },
+  "sim.lossAnalysis.residual.detailModal.methodTitle": {
+    en: "Methodology",
+    it: "Metodologia",
+  },
+  "sim.lossAnalysis.residual.detailModal.methodBody": {
+    en: "Formula: observed = market + EIS + model + residual. Market = observed × (external-alignment/100), capped at 92% — this is an SDS alignment assignment, not a measured XBI 1d contribution. When EIS and model are 0, a high market share alone is low-confidence (alignment-only). EIS = capped signed sum of ΔP₁d across events in the 7-day window (falls back to EIS window score if none). Model = curve gap × 0.15, capped by leftover residual. Residual = observed − explained; large residual with low share ⇒ investigation needed.",
+    it: "Formula: osservato = mercato + EIS + modello + residuo. Mercato = osservato × (allineamento-esterno/100), massimo 92% — è un’assegnazione da allineamento SDS, non un contributo XBI 1d misurato. Con EIS e modello a 0, una quota mercato alta da sola è a bassa confidenza (solo allineamento). EIS = somma con segno cappata delle ΔP₁d degli eventi in finestra 7 giorni (fallback su EIS window score se assenti). Modello = gap curva × 0.15, cappato dal residuo. Residuo = osservato − spiegato; residuo ampio con quota bassa ⇒ serve indagine.",
+  },
+  "sim.lossAnalysis.summaryTable.invested": {
+    en: "Invested",
+    it: "Investito",
+  },
+  "sim.lossAnalysis.summaryTable.investedTip": {
+    en: "Capital currently in the real portfolio ($ and % of book).",
+    it: "Capitale attualmente nel portafoglio reale ($ e % sul book).",
+  },
+  "sim.lossAnalysis.summaryTable.recAction": {
+    en: "Rec. size",
+    it: "Dim. raccom.",
+  },
+  "sim.lossAnalysis.summaryTable.recActionTip": {
+    en: "Two views in one column:\n • Operational delta — for BUY (+ green) / SELL (− red) / REVIEW: exact $ amount to move now based on decision chart + rescue score.\n • Target size (grey ≈$X) — for HOLD or when no delta is needed: suggested position size from P(plan) × plan slot ($5k default). Shown for every ticker with P(plan) ≥ 40% so you always see what the model thinks the size should be.",
+    it: "Due viste nella stessa colonna:\n • Delta operativo — per BUY (+ verde) / SELL (− rosso) / REVIEW: importo esatto da muovere ora, calcolato da decision chart + rescue score.\n • Dimensione target (grigio ≈$X) — per HOLD o quando non serve delta: size suggerita da P(plan) × slot piano ($5k default). Mostrata per ogni ticker con P(plan) ≥ 40% così vedi sempre quanto il modello suggerirebbe.",
+  },
   "sim.lossAnalysis.summaryTable.company": {
     en: "Company",
     it: "Società",
@@ -12351,6 +13804,66 @@ const DICT = {
   "sim.lossAnalysis.summaryTable.verdict": {
     en: "Verdict",
     it: "Verdetto",
+  },
+  "sim.lossAnalysis.summaryTable.recommendation": {
+    en: "Recommendation",
+    it: "Raccomandazione",
+  },
+  "sim.lossAnalysis.summaryTable.recommendationTip": {
+    en: "Decision chart recommendation — same Buy / Hold / Review / Sell logic as the chart below (P(plan), SDS, EIS, Risk v2, Reg. risk, MCS). Hover for diagnostic.",
+    it: "Raccomandazione Decision chart — stessa logica Buy / Hold / Review / Sell del grafico sotto (P(plan), SDS, EIS, Risk v2, rischio reg., MCS). Passa il mouse per la diagnosi.",
+  },
+  "sim.lossAnalysis.summaryTable.eisCorr": {
+    en: "EIS fit",
+    it: "Fit EIS",
+  },
+  "sim.lossAnalysis.summaryTable.eisCorrTip": {
+    en: "Signal bars: correlation between automatic EIS (last 10 days) and event-day price moves. Green = positive ρ, red = negative ρ. Bonus bar when net EIS aligns with today's 24h move.",
+    it: "Barre segnale: correlazione tra EIS automatiche (ultimi 10 gg) e variazioni prezzo nei giorni evento. Verde = ρ positiva, rosso = ρ negativa. Barra extra se l'EIS netto è allineato alla var. 24h odierna.",
+  },
+  "sim.lossAnalysis.summaryTable.manualEis": {
+    en: "Manual EIS",
+    it: "EIS manuale",
+  },
+  "sim.lossAnalysis.summaryTable.manualEisTip": {
+    en: "Manual EIS confirmed for today's 24h move — material catalyst linked to the price oscillation.",
+    it: "EIS manuale confermato per il move 24h di sessione — catalizzatore materiale collegato all'oscillazione.",
+  },
+  "sim.lossAnalysis.summaryTable.manualEisNaTip": {
+    en: "No confirmed manual EIS for this ticker's 24h move yet.",
+    it: "Nessun EIS manuale confermato per il move 24h di questo ticker.",
+  },
+  "sim.lossAnalysis.summaryTable.pCont": {
+    en: "P(cont)",
+    it: "P(cont)",
+  },
+  "sim.lossAnalysis.summaryTable.pContTip": {
+    en: "P(cont) = probability that the stock continues to rise. D10% = how much the price has grown, in percent, over the last 10 days.",
+    it: "P(cont) = probabilità che il titolo continui a crescere. D10% = quanto è cresciuto in percentuale negli ultimi 10 giorni.",
+  },
+  "sim.lossAnalysis.summaryTable.var24h": {
+    en: "24h",
+    it: "24h",
+  },
+  "sim.lossAnalysis.summaryTable.var24hTip": {
+    en: "Stock price change in the last ~24h (daily P&L vs prior close). ▲ up · ▼ down.",
+    it: "Variazione prezzo nelle ultime ~24h (P&L giornaliero vs chiusura precedente). ▲ su · ▼ giù.",
+  },
+  "sim.lossAnalysis.summaryTable.volumeToday": {
+    en: "Vol",
+    it: "Vol",
+  },
+  "sim.lossAnalysis.summaryTable.volumeTodayTip": {
+    en: "Today's share volume (shares traded so far). Hover cell for 20d average and ratio.",
+    it: "Volume odierno in azioni. Passa sul valore per media 20g e rapporto vs media.",
+  },
+  "sim.lossAnalysis.summaryTable.volumePctClose": {
+    en: "Volume",
+    it: "Volume",
+  },
+  "sim.lossAnalysis.summaryTable.volumePctCloseTip": {
+    en: "Session volume vs last Nasdaq close (±% like Catalyst Days). 0 = same as prior day. Hover for share counts.",
+    it: "Volume seduta vs ultima chiusura Nasdaq (±% come Catalyst Days). 0 = uguale al giorno prima. Hover per i pezzi.",
   },
   "sim.lossAnalysis.summaryTable.entry": {
     en: "Entry",
@@ -12364,45 +13877,77 @@ const DICT = {
     en: "Real portfolio position",
     it: "Posizione in portafoglio reale",
   },
+  "sim.lossAnalysis.summaryTable.livePriceDead": {
+    en: "Live quote dead/stale (illiquid warrant) — P&L from last mark or cost",
+    it: "Quotazione live morta/stale (warrant illiquido) — P&L da ultimo mark o a costo",
+  },
+  "sim.lossAnalysis.summaryTable.livePriceDeadShort": {
+    en: "stale",
+    it: "stale",
+  },
+  "sim.lossAnalysis.summaryTable.hype": {
+    en: "Hype",
+    it: "Hype",
+  },
+  "sim.lossAnalysis.summaryTable.hypeTip": {
+    en: "Off-sheet volume spike (≥400% vs prior session). Kept 10 days, longer if the price is rising, or if it is already in the portfolio.",
+    it: "Spike di volume fuori foglio (≥400% vs seduta precedente). In pipeline 10 giorni, oltre se il prezzo sale, o se è già in portafoglio.",
+  },
+  "sim.lossAnalysis.summaryTable.manualEisUpdated": {
+    en: "Manual EIS saved — open 24h news box (visible through weekend until next trading day)",
+    it: "EIS manuale salvato — apri box news 24h (visibile nel weekend fino alla prossima seduta)",
+  },
   "sim.lossAnalysis.summaryTable.pnl24h": {
     en: "24h move",
     it: "Var. 24h",
   },
+  "sim.lossAnalysis.summaryTable.studyPhase": {
+    en: "Study Phase",
+    it: "Study Phase",
+  },
+  "sim.lossAnalysis.summaryTable.studyPhaseTip": {
+    en: "Clinical trial phase from the Simulation sheet or clinical feed (e.g. Phase 2, Phase 3).",
+    it: "Fase del trial clinico dal foglio Simulation o dal feed clinico (es. Fase 2, Fase 3).",
+  },
   "sim.lossAnalysis.oppFilter.label": {
-    en: "24h move filter",
-    it: "Filtro movimento 24h",
+    en: "CD filter",
+    it: "Filtro CD",
   },
   "sim.lossAnalysis.oppFilter.all": {
     en: "All",
-    it: "Tutte",
+    it: "Tutti",
   },
   "sim.lossAnalysis.oppFilter.gain24h": {
     en: "↑ 24h gain",
-    it: "↑ Gain 24h",
+    it: "↑ Guadagno 24h",
   },
   "sim.lossAnalysis.oppFilter.loss24h": {
     en: "↓ 24h loss",
-    it: "↓ Loss 24h",
+    it: "↓ Perdita 24h",
+  },
+  "sim.lossAnalysis.oppFilter.cdWithin2mo": {
+    en: "CD ≤ 2 mo",
+    it: "CD ≤ 2 mesi",
   },
   "sim.lossAnalysis.oppFilter.empty": {
-    en: "No opportunities match this 24h filter. Try «All» or refresh Simulation prices.",
-    it: "Nessuna opportunità con questo filtro 24h. Prova «Tutte» o aggiorna i prezzi Simulation.",
+    en: "No items within 2 months of CD. Turn off the CD filter to see all rows.",
+    it: "Nessuna riga con CD entro 2 mesi. Disattiva il filtro CD per vedere tutte le righe.",
   },
   "sim.lossAnalysis.oppFilter.best": {
     en: "Best picks",
     it: "Migliori",
   },
   "sim.lossAnalysis.oppFilter.bestTip": {
-    en: "Show enter and wait only, ranked by verdict, target ROI, RA score and 24h move",
-    it: "Mostra solo enter e wait, ordinate per verdetto, ROI target, RA score e movimento 24h",
+    en: "Show BUY recommendations only (same as Decision chart), ranked by target ROI and RA score",
+    it: "Mostra solo raccomandazioni BUY (come Decision chart), ordinate per ROI target e RA score",
   },
   "sim.lossAnalysis.oppFilter.emptyBest": {
-    en: "No enter or wait opportunities right now. Turn off «Best picks» to see all rows.",
-    it: "Nessuna opportunità enter o wait al momento. Disattiva «Migliori» per vedere tutte le righe.",
+    en: "No BUY recommendations right now. Turn off «Best picks» to see all rows.",
+    it: "Nessuna raccomandazione BUY al momento. Disattiva «Migliori» per vedere tutte le righe.",
   },
   "sim.lossAnalysis.oppFilter.emptyCombined": {
-    en: "No rows match both filters. Relax the 24h filter or turn off «Best picks».",
-    it: "Nessuna riga con entrambi i filtri. Allenta il filtro 24h o disattiva «Migliori».",
+    en: "No rows match both filters. Turn off the CD filter or «Best picks».",
+    it: "Nessuna riga con entrambi i filtri. Disattiva il filtro CD o «Migliori».",
   },
   "sim.lossAnalysis.summary.oppCount": {
     en: "{n} opportunities",
@@ -12436,6 +13981,10 @@ const DICT = {
     en: "P(recovery) {pct}%",
     it: "P(recupero) {pct}%",
   },
+  "sim.lossAnalysis.affidabilitaProb": {
+    en: "Reliability {pct}%",
+    it: "Affidabilità {pct}%",
+  },
   "sim.lossAnalysis.entryProb": {
     en: "P(plan) {pct}%",
     it: "P(piano) {pct}%",
@@ -12461,8 +14010,8 @@ const DICT = {
     it: "Mantieni",
   },
   "sim.lossAnalysis.probAction.review": {
-    en: "Review",
-    it: "Rivedi",
+    en: "Uncertain",
+    it: "Incerto",
   },
   "sim.lossAnalysis.probAction.exit": {
     en: "Exit",
@@ -12512,6 +14061,14 @@ const DICT = {
     en: "Cap. loss (gap): {loss}",
     it: "Perdita cap. (gap): {loss}",
   },
+  "sim.lossAnalysis.metric.marketCap": {
+    en: "Market cap",
+    it: "Market cap",
+  },
+  "sim.lossAnalysis.metric.marketCapTip": {
+    en: "Company market capitalization (Yahoo / Simulation sheet).",
+    it: "Capitalizzazione di mercato della società (Yahoo / foglio Simulation).",
+  },
   "sim.lossAnalysis.target.progressTip": {
     en: "{progress}% toward target {target}",
     it: "{progress}% verso target {target}",
@@ -12537,8 +14094,8 @@ const DICT = {
     it: "{n} rimani",
   },
   "sim.lossAnalysis.summary.review": {
-    en: "{n} review",
-    it: "{n} valuta",
+    en: "{n} uncertain",
+    it: "{n} incerto",
   },
   "sim.lossAnalysis.decision.exit": {
     en: "Exit now",
@@ -12549,8 +14106,64 @@ const DICT = {
     it: "Rimani",
   },
   "sim.lossAnalysis.decision.review": {
-    en: "Review",
-    it: "Valuta",
+    en: "Uncertain",
+    it: "Incerto",
+  },
+  "sim.lossAnalysis.decisionChart.hint": {
+    en: "Buy · Hold · Uncertain · Sell — click a ticker for logic, radar and score bars; B/S markers show thresholds.",
+    it: "Buy · Hold · Incerto · Sell — clicca un ticker per logica, radar e barre score; B/S = soglie Buy/Sell.",
+  },
+  "sim.lossAnalysis.decisionChart.pnlMtm": {
+    en: "Total P&L",
+    it: "P&L totale",
+  },
+  "sim.lossAnalysis.decisionChart.mobileSync": {
+    en: "Sync mobile chart ↗",
+    it: "Sync grafico mobile ↗",
+  },
+  "sim.lossAnalysis.decisionChart.mobileSyncBusy": {
+    en: "Syncing…",
+    it: "Sync in corso…",
+  },
+  "sim.lossAnalysis.decisionChart.mobileSyncTip": {
+    en: "Push this Decision chart to mobile snapshot on {host}",
+    it: "Pubblica questo Decision chart nello snapshot mobile su {host}",
+  },
+  "sim.lossAnalysis.decisionChart.mobileSyncHint": {
+    en: "Auto-sync ~2s after changes · target {host}",
+    it: "Auto-sync ~2s dopo modifiche · destinazione {host}",
+  },
+  "sim.lossAnalysis.decisionChart.mobileSyncOk": {
+    en: "Mobile snapshot updated — refresh the app.",
+    it: "Snapshot mobile aggiornato — premi ↻ sull'app.",
+  },
+  "sim.lossAnalysis.decisionChart.mobileSyncFail": {
+    en: "Mobile sync failed: {detail}",
+    it: "Sync mobile fallito: {detail}",
+  },
+  "sim.lossAnalysis.decisionChart.mobileSyncNoToken": {
+    en: "API token missing — open Settings, paste the same token as the mobile app, then retry Sync.",
+    it: "Token API mancante — apri Settings, incolla lo stesso token dell'app mobile, poi riprova Sync.",
+  },
+  "sim.lossAnalysis.decisionChart.openBelow": {
+    en: "Open company charts below",
+    it: "Apri grafici azienda sotto",
+  },
+  "sim.lossAnalysis.decisionChart.curvesHint": {
+    en: "Scrolls to the full 24h card — P(plan), SDS, EIS, slope, price variation.",
+    it: "Scroll al blocco 24h completo — P(plan), SDS, EIS, slope, variazione prezzo.",
+  },
+  "sim.lossAnalysis.decisionChart.jumpSection": {
+    en: "Jump to this score chart in the 24h block",
+    it: "Vai al grafico di questo score nel blocco 24h",
+  },
+  "sim.lossAnalysis.decisionChart.eisMissing": {
+    en: "EIS not scored yet — check clinical feed or add manual news.",
+    it: "EIS non ancora calcolato — verifica feed clinico o aggiungi news manuale.",
+  },
+  "sim.lossAnalysis.decisionChart.insufficient": {
+    en: "Insufficient scores for a reliable recommendation.",
+    it: "Score insufficienti per una raccomandazione affidabile.",
   },
   "sim.lossAnalysis.badge.forwardTooLow": {
     en: "Curve target low for Enter (<{min}%)",
@@ -12736,6 +14349,14 @@ const DICT = {
     en: "Intermediate slope signal — final action: {final}",
     it: "Segnale slope intermedio — azione finale: {final}",
   },
+  "sim.lossAnalysis.slopeVerdict.overriddenPrimary": {
+    en: "Final action: {final} — keep the position",
+    it: "Azione finale: {final} — tieni la posizione",
+  },
+  "sim.lossAnalysis.slopeVerdict.overriddenSlopeNote": {
+    en: "Slope warning (not the decision): {slope}",
+    it: "Avviso pendenza (non è la decisione): {slope}",
+  },
   "sim.lossAnalysis.slopeVerdict.exitSignalSecondary": {
     en: "Exit layer fired — recovery guards → final action overrides mechanical exit",
     it: "Layer exit attivo — guardie recovery → l'azione finale prevale sull'exit meccanico",
@@ -12848,6 +14469,226 @@ const DICT = {
     en: "Model vs actual (% vs today)",
     it: "Modello vs reale (% vs oggi)",
   },
+  "sim.lossAnalysis.chart.deferred": {
+    en: "Overview charts load as you scroll…",
+    it: "Grafici riepilogo caricati allo scroll…",
+  },
+  "sim.lossAnalysis.chart.deepCollapsed": {
+    en: "Deep charts (model, gain plan, slopes) — open from a score link in the decision chart above.",
+    it: "Grafici approfondimento (modello, gain plan, pendenze) — apri dal link su uno score nel grafico decisionale sopra.",
+  },
+  "sim.lossAnalysis.chart.varShort": {
+    en: "Price variation · 1d / 7d / 1M",
+    it: "Variazione prezzo · 1g / 7g / 1M",
+  },
+  "sim.lossAnalysis.chart.varCombined": {
+    en: "Price variation vs market",
+    it: "Variazione prezzo vs mercato",
+  },
+  "sim.lossAnalysis.chart.varLong": {
+    en: "Price variation · 6M / 3M / 1M",
+    it: "Variazione prezzo · 6M / 3M / 1M",
+  },
+  "sim.lossAnalysis.chart.caption.varShort": {
+    en: "Daily and weekly move % from Simulation / live prices.",
+    it: "Var.% giornaliera e settimanale da Simulation / prezzi live.",
+  },
+  "sim.lossAnalysis.chart.caption.varCombined": {
+    en: "Ticker vs XBI — red dash = last price. 24h = last RTH session (not calendar). Horizons below.",
+    it: "Titolo vs XBI — tratteggio rosso = ultimo prezzo. 24h = ultima sessione RTH (non calendario). Orizzonti sotto.",
+  },
+  "sim.lossAnalysis.devLane.title": {
+    en: "Drug development path",
+    it: "Percorso di sviluppo del farmaco",
+  },
+  "sim.lossAnalysis.devLane.programsCaption": {
+    en: "Company catalysts · pick a product for the 12-month path",
+    it: "Catalyst società · scegli un prodotto per il percorso a 12 mesi",
+  },
+  "sim.lossAnalysis.devLane.companyTab": {
+    en: "All products",
+    it: "Tutti i prodotti",
+  },
+  "sim.lossAnalysis.devLane.leadCompany": {
+    en: "Next {days} days across all products — color = development stage, label = catalyst type, X = calendar day.",
+    it: "Prossimi {days} giorni su tutti i prodotti — colore = stadio di sviluppo, etichetta = tipo catalyst, asse X = giorno.",
+  },
+  "sim.lossAnalysis.devLane.leadProduct": {
+    en: "Expected path to approval (strip) plus the next 12 months of calendar catalysts for this product.",
+    it: "Percorso atteso verso l’approvazione (schema) più i prossimi 12 mesi di catalyst in calendario per questo prodotto.",
+  },
+  "sim.lossAnalysis.devLane.forwardCaption": {
+    en: "Next {months} months — expected catalysts",
+    it: "Prossimi {months} mesi — catalyst attese",
+  },
+  "sim.lossAnalysis.devLane.lead": {
+    en: "The Gantt is this NCT from study start to study completion (final milestone). The strip above places that trial on the IND → PDUFA path. Catalyst calendar and CT.gov dates are plotted when they belong to this study — not earnings, 8-K, or headlines.",
+    it: "Il Gantt è questo NCT dall’avvio al completamento dello studio (milestone finale). Lo schema sopra colloca quel trial sul percorso IND → PDUFA. Calendario catalyst e date CT.gov solo se appartengono a questo studio — non earnings, 8-K o titoli di giornale.",
+  },
+  "sim.lossAnalysis.devLane.hiddenOffAxis": {
+    en: "{n} dated events sit outside this 12-month window (approval-path dates stay on the strip above).",
+    it: "{n} eventi datati fuori da questa finestra a 12 mesi (le date del percorso di approvazione restano nello schema sopra).",
+  },
+  "sim.lossAnalysis.devLane.hiddenPacked": {
+    en: "{n} labels hidden so they do not overwrite each other.",
+    it: "{n} etichette nascoste per non sovrascriversi.",
+  },
+  "sim.lossAnalysis.devLane.proximity": {
+    en: "Timing proximity: {days}d to the next empty diamond.",
+    it: "Prossimità temporale: {days}g al prossimo diamante vuoto.",
+  },
+  "sim.lossAnalysis.devLane.proximityUncertain": {
+    en: "Timing proximity: ~{days}d to the next empty diamond (CT.gov / month-level CD).",
+    it: "Prossimità temporale: ~{days}g al prossimo diamante vuoto (CD CT.gov / mese).",
+  },
+  "sim.lossAnalysis.devLane.legend.occurred": {
+    en: "Occurred — sourced",
+    it: "Avvenuta — fonte",
+  },
+  "sim.lossAnalysis.devLane.legend.expected": {
+    en: "Expected — company guidance",
+    it: "Attesa — guidance aziendale",
+  },
+  "sim.lossAnalysis.devLane.legend.inferred": {
+    en: "Inferred — not sourced",
+    it: "Inferita — non sorgente",
+  },
+  "sim.lossAnalysis.devLane.legend.uncertainty": {
+    en: "Date uncertainty",
+    it: "Incertezza sulla data",
+  },
+  "sim.lossAnalysis.devLane.legend.today": {
+    en: "Today",
+    it: "Oggi",
+  },
+  "sim.lossAnalysis.devLane.lane.clinical": {
+    en: "THIS STUDY",
+    it: "QUESTO STUDIO",
+  },
+  "sim.lossAnalysis.devLane.lane.market": {
+    en: "MARKET REACTION · EIS",
+    it: "REAZIONE DI MERCATO · EIS",
+  },
+  "sim.lossAnalysis.devLane.templateCaption": {
+    en: "Not to scale — filled only when a public date exists",
+    it: "Non in scala — compilato solo se esiste una data pubblica",
+  },
+  "sim.lossAnalysis.devLane.templateCaptionAccel": {
+    en: "Accelerated-approval path — Phase 3 is confirmatory in parallel, not a serial gate",
+    it: "Percorso accelerated approval — la Fase 3 è confermatoria in parallelo, non un gate in serie",
+  },
+  "priceVarChart.title": {
+    en: "Price variation vs market",
+    it: "Variazione prezzo vs mercato",
+  },
+  "priceVarChart.subtitle": {
+    en: "{ticker} · vs {market} (biotech sector benchmark)",
+    it: "{ticker} · vs {market} (benchmark settore biotech)",
+  },
+  "priceVarChart.xbiUnavailable": {
+    en: "{market} unavailable — market bars hidden (refresh MCS snapshot on server).",
+    it: "{market} non disponibile — barre mercato nascoste (aggiorna snapshot MCS sul server).",
+  },
+  "priceVarChart.unavailable": {
+    en: "Price variations unavailable — refresh Simulation or variations.",
+    it: "Variazioni prezzo non disponibili — aggiorna Simulation o variazioni.",
+  },
+  "priceVarChart.loading": {
+    en: "Loading price…",
+    it: "Caricamento prezzo…",
+  },
+  "priceVarChart.softBuyLegend": {
+    en: "BUY",
+    it: "BUY",
+  },
+  "priceVarChart.softSellLegend": {
+    en: "SELL",
+    it: "SELL",
+  },
+  "priceVarChart.softBuyTip": {
+    en: "Soft BUY — green fill under the price curve while the operational recommendation is BUY (not the amber cycle overlay).",
+    it: "Soft BUY — riempimento verde sotto la curva del prezzo mentre la raccomandazione operativa è BUY (non l’overlay ciclo ambra).",
+  },
+  "priceVarChart.softSellTip": {
+    en: "Soft SELL — red fill under the price curve while the operational recommendation is SELL (not the amber cycle overlay).",
+    it: "Soft SELL — riempimento rosso sotto la curva del prezzo mentre la raccomandazione operativa è SELL (non l’overlay ciclo ambra).",
+  },
+  "priceVarChart.recBandBoundary": {
+    en: "Rec start / end",
+    it: "Inizio / fine rec",
+  },
+  "priceVarChart.recBandBoundaryTip": {
+    en: "Yellow dashed vertical line at the start and again when the Soft BUY or Soft SELL recommendation ends.",
+    it: "Linea verticale gialla tratteggiata all’inizio e di nuovo quando la raccomandazione Soft BUY o Soft SELL termina.",
+  },
+  "priceVarChart.cycleToggle": {
+    en: "Cycle",
+    it: "Ciclo",
+  },
+  "priceVarChart.cycleToggleOn": {
+    en: "Cycle ✓",
+    it: "Ciclo ✓",
+  },
+  "priceVarChart.cycleToggleTip": {
+    en: "Overlay — Catalyst (volume), Drop (trough), Rise (recovery), At High (multi-horizon peak; geometric state, not Soft BUY).",
+    it: "Overlay — Catalyst (volume), Drop (minimo), Rise (recupero), At High (picco multi-orizzonte; stato geometrico, non Soft BUY).",
+  },
+  "priceVarChart.cycleLegendWatch": {
+    en: "Catalyst",
+    it: "Catalyst",
+  },
+  "priceVarChart.cycleLegendBuy": {
+    en: "At High",
+    it: "At High",
+  },
+  "priceVarChart.cycleLegendSell": {
+    en: "Drop",
+    it: "Drop",
+  },
+  "priceVarChart.cycleMarkerWatchTip": {
+    en: "Volume catalyst — spike vs recent baseline (pattern / geometry).",
+    it: "Catalyst volume — picco vs baseline recente (pattern / geometria).",
+  },
+  "priceVarChart.cycleMarkerBuyTip": {
+    en: "At High — live price near 1W/1M/3M/6M high. Geometric state, not Soft BUY.",
+    it: "At High — prezzo live vicino al massimo 1W/1M/3M/6M. Stato geometrico, non Soft BUY.",
+  },
+  "priceVarChart.cycleMarkerSellTip": {
+    en: "Drop — trough on the visible curve (geometry).",
+    it: "Drop — minimo sulla curva visibile (geometria).",
+  },
+  "priceVarChart.cycleNoSignal": {
+    en: "No cycle pattern for this ticker.",
+    it: "Nessun pattern ciclo per questo ticker.",
+  },
+  "priceVarChart.marketModelOff": {
+    en: "Mkt model",
+    it: "Modello mkt",
+  },
+  "priceVarChart.marketModelOn": {
+    en: "Mkt model ✓",
+    it: "Modello mkt ✓",
+  },
+  "priceVarChart.marketModelTip": {
+    en: "Toggle ochre dashed line — XBI trend from MCS 5d slope (app market model), rebased to ticker $ scale.",
+    it: "Mostra/nascondi linea ocra tratteggiata — trend XBI da slope 5g MCS (modello mercato app), ricalibrato su scala $ del titolo.",
+  },
+  "priceVarChart.sixMonthHighLegend": {
+    en: "New 6M high",
+    it: "Nuovo max 6M",
+  },
+  "priceVarChart.sixMonthHighTip": {
+    en: "Price ${live} broke the 6-month high (${hist}) — new historical peak.",
+    it: "Prezzo ${live} ha superato il massimo degli ultimi 6 mesi (${hist}) — nuovo picco storico.",
+  },
+  "sim.lossAnalysis.chart.caption.varLong": {
+    en: "Long-horizon % from variations.json or sheet columns.",
+    it: "Var.% lungo periodo da variations.json o colonne foglio.",
+  },
+  "sim.lossAnalysis.chart.varLongMissing": {
+    en: "6M / 3M / 1M variations not loaded — run fetch_variations or refresh Simulation.",
+    it: "Var. 6M / 3M / 1M non caricate — esegui fetch_variations o aggiorna Simulation.",
+  },
   "sim.lossAnalysis.chart.miiCalib": {
     en: "MII + calibration",
     it: "MII + calibrazione",
@@ -12948,6 +14789,30 @@ const DICT = {
     en: "Market slope (MII) vs recalibrated model — click for detail.",
     it: "Pendenza mercato (MII) vs modello ricalibrato — clic per dettaglio.",
   },
+  "sim.lossAnalysis.chart.volumeEis.title": {
+    en: "Volume vs News",
+    it: "Volume vs News",
+  },
+  "sim.lossAnalysis.chart.volumeEis.caption": {
+    en: "Volume synced with price chart · green/red under-curve = Soft BUY/SELL · ochre dash = last volume · sky/slate/red dots = published EIS (+ / ~0 / −) · orange ring = High Vol search.",
+    it: "Volume allineato al grafico prezzo · verde/rosso sotto curva = Soft BUY/SELL · tratteggio ocra = ultimo volume · pallini azzurro/grigio/rosso = EIS pubblicato (+ / ~0 / −) · anello arancio = ricerca High Vol.",
+  },
+  "sim.lossAnalysis.chart.volumeEis.week": {
+    en: "1 week",
+    it: "1 sett.",
+  },
+  "sim.lossAnalysis.chart.volumeEis.month": {
+    en: "1 month",
+    it: "1 mese",
+  },
+  "sim.lossAnalysis.chart.volumeEis.loading": {
+    en: "Loading volume…",
+    it: "Caricamento volume…",
+  },
+  "sim.lossAnalysis.chart.volumeEis.empty": {
+    en: "Volume data unavailable",
+    it: "Dati volume non disponibili",
+  },
   "sim.workspace.details": {
     en: "Curves",
     it: "Curve",
@@ -12997,8 +14862,8 @@ const DICT = {
     it: "Stesso elenco hot Top del Decision Lab → Active Signals (chiavi pubblicate) · ordine ROI/giorno",
   },
   "sim.workspace.filter.sellNowTip": {
-    en: "Open positions with declining curve toward CD: ROI ≤ 0, negative slopes, or exit/avoid verdict",
-    it: "Posizioni aperte con curva in calo verso CD: ROI ≤ 0, pendenze negative o verdetto exit/avoid",
+    en: "Open Soft Soft SELL (same Home Rec) plus declining curve toward CD (ROI ≤ 0 / negative slopes)",
+    it: "Soft Soft SELL aperti (stessa Rec Home) più curva in calo verso CD (ROI ≤ 0 / pendenze negative)",
   },
   "sim.workspace.filter.hotZoneTip": {
     en: "All tickers with catalyst within 60 days (operational hot zone)",
@@ -13013,20 +14878,20 @@ const DICT = {
     it: "Lista primaria · CD entro {days} giorni · stessi filtri, solo in questa finestra",
   },
   "sim.workspace.cdScope.watchTitle": {
-    en: "Early opportunities (4–2 months to CD)",
-    it: "Opportunità anticipate (4–2 mesi dal CD)",
+    en: "Early opportunities + hype / catalyst",
+    it: "Opportunità anticipate + hype / catalyst",
   },
   "sim.workspace.cdScope.watchSubtitle": {
-    en: "Watch zone · CD between {min} and {max} days · curve still readable, lower timing weight",
-    it: "Zona watch · CD tra {min} e {max} giorni · curva ancora leggibile, peso timing minore",
+    en: "Watch zone · CD more than {min} days out · plus hype-funnel and catalyst-day names (far or recent CD)",
+    it: "Zona watch · CD oltre {min} giorni · più titoli hype e catalyst-day (CD lontano o recente)",
   },
   "sim.workspace.cdScope.showWatch": {
-    en: "Early (4–2 mo) · {count}",
-    it: "Anticipate 4–2 mesi · {count}",
+    en: "Early + hype/catalyst · {count}",
+    it: "Anticipate + hype/catalyst · {count}",
   },
   "sim.workspace.cdScope.showWatchTip": {
-    en: "Same table for tickers with completion date between 120 and 61 days (4–2 months out)",
-    it: "Stessa tabella per ticker con CD tra 120 e 61 giorni (da 4 a 2 mesi)",
+    en: "CD more than 60 days out, plus companies found by the hype scanner and the catalyst-day calendar",
+    it: "CD oltre 60 giorni, più le società trovate dallo scanner hype e dal calendario catalyst-day",
   },
   "sim.workspace.cdScope.backToHot": {
     en: "← Primary (within 2 mo)",
@@ -13097,8 +14962,8 @@ const DICT = {
     it: "Nessuna opportunità entro 2 mesi dal CD — prova Anticipate 4–2 mesi se ce ne sono in watch.",
   },
   "sim.workspace.cdScope.emptyWatch": {
-    en: "No opportunities between 4 and 2 months to CD — switch back to Primary.",
-    it: "Nessuna opportunità tra 4 e 2 mesi dal CD — torna alle Primarie.",
+    en: "No early, hype, or catalyst-day names in this window — switch back to Primary.",
+    it: "Nessun titolo anticipato, hype o catalyst-day in questa finestra — torna alle Primarie.",
   },
   "sim.workspace.table.layoutFull": {
     en: "Full table",
@@ -13195,6 +15060,42 @@ const DICT = {
   "sim.workspace.table.varSparkTip": {
     en: "Price variation mini-chart: 1d, 7d, 1M (% vs previous close / history).",
     it: "Mini-grafico variazioni prezzo: 1g, 7g, 1M (% vs chiusura precedente / storico).",
+  },
+  "sim.workspace.table.shares": {
+    en: "Shares",
+    it: "Shares",
+  },
+  "sim.workspace.table.sharesTip": {
+    en: "Shares purchased = Capital $ ÷ Buy $ (open book).",
+    it: "Shares acquistate = Capital $ ÷ Buy $ (libro aperto).",
+  },
+  "sim.workspace.table.gainLoss": {
+    en: "G/L",
+    it: "G/L",
+  },
+  "sim.workspace.table.gainLossTip": {
+    en: "Open mark-to-market vs buy: $ won/lost and equivalent shares at buy price. Not the −5% share alert.",
+    it: "P&L aperto vs buy: $ vinti/persi e shares equivalenti al prezzo di carico. Non è la soglia −5% shares.",
+  },
+  "sim.workspace.table.stop5": {
+    en: "−{pct}% G/L",
+    it: "−{pct}% G/L",
+  },
+  "sim.workspace.table.stop5Tip": {
+    en: "{pct}% of open G/L won on this ticker ($ and share-eq at Buy). Bell when giveback from peak wins reaches that %. Set % next to Portfolio. Book auto-sell stays G2 (20%).",
+    it: "{pct}% del G/L vinto su questo titolo ($ e shares eq. al Buy). Campanella se il giveback dal picco raggiunge quel %. Imposta la % accanto a Portfolio. Auto-sell book resta G2 (20%).",
+  },
+  "sim.workspace.table.stop5Bell": {
+    en: "Giveback reached −{pct}% of peak G/L won on this ticker — review.",
+    it: "Giveback a −{pct}% del G/L vinto (picco) su questo titolo — rivedi.",
+  },
+  "sim.workspace.table.glWinAlertPctLabel": {
+    en: "Alert % G/L",
+    it: "Alert % G/L",
+  },
+  "sim.workspace.table.glWinAlertPctTip": {
+    en: "Campanella / column threshold as % of G/L won on each ticker (default 10). Not the portfolio G2 auto-sell (20% of purchased + wins).",
+    it: "Soglia campanella / colonna come % del G/L vinto per titolo (default 10). Non è l’auto-sell G2 del portafoglio (20% di acquistato + vincite).",
   },
   "sim.workspace.table.roiSnTarget": {
     en: "ROI-Target",
@@ -13480,6 +15381,190 @@ const DICT = {
     en: "Not updated yet — open dashboard after daily refresh.",
     it: "Non ancora aggiornato — apri la dashboard dopo il refresh giornaliero.",
   },
+  "dashboard.newEntries.title": {
+    en: "New this week",
+    it: "Nuovi della settimana",
+  },
+  "dashboard.newEntries.subtitle": {
+    en: "Companies with a catalyst within {months} months",
+    it: "Società con catalizzatore entro {months} mesi",
+  },
+  "dashboard.newEntries.count": {
+    en: "{n} companies",
+    it: "{n} società",
+  },
+  "dashboard.newEntries.col.ticker": {
+    en: "Ticker",
+    it: "Ticker",
+  },
+  "dashboard.newEntries.col.company": {
+    en: "Company",
+    it: "Società",
+  },
+  "dashboard.newEntries.col.cd": {
+    en: "CD",
+    it: "CD",
+  },
+  "dashboard.newEntries.col.daysToCd": {
+    en: "Days to CD",
+    it: "Giorni a CD",
+  },
+  "dashboard.newEntries.col.firstSeen": {
+    en: "First seen",
+    it: "Vista",
+  },
+  "dashboard.newEntries.footer": {
+    en: "Detected in the last 7 days · scope: CD ≤ {maxDays} days.",
+    it: "Rilevate negli ultimi 7 giorni · scope: CD ≤ {maxDays} giorni.",
+  },
+  "dashboard.newEntries.emptyPrimary": {
+    en: "No new companies detected this week.",
+    it: "Nessuna nuova società rilevata questa settimana.",
+  },
+  "dashboard.newEntries.emptySecondary": {
+    en: "New tickers added to the SDS cohort will appear here for 7 days after their first detection.",
+    it: "I nuovi ticker aggiunti al cohort SDS compariranno qui per 7 giorni dopo la prima rilevazione.",
+  },
+  "dashboard.newEntries.dismiss": {
+    en: "Dismiss",
+    it: "Nascondi",
+  },
+  "dashboard.newEntries.dismissTip": {
+    en: "Hide this panel — it reappears if new companies show up",
+    it: "Nascondi questo pannello — riappare se arrivano nuove società",
+  },
+  "dashboard.hypeDetected.title": {
+    en: "Hype in pipeline",
+    it: "Hype in pipeline",
+  },
+  "dashboard.hypeDetected.subtitle": {
+    en: "Stay 10 days after the spike, while price is rising, then 3 days after the rise stops — or if they are in the portfolio",
+    it: "Restano 10 giorni dopo l’hype, per tutto il rialzo e 3 giorni dopo, o se entrano in portafoglio",
+  },
+  "dashboard.hypeDetected.count": {
+    en: "{n} companies",
+    it: "{n} società",
+  },
+  "dashboard.hypeDetected.col.ticker": {
+    en: "Ticker",
+    it: "Ticker",
+  },
+  "dashboard.hypeDetected.col.company": {
+    en: "Company",
+    it: "Società",
+  },
+  "dashboard.hypeDetected.col.cd": {
+    en: "CD",
+    it: "CD",
+  },
+  "dashboard.hypeDetected.col.daysToCd": {
+    en: "Days to CD",
+    it: "Giorni a CD",
+  },
+  "dashboard.hypeDetected.col.window": {
+    en: "Window",
+    it: "Finestra",
+  },
+  "dashboard.hypeDetected.col.bucket": {
+    en: "Scope",
+    it: "Scope",
+  },
+  "dashboard.hypeDetected.col.firstSeen": {
+    en: "First seen",
+    it: "Vista",
+  },
+  "dashboard.hypeDetected.bucket.sim": {
+    en: "In cohort ≤120d",
+    it: "In cohort ≤120g",
+  },
+  "dashboard.hypeDetected.bucket.offBook": {
+    en: "Off-book",
+    it: "Fuori book",
+  },
+  "dashboard.hypeDetected.bucket.tip": {
+    en: "‘In cohort’ = CD within the 120-day monitoring window; ‘Off-book’ = CD farther out but still hype-flagged.",
+    it: "‘In cohort’ = CD entro la finestra di 120 giorni di monitoraggio; ‘Fuori book’ = CD più lontano ma con hype attivo.",
+  },
+  "dashboard.hypeDetected.footer": {
+    en: "Volume-hype scanner (24h or 7d VOL VS PREV ≥ 400%). Names stay 10 days after the spike; longer while the stock is rising, then 3 days after the rise stops; portfolio names stay.",
+    it: "Scanner volume-hype (24h o 7d VOL VS PREV ≥ 400%). Restano 10 giorni dopo l’hype; più a lungo se il prezzo sale, poi 3 giorni dopo la fine del rialzo; in portafoglio restano.",
+  },
+  "dashboard.hypeDetected.dismiss": {
+    en: "Dismiss",
+    it: "Nascondi",
+  },
+  "dashboard.hypeDetected.dismissTip": {
+    en: "Hide this panel — it reappears if new hype tickers show up",
+    it: "Nascondi questo pannello — riappare se arrivano nuovi hype",
+  },
+  "dashboard.orphan.title": {
+    en: "Positions not on the Simulation sheet",
+    it: "Posizioni fuori dal foglio Simulation",
+  },
+  "dashboard.orphan.subtitle": {
+    en: "Open capital (>0) whose ticker|CD key no longer matches a Simulation row — nothing was sold, they are just hidden from the Portfolio tab.",
+    it: "Capitale ancora aperto (>0) la cui chiave ticker|CD non corrisponde più a una riga Simulation — nessun disinvestimento, semplicemente non compaiono nel Portfolio.",
+  },
+  "dashboard.orphan.count": {
+    en: "{n} positions",
+    it: "{n} posizioni",
+  },
+  "dashboard.orphan.totalCapital": {
+    en: "Capital: {usd}",
+    it: "Capitale: {usd}",
+  },
+  "dashboard.orphan.col.ticker": {
+    en: "Ticker",
+    it: "Ticker",
+  },
+  "dashboard.orphan.col.cd": {
+    en: "CD (stored)",
+    it: "CD (memorizzato)",
+  },
+  "dashboard.orphan.col.daysToCd": {
+    en: "Days to CD",
+    it: "Giorni a CD",
+  },
+  "dashboard.orphan.col.capital": {
+    en: "Capital",
+    it: "Capitale",
+  },
+  "dashboard.orphan.col.buyPrice": {
+    en: "Buy",
+    it: "Buy",
+  },
+  "dashboard.orphan.col.reason": {
+    en: "Reason",
+    it: "Motivo",
+  },
+  "dashboard.orphan.reason.cdMigrated": {
+    en: "CD migrated",
+    it: "CD spostato",
+  },
+  "dashboard.orphan.reason.cdMigrated.tip": {
+    en: "The clinical refresh moved the completion date from {oldCd} to {newCd}. Your position key is anchored to the old CD, so the row lookup fails.",
+    it: "Il refresh clinico ha spostato la Completion Date da {oldCd} a {newCd}. La chiave della tua posizione è ancorata al vecchio CD, quindi il lookup della riga fallisce.",
+  },
+  "dashboard.orphan.reason.pastCatalyst": {
+    en: "Past CD",
+    it: "Post-CD",
+  },
+  "dashboard.orphan.reason.pastCatalyst.tip": {
+    en: "The completion date is more than 7 days in the past. The Simulation sheet rebuild drops rows in this archive window; your capital is still on file.",
+    it: "La Completion Date è oltre 7 giorni fa. Il rebuild del foglio Simulation elimina le righe in questa finestra archivio; il tuo capitale è comunque salvato.",
+  },
+  "dashboard.orphan.reason.sheetMissing": {
+    en: "Not in sheet",
+    it: "Non in foglio",
+  },
+  "dashboard.orphan.reason.sheetMissing.tip": {
+    en: "Ticker is not in the current Simulation sheet at all — likely dropped from the universe. Capital in inputs is untouched.",
+    it: "Il ticker non è affatto nel foglio Simulation attuale — probabilmente droppato dall'universo. Il capitale negli inputs è intatto.",
+  },
+  "dashboard.orphan.footer": {
+    en: "Read-only view. To close a position, open the Simulation sheet and use Sell there — no automatic action happens here.",
+    it: "Vista sola lettura. Per chiudere una posizione apri il foglio Simulation e usa Sell da lì — nessuna azione automatica viene eseguita qui.",
+  },
   "dashboard.pulse.title": {
     en: "Since your last visit",
     it: "Dall'ultima visita",
@@ -13491,6 +15576,38 @@ const DICT = {
   "dashboard.pulse.sinceVisit": {
     en: "Changes since {when}",
     it: "Cambiamenti da {when}",
+  },
+  "dashboard.pulse.tickSchedule.statusDue": {
+    en: "Tick slot open",
+    it: "Slot tick aperto",
+  },
+  "dashboard.pulse.tickSchedule.statusWaiting": {
+    en: "Waiting",
+    it: "In attesa",
+  },
+  "dashboard.pulse.tickSchedule.statusClosed": {
+    en: "Market closed",
+    it: "Mercato chiuso",
+  },
+  "dashboard.pulse.tickSchedule.statusOff": {
+    en: "Loop off",
+    it: "Loop spento",
+  },
+  "dashboard.pulse.tickSchedule.lastTick": {
+    en: "Last tick",
+    it: "Ultimo tick",
+  },
+  "dashboard.pulse.tickSchedule.noTickYet": {
+    en: "No tick yet",
+    it: "Nessun tick ancora",
+  },
+  "dashboard.pulse.tickSchedule.nextSlot": {
+    en: "Next slot {slot}",
+    it: "Prossimo slot {slot}",
+  },
+  "dashboard.pulse.tickSchedule.slotOpen": {
+    en: "Current slot {slot}",
+    it: "Slot corrente {slot}",
   },
   "dashboard.pulse.portfolioPnl": {
     en: "Portfolio",
@@ -13517,36 +15634,188 @@ const DICT = {
     it: "Totale dall'ingresso. Oggi {today}; prima di oggi ~{prior}.",
   },
   "dashboard.pulse.deltaTip": {
-    en: "P&L change since last dashboard visit",
-    it: "Variazione P&L dall'ultima visita dashboard",
+    en: "Portfolio P&L change since last dashboard visit (not market 24h).",
+    it: "Variazione P&L portafoglio dall'ultima visita dashboard (non è il 24h di mercato).",
   },
   "dashboard.pulse.noPortfolio": {
-    en: "No open positions — enter capital in Simulation.",
-    it: "Nessuna posizione aperta — inserisci capitale in Simulation.",
+    en: "No open positions — add a ticker below.",
+    it: "Nessuna posizione aperta — aggiungi un ticker sotto.",
+  },
+  "dashboard.pulse.external.title": {
+    en: "Add holding (other platform)",
+    it: "Aggiungi titolo (altra piattaforma)",
+  },
+  "dashboard.pulse.external.hint": {
+    en: "P&L total = (live price − your buy) / buy × invested. Enter buy price for a real cost basis; you can edit invested/buy later in the row.",
+    it: "P&L totale = (prezzo live − tuo buy) / buy × investito. Inserisci il prezzo di acquisto per il costo reale; poi puoi modificare investito/buy sulla riga.",
+  },
+  "dashboard.pulse.external.add": {
+    en: "Add",
+    it: "Aggiungi",
+  },
+  "dashboard.pulse.external.adding": {
+    en: "Adding…",
+    it: "Aggiungo…",
+  },
+  "dashboard.pulse.external.added": {
+    en: "{ticker} added to open positions.",
+    it: "{ticker} aggiunto alle posizioni aperte.",
+  },
+  "dashboard.pulse.external.fail.emptyTicker": {
+    en: "Enter a ticker.",
+    it: "Inserisci un ticker.",
+  },
+  "dashboard.pulse.external.fail.badCapital": {
+    en: "Enter invested capital greater than 0.",
+    it: "Inserisci un capitale investito maggiore di 0.",
+  },
+  "dashboard.pulse.external.fail.notInUniverse": {
+    en: "Ticker not in the SuperNova universe — run a data refresh or pick a name already on the Simulation sheet.",
+    it: "Ticker non presente nell’universo SuperNova — fai un refresh dati o scegli un nome già nel foglio Simulation.",
+  },
+  "dashboard.pulse.external.fail.alreadyOpen": {
+    en: "This ticker is already an open position.",
+    it: "Questo ticker è già una posizione aperta.",
+  },
+  "dashboard.pulse.external.fail.noPrice": {
+    en: "No live price — enter a buy price or refresh Yahoo prices first.",
+    it: "Nessun prezzo live — inserisci il prezzo di acquisto o aggiorna prima i prezzi Yahoo.",
+  },
+  "dashboard.pulse.external.fail.badDate": {
+    en: "Purchase date must be YYYY-MM-DD.",
+    it: "La data di acquisto deve essere AAAA-MM-GG.",
+  },
+  "dashboard.pulse.external.fail.persist": {
+    en: "Could not save the position. Try again.",
+    it: "Impossibile salvare la posizione. Riprova.",
   },
   "dashboard.pulse.positionsSummary": {
     en: "Open positions ({n})",
     it: "Posizioni aperte ({n})",
   },
+  "dashboard.pulse.restoreBook": {
+    en: "Restore portfolio from server",
+    it: "Ripristina portafoglio da server",
+  },
+  "dashboard.pulse.restoreBookBusy": {
+    en: "Restoring…",
+    it: "Ripristino…",
+  },
+  "dashboard.pulse.restoreBookTip": {
+    en: "Reload open positions (capital + buy price) from the server book. Use when companies disappeared from Pulse but still exist on the server.",
+    it: "Ricarica le posizioni aperte (capitale + prezzo acquisto) dal libro sul server. Usalo se in Pulse mancano aziende che sul server ci sono ancora.",
+  },
+  "dashboard.pulse.restoreBookHint": {
+    en: "Few open positions vs usual book — restore from server if names are missing.",
+    it: "Poche posizioni aperte rispetto al portafoglio solito — ripristina dal server se mancano nomi.",
+  },
+  "dashboard.pulse.restoreBookDone": {
+    en: "Restored {n} position(s) · open capital {capital}",
+    it: "Ripristinate {n} posizioni · capitale aperto {capital}",
+  },
+  "dashboard.pulse.restoreBookFail": {
+    en: "Restore failed — check API connection.",
+    it: "Ripristino non riuscito — controlla la connessione API.",
+  },
   "dashboard.pulse.colTicker": {
     en: "Ticker",
     it: "Ticker",
+  },
+  "dashboard.pulse.colCycle": {
+    en: "Cycle",
+    it: "Ciclo",
+  },
+  "dashboard.pulse.colCycleTip": {
+    en: "Catalyst cycle — Setup · Buy · Sell. Hidden when it contradicts operational Rec or entry while already in portfolio.",
+    it: "Ciclo catalyst — Setup · Buy · Sell. Nascosto se contraddice la Rec operativa o un Buy da posizione già aperta.",
+  },
+  "dashboard.pulse.colPrice": {
+    en: "Price",
+    it: "Prezzo",
+  },
+  "dashboard.pulse.colPriceTip": {
+    en: "Current / last reading from the Simulation sheet ($).",
+    it: "Prezzo corrente / ultima reading dal foglio Simulation ($).",
   },
   "dashboard.pulse.colTrend": {
     en: "Trend",
     it: "Trend",
   },
   "dashboard.pulse.colTrendTip": {
-    en: "Direction aligned with Δ visit when you have a prior visit (↑ up · ↓ down · → flat); otherwise 24h move.",
-    it: "Direzione allineata al Δ visita se c'è una visita precedente (↑ salita · ↓ discesa · → piatto); altrimenti movimento 24h.",
+    en: "Market session direction from the 24h column (↑ up · ↓ down · → flat). Not the same as Δ visit.",
+    it: "Direzione di sessione dalla colonna 24h (↑ salita · ↓ discesa · → piatto). Diversa dal Δ visita.",
+  },
+  "dashboard.pulse.colPcontWind": {
+    en: "P(cont) wind",
+    it: "Vento P(cont)",
+  },
+  "dashboard.pulse.colPcontWindTip": {
+    en: "P(continuation) wind — empirical probability the run holds (same engine as Evaluation). Wind icon when P≥50%.",
+    it: "Vento P(continuation) — probabilità empirica che la corsa tenga (stesso motore di Evaluation). Icona vento se P≥50%.",
   },
   "dashboard.pulse.colDelta": {
     en: "Δ visit",
     it: "Δ visita",
   },
+  "dashboard.pulse.colDeltaTip": {
+    en: "Change in this position's total P&L since your last dashboard visit. If no prior visit is stored, uses implied prior close (≈ today's session move).",
+    it: "Variazione del P&L totale di questa posizione dall'ultima visita dashboard. Se non c'è una visita precedente, usa la chiusura implicita (≈ movimento di sessione di oggi).",
+  },
+  "dashboard.pulse.col24hTip": {
+    en: "Today's session move (€): close vs prior close on invested capital. This is the day P&L.",
+    it: "Movimento di sessione di oggi (€): chiusura vs chiusura precedente sul capitale investito. È il P&L della giornata.",
+  },
+  "dashboard.pulse.colManualEis": {
+    en: "Manual EIS",
+    it: "EIS manuale",
+  },
+  "dashboard.pulse.colGlobalEis": {
+    en: "Global EIS",
+    it: "EIS globali",
+  },
+  "dashboard.pulse.colGlobalEisTip": {
+    en: "Sum (Σ) of all collected EIS scores for this ticker, plus positive / negative legs (+ / −).",
+    it: "Somma (Σ) di tutti gli score EIS raccolti per questo ticker, e differenza tra gambe positive e negative (+ / −).",
+  },
+  "dashboard.pulse.colInvested": {
+    en: "Invested",
+    it: "Investito",
+  },
+  "dashboard.pulse.colInvestedTip": {
+    en: "Capital allocated to this open position, plus its share of open-book capital (same % as the allocation pie slice).",
+    it: "Capitale allocato a questa posizione aperta, più la quota % sul libro aperto (stessa % della fettina nella pie di allocazione).",
+  },
   "dashboard.pulse.colPnl": {
     en: "P&L total",
     it: "P&L totale",
+  },
+  "dashboard.pulse.colPnlTip": {
+    en: "Mark-to-market from the capital and buy price you entered: (live − buy) / buy × invested. Updates when you edit those fields or the live price moves.",
+    it: "Mark-to-market dal capitale e dal prezzo di acquisto che hai inserito: (live − buy) / buy × investito. Si ricalcola se modifichi quei campi o se si muove il prezzo live.",
+  },
+  "dashboard.pulse.buyBasis": {
+    en: "buy",
+    it: "buy",
+  },
+  "dashboard.pulse.investedEditTip": {
+    en: "Edit invested capital — P&L total recalculates from this amount and your buy price.",
+    it: "Modifica il capitale investito — il P&L totale si ricalcola da questo importo e dal prezzo di acquisto.",
+  },
+  "dashboard.pulse.colClose": {
+    en: "Close",
+    it: "Chiudi",
+  },
+  "dashboard.pulse.colCloseTip": {
+    en: "Remove (×) or sell at the current price. Both close the open position.",
+    it: "Rimuovi (×) o vendi al prezzo corrente. Entrambe chiudono la posizione aperta.",
+  },
+  "dashboard.pulse.removeTip": {
+    en: "Remove {ticker} from open positions",
+    it: "Rimuovi {ticker} dalle posizioni aperte",
+  },
+  "dashboard.pulse.removeConfirm": {
+    en: "Close {ticker} and remove it from the table?",
+    it: "Chiudere {ticker} e toglierlo dalla tabella?",
   },
   "dashboard.pulse.colGainPlan": {
     en: "Gain vs plan",
@@ -13561,8 +15830,8 @@ const DICT = {
     it: "Variazione angolo MII dall'ultima visita",
   },
   "dashboard.pulse.footnote": {
-    en: "Dashed = planned gain curve · solid = actual €. Snapshot saved when you leave the dashboard.",
-    it: "Tratteggio = piano gain · continua = € reali. Snapshot salvato quando esci dalla dashboard.",
+    en: "Pie = open-book capital share by ticker (same % as Invested). Snapshot saved when you leave the dashboard.",
+    it: "Pie = quota di capitale aperto per titolo (stessa % di Investito). Snapshot salvato quando esci dalla dashboard.",
   },
   "dashboard.pulse.inGain": {
     en: "Portfolio in gain",
@@ -13621,8 +15890,8 @@ const DICT = {
     it: "Gain vs piano · sim loop (€)",
   },
   "dashboard.pulse.simLoop.chartCaption": {
-    en: "Hold-day axis (d0…now) — same as Portfolio pulse · dashed = plan today · solid green = paper sim actual €.",
-    it: "Asse per giorni di hold (g0…ora) — come Portfolio pulse · tratteggio = piano oggi · verde = € reali paper sim.",
+    en: "Hold-day axis (d0…now) — dashed = plan · solid = paper actual € · y=0 = breakeven.",
+    it: "Asse hold (g0…ora) — tratteggio = piano · continuo = € paper · y=0 = pareggio.",
   },
   "dashboard.pulse.simLoop.footnote": {
     en: "Same panel as Portfolio but computed on the sim loop's paper positions. Use ⇄ Portfolio to switch back.",
@@ -13681,16 +15950,24 @@ const DICT = {
     it: "Gain vs piano · sim loop synth (€)",
   },
   "dashboard.pulse.simLoopSynth.chartCaption": {
-    en: "Hold-day axis (d0…now) — same as Portfolio pulse · dashed = plan today · solid green = Weight Sim Exp sized actual €.",
-    it: "Asse per giorni di hold (g0…ora) — come Portfolio pulse · tratteggio = piano oggi · verde = € reali con sizing Weight Sim Exp.",
+    en: "Hold-day axis (d0…now) — dashed = plan · solid = Weight Sim Exp actual € · y=0 = breakeven.",
+    it: "Asse hold (g0…ora) — tratteggio = piano · continuo = € Weight Sim Exp · y=0 = pareggio.",
   },
   "dashboard.pulse.simLoopSynth.footnote": {
-    en: "Weight Sim Exp mix on the sim loop book — compare with equal-weight Sim loop and live Portfolio via ⇄ buttons.",
-    it: "Mix Weight Sim Exp sul book sim loop — confronta con Sim loop equal e Portfolio live con i pulsanti ⇄.",
+    en: "Weight Sim Exp entry weights (frozen at BUY) on the sim loop book — same sizing as Cap Div / 3-experiment synth. Compare with equal-weight Sim loop via ⇄.",
+    it: "Pesi Weight Sim Exp all'ingresso (congelati al BUY) sul book sim loop — stesso sizing di Cap Div / synth 3 esperimenti. Confronta con Sim loop equal tramite ⇄.",
   },
   "dashboard.pulse.simLoopSynth.equalRefFootnote": {
     en: "Equal-weight reference (same trades, €{cap}/slot): {pnl}. Synth marks open positions at entry Weight Sim Exp until a new BUY; closed trades use share at entry.",
     it: "Riferimento equal-weight (stesse operazioni, €{cap}/slot): {pnl}. Il synth marca le posizioni aperte col peso all'ingresso fino a un nuovo BUY; le chiusure col peso all'ingresso.",
+  },
+  "dashboard.pulse.simLoopSynth.capDivPotFootnote": {
+    en: "KPIs = Cap Div snapshot (pot €{pot}, entry-frozen Weight Sim Exp) — same basis as 3-experiment synth.",
+    it: "KPI = snapshot Cap Div (pot €{pot}, Weight Sim Exp congelato all'ingresso) — stessa base del synth nei 3 esperimenti.",
+  },
+  "dashboard.pulse.simLoopSynth.paperSimRefFootnote": {
+    en: "Paper tick sim total (SELL history): {pnl}.",
+    it: "Totale paper tick sim (storico SELL): {pnl}.",
   },
   "dashboard.pulse.simLoopSynth.reconcile.title": {
     en: "Equal vs synth breakdown",
@@ -13773,8 +16050,8 @@ const DICT = {
     it: "{n} ticker chiusi usano peso live di fallback — nessuno snapshot all'ingresso.",
   },
   "dashboard.pulse.chartCaption": {
-    en: "Dashed = planned curve to today · solid green = actual € to today. No future projection — updates on each refresh.",
-    it: "Tratteggio = curva piano fino a oggi · verde = € reali fino a oggi. Nessuna proiezione futura — si aggiorna a ogni refresh.",
+    en: "Dashed = plan · solid = actual € · y=0 = breakeven. Shaded area under the curve blends Soft BUY or Soft SELL index colors (SDS, P(plan), P(cont), …); intensity = clearance past each min gate. Toggle BUY/SELL above. No future projection.",
+    it: "Tratteggio = piano · continuo = € reali · y=0 = pareggio. Area sotto la curva = mix colori indici Soft BUY o Soft SELL (SDS, P(plan), P(cont), …); intensità = distanza dal gate minimo. Toggle BUY/SELL sopra. Nessuna proiezione futura.",
   },
   "dashboard.pulse.chartEmpty": {
     en: "Not enough history yet — snapshot builds after refresh cycles.",
@@ -14293,6 +16570,23 @@ const DICT = {
     it: "Ho letto — chiudi",
   },
 
+  "g2AutoSold.modal.title": {
+    en: "Auto-sold (Urgent G2)",
+    it: "Venduti in automatico (Urgent G2)",
+  },
+  "g2AutoSold.modal.subtitle": {
+    en: "Day losses exceeded 20% of (purchased + gains) on the whole book — closed fastest-falling names first.",
+    it: "Le perdite giornaliere hanno superato il 20% di (acquistato + guadagnato) sul portafoglio — chiusi prima i titoli con il ribasso day più drastico.",
+  },
+  "g2AutoSold.modal.dayLine": {
+    en: "day {pct} · {eur}",
+    it: "giorno {pct} · {eur}",
+  },
+  "g2AutoSold.modal.close": {
+    en: "OK",
+    it: "OK",
+  },
+
   "modalCharts.horizonBanner.modals": {
     en: "Two horizons: sparkline = absolute pre-CD curve forward to ~T+7 (short); slope = % vs today to T+90 post-CD (long). They can disagree — slope drives exit/hold on the long view.",
     it: "Due orizzonti: sparkline = curva assoluta pre-CD fino ~T+7 (breve); slope = % vs oggi fino T+90 post-CD (lungo). Possono divergere — la slope guida exit/hold sulla vista lunga.",
@@ -14577,30 +16871,176 @@ const DICT = {
     it: "★ ",
   },
 
+  // ── Catalyst Days — interest watchlist ─────────────────────────────────────
+  "premium.unlock.link": {
+    en: "premium membership",
+    it: "premium membership",
+  },
+  "premium.unlock.prefix": {
+    en: "Unlock",
+    it: "Sblocca",
+  },
+  "premium.unlock.calendar": {
+    en: "Unlock premium membership to access up to 6 months catalyst days and plan in advance your investments.",
+    it: "Unlock premium membership to access up to 6 months catalyst days and plan in advance your investments.",
+  },
+  "premium.unlock.discovery": {
+    en: "Unlock premium membership to discover products at high interest, breakthrough therapies and potential next generation blockbuster.",
+    it: "Unlock premium membership to discover products at high interest, breakthrough therapies and potential next generation blockbuster.",
+  },
+  "premium.unlock.companiesOfInterest": {
+    en: "Unlock premium membership to add companies of interest — Daily News keeps fresh headlines on those names every hour.",
+    it: "Unlock premium membership per aggiungere società d'interesse — Daily News porta notizie fresche su quei titoli ogni ora.",
+  },
+  "landing.explorePublic": {
+    en: "Explore Catalyst",
+    it: "Esplora Catalyst",
+  },
+  "landing.browseWhileWaiting": {
+    en: "Browse Catalyst while you wait",
+    it: "Esplora Catalyst mentre attendi",
+  },
+  "dailyNews.top.title": {
+    en: "Top News ★",
+    it: "Top News ★",
+  },
+  "dailyNews.top.hourlyLead": {
+    en: "Fresh news on companies of interest (★) — updated every hour",
+    it: "Notizie fresche sulle società d'interesse (★) — aggiornate ogni ora",
+  },
+  "dailyNews.top.awaiting": {
+    en: "Awaiting update",
+    it: "In attesa aggiornamento",
+  },
+  "catalystInterest.title": {
+    en: "Companies of interest",
+    it: "Società di interesse",
+  },
+  "catalystInterest.lead": {
+    en: "Add tickers to your book — Daily News refreshes headlines on these names every hour.",
+    it: "Aggiungi i ticker al tuo book — Daily News aggiorna le notizie su questi titoli ogni ora.",
+  },
+  "catalystInterest.baseHourlyNote": {
+    en: "Basic membership: Top News already refreshes every hour for ★ companies of interest.",
+    it: "Membership base: Top News si aggiorna già ogni ora sulle società d'interesse (★).",
+  },
+  "catalystInterest.premium": {
+    en: "Premium membership",
+    it: "Premium membership",
+  },
+  "catalystInterest.field.ticker": {
+    en: "Ticker",
+    it: "Ticker",
+  },
+  "catalystInterest.field.company": {
+    en: "Company",
+    it: "Società",
+  },
+  "catalystInterest.field.cd": {
+    en: "CD (opt.)",
+    it: "CD (opz.)",
+  },
+  "catalystInterest.busy": {
+    en: "Searching catalysts…",
+    it: "Cerco i catalyst…",
+  },
+  "catalystInterest.action.enroll": {
+    en: "Add",
+    it: "Aggiungi",
+  },
+  "catalystInterest.success": {
+    en: "{ticker} enrolled — {bits}",
+    it: "{ticker} iscritto — {bits}",
+  },
+  "catalystInterest.successCd": {
+    en: "{ticker} → Catalyst, Top KPI, Deep Dive · next {cd} ({src}){extra}",
+    it: "{ticker} → Catalyst, Top KPI, Deep Dive · prossimo {cd} ({src}){extra}",
+  },
+  "catalystInterest.successNoCd": {
+    en: "{ticker} → Catalyst, Top KPI, Deep Dive with ★. No dated catalyst yet — weekly search will update the card.",
+    it: "{ticker} → Catalyst, Top KPI, Deep Dive con ★. Nessun catalyst datato ancora — il search settimanale aggiornerà la scheda.",
+  },
+  "catalystInterest.action.openDive": {
+    en: "Open EIS Deep Dive",
+    it: "Apri EIS Deep Dive",
+  },
+  "catalystInterest.action.remove": {
+    en: "Remove from watchlist",
+    it: "Rimuovi dalla watchlist",
+  },
+  "catalystInterest.error.tickerRequired": {
+    en: "Ticker is required.",
+    it: "Il ticker è obbligatorio.",
+  },
+  "catalystInterest.error.enrollFailed": {
+    en: "Could not enroll ticker.",
+    it: "Impossibile iscrivere il ticker.",
+  },
+
   // ── Advice learning loop ────────────────────────────────────────────────────
   "adviceLearning.timeline.title": {
     en: "Recommendation quality — learning timeline",
     it: "Qualità raccomandazioni — timeline di apprendimento",
   },
   "adviceLearning.timeline.lead": {
-    en: "Tracks how the advice-success rate evolves as the system observes errors and applies bucket corrections / action demotions. Diamonds = manual 'Apply learnings' checkpoints.",
-    it: "Traccia come il success rate dei consigli evolve mentre il sistema osserva gli errori e applica correzioni per bucket o declassamenti d'azione. I rombi = checkpoint manuali 'Applica apprendimenti'.",
+    en: "Tracks how effective BUY and SELL recommendations are over time. BUY success = price rises ≥+0.5% within 24h; SELL success = price falls ≤−0.5% within 24h (anticipating decline). Diamonds = manual 'Apply learnings' checkpoints.",
+    it: "Traccia l'efficacia operativa dei consigli BUY e SELL nel tempo. BUY riuscito = prezzo ≥+0,5% entro 24h; SELL riuscito = prezzo ≤−0,5% entro 24h (anticipo del ribasso). I rombi = checkpoint manuali 'Applica apprendimenti'.",
+  },
+  "adviceLearning.timeline.crossTabNote": {
+    en: "Overall ~{overall}% mixes BUY, SELL and HOLD (n={n}). Teal BUY-only line is {buy}% (n={buyN}) — same 24h rule as Decision Sim; compare with Per-channel impact BUY→P(up) (sim history, different horizon). Weak spot: mid P(plan) 60–69% at {mid}% ({midN} scored).",
+    it: "Il complessivo ~{overall}% mescola BUY, SELL e HOLD (n={n}). La linea verde BUY è {buy}% (n={buyN}) — stessa regola 24h di Decision Sim; confronta con Impatto per canale BUY→P(rialzo) (storico sim, orizzonte diverso). Punto debole: fascia P(plan) 60–69% al {mid}% ({midN} valutati).",
   },
   "adviceLearning.timeline.legendHint": {
-    en: "Solid line: overall success. Dashed: low-/high-P(plan) bands. Thin sky line: 24h direction KPI. Reference line at 50% = coin flip.",
-    it: "Linea piena: successo complessivo. Tratteggiata: bande P(plan) basse/alte. Linea sky sottile: KPI direzione 24h. Linea di riferimento a 50% = lancio della moneta.",
+    en: "Teal: BUY success (24h, price ≥+0.5%). Rose: SELL success (24h, price ≤−0.5%). Purple diamonds: Apply learnings checkpoints. 50% line = coin flip.",
+    it: "Verde acqua: successo BUY (24h, prezzo ≥+0,5%). Rosa: successo SELL (24h, prezzo ≤−0,5%). Rombi viola: checkpoint Applica apprendimenti. Linea 50% = moneta.",
   },
   "adviceLearning.timeline.empty": {
     en: "No learning checkpoints yet. Open the Decision Sim → P(plan) vs forecast error panel and click 'Apply learnings' to record the first checkpoint.",
     it: "Nessun checkpoint di apprendimento ancora. Apri Decision Sim → P(plan) vs forecast error e clicca 'Applica apprendimenti' per registrare il primo.",
   },
   "adviceLearning.timeline.notEnough": {
-    en: "Only one checkpoint recorded. Come back tomorrow (auto-snapshot once per day) or apply a fresh learning checkpoint to draw the trend.",
-    it: "Un solo checkpoint registrato. Torna domani (auto-snapshot 1×/giorno) oppure applica un nuovo checkpoint per disegnare il trend.",
+    en: "Only one checkpoint so far — trend deltas appear from the second point (auto-snapshot once per day, or Apply learnings). If you had more history before, it may have been reset by an earlier pipeline migration or Recalculate — it cannot be restored automatically.",
+    it: "Un solo checkpoint per ora — le variazioni compaiono dal secondo punto (auto-snapshot 1×/giorno, oppure Applica apprendimenti). Se avevi più storico prima, potrebbe essere stato azzerato da una migrazione pipeline o da Ricalcola — non è recuperabile in automatico.",
   },
   "adviceLearning.timeline.reset": {
     en: "Clear history",
     it: "Cancella storico",
+  },
+  "adviceLearning.timeline.recalculate": {
+    en: "Recalculate now",
+    it: "Ricalcola ora",
+  },
+  "adviceLearning.timeline.lowSampleBannerTitle": {
+    en: "Small sample — trends may mislead",
+    it: "Campione piccolo — i trend possono ingannare",
+  },
+  "adviceLearning.timeline.cumulativeNote": {
+    en: "Each checkpoint scores the full cumulative advice pool (not a rolling 30-day window). Sparse app use + few scored advices make Δ pp swings normal — not proof of broken logic.",
+    it: "Ogni checkpoint valuta tutto lo storico cumulativo (non una finestra rolling 30g). Poco uso dell’app + pochi consigli scorati rendono normali gli sbalzi Δ pp — non provano un bug di logica.",
+  },
+  "adviceLearning.timeline.staleLine": {
+    en: "Latest checkpoint {days} day(s) ago — open SuperNova after a price refresh to score new advice.",
+    it: "Ultimo checkpoint {days} giorni fa — apri SuperNova dopo un refresh prezzi per scoreare nuovi consigli.",
+  },
+  "adviceLearning.timeline.overallLowLine": {
+    en: "Overall n={n} (need ≥{min} for Δ overall).",
+    it: "Complessivo n={n} (servono ≥{min} per Δ complessivo).",
+  },
+  "adviceLearning.timeline.buyLowLine": {
+    en: "BUY n={n} (need ≥{min} for Δ BUY).",
+    it: "BUY n={n} (servono ≥{min} per Δ BUY).",
+  },
+  "adviceLearning.timeline.sellLowLine": {
+    en: "SELL n={n} (need ≥{min} for Δ SELL).",
+    it: "SELL n={n} (servono ≥{min} per Δ SELL).",
+  },
+  "adviceLearning.timeline.bucketLowLine": {
+    en: "{band} band n={n} (need ≥{min} for its Δ pp).",
+    it: "Fascia {band} n={n} (servono ≥{min} per il relativo Δ pp).",
+  },
+  "adviceLearning.timeline.hiddenDeltasHint": {
+    en: "Hidden Δ chips = sample below threshold at latest checkpoint.",
+    it: "Chip Δ nascosti = campione sotto soglia all’ultimo checkpoint.",
   },
   "adviceLearning.feedback.applyBtn": {
     en: "Apply learnings",
@@ -14634,6 +17074,10 @@ const DICT = {
     en: "Learnings & stats (P(plan) / SELL)",
     it: "Apprendimenti e statistiche (P(plan) / SELL)",
   },
+  "adviceLearning.feedback.insightsSummaryCompact": {
+    en: "Stats & learnings",
+    it: "Stats e learnings",
+  },
 
   // ── View error boundary ─────────────────────────────────────────────────────
   "viewError.title": {
@@ -14648,9 +17092,17 @@ const DICT = {
     en: "Desktop build out of sync. Close the app and run scripts\\Avvia_Biotech_Desktop.bat (rebuilds the UI).",
     it: "Build desktop non allineata. Chiudi l'app e rilancia scripts\\Avvia_Biotech_Desktop.bat (ricompila la UI).",
   },
+  "viewError.chunkLoadWeb": {
+    en: "This page is out of date. Click Retry (or Ctrl+F5) to reload SuperNova.",
+    it: "Pagina non aggiornata. Clicca Riprova (o Ctrl+F5) per ricaricare SuperNova.",
+  },
   "viewError.retry": {
     en: "Retry",
     it: "Riprova",
+  },
+  "viewError.userSoft": {
+    en: "Something went wrong on this panel. Tap Retry — the issue was already sent to the administrator.",
+    it: "Qualcosa non ha funzionato in questo pannello. Premi Riprova — il problema è già stato inviato all'amministratore.",
   },
 } as const;
 

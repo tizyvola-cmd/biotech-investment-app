@@ -12,6 +12,7 @@ type Props = {
   ticker: string | null;
   eisScore: number | null;
   eisHint: string | null;
+  clinicalRecords?: ClinicalPreCdRecord[];
   onClose: () => void;
 };
 
@@ -203,15 +204,24 @@ function HeroCard({ detail, ticker, it, fallbackScore }: { detail: TickerEisDeta
   );
 }
 
-export function MobileEisSheet({ open, ticker, eisScore, eisHint, onClose }: Props) {
+export function MobileEisSheet({ open, ticker, eisScore, eisHint, clinicalRecords, onClose }: Props) {
   const { lang, t, locale } = useMobileLang();
   const it = lang === "it";
   const [loading, setLoading] = useState(false);
   const [err, setErr] = useState<string | null>(null);
-  const [records, setRecords] = useState<ClinicalPreCdRecord[]>([]);
+  const [records, setRecords] = useState<ClinicalPreCdRecord[]>(clinicalRecords ?? []);
+
+  useEffect(() => {
+    if (clinicalRecords?.length) {
+      setRecords(clinicalRecords);
+      setLoading(false);
+      setErr(null);
+    }
+  }, [clinicalRecords]);
 
   useEffect(() => {
     if (!open || !ticker) return;
+    if (clinicalRecords?.length) return;
     let cancelled = false;
     setLoading(true);
     setErr(null);
@@ -229,7 +239,7 @@ export function MobileEisSheet({ open, ticker, eisScore, eisHint, onClose }: Pro
     return () => {
       cancelled = true;
     };
-  }, [open, ticker]);
+  }, [open, ticker, clinicalRecords]);
 
   const detail = useMemo(() => {
     if (!ticker) return null;

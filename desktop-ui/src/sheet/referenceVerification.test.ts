@@ -1,9 +1,10 @@
 import { describe, expect, it } from "vitest";
 import {
   isClinicalPreCdRecordTrusted,
+  isFeedEventTrusted,
   resolveRecordSponsorMatch,
 } from "./referenceVerification";
-import type { ClinicalPreCdRecord } from "../api/supernova";
+import type { ClinicalPreCdRecord, ClinicalPublicationEvent } from "../api/supernova";
 
 function rec(partial: Partial<ClinicalPreCdRecord>): ClinicalPreCdRecord {
   return {
@@ -50,5 +51,40 @@ describe("referenceVerification sponsor gate", () => {
   it("blocks empty sponsor with no lead_sponsor", () => {
     const r = rec({ meta: {} });
     expect(isClinicalPreCdRecordTrusted(r)).toBe(false);
+  });
+
+  it("blocks stale Exact when lead sponsor is a different pharma (ETON≠PMV)", () => {
+    const r = rec({
+      ticker: "ETON",
+      company: "Eton Pharmaceuticals, Inc.",
+      nct_id: "NCT04585750",
+      sponsor_match: "Exact",
+      meta: {
+        lead_sponsor: "PMV Pharmaceuticals, Inc",
+        brief_title: "PYNNACLE",
+      },
+    });
+    expect(resolveRecordSponsorMatch(r)).toBe("no match");
+    expect(isClinicalPreCdRecordTrusted(r)).toBe(false);
+  });
+});
+
+describe("isFeedEventTrusted daily news", () => {
+  it("keeps Daily News migrate events even when the study sponsor is untrusted", () => {
+    const r = rec({
+      sponsor_match: "no match",
+      meta: { lead_sponsor: "Unrelated Pharma", brief_title: "Other" },
+    });
+    const ev: ClinicalPublicationEvent = {
+      event_date: "2026-09-15",
+      event_title: "Vertex completes Crinetics acquisition",
+      source_type: "press_release",
+      reference_verified: true,
+      reference_match: "daily_news",
+      link_label: "Daily News",
+      eis: { score: 4.2, sentiment: 0.5 },
+    };
+    (ev as { _from_daily_news?: boolean })._from_daily_news = true;
+    expect(isFeedEventTrusted(ev, r)).toBe(true);
   });
 });

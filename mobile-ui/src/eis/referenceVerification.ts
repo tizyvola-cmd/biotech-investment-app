@@ -14,6 +14,21 @@ const GENERIC_SPONSOR_TOKENS = new Set([
   "health",
   "laboratories",
   "labs",
+  "inc",
+  "ltd",
+  "llc",
+  "corp",
+  "corporation",
+  "company",
+  "co",
+  "plc",
+  "sa",
+  "nv",
+  "ag",
+  "gmbh",
+  "group",
+  "holdings",
+  "holding",
 ]);
 
 function sponsorTokens(text: string): Set<string> {
@@ -22,7 +37,7 @@ function sponsorTokens(text: string): Set<string> {
       .toLowerCase()
       .replace(/[^a-z0-9]+/g, " ")
       .split(/\s+/)
-      .filter((w) => w.length >= 4),
+      .filter((w) => w.length >= 3),
   );
 }
 
@@ -42,6 +57,43 @@ const GENERIC_DRUG = new Set(["corporate", "—", "-", "n/a", "na", "none"]);
 const MIN_REFERENCE_CHARS = 12;
 const MIN_DRUG_ONLY_TERM_LEN = 5;
 const SHORT_TICKER_MAX = 4;
+
+const SHARED_SOC_DRUG_TERMS = new Set([
+  "pembrolizumab",
+  "keytruda",
+  "nivolumab",
+  "opdivo",
+  "atezolizumab",
+  "tecentriq",
+  "durvalumab",
+  "imfinzi",
+  "ipilimumab",
+  "yervoy",
+  "cemiplimab",
+  "libtayo",
+  "carboplatin",
+  "paclitaxel",
+  "cisplatin",
+  "docetaxel",
+  "gemcitabine",
+  "rituximab",
+  "trastuzumab",
+  "bevacizumab",
+  "lenalidomide",
+  "dexamethasone",
+  "prednisone",
+  "methotrexate",
+  "chemotherapy",
+  "placebo",
+  "saline",
+]);
+
+function isSharedSocDrugTerm(term: string): boolean {
+  const t = term.trim().toLowerCase();
+  if (!t) return false;
+  if (SHARED_SOC_DRUG_TERMS.has(t)) return true;
+  return SHARED_SOC_DRUG_TERMS.has(t.replace(/[\s\-_]+/g, ""));
+}
 
 function companySearchTerms(company: string, ticker: string): string[] {
   const terms: string[] = [];
@@ -146,9 +198,10 @@ function verifyEventReference(
   const company = rec.company ?? "";
   const ticker = rec.ticker ?? "";
   const drugTokens = rec.publication_context?.drug_tokens_searched ?? [];
-  const drHit = drugSearchTerms(drugTokens, ev.drug ?? ev.asset).some((t) =>
-    textMentionsTerm(text, t),
-  );
+  const drTerms = drugSearchTerms(drugTokens, ev.drug ?? ev.asset);
+  const specificHits = drTerms.filter((t) => textMentionsTerm(text, t) && !isSharedSocDrugTerm(t));
+  const backboneHits = drTerms.filter((t) => textMentionsTerm(text, t) && isSharedSocDrugTerm(t));
+  const drHit = specificHits.length > 0 || backboneHits.length > 0;
   const coTerms = companySearchTerms(company, ticker);
   const multiCo = coTerms.filter((t) => t.includes(" ") && textMentionsTerm(text, t));
   const singleCo = coTerms.filter((t) => !t.includes(" ") && textMentionsTerm(text, t));
@@ -159,48 +212,54 @@ function verifyEventReference(
 
   if (coHit && drHit) return { verified: true, match: "company+drug" };
   if (coHit) return { verified: true, match: "company" };
-  if (drHit) return { verified: true, match: "drug" };
+  if (specificHits.length > 0) return { verified: true, match: "drug" };
+  if (backboneHits.length > 0) {
+    const nct = String(rec.nct_id ?? "").trim().toUpperCase();
+    if (nct && `${text} ${ev.link ?? ""}`.toUpperCase().includes(nct)) {
+      return { verified: true, match: "drug" };
+    }
+    return { verified: false, match: null };
+  }
   return { verified: false, match: null };
-}
-
-function isSponsorMatchTrusted(sponsorMatch: string | null | undefined): boolean {
-  const sm = String(sponsorMatch ?? "").trim().toLowerCase();
-  return sm === "exact" || sm === "partial" || sm === "direct match";
 }
 
 function resolveRecordSponsorMatch(
   rec: ClinicalPreCdRecord,
 ): "exact" | "partial" | "no match" | "n/d" {
-  const stored = String(rec.sponsor_match ?? "").trim().toLowerCase();
-  if (stored === "exact" || stored === "partial" || stored === "direct match") {
-    return stored === "direct match" ? "exact" : stored;
-  }
   const company = String(rec.company ?? rec.ticker ?? "").trim();
   const lead = String(rec.meta?.lead_sponsor ?? "").trim();
-  if (!company || !lead) return "n/d";
+  if (!company || !lead) {
+    const stored = String(rec.sponsor_match ?? "").trim().toLowerCase();
+    if (stored === "exact" || stored === "partial" || stored === "direct match") {
+      return stored === "direct match" ? "exact" : (stored as "exact" | "partial");
+    }
+    return "n/d";
+  }
   const rel = inferNctRelationForCompany(
     company,
     lead,
     String(rec.meta?.collaborators ?? ""),
   );
-  if (rel === "direct sponsor") return "exact";
+  if (rel === "direct sponsor") {
+    return meaningfulSponsorOverlap(company, lead) ? "exact" : "no match";
+  }
   if (rel === "collaborator") {
     return meaningfulSponsorOverlap(company, lead) ? "partial" : "no match";
   }
+  if (meaningfulSponsorOverlap(company, lead)) return "partial";
   return "no match";
 }
 
 export function isClinicalPreCdRecordTrusted(rec: ClinicalPreCdRecord): boolean {
-  const sm = String(rec.sponsor_match ?? "").trim().toLowerCase();
-  if (sm === "no match") return false;
-  if (sm === "exact" || sm === "direct match") return true;
-  if (sm === "partial") {
-    const company = String(rec.company ?? rec.ticker ?? "").trim();
-    const lead = String(rec.meta?.lead_sponsor ?? "").trim();
-    return meaningfulSponsorOverlap(company, lead);
-  }
+  const nct = String(rec.nct_id ?? "").trim().toUpperCase();
+  if (nct.startsWith("MANUAL-")) return true;
+  const company = String(rec.company ?? rec.ticker ?? "").trim();
+  const lead = String(rec.meta?.lead_sponsor ?? "").trim();
+  if (String(rec.sponsor_match ?? "").trim().toLowerCase() === "no match") return false;
   const resolved = resolveRecordSponsorMatch(rec);
-  return resolved === "exact" || resolved === "partial";
+  if (resolved !== "exact" && resolved !== "partial") return false;
+  if (!lead) return false;
+  return meaningfulSponsorOverlap(company, lead);
 }
 
 function isFeedEventTrusted(
@@ -208,11 +267,10 @@ function isFeedEventTrusted(
   rec: ClinicalPreCdRecord,
 ): boolean {
   const st = (ev.source_type ?? "").toLowerCase();
+  if (st === "manual") return true;
   if (st === "sec_8k" || st === "cd_milestone") return true;
-  if (String(rec.sponsor_match ?? "").trim().toLowerCase() === "no match") return false;
-  if (ev.reference_verified === true) return true;
-  if (ev.reference_verified === false) return false;
-  return verifyEventReference(ev, rec).verified;
+  if (!isClinicalPreCdRecordTrusted(rec)) return false;
+  return verifyEventReference(ev, rec, { strict: true }).verified;
 }
 
 export function trustedRecordEvents(rec: ClinicalPreCdRecord): ClinicalPublicationEvent[] {

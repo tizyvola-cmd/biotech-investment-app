@@ -1,0 +1,64 @@
+## Phase 0 — Landing audit (read-only)
+
+**Primary source:** `desktop-ui/src/components/SupernovaLandingPage.tsx`  
+**Mounted when:** `desktopTester.showLanding` in `desktop-ui/src/App.tsx` (~1600–1624)  
+**Styles:** `desktop-ui/src/styles/themes.css` (`.sn-landing*` ~933+)  
+**i18n:** landing marketing copy is **hardcoded English** in the TSX. `i18n.ts` only has unrelated keys (`landing.explorePublic`, `landing.browseWhileWaiting`).  
+**Reference mock (not wired):** `c:\Users\tizyv\Downloads\supernova-landing-redesign.html`
+
+---
+
+### 1. Section map (where it lives today)
+
+| Section | Location | Notes |
+|--------|----------|--------|
+| **a. Hero** | `SupernovaLandingPage.tsx` **992–1052** | Eyebrow 994–997; H1 998–1001; body 1002–1016; CTAs **1017–1039** (`Join free — Basic` / `See Premium`); chips 1041–1051 |
+| **b. Feature cards** | Data: `JOBS` **165–210**; render: `#product` **1055–1095** | Titles: Company & product file / Daily News / Inflection points / EIS scoring |
+| **c. How it works** | Section **1098–1153**; helpers `StoryBlock` **280–324**, `DrawDeepDive` / `DrawNewsFlow` / `DrawSensitiveWindow` **347+**; `ProofStrip` **328–345** after step 03 | Steps: 01 Deep Dive → 02 Daily News → 03 Inflection points |
+| **d. Pricing** | `#pricing` **1156–1289**; `BASIC_FEATURES` **212–237**; `PREMIUM_FEATURES` **239–264** | Waitlist: email + `joinPremiumWaitlist` **546–551, 666–682, 1250–1286**; CTA copy **"Join — test Premium free"** **1281** |
+| **e. Nav** | Header **702–777**; `VerticalSwitch` **103–137** | Scroll links Product/Pricing via `ScrollTo` **266–278, 728–729**; Contact **738–745**; Sign in **747–755**; Get started **756–775** |
+| **Footer** | **1516–1522** | Logo + “Private Beta” only — no contact/legal/social |
+
+**Related (same file, not main story):** Contact panel **846–975**; Request access **1294+**; Sign-in **1470+**; pending/revoked **783–840**.
+
+---
+
+### 2. Gap list — insertion seams + existing data (no new copy invented)
+
+| Gap | Where it would slot | Existing assets / logic elsewhere |
+|-----|---------------------|-----------------------------------|
+| **Real product screenshot / GIF / demo** | (1) Hero after CTAs (~1051) as right column, *or* (2) replace `ProofStrip` **328–345** / `src="/landing/catalyst-desk.png"` | Path referenced but **no `catalyst-desk.png` found in repo** (may be missing or only on VPS). App UI: `CatalystDeskView.tsx`, `HomeSignalsDesk.tsx`. Redesign mock: hero “product proof” panel. |
+| **Plain-language gloss (EIS, Mig, Clin/Fin/Access)** | First mention sites: hero chip **1048–1050**; JOBS EIS/Daily News **178–202**; How-it-works step 02 title/body **1126–1133**; `DrawNewsFlow` **401–439** | In-app gloss already exists: `EisScoreLegendHover.tsx` **16–29** (Clin/Fin/Corp/Acc + EIS 12h/24h/36h). Not used on landing. |
+| **Methodology note / EIS tooltip** | New block after How it works (~1152) or under Pricing EIS bullet **232–236**; optional info icon next to “EIS scoring” JOBS card **200–202** | Market EIS: `prediction/event_impact_score.py` `compute_eis` **295+**. Story scores: `eis_taxonomy_scoring.py` + `EisScoreLegendHover`. Soft BUY/SELL logic is separate (`RECOMMENDATION_LOGIC.md`) — do not conflate with news EIS. |
+| **“Not financial advice” disclaimer** | Footer **1516–1522**, and/or near Soft BUY/SELL lines **1066**, **1133**, **439** | Soft BUY/SELL already framed as separate from news (**439**, **1066**, **1133**). No legal disclaimer string on landing today. |
+| **Founder / credibility** | New strip after `#product` (~1095) or inside redesign’s “Methodology & trust” (~before pricing) | No founder/about copy in landing. Contact form **846–975** → Access desk (`AccessDeskView.tsx`). |
+| **FAQ** | New `#faq` section between Pricing and footer (~1289 → 1515), or after How it works | Redesign mock has `#faq` (~525+). No FAQ component in app. Nav could add `ScrollTo id="faq"`. |
+| **Early-access waitlist framing** | Premium notice **1227–1229**; button **1281**; success text **1255–1256**; placeholder already “Email for early Premium access” **1266** | API: `joinPremiumWaitlist` in `testerFeedback.ts`. Operator: Access desk Premium list. Logic must stay untouched in Phase 1 unless you approve copy-only. |
+| **Footer: contact, legal, social** | Expand **1516–1522** | Contact already works via nav → `panel="contact"`. No Terms/Privacy/social URLs in this component. |
+
+---
+
+### 3. Technology/AI nav — not a dead link
+
+`VerticalSwitch` **123–134** sets `vertical === "tech"`.  
+When `showMain && vertical === "tech"` (**842–844**), it renders **`HighTechComingSoonView`** (`HighTechComingSoonView.tsx`) — full “coming soon” page + “Back to Biotech”.  
+Title attribute already says “coming soon” (**131**). It does **not** open an empty live product; it is a real alternate main view, not a disabled/no-op control. Redesign mock prefers a clearer “coming soon” chip on the tab itself.
+
+---
+
+### 4. Open questions before Phase 1
+
+1. **Which gaps to ship first**, and in what order (screenshot vs gloss vs methodology vs FAQ vs footer vs Premium CTA wording)?  
+2. **Product proof media:** new capture of Catalyst desk, keep `/landing/catalyst-desk.png`, or mock ticker card from the redesign HTML?  
+3. **EIS on marketing page:** market price-reaction EIS (`compute_eis`) vs Clin/Fin/Access taxonomy — which definition should the gloss/methodology use (or both, clearly separated)?  
+4. **Disclaimer:** exact legal wording and placement (footer only vs also near Soft BUY/SELL)?  
+5. **Founder/about:** who/what to say, and any approved photo/link?  
+6. **FAQ:** which 4–6 questions (access approval, Basic vs Premium, Soft BUY/SELL, data sources, etc.)?  
+7. **Premium CTA:** approve copy change only to “Join the early-access list” (button + gold box), without touching `joinPremiumWaitlist`?  
+8. **Footer links:** real contact email, Terms/Privacy URLs, social handles — or placeholders only?  
+9. **Technology/AI tab:** keep current swap-to-coming-soon view, or match redesign (disabled-looking tab + “soon” pill on the biotech page)?  
+10. **Scope of redesign HTML:** treat as structure/copy reference only, or aim to mirror its new sections (`#why`, `#methodology`, `#faq`) 1:1?
+
+---
+
+**Phase 1 not started** — waiting for your approval of this audit and an ordered gap list.

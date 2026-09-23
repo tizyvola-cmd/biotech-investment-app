@@ -9,7 +9,9 @@ export type TimelineKind =
   | "clinical"
   | "press_release"
   | "ctgov"
-  | "cd_milestone";
+  | "cd_milestone"
+  | "manual"
+  | "fda_briefing";
 
 export type EventSourceFilter =
   | "all"
@@ -43,8 +45,17 @@ export function timelineKind(ev: ClinicalPublicationEvent): TimelineKind {
   const st = String(ev.source_type ?? "").toLowerCase();
   const et = String((ev as { event_type?: string }).event_type ?? "").toLowerCase();
   if (st === "sec_8k" || et === "sec_8k") return "sec_8k";
+  if (st === "manual" || et === "manual") return "manual";
   if (st === "cd_milestone" || et === "cd_milestone") return "cd_milestone";
   if (st === "ctgov" || et === "ctgov") return "ctgov";
+  if (
+    st === "fda_briefing" ||
+    et === "fda_briefing" ||
+    st.includes("fda_briefing") ||
+    st.includes("fda_adcom")
+  ) {
+    return "fda_briefing";
+  }
   if (st === "press_release" || et === "press_release" || st.includes("press")) {
     return "press_release";
   }
@@ -68,6 +79,16 @@ export function timelineBadge(
       return { label: it ? "📅 CD" : "📅 CD", className: "feed-panel-chip-cd" };
     case "ctgov":
       return { label: "CT.gov", className: "feed-panel-chip-clin" };
+    case "fda_briefing":
+      return {
+        label: it ? "★ FDA Briefing" : "★ FDA Briefing",
+        className: "feed-panel-chip-press",
+      };
+    case "manual":
+      return {
+        label: it ? "✍ Manuale" : "✍ Manual",
+        className: "feed-panel-chip-press",
+      };
     default:
       return { label: it ? "🧬 Clinico" : "🧬 Clinical", className: "feed-panel-chip-clin" };
   }
@@ -81,18 +102,23 @@ export function filterEventsBySource(
   events: ClinicalPublicationEvent[],
   sourceFilter: EventSourceFilter,
 ): ClinicalPublicationEvent[] {
-  if (sourceFilter === "all") return events;
-  if (sourceFilter === "k8") return events.filter((ev) => timelineKind(ev) === "sec_8k");
+  // SEC 8-K display lives in Deep Dive → Financial (EDGAR dossier).
+  const withoutSec8k = events.filter((ev) => timelineKind(ev) !== "sec_8k");
+  if (sourceFilter === "k8") return [];
+  if (sourceFilter === "all") return withoutSec8k;
   if (sourceFilter === "press") {
-    return events.filter((ev) => timelineKind(ev) === "press_release");
+    return withoutSec8k.filter((ev) => {
+      const k = timelineKind(ev);
+      return k === "press_release" || k === "manual";
+    });
   }
   if (sourceFilter === "cd") {
-    return events.filter((ev) => {
+    return withoutSec8k.filter((ev) => {
       const k = timelineKind(ev);
       return k === "cd_milestone" || k === "ctgov";
     });
   }
-  return events.filter((ev) => timelineKind(ev) === "clinical");
+  return withoutSec8k.filter((ev) => timelineKind(ev) === "clinical");
 }
 
 /** Synthetic milestones: expected CD + CT.gov updates in window. */

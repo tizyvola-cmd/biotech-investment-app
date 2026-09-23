@@ -1,4 +1,4 @@
-import { useCallback, useState } from "react";
+import { useCallback, useRef, useState } from "react";
 import type { AppScreen } from "../types";
 
 const MAX_SCREEN_HISTORY = 24;
@@ -20,23 +20,31 @@ export type ScreenNavigation = {
 export function useScreenNavigation(initialScreen: AppScreen = "main"): ScreenNavigation {
   const [screen, setScreen] = useState<AppScreen>(initialScreen);
   const [backStack, setBackStack] = useState<AppScreen[]>([]);
+  const backStackRef = useRef<AppScreen[]>([]);
 
-  const navigateTo = useCallback((next: AppScreen) => {
-    setScreen((current) => {
-      if (next === current) return current;
-      setBackStack((stack) => [...stack.slice(-(MAX_SCREEN_HISTORY - 1)), current]);
-      return next;
-    });
+  const syncBackStack = useCallback((next: AppScreen[]) => {
+    backStackRef.current = next;
+    setBackStack(next);
   }, []);
+
+  const navigateTo = useCallback(
+    (next: AppScreen) => {
+      setScreen((current) => {
+        if (next === current) return current;
+        syncBackStack([...backStackRef.current.slice(-(MAX_SCREEN_HISTORY - 1)), current]);
+        return next;
+      });
+    },
+    [syncBackStack],
+  );
 
   const goBack = useCallback(() => {
-    setBackStack((stack) => {
-      if (stack.length === 0) return stack;
-      const prev = stack[stack.length - 1]!;
-      setScreen(prev);
-      return stack.slice(0, -1);
-    });
-  }, []);
+    const stack = backStackRef.current;
+    if (stack.length === 0) return;
+    const prev = stack[stack.length - 1]!;
+    syncBackStack(stack.slice(0, -1));
+    setScreen(prev);
+  }, [syncBackStack]);
 
   const previousScreen = backStack.length > 0 ? backStack[backStack.length - 1]! : null;
 

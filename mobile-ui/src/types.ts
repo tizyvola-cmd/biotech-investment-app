@@ -16,6 +16,8 @@ export type InvestSimInputEntry = {
   purchaseDate?: string;
   soldAt?: string;
   closedPnlEur?: number;
+  closedCapital?: number;
+  closedValue?: number;
 };
 
 export type InvestSimInputs = Record<string, InvestSimInputEntry>;

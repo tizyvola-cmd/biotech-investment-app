@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import type { TickerSimEvaluation } from "./investDecisionSimLoop";
 import {
+  buildDailySimLoopExecution,
   computeEntryRiskScore,
   filterEvaluationsForSolidDailyBuys,
   passesSolidDailyBuyGate,
@@ -127,8 +128,89 @@ describe("simLoopDailyEvaluation", () => {
     expect(stressed.breakdown.feedFragPt).toBeGreaterThan(base.breakdown.feedFragPt);
   });
 
-  it("uses documented solid defaults", () => {
+  it("uses documented solid defaults (legacy helper)", () => {
     expect(SOLID_DAILY_BUY_DEFAULTS.minPplanPct).toBe(55);
     expect(SOLID_DAILY_BUY_DEFAULTS.minSds).toBe(45);
+  });
+
+  it("auto execution keeps Soft BUY suggestedAction (no solid demotion)", () => {
+    const softBuy = ev({
+      key: "soft|cd",
+      ticker: "SOFT",
+      probPct: 52,
+      compositeScore: 40,
+      investVerdict: "wait",
+      suggestedAction: "buy",
+    });
+    const opts = buildDailySimLoopExecution(5000, {
+      probOptions: {
+        sdsRows: [
+          { ticker: "SOFT", sds: 25, zone_label: "watch", zone_color: "", zone_action: "" },
+        ],
+      },
+      simTable: null,
+      inputs: {},
+      pointsBySeriesKey: new Map(),
+      lang: "en",
+    });
+    const out = opts.filterEvaluations([softBuy]);
+    expect(out[0]!.suggestedAction).toBe("buy");
+    expect(opts.resolveBuyCapital(softBuy)).toBeGreaterThan(0);
+  });
+
+  it("Grade 3 gate tier further reduces synth capital vs safety-only", () => {
+    const top2No = ev({
+      key: "WEAK|cd",
+      ticker: "WEAK",
+      probPct: 55,
+      investVerdict: "no",
+      suggestedAction: "buy",
+      pnlPct24h: 1,
+    });
+    const top2Yes = ev({
+      key: "STRONG|cd",
+      ticker: "STRONG",
+      probPct: 62,
+      investVerdict: "yes",
+      suggestedAction: "buy",
+      pnlPct24h: 1.5,
+    });
+    const opts = buildDailySimLoopExecution(5000, {
+      probOptions: {
+        sdsRows: [
+          { ticker: "WEAK", sds: 30, zone_label: "watch", zone_color: "", zone_action: "" },
+          { ticker: "STRONG", sds: 35, zone_label: "watch", zone_color: "", zone_action: "" },
+        ],
+      },
+      simTable: {
+        columns: [],
+        rows: [
+          {
+            Ticker: "WEAK",
+            cont_g10: 15,
+            cont_sell_edge: -1,
+            p_continuation: 44,
+            "Var. Giorn. %": 1,
+          },
+          {
+            Ticker: "STRONG",
+            cont_g10: 12,
+            cont_sell_edge: -2,
+            p_continuation: 40,
+            "Var. Giorn. %": 1.5,
+            "Var. 7d %": 3,
+            "Var. 3M %": 5,
+            "Var. 6M %": 8,
+          },
+        ],
+      } as never,
+      inputs: {},
+      pointsBySeriesKey: new Map(),
+      lang: "en",
+    });
+    const weakCap = opts.resolveBuyCapital(top2No);
+    const strongCap = opts.resolveBuyCapital(top2Yes);
+    expect(strongCap).toBeGreaterThan(weakCap);
+    expect(weakCap).toBeLessThanOrEqual(3500);
   });
 });

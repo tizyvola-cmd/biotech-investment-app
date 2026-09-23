@@ -34,13 +34,17 @@ import {
 import { clinicalKpiFromSimRow } from "../sheet/tickerEisSummary";
 import { INVEST_SIM_INPUTS_CHANGED_EVENT } from "../sheet/investSimStorage";
 import { DEFAULT_PLAN_CAPITAL_EUR } from "../sheet/expectedRoiDisplay";
+import {
+  evaluateSoftBuyGateStrength,
+  softBuyCapitalFromGateStrength,
+} from "../sheet/softBuyGateStrength";
 import { computeRecommendationGainIdea } from "../sheet/recommendationGainIdea";
 import { RecommendationGainIdeaCell } from "./RecommendationGainIdeaCell";
 import { SHEET_GRID_TABLE_CLASS, gridTd, gridTh } from "../sheet/sheetGridTable";
 import { SheetGridColgroup } from "../sheet/SheetGridColgroup";
 import { PortfolioTickerMark } from "./PortfolioScopeToggle";
 import { EisScoreBadge } from "./EisScoreBadge";
-import { EisDetailDrawer } from "./EisDetailDrawer";
+import { openEisDeepDive } from "../sheet/eisDeepDiveFocusStore";
 import { PnlDeltaCell } from "./PnlDeltaCell";
 import { ModelTargetPriceCell } from "./ModelTargetPriceCell";
 import { PortfolioExitButton, type PortfolioSellHandler } from "./PortfolioExitButton";
@@ -82,6 +86,13 @@ import {
   readDaysToCdFromSimRow,
 } from "../sheet/accuracyPeakCdOffset";
 import { dailyChangePctFromRow } from "../sheet/simulationPosition";
+import {
+  loadAdviceFeedback,
+  ADVICE_FEEDBACK_CHANGED_EVENT,
+  type AdviceFeedback,
+} from "../sheet/adviceFeedback";
+import type { PaperPosition } from "../sheet/investDecisionSimLoop";
+import type { SimLoopSynthAllocation } from "../hooks/useSimLoopSynthAllocation";
 
 function fmtUsd(v: number | null | undefined): string {
   if (v == null || !Number.isFinite(v)) return "—";
@@ -96,7 +107,6 @@ export function DashboardRecommendationsTable({
   chartBundle,
   sdsRows,
   simTableVersion,
-  onOpenSimulationSheet,
   onOpen24hAssessment,
   onRegisterBuy,
   onSell,
@@ -105,18 +115,15 @@ export function DashboardRecommendationsTable({
   onClose,
   onBindClose,
   onStatsChange,
+  adviceFeedback: adviceFeedbackProp,
+  paperPortfolio = [],
+  synthAlloc: synthAllocProp,
 }: {
   simTable: SheetTable | null;
   simLoading: boolean;
   chartBundle: ChartBundle | null;
   sdsRows: SdsRow[] | null;
   simTableVersion?: string | null;
-  /** Decision Lab → Simulation workspace row (Buy/Sell in Actions). */
-  onOpenSimulationSheet?: (focus: {
-    ticker: string;
-    cd?: string;
-    action?: "buy" | "sell";
-  }) => void;
   /** Simulation tab 24h assessment with scroll to ticker card. */
   onOpen24hAssessment?: (focus: { ticker: string; cd?: string }) => void;
   onRegisterBuy?: PortfolioRegisterBuyHandler;
@@ -127,20 +134,35 @@ export function DashboardRecommendationsTable({
   onClose?: () => void;
   onBindClose?: (closeWithAck: () => void) => void;
   onStatsChange?: (stats: { total: number; newCount: number; keySig: string }) => void;
+  /** Parity with Pulse — when omitted, loads from local storage. */
+  adviceFeedback?: AdviceFeedback | null;
+  paperPortfolio?: PaperPosition[];
+  /** When provided (from Dashboard), reuse same synth map as Pulse. */
+  synthAlloc?: SimLoopSynthAllocation | null;
 }) {
   const t = useT();
   const { lang } = useLang();
   const it = lang === "it";
   const inputs = useInvestSimInputs(simTable);
   const history = useInvestSimPortfolioHistory().history;
+  const [localAdviceFeedback, setLocalAdviceFeedback] = useState<AdviceFeedback | null>(() =>
+    typeof window !== "undefined" ? loadAdviceFeedback() : null,
+  );
+  useEffect(() => {
+    if (adviceFeedbackProp !== undefined) return;
+    const onChange = () => setLocalAdviceFeedback(loadAdviceFeedback());
+    window.addEventListener(ADVICE_FEEDBACK_CHANGED_EVENT, onChange);
+    return () => window.removeEventListener(ADVICE_FEEDBACK_CHANGED_EVENT, onChange);
+  }, [adviceFeedbackProp]);
+  const adviceFeedback = adviceFeedbackProp !== undefined ? adviceFeedbackProp : localAdviceFeedback;
   const [inputsTick, setInputsTick] = useState(0);
   const [dismissTick, setDismissTick] = useState(0);
   const [priceReadingRevision, setPriceReadingRevision] = useState(0);
   const prevSimTableVersionRef = useRef<string | null>(null);
 
   const simTablePriceVersion = useMemo(
-    () => buildSimTablePriceVersion(simTable, inputs),
-    [simTable, inputs],
+    () => buildSimTablePriceVersion(simTable),
+    [simTable],
   );
 
   useEffect(() => {
@@ -166,9 +188,6 @@ export function DashboardRecommendationsTable({
   const [profileFilter, setProfileFilter] = useState<DashboardRecProfileFilter>("all");
   const [cdFilter, setCdFilter] = useState<DashboardRecCdFilter>("all");
   const [sortMode, setSortMode] = useState<DashboardRecSortMode>("deal");
-  const [eisDrawer, setEisDrawer] = useState<{ ticker: string; kpi: number | null } | null>(
-    null,
-  );
   const [riskModalEntry, setRiskModalEntry] = useState<LossRiskEntry | null>(null);
 
   // Loss-risk catalog — keyed by uppercase ticker, reuses the same Phase A
@@ -225,14 +244,18 @@ export function DashboardRecommendationsTable({
     return sum > 0 ? sum : 5000;
   }, [inputs, inputsTick]);
 
-  const synthAlloc = useSimLoopSynthAllocation({
+  const localSynthAlloc = useSimLoopSynthAllocation({
     simTable,
     sdsRows,
     investInputs: inputs,
     pointsBySeriesKey,
     totalCapitalEur: topCapital,
-    enabled: Boolean(simTable?.rows?.length) && topCapital > 0,
+    enabled:
+      synthAllocProp === undefined &&
+      Boolean(simTable?.rows?.length) &&
+      topCapital > 0,
   });
+  const synthAlloc = synthAllocProp !== undefined ? synthAllocProp : localSynthAlloc;
 
   const [outcomesDoc, setOutcomesDoc] = useState<SimOutcomesDoc | null>(null);
   useEffect(() => {
@@ -254,8 +277,9 @@ export function DashboardRecommendationsTable({
       pointsBySeriesKey,
       lang,
       probOptions,
-      paperPortfolio: [],
+      paperPortfolio,
       synthAlloc,
+      adviceFeedback,
     });
     const resolveDaysToCd = (key: string): number | null =>
       readDaysToCdFromSimRow(simRowByKey.get(key));
@@ -287,7 +311,18 @@ export function DashboardRecommendationsTable({
     const closedRows = outcomesDoc ? closedSimOutcomeRowsFromDoc(outcomesDoc) : [];
     const auditItems = buildAuditPeakItemsFromClosedRows(closedRows, simRowByKey, lang);
     return buildCombinedAdviceOutcomeSummary(monitorPoints, auditItems);
-  }, [simTable, inputs, pointsBySeriesKey, it, probOptions, synthAlloc, simRowByKey, outcomesDoc]);
+  }, [
+    simTable,
+    inputs,
+    pointsBySeriesKey,
+    it,
+    probOptions,
+    synthAlloc,
+    simRowByKey,
+    outcomesDoc,
+    paperPortfolio,
+    adviceFeedback,
+  ]);
 
   const rows = useMemo(
     () =>
@@ -303,6 +338,8 @@ export function DashboardRecommendationsTable({
         cdFilter,
         sortMode,
         synthAlloc,
+        adviceFeedback,
+        paperPortfolio,
         adviceOutcomeBins,
       }),
     [
@@ -320,6 +357,8 @@ export function DashboardRecommendationsTable({
       dismissTick,
       priceReadingRevision,
       synthAlloc,
+      adviceFeedback,
+      paperPortfolio,
       adviceOutcomeBins,
     ],
   );
@@ -337,6 +376,8 @@ export function DashboardRecommendationsTable({
       cdFilter,
       sortMode: "score",
       synthAlloc,
+      adviceFeedback,
+      paperPortfolio,
       adviceOutcomeBins,
     });
     return {
@@ -358,6 +399,8 @@ export function DashboardRecommendationsTable({
     dismissTick,
     priceReadingRevision,
     synthAlloc,
+    adviceFeedback,
+    paperPortfolio,
     adviceOutcomeBins,
   ]);
 
@@ -375,6 +418,8 @@ export function DashboardRecommendationsTable({
       cdFilter: "all",
       sortMode: "score",
       synthAlloc,
+      adviceFeedback,
+      paperPortfolio,
       adviceOutcomeBins,
     });
     onStatsChange({
@@ -395,6 +440,8 @@ export function DashboardRecommendationsTable({
     dismissTick,
     priceReadingRevision,
     synthAlloc,
+    adviceFeedback,
+    paperPortfolio,
     adviceOutcomeBins,
   ]);
 
@@ -479,10 +526,6 @@ export function DashboardRecommendationsTable({
     const rationale = recommendationRationale(row);
     const clinicalKpi = clinicalKpiFromSimRow(simRow);
     const navFocus = { ticker: row.ticker, cd: cd || undefined };
-    const sheetAction: "buy" | "sell" =
-      row.suggestedAction === "sell" || (row.suggestedAction === "hold" && row.hasPosition)
-        ? "sell"
-        : "buy";
     const pos =
       simRow && row.hasPosition
         ? computeSimulationPosition(simRow, inputs, { history })
@@ -517,6 +560,7 @@ export function DashboardRecommendationsTable({
             ticker={row.ticker}
             inPortfolio={row.hasPosition}
             pnlPct={row.pnlPct ?? row.pnlPct24h}
+            simRow={simRow}
             className="text-sm font-bold"
           />
           </div>
@@ -571,7 +615,13 @@ export function DashboardRecommendationsTable({
             type="button"
             className="inline-flex flex-col items-center gap-0.5 hover:opacity-85 transition"
             title={t("sim.lossAnalysis.action.eisTip")}
-            onClick={() => setEisDrawer({ ticker: row.ticker, kpi: clinicalKpi })}
+            onClick={() =>
+              openEisDeepDive({
+                ticker: row.ticker,
+                clinicalKpi,
+                simRow: simRow ?? null,
+              })
+            }
           >
             <EisScoreBadge
               ticker={row.ticker}
@@ -677,22 +727,23 @@ export function DashboardRecommendationsTable({
               <PortfolioRegisterBuyButton
                 ticker={row.ticker}
                 simKey={row.key}
-                capitalEur={DEFAULT_PLAN_CAPITAL_EUR}
+                capitalEur={softBuyCapitalFromGateStrength(
+                  DEFAULT_PLAN_CAPITAL_EUR,
+                  evaluateSoftBuyGateStrength(
+                    {
+                      ticker: row.ticker,
+                      key: row.key,
+                      sdsScore: row.sdsScore,
+                      pplan: row.probPct,
+                      investVerdict: row.investVerdict,
+                      pnlPct24h: row.pnlPct24h,
+                    },
+                    { simRow, chartPts },
+                  ),
+                )}
                 onRegisterBuy={onRegisterBuy}
                 compact
               />
-            ) : null}
-            {onOpenSimulationSheet ? (
-              <button
-                type="button"
-                className="btn-ghost text-xs px-1.5 py-0.5 border border-[rgb(var(--border))]/45"
-                title={t("decisionLab.nav.openSimulationTip")}
-                onClick={() =>
-                  onOpenSimulationSheet({ ...navFocus, action: sheetAction })
-                }
-              >
-                {t("dashboard.rec.openSim")}
-              </button>
             ) : null}
             {onOpen24hAssessment ? (
               <button
@@ -863,14 +914,6 @@ export function DashboardRecommendationsTable({
           </table>
         )}
       </div>
-
-      <EisDetailDrawer
-        open={eisDrawer != null}
-        onClose={() => setEisDrawer(null)}
-        ticker={eisDrawer?.ticker ?? null}
-        clinicalKpi={eisDrawer?.kpi}
-        it={it}
-      />
 
       <LossRiskBreakdownModal
         entry={riskModalEntry}

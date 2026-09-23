@@ -310,6 +310,74 @@ def enrich_pubmed_hit(hit: dict) -> dict:
     return out
 
 
+_MONTH_NUM = {
+    m: f"{i:02d}"
+    for i, m in enumerate(
+        [
+            "jan",
+            "feb",
+            "mar",
+            "apr",
+            "may",
+            "jun",
+            "jul",
+            "aug",
+            "sep",
+            "oct",
+            "nov",
+            "dec",
+        ],
+        start=1,
+    )
+}
+
+
+def _month_to_num(raw: str) -> str:
+    t = (raw or "").strip().lower()[:3]
+    if t in _MONTH_NUM:
+        return _MONTH_NUM[t]
+    digits = re.sub(r"\D", "", raw or "")
+    if digits.isdigit() and 1 <= int(digits) <= 12:
+        return f"{int(digits):02d}"
+    return ""
+
+
+def _pub_date_from_el(el: ET.Element, tag_tail) -> tuple[str, str]:
+    """Return (YYYY-MM-DD or '', YYYY) from a PubDate / ArticleDate element."""
+    year = month = day = ""
+    for c in list(el):
+        tl = tag_tail(c.tag)
+        txt = (c.text or "").strip()
+        if tl == "Year" and len(txt) >= 4 and txt[:4].isdigit():
+            year = txt[:4]
+        elif tl == "Month" and txt:
+            month = _month_to_num(txt)
+        elif tl == "Day" and txt:
+            digits = re.sub(r"\D", "", txt)
+            if digits.isdigit() and 1 <= int(digits) <= 31:
+                day = f"{int(digits):02d}"
+        elif tl == "MedlineDate" and txt and not year:
+            m = re.match(r"(\d{4})", txt)
+            if m:
+                year = m.group(1)
+            mm = re.search(
+                r"(?i)\b(Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec)\b",
+                txt,
+            )
+            if mm:
+                month = _month_to_num(mm.group(1))
+            dd = re.search(r"\b(\d{1,2})\b", txt[4:])
+            if dd and 1 <= int(dd.group(1)) <= 31:
+                day = f"{int(dd.group(1)):02d}"
+    if not year:
+        return "", ""
+    if month and day:
+        return f"{year}-{month}-{day}", year
+    if month:
+        return f"{year}-{month}-01", year
+    return "", year
+
+
 def _efetch_pubmed_articles(pmids: list[str]) -> list[dict]:
     if not pmids:
         return []
@@ -345,7 +413,8 @@ def _efetch_pubmed_articles(pmids: list[str]) -> list[dict]:
         pmid = ""
         title = ""
         abst_parts: list[tuple[str, str]] = []
-        ymd = ""
+        pub_date = ""
+        pub_year = ""
 
         for el in art.iter():
             tl = tag_tail(el.tag)
@@ -359,11 +428,17 @@ def _efetch_pubmed_articles(pmids: list[str]) -> list[dict]:
                 lab = (el.attrib.get("Label") or "").strip()
                 bit = "".join(el.itertext()).strip()
                 abst_parts.append((lab, bit))
-            elif tl == "Year" and el.text and len(el.text.strip()) == 4:
-                ymd = el.text.strip()
-            elif tl == "MedlineDate" and el.text and len(ymd) < 4:
+            elif tl in ("PubDate", "ArticleDate") and not pub_date:
+                pd, py = _pub_date_from_el(el, tag_tail)
+                if pd:
+                    pub_date = pd
+                if py and not pub_year:
+                    pub_year = py
+            elif tl == "Year" and el.text and len(el.text.strip()) == 4 and not pub_year:
+                pub_year = el.text.strip()
+            elif tl == "MedlineDate" and el.text and not pub_year:
                 ym = el.text.strip()[:7]
-                ymd = ym[:4] if len(ym) >= 4 else ymd
+                pub_year = ym[:4] if len(ym) >= 4 else pub_year
 
         labeled_lines = [
             f"{lab}: {bit}" if lab else bit for lab, bit in abst_parts if bit.strip()
@@ -386,7 +461,8 @@ def _efetch_pubmed_articles(pmids: list[str]) -> list[dict]:
                 "abstract": abst_stored,
                 "abstract_sections": sections,
                 "results_section": results_section[:2400] if results_section else "",
-                "pub_year": ymd[:4] if len(ymd) >= 4 else "",
+                "pub_year": pub_year or (pub_date[:4] if pub_date else ""),
+                "pub_date": pub_date,
             }
             out.append(enrich_pubmed_hit(row))
 

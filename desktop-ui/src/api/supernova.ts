@@ -122,8 +122,8 @@ export async function api<T>(
   return res.json() as Promise<T>;
 }
 
-export function fetchHealth() {
-  return api<{ status: string; root: string }>("/api/health");
+export function fetchHealth(opts?: ApiOptions) {
+  return api<{ status: string; root: string }>("/api/health", undefined, opts);
 }
 
 /** Lightweight monitor history for weekly trend KPIs (no full learnings bundle). */

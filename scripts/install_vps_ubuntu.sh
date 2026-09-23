@@ -72,8 +72,9 @@ WorkingDirectory=${APP_DIR}
 EnvironmentFile=-${APP_DIR}/config/profiles/desktop_web_host.env
 Environment=PYTHONUNBUFFERED=1
 ExecStart=${PY} -m supernova_api
-Restart=on-failure
-RestartSec=15
+Restart=always
+RestartSec=3
+StartLimitIntervalSec=0
 
 [Install]
 WantedBy=multi-user.target

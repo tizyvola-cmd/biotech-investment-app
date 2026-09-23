@@ -181,6 +181,11 @@ function ScreenFallback() {
   );
 }
 
+/** Health ping budget — short so a stalled request cannot block the next poll. */
+const HEALTH_TIMEOUT_MS = 8_000;
+/** Consecutive failed pings before the top bar shows «API offline». */
+const HEALTH_FAILURES_BEFORE_OFFLINE = 3;
+
 export default function App() {
   const { screen, navigateTo: pushScreen, goBack, canGoBack, previousScreen } =
     useScreenNavigation("main");
@@ -401,14 +406,29 @@ export default function App() {
     void reloadData();
   }, [screen, dataLoading, allRows.length, reloadData]);
 
+  const healthFailuresRef = useRef(0);
+  const healthInFlightRef = useRef(false);
+
+  const markApiOnline = useCallback(() => {
+    healthFailuresRef.current = 0;
+    setApiOk(true);
+    setRefreshStoreApiOk(true);
+  }, []);
+
+  /** Offline only after a few consecutive failures — single blips stay silent. */
+  const markApiPingFailed = useCallback(() => {
+    healthFailuresRef.current += 1;
+    if (healthFailuresRef.current < HEALTH_FAILURES_BEFORE_OFFLINE) return;
+    setApiOk(false);
+    setRefreshStoreApiOk(false);
+  }, []);
+
   const refreshApi = useCallback(async () => {
     try {
-      await fetchHealth();
-      setApiOk(true);
-      setRefreshStoreApiOk(true);
+      await fetchHealth({ timeoutMs: HEALTH_TIMEOUT_MS });
+      markApiOnline();
     } catch {
-      setApiOk(false);
-      setRefreshStoreApiOk(false);
+      markApiPingFailed();
       return;
     }
     try {
@@ -418,7 +438,7 @@ export default function App() {
     } catch {
       /* Health OK — keep online badge; status/log are best-effort. */
     }
-  }, []);
+  }, [markApiOnline, markApiPingFailed]);
 
   // Lightweight health-only poller. ``refreshApi`` does several heavy calls
   // (status + log tails) that we only want at boot and after recovery; for
@@ -431,21 +451,31 @@ export default function App() {
   useEffect(() => {
     let cancelled = false;
     const tick = async () => {
+      // A slow backend must not queue overlapping pings: skip while one is open.
+      if (healthInFlightRef.current) return;
+      healthInFlightRef.current = true;
       try {
-        await fetchHealth();
+        await fetchHealth({ timeoutMs: HEALTH_TIMEOUT_MS });
         if (cancelled) return;
         if (!apiOk) {
           // Just came back online: rerun the heavy bundle once.
           void refreshApi();
         } else {
-          setApiOk(true);
-          setRefreshStoreApiOk(true);
+          markApiOnline();
         }
       } catch {
-        if (!cancelled) {
-          setApiOk(false);
-          setRefreshStoreApiOk(false);
+        if (cancelled) return;
+        // One immediate retry absorbs a dropped connection between polls.
+        try {
+          await fetchHealth({ timeoutMs: HEALTH_TIMEOUT_MS });
+          if (cancelled) return;
+          if (!apiOk) void refreshApi();
+          else markApiOnline();
+        } catch {
+          if (!cancelled) markApiPingFailed();
         }
+      } finally {
+        healthInFlightRef.current = false;
       }
     };
     void tick();
@@ -457,7 +487,7 @@ export default function App() {
       cancelled = true;
       window.clearInterval(id);
     };
-  }, [apiOk, refreshApi]);
+  }, [apiOk, refreshApi, markApiOnline, markApiPingFailed]);
 
   const reloadSimulation = useCallback(async (): Promise<SheetTable | null> => {
     setSimLoading(true);

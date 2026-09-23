@@ -78,7 +78,9 @@ After=network.target
 WorkingDirectory=/opt/supernova
 EnvironmentFile=/opt/supernova/config/profiles/mobile_v3_host.env
 ExecStart=/opt/supernova/.venv/bin/python -m supernova_api
-Restart=on-failure
+Restart=always
+RestartSec=3
+StartLimitIntervalSec=0
 
 [Install]
 WantedBy=multi-user.target

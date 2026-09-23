@@ -485,6 +485,26 @@ def _mount_desktop_web(application: FastAPI, cfg: SupernovaConfig) -> None:
     )
 
 
+def _raise_threadpool_capacity() -> None:
+    """Widen the AnyIO worker pool used by sync endpoints.
+
+    Sheet/refresh routes are blocking and slow; with the default 40 tokens a
+    handful of concurrent tabs can hold every worker, so unrelated requests
+    queue until one frees up and the UI reports the API as down.
+    """
+    try:
+        raw = os.environ.get("SUPERNOVA_THREADPOOL_SIZE", "").strip()
+        total = int(raw) if raw else 120
+    except ValueError:
+        total = 120
+    try:
+        import anyio.to_thread
+
+        anyio.to_thread.current_default_thread_limiter().total_tokens = max(total, 40)
+    except Exception as exc:  # pragma: no cover - depends on anyio internals
+        logger.warning("threadpool resize skipped: %s", exc)
+
+
 def build_app(cfg: SupernovaConfig | None = None) -> FastAPI:
     """Create FastAPI app (used by tests and ``app`` module export)."""
     from contextlib import asynccontextmanager
@@ -494,6 +514,7 @@ def build_app(cfg: SupernovaConfig | None = None) -> FastAPI:
     @asynccontextmanager
     async def _lifespan(_app: FastAPI):
         _log_startup_security(c)
+        _raise_threadpool_capacity()
         sched_stop: threading.Event | None = None
         try:
             import ai_secrets_store as _ai_sec
@@ -540,7 +561,9 @@ def build_app(cfg: SupernovaConfig | None = None) -> FastAPI:
     application.add_middleware(_MobileSlashRedirectMiddleware)
 
     @application.get("/api/health")
-    def health() -> dict[str, str]:
+    async def health() -> dict[str, str]:
+        # ``async`` on purpose: served on the event loop, so the probe answers
+        # even when every worker thread is busy with a heavy sheet/refresh call.
         return {"status": "ok", "root": str(ROOT)}
 
     @application.get("/api/status")

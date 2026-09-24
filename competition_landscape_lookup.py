@@ -5,8 +5,10 @@ Display-only — not Soft BUY/SELL.
 from __future__ import annotations
 
 import json
+import os
 import re
 import threading
+import time
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
@@ -19,6 +21,51 @@ _CACHE_LOCK = threading.Lock()
 # Competition peers change slowly — keep Gemini results for 90 days unless force.
 _CACHE_TTL_H = 24 * 90
 _MAX_COMPETITORS = 10
+# Flash-Lite: same peers list, a fraction of the quota and of the latency.
+_DEFAULT_MODEL = "gemini-flash-lite-latest"
+_WEB_TIMEOUT_S = 6.0
+# A quota/credit error is not per-request: pause the whole section instead of
+# making every card wait for the provider to fail again.
+_AI_COOLDOWN_S = 300.0
+_AI_COOLDOWN_LOCK = threading.Lock()
+_ai_cooldown_until = 0.0
+_ai_cooldown_detail = ""
+
+
+def _env_flag(name: str, default: bool) -> bool:
+    raw = os.environ.get(name)
+    if raw is None or not raw.strip():
+        return default
+    return raw.strip().lower() in ("1", "true", "yes", "on")
+
+
+def _env_float(name: str, default: float) -> float:
+    try:
+        return float(os.environ.get(name, "").strip() or default)
+    except ValueError:
+        return default
+
+
+def _ai_cooldown_left() -> float:
+    with _AI_COOLDOWN_LOCK:
+        return max(0.0, _ai_cooldown_until - time.time())
+
+
+def _start_ai_cooldown(detail: str) -> None:
+    global _ai_cooldown_until, _ai_cooldown_detail
+    with _AI_COOLDOWN_LOCK:
+        _ai_cooldown_until = time.time() + _env_float(
+            "COMPETITION_AI_COOLDOWN_S", _AI_COOLDOWN_S
+        )
+        _ai_cooldown_detail = detail
+
+
+def _clear_ai_cooldown() -> None:
+    global _ai_cooldown_until, _ai_cooldown_detail
+    with _AI_COOLDOWN_LOCK:
+        _ai_cooldown_until = 0.0
+        _ai_cooldown_detail = ""
+
 
 _SYSTEM = (
     "You are a biotech competitive-intelligence analyst. "
@@ -285,7 +332,9 @@ def _ddg_snippets(query: str, *, limit: int = 6) -> list[str]:
         headers={"User-Agent": "Mozilla/5.0 SuperNovaCompetition/1.0"},
     )
     try:
-        with urllib.request.urlopen(req, timeout=12) as resp:
+        with urllib.request.urlopen(
+            req, timeout=_env_float("COMPETITION_WEB_TIMEOUT_S", _WEB_TIMEOUT_S)
+        ) as resp:
             html = resp.read().decode("utf-8", errors="replace")
     except Exception:
         return []
@@ -352,7 +401,7 @@ def read_cached_competition_landscape(
         "ok": False,
         "cached": False,
         "error": "not_prepared",
-        "hint": "Competition is prepared with the card, before this tab opens.",
+        "hint": "Competition is built on request — load it from the card.",
     }
 
 
@@ -471,8 +520,12 @@ def desk_competition_targets(*, limit: int = 180) -> list[dict[str, str]]:
 
 
 def warm_desk_competition(*, limit: int = 180) -> None:
-    """One background pass. Gemini runs here, not when the Financial/Deep Dive tab opens."""
+    """Optional background pass, off by default: one AI call per desk product
+    burns the daily quota for cards nobody opens. Set COMPETITION_WARM=1 to
+    pre-build the cache anyway."""
     global _warm_running
+    if not _env_flag("COMPETITION_WARM", False):
+        return
     with _WARM_LOCK:
         if _warm_running:
             return
@@ -590,15 +643,32 @@ def lookup_competition_landscape(
                 ticker=tk, product_name=product, indication=disease
             )
 
-    snippets: list[str] = []
+    cooldown_left = _ai_cooldown_left()
+    if cooldown_left > 0:
+        with _AI_COOLDOWN_LOCK:
+            detail = _ai_cooldown_detail
+        return {
+            "ok": False,
+            "error": "ai_cooldown",
+            "retry_after_s": int(cooldown_left),
+            "web_hits": [],
+            "detail": detail,
+        }
+
     co = (company or "").strip()
     disease_q = disease or product or tk
-    for q in (
+    queries = [
         f"{disease_q} clinical pipeline competitors Phase 2 Phase 3 2026",
         f"{disease_q} drugs in development ClinicalTrials.gov {product}".strip(),
         f"{disease_q} {co} competitive landscape market cap",
-    ):
-        snippets.extend(_ddg_snippets(q, limit=4))
+    ]
+    from concurrent.futures import ThreadPoolExecutor
+
+    with ThreadPoolExecutor(max_workers=len(queries), thread_name_prefix="comp-web") as pool:
+        batches = list(pool.map(lambda q: _ddg_snippets(q, limit=4), queries))
+    snippets: list[str] = []
+    for batch in batches:
+        snippets.extend(batch)
         if len(snippets) >= 10:
             break
 
@@ -659,6 +729,7 @@ def lookup_competition_landscape(
     )
     prompt = "\n".join(lines)
 
+    model = os.environ.get("COMPETITION_GEMINI_MODEL", "").strip() or _DEFAULT_MODEL
     provider_used = "gemini"
     raw: str | None = None
     if ai_provider.get_api_key("gemini"):
@@ -667,10 +738,12 @@ def lookup_competition_landscape(
             prompt,
             system=_SYSTEM,
             max_tokens=2200,
-            model_override=None,
+            model_override=model,
             task="catalyst",
         )
-        if not raw:
+        # Walking the other providers after a Gemini failure means one card can
+        # wait minutes for every provider to reject it in turn.
+        if not raw and _env_flag("COMPETITION_AI_FALLBACK", False):
             provider_used = "fallback"
             raw = ai_provider.call_ai(prompt, system=_SYSTEM, max_tokens=2200, task="clinical_kpi")
     else:
@@ -678,12 +751,16 @@ def lookup_competition_landscape(
         raw = ai_provider.call_ai(prompt, system=_SYSTEM, max_tokens=2200, task="clinical_kpi")
 
     if not raw:
+        detail = ai_provider.friendly_error_message(lang="it")
+        _start_ai_cooldown(detail)
         return {
             "ok": False,
             "error": "ai_empty",
+            "retry_after_s": int(_ai_cooldown_left()),
             "web_hits": snippets[:10],
-            "detail": ai_provider.friendly_error_message(lang="it"),
+            "detail": detail,
         }
+    _clear_ai_cooldown()
 
     parsed = _parse_ai_json(raw)
     if not parsed:

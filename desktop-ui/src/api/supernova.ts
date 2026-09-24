@@ -2294,6 +2294,8 @@ export type CompetitionLandscapeResult = {
   error?: string;
   hint?: string;
   detail?: string;
+  /** Seconds to wait before retrying after a provider quota error. */
+  retry_after_s?: number;
   web_hits?: string[];
   landscape?: CompetitionLandscape;
 };
@@ -2313,7 +2315,7 @@ export function lookupDeskCompetitionLandscape(body: {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify(body),
-  }, { timeoutMs: body.cache_only ? 20_000 : 240_000 });
+  }, { timeoutMs: body.cache_only ? 20_000 : 90_000 });
 }
 
 /** Gemini + web snippets — patent filing / LOE (drugs) or device IP + FDA clearance. */

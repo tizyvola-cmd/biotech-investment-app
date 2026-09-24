@@ -149,6 +149,7 @@ export function EisCompetitionNotesBox({
   };
   const [landscape, setLandscape] = useState<CompetitionLandscape | null>(null);
   const [loading, setLoading] = useState(true);
+  const [building, setBuilding] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [updatedAt, setUpdatedAt] = useState<string | null>(null);
   const [cached, setCached] = useState(false);
@@ -196,7 +197,37 @@ export function EisCompetitionNotesBox({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [tk, productForSearch, indicationForSearch, nctId]);
 
+  function buildNow() {
+    if (building) return;
+    const gen = ++searchGen.current;
+    setBuilding(true);
+    setError(null);
+    void lookupDeskCompetitionLandscape(searchBody)
+      .then((res) => {
+        if (gen !== searchGen.current) return;
+        if (!res?.ok || !res.landscape) {
+          const wait = res?.retry_after_s
+            ? ` ${it ? "Riprova tra" : "Retry in"} ${Math.ceil(res.retry_after_s / 60)} min.`
+            : "";
+          setError(`${res?.detail || res?.hint || res?.error || "lookup failed"}${wait}`);
+          return;
+        }
+        setLandscape(res.landscape);
+        setUpdatedAt(res.updated_at || null);
+        setCached(Boolean(res.cached));
+        setError(null);
+      })
+      .catch((e: unknown) => {
+        if (gen !== searchGen.current) return;
+        setError(e instanceof Error ? e.message : String(e));
+      })
+      .finally(() => {
+        if (gen === searchGen.current) setBuilding(false);
+      });
+  }
+
   const peers = landscape?.competitors ?? [];
+  const canBuild = Boolean(tk) && Boolean(productForSearch || indicationForSearch);
   const contextBits = [productForSearch, indicationForSearch, company].filter((x) =>
     String(x || "").trim(),
   );
@@ -210,8 +241,8 @@ export function EisCompetitionNotesBox({
           </p>
           <p className="text-[10px] text-ink-muted leading-snug mt-0.5">
             {it
-              ? "Competitor clinici esterni sulla stessa malattia — fase, MoA, modality, value proposition, società e market cap. Preparati con la scheda."
-              : "External clinical-stage peers on the same disease — phase, MoA, modality, value proposition, company and market cap. Prepared with the card."}
+              ? "Competitor clinici esterni sulla stessa malattia — fase, MoA, modality, value proposition, società e market cap. Caricati su richiesta."
+              : "External clinical-stage peers on the same disease — phase, MoA, modality, value proposition, company and market cap. Loaded on request."}
           </p>
           {contextBits.length ? (
             <p className="text-[10px] text-[#A79AFF] mt-1 leading-snug">
@@ -219,6 +250,26 @@ export function EisCompetitionNotesBox({
             </p>
           ) : null}
         </div>
+        {canBuild ? (
+          <button
+            type="button"
+            onClick={buildNow}
+            disabled={building || loading}
+            className="shrink-0 rounded-md border border-[#7C6CF3]/60 bg-[#7C6CF3]/15 px-2 py-1 text-[10px] font-bold text-[#A79AFF] hover:bg-[#7C6CF3]/25 disabled:opacity-50"
+          >
+            {building
+              ? it
+                ? "Ricerca in corso…"
+                : "Searching…"
+              : peers.length
+                ? it
+                  ? "Aggiorna"
+                  : "Refresh"
+                : it
+                  ? "Carica competition"
+                  : "Load competition"}
+          </button>
+        ) : null}
       </div>
 
       {landscape?.indication || landscape?.standard_of_care || landscape?.summary ? (
@@ -259,6 +310,14 @@ export function EisCompetitionNotesBox({
         </p>
       ) : null}
 
+      {building ? (
+        <p className="text-[11px] text-ink-muted">
+          {it
+            ? "Ricerca peer clinici in corso — circa 20 secondi."
+            : "Searching clinical peers — about 20 seconds."}
+        </p>
+      ) : null}
+
       {peers.length ? (
         <div className="grid gap-2 sm:grid-cols-2">
           {peers.map((peer, i) => (
@@ -269,12 +328,12 @@ export function EisCompetitionNotesBox({
             />
           ))}
         </div>
-      ) : !loading && !error ? (
+      ) : !loading && !building && !error ? (
         <div className="rounded-md border border-dashed border-[rgb(var(--border))]/45 bg-[rgb(var(--surface-2))]/20 px-2.5 py-2">
           <p className="text-[11px] text-ink-muted leading-snug">
             {it
-              ? "Competition non ancora scritta per questo prodotto. Viene preparata prima dell’apertura della scheda."
-              : "Competition is not written for this product yet. It is prepared before the card opens."}
+              ? "Competition non ancora scritta per questo prodotto. Premi «Carica competition» per cercarla ora."
+              : "Competition is not written for this product yet. Press “Load competition” to build it now."}
           </p>
         </div>
       ) : null}

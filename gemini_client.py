@@ -11,6 +11,7 @@ Used by ``ai_provider`` when provider == ``gemini``. Soft BUY/SELL unchanged.
 from __future__ import annotations
 
 import os
+import re
 import time
 from typing import Any, Callable
 
@@ -22,6 +23,9 @@ _FALLBACK_MODELS = (
     "gemini-3.5-flash-lite",
     "gemini-flash-latest",
 )
+# A per-day quota does not refill between retries — backing off only makes the
+# caller wait minutes for the same rejection.
+_PER_DAY_QUOTA_RE = re.compile(r"per\s*day|perday|free_tier_requests", re.I)
 
 
 def _extract_text(resp: Any) -> str:
@@ -159,6 +163,8 @@ class GeminiClient:
                 code = getattr(e, "code", None)
                 low = str(e).lower()
                 retryable = code in (429, 503) or "429" in low or "503" in low or "unavailable" in low
+                if _PER_DAY_QUOTA_RE.search(str(e)):
+                    raise
                 if retryable and attempt < self.max_retries:
                     time.sleep(self.retry_backoff_seconds * attempt)
                     continue
@@ -166,6 +172,8 @@ class GeminiClient:
             except Exception as e:
                 last_error = e
                 low = str(e).lower()
+                if _PER_DAY_QUOTA_RE.search(str(e)):
+                    raise
                 if (
                     "429" in low
                     or "503" in low

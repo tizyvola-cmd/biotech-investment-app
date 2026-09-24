@@ -162,6 +162,25 @@ export function lastUsEquityCloseSessionKey(ref: Date = new Date()): string {
   return lastUsEquityTradingDayKey(probe);
 }
 
+/** True on a trading day at or after the 09:30 ET open. */
+export function isAtOrAfterUsEquityOpen(ref: Date = new Date()): boolean {
+  if (!isUsEquityTradingDay(ref)) return false;
+  const { hour, minute } = nyWallClock(ref);
+  return hour * 60 + minute >= 9 * 60 + 30;
+}
+
+/**
+ * Session a print belongs to: today once the bell rings, otherwise the last
+ * session that actually traded. Pre-market on a trading day still belongs to
+ * the previous session — nothing has printed today yet.
+ */
+export function printSessionDayKey(ref: Date = new Date()): string {
+  if (isAtOrAfterUsEquityOpen(ref)) return calendarDayKeyInTimeZone(ref, NY_TZ);
+  const probe = new Date(ref.getTime());
+  if (isUsEquityTradingDay(ref)) probe.setDate(probe.getDate() - 1);
+  return lastUsEquityTradingDayKey(probe);
+}
+
 export function lastUsEquitySessionDayKey(ref: Date = new Date()): string {
   const probe = new Date(ref.getTime());
   for (let i = 0; i < 12; i++) {

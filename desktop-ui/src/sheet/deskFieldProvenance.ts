@@ -3,7 +3,10 @@
  * Display values stay flat; `_desk` carries when/where the print came from
  * so weekend cells can show a grey «ven» badge instead of looking live.
  */
-import { lastUsEquityTradingDayKey, isUsEquitySessionDay } from "./marketSession";
+import {
+  isDuringUsEquityRegularHours,
+  printSessionDayKey,
+} from "./marketSession";
 
 export type DeskFieldProvenance = {
   /** ISO timestamp of the print. */
@@ -34,6 +37,25 @@ export function deskProvenanceOf(row: unknown): DeskRowProvenance | null {
   return meta;
 }
 
+/** Print timestamp carried by the server row itself, when it has one. */
+function rowPrintStamp(row: unknown): string | null {
+  if (!row || typeof row !== "object") return null;
+  const o = row as Record<string, unknown>;
+  for (const k of ["asof", "as_of", "updated_at"]) {
+    const v = o[k];
+    if (typeof v === "string" && v.trim()) return v.trim();
+  }
+  return null;
+}
+
+/** Session a stamp belongs to; a date-only server stamp already is that day. */
+function sessionDayOfStamp(stamp: string): string {
+  const day = stamp.trim().slice(0, 10);
+  if (/^\d{4}-\d{2}-\d{2}$/.test(stamp.trim())) return day;
+  const d = new Date(stamp);
+  return printSessionDayKey(Number.isNaN(d.getTime()) ? new Date() : d);
+}
+
 export function stampDeskRowProvenance<T extends object>(
   row: T,
   source: string,
@@ -43,10 +65,9 @@ export function stampDeskRowProvenance<T extends object>(
     signalKeys?: readonly string[];
   },
 ): WithDeskProvenance<T> {
-  const asof = (opts?.asof || new Date().toISOString()).trim();
+  const asof = (opts?.asof || rowPrintStamp(row) || new Date().toISOString()).trim();
   const sessionDay =
-    (opts?.sessionDay || "").trim().slice(0, 10) ||
-    lastUsEquityTradingDayKey(new Date(asof));
+    (opts?.sessionDay || "").trim().slice(0, 10) || sessionDayOfStamp(asof);
   const fields: Record<string, DeskFieldProvenance> = {};
   if (opts?.signalKeys?.length) {
     const o = row as Record<string, unknown>;
@@ -104,7 +125,7 @@ export function deskRowIsStaleCarry(
   row: unknown,
   now: Date = new Date(),
 ): boolean {
-  if (isUsEquitySessionDay(now)) {
+  if (isDuringUsEquityRegularHours(now)) {
     // During a session day still mark if asof session is older than last session.
     const meta = deskProvenanceOf(row);
     if (!meta?.session_day && !meta?.asof) return Boolean(
@@ -121,10 +142,10 @@ export function deskRowIsStaleCarry(
         (row as { stale?: boolean }).stale === true,
     );
   }
-  const last = lastUsEquityTradingDayKey(now);
+  const last = printSessionDayKey(now);
   const day = (meta.session_day || "").slice(0, 10);
   if (day && day < last) return true;
-  if (day && day === last && !isUsEquitySessionDay(now)) return true;
+  if (day && day === last && !isDuringUsEquityRegularHours(now)) return true;
   return Boolean((row as { stale?: boolean }).stale);
 }
 
@@ -136,8 +157,10 @@ export function deskStaleSessionBadge(
 ): string | null {
   if (!deskRowIsStaleCarry(row, now)) return null;
   const meta = deskProvenanceOf(row);
-  const day = (meta?.session_day || meta?.asof || "").slice(0, 10);
-  const d = day ? new Date(`${day}T16:00:00Z`) : now;
+  const day =
+    (meta?.session_day || meta?.asof || "").slice(0, 10) ||
+    printSessionDayKey(now);
+  const d = new Date(`${day}T16:00:00Z`);
   if (Number.isNaN(d.getTime())) return it ? "ven" : "Fri";
   const wd = d.getUTCDay(); // 0 Sun … 5 Fri
   const itMap = ["dom", "lun", "mar", "mer", "gio", "ven", "sab"];

@@ -331,9 +331,13 @@ export function EisCompetitionNotesBox({
       ) : !loading && !building && !error ? (
         <div className="rounded-md border border-dashed border-[rgb(var(--border))]/45 bg-[rgb(var(--surface-2))]/20 px-2.5 py-2">
           <p className="text-[11px] text-ink-muted leading-snug">
-            {it
-              ? "Competition non ancora scritta per questo prodotto. Premi «Carica competition» per cercarla ora."
-              : "Competition is not written for this product yet. Press “Load competition” to build it now."}
+            {!canBuild
+              ? it
+                ? "Serve il farmaco o la malattia per cercare i competitor: questa scheda non li ha ancora risolti."
+                : "The search needs the drug or the disease: this card has not resolved them yet."
+              : it
+                ? "Competition non ancora scritta per questo prodotto. Premi «Carica competition» per cercarla ora."
+                : "Competition is not written for this product yet. Press “Load competition” to build it now."}
           </p>
         </div>
       ) : null}

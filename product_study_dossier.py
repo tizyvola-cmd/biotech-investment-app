@@ -33,7 +33,7 @@ from orchestrator_io_paths import DATA_DIR
 _CACHE_PATH = Path(DATA_DIR) / "product_study_dossier_cache.json"
 _CACHE_LOCK = threading.Lock()
 _CACHE_TTL_H = 12
-_DOSSIER_VERSION = 6  # clinical taxonomy scores + company-affiliation boost on papers
+_DOSSIER_VERSION = 7  # plain-language readout explainer on studies with posted results
 _MAX_STUDIES = 6
 _MAX_PUBMED = 8
 _MAX_PAPER_REFS = 12
@@ -56,6 +56,24 @@ _SYSTEM_PAPER = (
     "discussion = implications / takeaways from the discussion or conclusions. "
     "Use only facts present in the abstract or provided text; never invent numbers. "
     "Do not repeat the same sentence across keys."
+)
+
+
+_READOUT_WORDS = 70
+_SYSTEM_READOUT = (
+    "You explain clinical trial readouts to a non-clinical investor. "
+    "Return strict JSON only — no markdown. "
+    "Keys: what, why, impact. "
+    "what = what the endpoint physically measures, in plain language (no jargon; "
+    "expand acronyms; say the unit and whether lower or higher is better). "
+    "why = why clinicians and regulators track this measure in this specific "
+    "disease — what it says about the patient. "
+    "impact = how to read the numbers actually reported in this study, including "
+    "the typical effect size of the current standard of care for the same disease "
+    "and endpoint, so the reader can tell whether the result is competitive. "
+    "Name the standard-of-care comparator and its usual effect size when you know "
+    "it, and say explicitly when the comparison is approximate. "
+    "Never invent numbers for this study: use only the results provided."
 )
 
 
@@ -384,6 +402,58 @@ def _build_study_card(raw: dict[str, Any], extracted: dict[str, Any]) -> dict[st
         "ctgov_url": f"https://clinicaltrials.gov/study/{nct}" if nct else None,
         "results_table": _table_rows_for_study(raw, extracted),
     }
+
+
+def _readout_explainer_ai(card: dict[str, Any], *, product: str) -> dict[str, str] | None:
+    """Plain-language reading of the posted endpoints, benchmarked on standard of care."""
+    rows = [r for r in (card.get("results_table") or []) if isinstance(r, dict)]
+    if not rows or not ai_provider.is_available():
+        return None
+
+    lines: list[str] = []
+    for row in rows[:6]:
+        bits = [
+            f"endpoint: {_clean(row.get('endpoint')) or '—'}",
+            f"type: {_clean(row.get('type')) or '—'}",
+            f"time frame: {_clean(row.get('time_frame')) or '—'}",
+            f"result: {_clean(row.get('result')) or '—'}",
+            f"statistic: {_clean(row.get('statistic')) or _clean(row.get('p_value')) or '—'}",
+        ]
+        lines.append(" · ".join(bits))
+
+    prompt = (
+        f"Drug / product: {product}\n"
+        f"Disease / indication: {_clean(card.get('conditions')) or 'not reported'}\n"
+        f"Study: {_clean(card.get('title')) or _clean(card.get('nct_id')) or '—'}\n"
+        f"Phase: {_clean(card.get('phase')) or '—'} · "
+        f"design: {_clean(card.get('design')) or '—'} · "
+        f"patients: {card.get('enrollment') if card.get('enrollment') is not None else '—'}\n\n"
+        "Posted endpoints (sole evidence for this study):\n"
+        + "\n".join(lines)
+        + "\n\nReturn JSON with keys what, why, impact.\n"
+        f"- what: ≤{_READOUT_WORDS} words — what these readouts measure, in plain words.\n"
+        f"- why: ≤{_READOUT_WORDS} words — why this measure is followed in this disease.\n"
+        f"- impact: ≤{_READOUT_WORDS} words — how to read the reported numbers versus "
+        "the standard of care for this disease and endpoint.\n"
+        "Use null for a key you cannot support."
+    )
+    raw = ai_provider.call_ai(prompt, system=_SYSTEM_READOUT, max_tokens=700, task="clinical_kpi")
+    if not raw:
+        return None
+    text = re.sub(r"^```(?:json)?\s*", "", raw.strip(), flags=re.MULTILINE)
+    text = re.sub(r"\s*```$", "", text, flags=re.MULTILINE)
+    try:
+        parsed = json.loads(text)
+    except Exception:
+        return None
+    if not isinstance(parsed, dict):
+        return None
+    out: dict[str, str] = {}
+    for key in ("what", "why", "impact"):
+        val = _cap_words(parsed.get(key), _READOUT_WORDS)
+        if val:
+            out[key] = val
+    return out or None
 
 
 def _pubmed_search_drug_company(product: str, company: str) -> tuple[list[str], str]:
@@ -1025,7 +1095,12 @@ def lookup_product_study_dossier(
     ordered = with_res + without
 
     for full, extracted in ordered[:_MAX_STUDIES]:
-        cards.append(_build_study_card(full, extracted))
+        card = _build_study_card(full, extracted)
+        try:
+            card["readout_explainer"] = _readout_explainer_ai(card, product=product)
+        except Exception:
+            card["readout_explainer"] = None
+        cards.append(card)
 
     pmids_query_papers = _collect_pubmed_papers(product, co)
     papers, pubmed_query = pmids_query_papers

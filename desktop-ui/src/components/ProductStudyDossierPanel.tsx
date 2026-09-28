@@ -6,6 +6,7 @@ import {
   type ProductStudyCard,
   type ProductStudyDossier,
   type ProductStudyPaper,
+  type ProductStudyReadoutExplainer,
   type ProductStudyResultRow,
 } from "../api/supernova";
 import { openExternalUrl } from "../sheet/k8ChartLinks";
@@ -73,6 +74,42 @@ function ResultsTable({ rows }: { rows: ProductStudyResultRow[] }) {
         </tbody>
       </table>
     </div>
+  );
+}
+
+function ReadoutExplainer({
+  explainer,
+  it,
+}: {
+  explainer: ProductStudyReadoutExplainer | null | undefined;
+  it: boolean;
+}) {
+  const what = (explainer?.what || "").trim();
+  const why = (explainer?.why || "").trim();
+  const impact = (explainer?.impact || "").trim();
+  if (!what && !why && !impact) return null;
+  const blocks: { label: string; body: string }[] = [
+    { label: it ? "Cosa misura" : "What it measures", body: what },
+    {
+      label: it ? "Perché si segue in questa malattia" : "Why it is tracked in this disease",
+      body: why,
+    },
+    {
+      label: it ? "Impatto vs standard of care" : "Impact vs standard of care",
+      body: impact,
+    },
+  ].filter((b) => Boolean(b.body));
+  return (
+    <section className="rounded-md border border-[#A79AFF]/25 bg-[#A79AFF]/[0.07] px-2.5 py-2 space-y-1.5">
+      <p className="text-[9px] font-bold uppercase tracking-wide text-[#A79AFF]">
+        {it ? "Readout spiegato" : "Readout explained"}
+      </p>
+      {blocks.map((b) => (
+        <p key={b.label} className="text-[11px] leading-snug text-[#C5CDDC]">
+          <span className="font-semibold text-[#F3F5FA]">{b.label}:</span> {b.body}
+        </p>
+      ))}
+    </section>
   );
 }
 
@@ -167,6 +204,7 @@ function StudyCard({
         </p>
       ) : null}
       <ResultsTable rows={study.results_table ?? []} />
+      <ReadoutExplainer explainer={study.readout_explainer} it={it} />
     </section>
   );
 }

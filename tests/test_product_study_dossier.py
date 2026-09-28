@@ -113,6 +113,62 @@ def test_pubmed_parse_doi_and_reference_links():
     assert p.get("references") in (None, [])
 
 
+def test_readout_explainer(monkeypatch):
+    import json
+
+    import ai_provider
+    from product_study_dossier import _readout_explainer_ai
+
+    card = {
+        "nct_id": "NCT02879383",
+        "title": "Duodenal Mucosal Resurfacing in Type 2 Diabetes",
+        "conditions": "Diabetes Mellitus, Type 2",
+        "phase": "PHASE2",
+        "design": "Double-blind · Randomized",
+        "enrollment": 109,
+        "results_table": [
+            {
+                "endpoint": "Change From Baseline at 24 Weeks in HbA1c",
+                "type": "PRIMARY",
+                "time_frame": "Baseline and 24 weeks",
+                "result": "DMR: -0.60 · Sham: -0.30",
+                "statistic": None,
+                "p_value": None,
+            }
+        ],
+    }
+
+    monkeypatch.setattr(ai_provider, "is_available", lambda: False)
+    assert _readout_explainer_ai(card, product="Revita DMR") is None
+
+    monkeypatch.setattr(ai_provider, "is_available", lambda: True)
+    assert _readout_explainer_ai({"results_table": []}, product="Revita DMR") is None
+
+    captured: dict[str, str] = {}
+
+    def fake_call(prompt, **kwargs):
+        captured["prompt"] = prompt
+        return "```json\n" + json.dumps(
+            {
+                "what": "Average blood sugar over three months, in percentage points; lower is better.",
+                "why": None,
+                "impact": "A 0.3 point advantage over sham is below what metformin delivers.",
+            }
+        ) + "\n```"
+
+    monkeypatch.setattr(ai_provider, "call_ai", fake_call)
+    out = _readout_explainer_ai(card, product="Revita DMR")
+    assert out is not None
+    assert "blood sugar" in out["what"]
+    assert "why" not in out
+    assert "metformin" in out["impact"]
+    assert "Diabetes Mellitus, Type 2" in captured["prompt"]
+    assert "DMR: -0.60 · Sham: -0.30" in captured["prompt"]
+
+    monkeypatch.setattr(ai_provider, "call_ai", lambda prompt, **kwargs: "not json")
+    assert _readout_explainer_ai(card, product="Revita DMR") is None
+
+
 def test_affiliation_match_and_pdf_placeholder(monkeypatch):
     import ai_provider
     from product_study_dossier import (

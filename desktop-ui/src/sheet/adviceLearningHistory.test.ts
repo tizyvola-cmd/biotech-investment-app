@@ -58,6 +58,7 @@ function installBrowserShim(): { restore: () => void } {
 function makeSummary(opts: Partial<AdviceCalibrationSummary> = {}): AdviceCalibrationSummary {
   return {
     lowProb: { count: 10, good: 5, bad: 5, successRatePct: 50, ...opts.lowProb },
+    midProb: { count: 6, good: 2, bad: 4, successRatePct: 33.3, ...opts.midProb },
     highProb: { count: 4, good: 3, bad: 1, successRatePct: 75, ...opts.highProb },
     scoredCount: 14,
     pendingCount: 2,
@@ -86,6 +87,8 @@ describe("adviceLearningHistory", () => {
         feedback: emptyAdviceFeedback(),
         unifiedAdviceSuccessPct: 92.3,
         capturePct: 295.7,
+        buySuccessRatePct: 76.5,
+        buyScored: 12,
         manual: true,
         now: new Date("2026-06-17T10:00:00Z"),
       });
@@ -94,6 +97,8 @@ describe("adviceLearningHistory", () => {
       expect(snap.overallSuccessRatePct).toBe(60);
       expect(snap.unifiedAdviceSuccessPct).toBe(92.3);
       expect(snap.capturePct).toBe(295.7);
+      expect(snap.buySuccessRatePct).toBe(76.5);
+      expect(snap.buyScored).toBe(12);
       expect(snap.scoredPoints).toBe(14);
     });
   });

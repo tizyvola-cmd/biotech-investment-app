@@ -3436,7 +3436,7 @@ def write_grafici_sheet(
     _row = _data_cb + _n_cb + 2
 
     _chart_anchor = _row + 1
-        _gap = _CHART_STACK_GAP
+    _gap = _CHART_STACK_GAP
     _pct_session_chart(
         "1 · % curva ricalibrata vs T−60",
         f"A{_chart_anchor}",
@@ -3447,7 +3447,7 @@ def write_grafici_sheet(
     )
     _pct_session_chart(
         "2 · % storico vs T−60",
-            f"A{_chart_anchor + _gap}",
+        f"A{_chart_anchor + _gap}",
         _data_s,
         _n_s,
         _axis_s,
@@ -3455,7 +3455,7 @@ def write_grafici_sheet(
     )
     _pct_session_chart(
         "3 · % modello vs T−60",
-            f"A{_chart_anchor + 2 * _gap}",
+        f"A{_chart_anchor + 2 * _gap}",
         _data_m,
         _n_m,
         _axis_m,
@@ -3463,7 +3463,7 @@ def write_grafici_sheet(
     )
     _pct_session_chart(
         "4 · Combinato — G4 (curve selezionate)",
-            f"A{_chart_anchor + 3 * _gap}",
+        f"A{_chart_anchor + 3 * _gap}",
         _data_cb,
         _n_cb,
         _axis_cb,

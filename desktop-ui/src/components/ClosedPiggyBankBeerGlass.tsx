@@ -11,7 +11,7 @@ function fmtUsd(v: number): string {
 
 function fmtEur(v: number): string {
   const sign = v >= 0 ? "+" : "−";
-  return `${sign}€ ${Math.abs(v).toLocaleString("en-US", {
+  return `${sign}$ ${Math.abs(v).toLocaleString("en-US", {
     minimumFractionDigits: 2,
     maximumFractionDigits: 2,
   })}`;
@@ -189,16 +189,38 @@ function closedPiggyResetMessage(
   return t("closedPiggy.resetConfirmFirst", { amount: vars.raw });
 }
 
+function fmtCashAmount(v: number): string {
+  return `$ ${Math.abs(v).toLocaleString("en-US", {
+    minimumFractionDigits: 0,
+    maximumFractionDigits: 0,
+  })}`;
+}
+
 export function ClosedPiggyBankBeerGlass({
   display,
   onReset,
   compact = false,
   showExplain = true,
+  reinvestedEur,
+  openFromBudgetEur,
+  gainsCashEur,
 }: {
   display: ClosedPiggyBankDisplay;
   onReset: () => void;
   compact?: boolean;
   showExplain?: boolean;
+  /**
+   * Open-book amount funded by gains beyond the investment budget
+   * (budget-first). Only shown when > 0.
+   */
+  reinvestedEur?: number;
+  /** Open-book amount still covered by the investment budget. */
+  openFromBudgetEur?: number;
+  /**
+   * Closed gains sitting in the piggy cash (not locked in open beyond budget).
+   * When budget covers the open book, this equals the closed P&L still in cash.
+   */
+  gainsCashEur?: number;
 }) {
   const t = useT();
   const isLoss = display.pnlEur < -0.01;
@@ -207,6 +229,23 @@ export function ClosedPiggyBankBeerGlass({
   const pnlColor = noClosed
     ? "text-ink-muted"
     : portfolioPnlAccentClass(display.pnlEur).trim() || "text-ink";
+  const reinvestedAmount =
+    reinvestedEur != null && Number.isFinite(reinvestedEur) && reinvestedEur > 0.5
+      ? reinvestedEur
+      : null;
+  const openBudgetAmount =
+    openFromBudgetEur != null && Number.isFinite(openFromBudgetEur) && openFromBudgetEur > 0.5
+      ? openFromBudgetEur
+      : null;
+  const showBudgetFunded = reinvestedAmount == null && openBudgetAmount != null && !noClosed;
+  const gainsCashAmount = (() => {
+    if (noClosed || reinvestedAmount != null) return null;
+    if (gainsCashEur != null && Number.isFinite(gainsCashEur) && gainsCashEur > 0.5) {
+      return gainsCashEur;
+    }
+    if (showBudgetFunded && display.pnlEur > 0.5) return display.pnlEur;
+    return null;
+  })();
 
   const handleReset = () => {
     if (typeof window !== "undefined" && window.confirm(closedPiggyResetMessage(display, t))) {
@@ -248,10 +287,48 @@ export function ClosedPiggyBankBeerGlass({
           ) : (
             <p className="text-[10px] text-ink-muted/85 leading-snug">{t("closedPiggy.empty")}</p>
           )}
-          {!noClosed && closedPiggyResetConfirmVars(display).hasBaseline ? (
+          {!noClosed && reinvestedAmount != null ? (
+            <p
+              className="text-[10px] tabular-nums text-amber-700/85 dark:text-amber-300/85 leading-snug"
+              title={t("closedPiggy.reinvestedTip", {
+                amount: reinvestedAmount.toLocaleString("en-US", {
+                  minimumFractionDigits: 0,
+                  maximumFractionDigits: 0,
+                }),
+              })}
+            >
+              {t("closedPiggy.reinvested", {
+                amount: reinvestedAmount.toLocaleString("en-US", {
+                  minimumFractionDigits: 0,
+                  maximumFractionDigits: 0,
+                }),
+              })}
+            </p>
+          ) : null}
+          {gainsCashAmount != null ? (
+            <p
+              className="text-[10px] tabular-nums font-semibold text-emerald-700 dark:text-emerald-300 leading-snug"
+              title={t("closedPiggy.gainsCashTip")}
+            >
+              {t("closedPiggy.gainsCash", {
+                amount: fmtCashAmount(gainsCashAmount),
+              })}
+            </p>
+          ) : null}
+          {showBudgetFunded && openBudgetAmount != null ? (
+            <p
+              className="text-[10px] text-ink-muted/90 leading-snug"
+              title={t("closedPiggy.budgetFundedTip")}
+            >
+              {t("closedPiggy.openFromBudgetLine", {
+                amount: fmtCashAmount(openBudgetAmount),
+              })}
+            </p>
+          ) : null}
+          {!noClosed && closedPiggyHasBaseline(display) ? (
             <p className="text-[9px] tabular-nums text-ink-muted/75 leading-snug">
               {t("closedPiggy.sinceResetNote", {
-                raw: display.rawPnlEur.toFixed(2),
+                sinceReset: display.sinceResetPnlEur.toFixed(2),
               })}
             </p>
           ) : null}
@@ -290,21 +367,61 @@ export function ClosedPiggyBankCompact({
   display,
   onReset,
   onOpenDetail,
+  reinvestedEur,
+  openFromBudgetEur,
+  gainsCashEur,
 }: {
   display: ClosedPiggyBankDisplay;
   onReset: () => void;
   onOpenDetail?: () => void;
+  /** Gains in open beyond budget — same as BeerGlass. */
+  reinvestedEur?: number;
+  openFromBudgetEur?: number;
+  gainsCashEur?: number;
 }) {
   const t = useT();
   if (display.positionCount === 0) return null;
   const isLoss = display.pnlEur < -0.01;
   const pnlColor = portfolioPnlAccentClass(display.pnlEur).trim() || "text-ink";
-  const compactTip = closedPiggyHasBaseline(display)
+  const baseTip = closedPiggyHasBaseline(display)
     ? t("closedPiggy.compactTipSinceReset", {
-        sinceReset: display.pnlEur.toFixed(0),
+        sinceReset: display.sinceResetPnlEur.toFixed(0),
         allTime: display.rawPnlEur.toFixed(0),
       })
     : t("closedPiggy.compactTipAllTime", { allTime: display.rawPnlEur.toFixed(0) });
+  const reinvestedAmount =
+    reinvestedEur != null && Number.isFinite(reinvestedEur) && reinvestedEur > 0.5
+      ? reinvestedEur
+      : null;
+  const openBudgetAmount =
+    openFromBudgetEur != null && Number.isFinite(openFromBudgetEur) && openFromBudgetEur > 0.5
+      ? openFromBudgetEur
+      : null;
+  const budgetFunded = reinvestedAmount == null && openBudgetAmount != null;
+  const cashInPiggy =
+    reinvestedAmount == null
+      ? gainsCashEur != null && gainsCashEur > 0.5
+        ? gainsCashEur
+        : budgetFunded && display.pnlEur > 0.5
+          ? display.pnlEur
+          : null
+      : null;
+  const compactTip = [
+    baseTip,
+    cashInPiggy != null
+      ? t("closedPiggy.gainsCash", { amount: fmtCashAmount(cashInPiggy) })
+      : null,
+    reinvestedAmount != null
+      ? t("closedPiggy.reinvested", {
+          amount: reinvestedAmount.toLocaleString("en-US", { maximumFractionDigits: 0 }),
+        })
+      : null,
+    budgetFunded && openBudgetAmount != null
+      ? t("closedPiggy.openFromBudgetLine", { amount: fmtCashAmount(openBudgetAmount) })
+      : null,
+  ]
+    .filter(Boolean)
+    .join("\n\n");
 
   return (
     <div className="closed-piggy-bank-compact shrink-0 flex flex-col items-center gap-0.5 min-w-[4.25rem]">
@@ -321,6 +438,14 @@ export function ClosedPiggyBankCompact({
         <span className="text-[9px] uppercase tracking-wide text-ink-muted/75 leading-none">
           {t("closedPiggy.short")}
         </span>
+        {cashInPiggy != null ? (
+          <span
+            className="text-[8px] font-semibold tabular-nums text-emerald-700 dark:text-emerald-300 leading-none max-w-[5.5rem] text-center"
+            title={t("closedPiggy.gainsCashTip")}
+          >
+            {t("closedPiggy.cashShort", { amount: fmtCashAmount(cashInPiggy) })}
+          </span>
+        ) : null}
       </button>
       <button
         type="button"

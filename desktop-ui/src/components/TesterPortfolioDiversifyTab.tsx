@@ -1,9 +1,10 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type { ChartPoint, SheetTable } from "../types";
 import {
-  closedSimOutcomeRowsFromDoc,
   loadInvestmentSimOutcomes,
+  type SimOutcomeRow,
 } from "../data/investmentSimOutcomesData";
+import { closedValidationOutcomeRowsFromDoc } from "../sheet/simOutcomeCycleDedup";
 import { loadSdsCohort, type SdsRow } from "../api/supernova";
 import { useLang, useT } from "../shared/i18n";
 import { reconcileInvestSimInputs } from "../sheet/investSimKeys";
@@ -30,7 +31,7 @@ export function TesterPortfolioDiversifyTab({
   const it = lang === "it";
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
-  const [closedRows, setClosedRows] = useState<ReturnType<typeof closedSimOutcomeRowsFromDoc>>([]);
+  const [closedRows, setClosedRows] = useState<SimOutcomeRow[]>([]);
   const [sdsRows, setSdsRows] = useState<SdsRow[] | null>(null);
   const [generatedAt, setGeneratedAt] = useState<string | null>(null);
   const [reloadToken, setReloadToken] = useState(0);
@@ -92,7 +93,7 @@ export function TesterPortfolioDiversifyTab({
             : raw;
         }
         const { doc, error: loadErr } = await loadInvestmentSimOutcomes({ rebuild, syncInputs });
-        setClosedRows(closedSimOutcomeRowsFromDoc(doc));
+        setClosedRows(closedValidationOutcomeRowsFromDoc(doc));
         setGeneratedAt(doc?.generated_at ?? null);
         if (loadErr) setError(loadErr);
         if (rebuild) setReloadToken((n) => n + 1);

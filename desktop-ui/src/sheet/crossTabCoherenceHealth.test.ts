@@ -101,16 +101,17 @@ describe("assessCrossTabCoherenceHealth", () => {
     expect(h.warningIssues.some((i) => i.id === "storeAlignment")).toBe(true);
   });
 
-  it("warn when relaxed-only tickers exist but not in store", () => {
+  it("ok (no alert) when relaxed-only tickers exist but not in store", () => {
     const h = assessCrossTabCoherenceHealth(
       baseReport({
         relaxedHot: 2,
         divergentTickers: ["VRTX", "VWA"],
       }),
     );
-    expect(h.overall).toBe("warn");
-    expect(h.metricLevels.relaxedHot).toBe("warn");
+    expect(h.overall).toBe("ok");
+    expect(h.metricLevels.relaxedHot).toBe("ok");
     expect(h.criticalIssues).toHaveLength(0);
+    expect(h.warningIssues.some((i) => i.id === "relaxedDrift")).toBe(false);
   });
 
   it("error when legacy preview publisher has hot keys", () => {
@@ -127,5 +128,38 @@ describe("assessCrossTabCoherenceHealth", () => {
     );
     expect(h.overall).toBe("error");
     expect(h.criticalIssues.some((i) => i.id === "publishSource")).toBe(true);
+  });
+
+  it("store-stale dismiss signature stays stable as ageMin ticks", () => {
+    const a = assessCrossTabCoherenceHealth(
+      baseReport({
+        openPositions: 3,
+        storeAgeMinutes: 402,
+        store: {
+          hotKeys: ["co:SYRE|2026-08-19"],
+          watchKeys: [],
+          top2BuyKeys: [],
+          publishedBy: "dashboard-strict",
+          updatedAt: Date.now() - 402 * 60_000,
+        },
+      }),
+    );
+    const b = assessCrossTabCoherenceHealth(
+      baseReport({
+        openPositions: 3,
+        storeAgeMinutes: 403,
+        store: {
+          hotKeys: ["co:SYRE|2026-08-19"],
+          watchKeys: [],
+          top2BuyKeys: [],
+          publishedBy: "dashboard-strict",
+          updatedAt: Date.now() - 403 * 60_000,
+        },
+      }),
+    );
+    expect(a.criticalIssues.some((i) => i.id === "storeFreshness")).toBe(true);
+    expect(a.signature).toBe(b.signature);
+    expect(a.signature).not.toContain("402");
+    expect(a.signature).not.toContain("403");
   });
 });

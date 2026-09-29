@@ -38,8 +38,18 @@ export type ModelSizeErrorPanelProps = {
 
 export function ModelSizeErrorPanel({ view, defaultOpen = true }: ModelSizeErrorPanelProps) {
   const t = useT();
-  useLang();
+  const { lang } = useLang();
   const [open, setOpen] = useState(defaultOpen);
+
+  const lastSnapshotLabel = useMemo(() => {
+    if (!view.lastSnapshotIso) return null;
+    const when = new Date(view.lastSnapshotIso).toLocaleString(lang === "it" ? "it-IT" : "en-US", {
+      dateStyle: "medium",
+      timeStyle: "short",
+      hour12: false,
+    });
+    return t("modelLab.qc.modelSizeError.lastSnapshot", { when });
+  }, [view.lastSnapshotIso, lang, t]);
 
   const chartData = useMemo(
     () =>
@@ -69,6 +79,9 @@ export function ModelSizeErrorPanel({ view, defaultOpen = true }: ModelSizeError
         <div className="min-w-0">
           <p className="text-xs font-semibold text-ink">{t("modelLab.qc.modelSizeError.title")}</p>
           <p className="text-[10px] text-ink-muted mt-0.5">{t("modelLab.qc.modelSizeError.lead")}</p>
+          {lastSnapshotLabel ? (
+            <p className="text-[9px] text-ink-muted mt-0.5">{lastSnapshotLabel}</p>
+          ) : null}
           <p className={`text-sm font-bold tabular-nums mt-1 ${sizeErrorTone(view.currentMaePp)}`}>
             {headerValue}
             {deltaNote ? (

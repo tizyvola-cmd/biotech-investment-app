@@ -5,8 +5,9 @@ morning_research_refresh.py — Aggiornamento mattutino ricerca (Lun–Ven, ~07:
 Esegue:
   1. ``new_bio_ipo.py`` — nuove IPO biotech → ``biotech_symbols.json`` + ``yf.json``
   2. ``launch_simulation_cd_scan.py`` — fetch CT.gov/FDA + rigenera Simulation + snapshot
-  3. ``merge_yf_into_financial_snapshot`` — ticker IPO visibili subito in Financial
-  4. bump ``desktop_data_manifest.json``
+  3. ``hype_volume_funnel_scan.py`` — VOL VS PREV ≥400% off-sheet + drop HYPE stale
+  4. ``merge_yf_into_financial_snapshot`` — ticker IPO visibili subito in Financial
+  5. bump ``desktop_data_manifest.json``
 
 Pianificato dal web scheduler una volta al giorno feriale (default 07:00 Europe/Rome).
 """
@@ -37,6 +38,7 @@ def main() -> int:
     ap.add_argument("--force", action="store_true", help="esegui anche nel weekend")
     ap.add_argument("--skip-ipo", action="store_true")
     ap.add_argument("--skip-cd-scan", action="store_true")
+    ap.add_argument("--skip-hype", action="store_true")
     ap.add_argument("--quiet", action="store_true")
     args = ap.parse_args()
 
@@ -82,13 +84,32 @@ def main() -> int:
             if rc != 0:
                 failures.append(f"cd_scan (exit {rc})")
 
+        if not args.skip_hype:
+            rc = run_step(
+                logger,
+                name="hype_volume_funnel",
+                cmd=[py, "-u", "scripts/hype_volume_funnel_scan.py"],
+                timeout_min=45,
+            )
+            if rc != 0:
+                failures.append(f"hype_volume_funnel (exit {rc})")
+
         try:
-            from excel_sheet_reader import merge_yf_into_financial_snapshot
+            from excel_sheet_reader import (
+                merge_yf_into_financial_snapshot,
+                sync_yf_quotes_into_financial_snapshot,
+            )
 
             merge_result = merge_yf_into_financial_snapshot()
             logger.info("Financial merge IPO: %s", merge_result)
             if merge_result.get("error"):
                 failures.append(f"merge_yf ({merge_result['error']})")
+            # CD-scan export riscrive Financial da Excel (prezzi spesso stale):
+            # ripropaga sempre yf.json → snapshot dopo merge IPO.
+            sync_result = sync_yf_quotes_into_financial_snapshot()
+            logger.info("Financial Yahoo quote sync: %s", sync_result)
+            if sync_result.get("error"):
+                failures.append(f"sync_yf_quotes ({sync_result['error']})")
         except Exception as exc:
             failures.append(f"merge_yf ({exc})")
 

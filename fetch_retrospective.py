@@ -688,14 +688,23 @@ def _fetch_xbi_close(force: bool = False) -> pd.Series:
         else:
             print(f"  [retro] Download {_XBI_TICKER} da yfinance...")
             import yfinance as _yf
-            tk   = _yf.Ticker(_XBI_TICKER)
-            # "max" non supportato per tutti i ticker — usa start date
-            try:
-                hist = tk.history(start="2005-01-01", auto_adjust=True)
-            except Exception:
-                hist = tk.history(period="10y", auto_adjust=True)
-            hist.index = pd.to_datetime(hist.index).tz_localize(None)
+            hist = pd.DataFrame()
+            for _sym in (_XBI_TICKER, "XBI"):
+                try:
+                    tk = _yf.Ticker(_sym)
+                    try:
+                        _h = tk.history(start="2005-01-01", auto_adjust=True)
+                    except Exception:
+                        _h = tk.history(period="10y", auto_adjust=True)
+                    if not _h.empty and "Close" in _h.columns:
+                        hist = _h
+                        if _sym != _XBI_TICKER:
+                            print(f"  [retro] {_XBI_TICKER}: fallback a '{_sym}' (SPDR ETF).")
+                        break
+                except Exception:
+                    continue
             if not hist.empty:
+                hist.index = pd.to_datetime(hist.index).tz_localize(None)
                 with open(cache_file, "wb") as _f:
                     _pkl.dump(hist, _f)
 

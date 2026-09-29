@@ -3,6 +3,7 @@ import type { SheetTable } from "../types";
 import { tickersFromSimulationTable } from "../sheet/simulationTickers";
 import type { SheetCellRenderer } from "./ConfigurableSheetGrid";
 import { SheetDataGrid } from "./SheetDataGrid";
+import { useLang } from "../shared/i18n";
 
 function tickerOnRow(row: Record<string, unknown>): string {
   return String(row.ticker ?? row.Ticker ?? row.symbol ?? row.Symbol ?? "")
@@ -34,7 +35,7 @@ export function SimulationPortfolioSheetView({
   loading: boolean;
   error: string | null;
   onReload: () => void;
-  countLabel?: string;
+  countLabel?: string | { en: string; it: string };
   /** localStorage key for table layout (default: API sheet name). */
   layoutSheetId?: string;
   renderCell?: SheetCellRenderer;
@@ -56,6 +57,9 @@ export function SimulationPortfolioSheetView({
   >;
   emptyTickerHint?: string;
 }) {
+  const { lang } = useLang();
+  const it = lang === "it";
+  const countLabelText = typeof countLabel === "string" ? countLabel : (it ? countLabel.it : countLabel.en);
   const tickers = useMemo(() => {
     if (simCdByTicker && Object.keys(simCdByTicker).length > 0) {
       return Object.keys(simCdByTicker).sort();
@@ -117,15 +121,21 @@ export function SimulationPortfolioSheetView({
         <h2 className="text-sm font-semibold text-ink">{title}</h2>
         <p className="text-xs text-ink-muted mt-1">
           {simCdByTicker && Object.keys(simCdByTicker).length > 0
-            ? `${Object.keys(simCdByTicker).length} Simulation catalysts (upcoming CD ≤60 d)`
-            : `Only the ${tickers.length} companies in Simulation`}
+            ? (it
+                ? `${Object.keys(simCdByTicker).length} catalizzatori Simulation (CD in arrivo ≤60 g)`
+                : `${Object.keys(simCdByTicker).length} Simulation catalysts (upcoming CD ≤60 d)`)
+            : (it
+                ? `Solo le ${tickers.length} aziende in Simulation`
+                : `Only the ${tickers.length} companies in Simulation`)}
           {" — "}
           {sourceHint}.{" "}
           {dataTable?.row_count != null && (
             <>
-              {dataTable.row_count} total {countLabel}
+              {dataTable.row_count} {it ? `${countLabelText} totali` : `total ${countLabelText}`}
               {selected !== "all" && filteredTable
-                ? ` · ${filteredTable.row_count} for ${selected}`
+                ? (it
+                    ? ` · ${filteredTable.row_count} per ${selected}`
+                    : ` · ${filteredTable.row_count} for ${selected}`)
                 : ""}
               .
             </>
@@ -133,7 +143,7 @@ export function SimulationPortfolioSheetView({
         </p>
         {dataTable?.simulation_error && (
           <p className="text-xs text-ink-muted mt-1">
-            Simulation warning: {dataTable.simulation_error}
+            {it ? "Avviso Simulation:" : "Simulation warning:"} {dataTable.simulation_error}
           </p>
         )}
       </div>
@@ -152,7 +162,7 @@ export function SimulationPortfolioSheetView({
           }`}
           onClick={() => setSelected("all")}
         >
-          All ({dataTable?.row_count ?? 0})
+          {it ? "Tutti" : "All"} ({dataTable?.row_count ?? 0})
         </button>
         {tickers.map((tk) => {
           const n = countsByTicker.get(tk) ?? 0;
@@ -204,6 +214,8 @@ function ClinicalCatalystBanner({
     Parameters<typeof SimulationPortfolioSheetView>[0]["simCdByTicker"]
   >[string];
 }) {
+  const { lang } = useLang();
+  const it = lang === "it";
   const href =
     entry.studyHref ??
     (entry.nct ? `https://clinicaltrials.gov/study/${entry.nct}` : null);
@@ -211,15 +223,15 @@ function ClinicalCatalystBanner({
     entry.daysToCd == null
       ? null
       : entry.daysToCd === 0
-        ? "today"
+        ? (it ? "oggi" : "today")
         : entry.daysToCd > 0
-          ? `in ${entry.daysToCd} d`
-          : `${Math.abs(entry.daysToCd)} d ago`;
+          ? (it ? `tra ${entry.daysToCd} g` : `in ${entry.daysToCd} d`)
+          : (it ? `${Math.abs(entry.daysToCd)} g fa` : `${Math.abs(entry.daysToCd)} d ago`);
 
   return (
     <div className="rounded-lg border border-accent/40 bg-accent/5 px-4 py-3">
       <p className="text-[10px] uppercase tracking-wide text-accent font-semibold">
-        Catalyst Simulation
+        {it ? "Catalizzatore Simulation" : "Catalyst Simulation"}
       </p>
       <div className="mt-1 flex flex-wrap items-baseline gap-x-3 gap-y-1">
         <span className="text-sm font-semibold text-ink">{entry.ticker}</span>
@@ -229,7 +241,9 @@ function ClinicalCatalystBanner({
       </div>
       <dl className="mt-2 grid gap-1 text-xs sm:grid-cols-2 lg:grid-cols-4">
         <div>
-          <dt className="text-ink-muted">Completion Date (Simulation)</dt>
+          <dt className="text-ink-muted">
+            {it ? "Completion Date (Simulation)" : "Completion Date (Simulation)"}
+          </dt>
           <dd className="font-medium text-ink">
             {entry.completionDateDisplay}
             {daysLabel ? (
@@ -253,7 +267,7 @@ function ClinicalCatalystBanner({
               rel="noopener noreferrer"
               className="inline-flex items-center rounded-md bg-accent px-3 py-1.5 text-xs font-medium text-white hover:opacity-90"
             >
-              Open study on ClinicalTrials.gov
+              {it ? "Apri studio su ClinicalTrials.gov" : "Open study on ClinicalTrials.gov"}
             </a>
           ) : null}
         </div>

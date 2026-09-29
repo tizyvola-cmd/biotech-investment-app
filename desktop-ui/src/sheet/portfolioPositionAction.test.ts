@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import {
+  piggyChipToneFromRecAndPnl,
   portfolioChipToneFromAction,
   resolvePortfolioPositionAction,
 } from "./portfolioPositionAction";
@@ -49,5 +50,28 @@ describe("resolvePortfolioPositionAction", () => {
     expect(portfolioChipToneFromAction("hold")).toBe("warn");
     expect(portfolioChipToneFromAction("sell")).toBe("loss");
     expect(portfolioChipToneFromAction("gain")).toBe("gain");
+  });
+});
+
+describe("piggyChipToneFromRecAndPnl", () => {
+  it("keeps green when MTM positive even if REC is uncertain", () => {
+    expect(
+      piggyChipToneFromRecAndPnl("review", { pnlEur: 108, pnlPct: 2.7 }, "sell"),
+    ).toBe("gain");
+  });
+
+  it("uses amber for Hold/Uncertain while MTM is still negative (BNTX/CHRS)", () => {
+    expect(
+      piggyChipToneFromRecAndPnl("hold", { pnlEur: -69, pnlPct: -1.7 }, "sell"),
+    ).toBe("warn");
+    expect(
+      piggyChipToneFromRecAndPnl("review", { pnlEur: -0.3, pnlPct: -0.1 }, "sell"),
+    ).toBe("warn");
+  });
+
+  it("keeps red only when REC is Sell on a losing line", () => {
+    expect(
+      piggyChipToneFromRecAndPnl("sell", { pnlEur: -327, pnlPct: -6.5 }, "sell"),
+    ).toBe("loss");
   });
 });

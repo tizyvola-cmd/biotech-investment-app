@@ -71,6 +71,7 @@ import {
   sheetGridThClassAlign,
 } from "../sheet/sheetGridTable";
 import { SheetGridColgroup } from "../sheet/SheetGridColgroup";
+import { RegulatoryRiskPanel } from "./RegulatoryRiskPanel";
 
 type SdsTab = "score" | "history";
 
@@ -84,7 +85,6 @@ type SupernovaDistanceScoreViewProps = {
   investInputs?: InvestSimInputs;
   /** Simulation sheet columns — for target/stop markers on sparklines. */
   simTableColumns?: string[];
-  onOpenSimulationRow?: (focus: { ticker: string; cd?: string }) => void;
   /** Seleziona ticker in tabella/dettaglio SDS all'apertura. */
   focusTicker?: string | null;
   onFocusTickerConsumed?: () => void;
@@ -353,12 +353,28 @@ function DetailPanel({ row, onClose }: { row: SdsRow; onClose: () => void }) {
           <span className="text-ink-muted">{t("decisionLab.sds.size")}: </span>
           {inv?.position_size ?? "—"}
         </p>
+        {inv?.pred_reliable === false ? (
+          <p className="text-amber-700 dark:text-amber-400">
+            <span className="text-ink-muted">{t("decisionLab.sds.reliability")}: </span>
+            {t("decisionLab.sds.notReliable")}
+          </p>
+        ) : inv?.pred_stars != null ? (
+          <p>
+            <span className="text-ink-muted">{t("decisionLab.sds.reliability")}: </span>
+            <span className="text-amber-500">{"★".repeat(Math.max(0, Math.min(5, inv.pred_stars)))}</span>
+            <span className="text-ink-muted/30">{"★".repeat(5 - Math.max(0, Math.min(5, inv.pred_stars)))}</span>
+            {inv.pred_reliability_pct != null ? (
+              <span className="text-ink-muted tabular-nums"> · {inv.pred_reliability_pct.toFixed(0)}%</span>
+            ) : null}
+          </p>
+        ) : null}
         <p className="text-ink-muted">{inv?.rationale}</p>
         {inv?.exit_target ? (
           <p className="text-[10px] text-ink-muted pt-1">↗ {inv.exit_target}</p>
         ) : null}
         {inv?.stop_loss ? <p className="text-[10px] text-ink-muted">⛔ {inv.stop_loss}</p> : null}
       </div>
+      <RegulatoryRiskPanel ticker={row.ticker} />
       <p className="text-[10px] text-ink-muted">
         {t("decisionLab.sds.missingData", { pct: row.missing_data_pct ?? 0 })}
       </p>
@@ -370,7 +386,6 @@ export function SupernovaDistanceScoreView({
   simChartsByTicker,
   investInputs,
   simTableColumns,
-  onOpenSimulationRow,
   focusTicker,
   onFocusTickerConsumed,
   parentReloadToken = 0,
@@ -1037,9 +1052,6 @@ export function SupernovaDistanceScoreView({
                     const simMeta = simChartsByTicker?.get(tk);
                     const port = portfolioByTicker.get(tk);
                     const roi = roiByTicker.get(tk);
-                    const completionCd = simMeta?.row
-                      ? String(simMeta.row["Completion Date"] ?? "").trim()
-                      : undefined;
                     const curvesForTone = simMeta?.row ? extractCurveInputs(simMeta.row) : null;
                     const rowOutlook = rowOutlookByTicker.get(tk) ?? "flat";
                     const isRowFocused = selected?.ticker === r.ticker;
@@ -1122,22 +1134,6 @@ export function SupernovaDistanceScoreView({
                                 }}
                               >
                                 +chart
-                              </button>
-                            ) : null}
-                            {onOpenSimulationRow ? (
-                              <button
-                                type="button"
-                                className="text-[9px] font-semibold text-accent hover:underline"
-                                title={t("decisionLab.sds.openSimulationRow", { ticker: r.ticker })}
-                                onClick={(e) => {
-                                  e.stopPropagation();
-                                  onOpenSimulationRow({
-                                    ticker: tk,
-                                    cd: completionCd && completionCd !== "—" ? completionCd : undefined,
-                                  });
-                                }}
-                              >
-                                {t("sim.workspace.tickerSimulationLink")}
                               </button>
                             ) : null}
                           </div>

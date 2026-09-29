@@ -39,6 +39,13 @@ from bs4 import BeautifulSoup
 
 import ai_provider
 
+try:
+    import ai_secrets_store
+
+    ai_secrets_store.load_and_apply()
+except Exception:
+    pass
+
 # ── Config ─────────────────────────────────────────────────────────────────────
 EDGAR_USER_AGENT = os.environ.get(
     "SEC_EDGAR_USER_AGENT",
@@ -185,8 +192,17 @@ def _fetch_submissions(cik10: str) -> dict[str, Any] | None:
     return None
 
 
-def _recent_8k_filings(submissions: dict[str, Any], max_n: int = 10) -> list[dict[str, Any]]:
-    """Return most recent 8-K filings from EDGAR submissions JSON."""
+def _recent_8k_filings(
+    submissions: dict[str, Any],
+    max_n: int = 10,
+    *,
+    include_6k: bool = False,
+    extra_forms: set[str] | frozenset[str] | None = None,
+) -> list[dict[str, Any]]:
+    """Return most recent current-report-style filings from EDGAR submissions JSON.
+
+    Always includes 8-K / 8-K/A. Optional 6-K and any ``extra_forms`` (e.g. 424B5, DEF 14A).
+    """
     recent = submissions.get("filings", {}).get("recent", {})
     forms = recent.get("form", [])
     dates = recent.get("filingDate", [])
@@ -195,9 +211,15 @@ def _recent_8k_filings(submissions: dict[str, Any], max_n: int = 10) -> list[dic
     items_list = recent.get("items", [])
     descs = recent.get("primaryDocDescription", [])
 
+    allowed: set[str] = {"8-K", "8-K/A"}
+    if include_6k:
+        allowed |= {"6-K", "6-K/A"}
+    if extra_forms:
+        allowed |= {str(x).strip() for x in extra_forms if str(x).strip()}
+
     result: list[dict[str, Any]] = []
     for i, ft in enumerate(forms):
-        if ft in ("8-K", "8-K/A") and len(result) < max_n:
+        if ft in allowed and len(result) < max_n:
             result.append(
                 {
                     "form_type": ft,
@@ -220,42 +242,381 @@ def _filing_html_url(cik10: str, accession: str, primary_doc: str) -> str:
     )
 
 
-def _extract_text_from_html(html: str) -> str:
+def _extract_text_from_html(html: str, *, max_chars: int | None = None) -> str:
+    limit = MAX_TEXT_CHARS if max_chars is None else max(1000, int(max_chars))
     soup = BeautifulSoup(html, "html.parser")
-    for tag in soup(["script", "style", "head", "nav", "footer"]):
+    for tag in soup(
+        ["script", "style", "noscript", "svg", "iframe", "form", "button"]
+    ):
         tag.decompose()
-    text = soup.get_text(separator=" ", strip=True)
+    # Prefer article body over site chrome (BioSpace keeps Subscribe/Menu outside <nav>).
+    root = (
+        soup.find("article")
+        or soup.find("main")
+        or soup.find(attrs={"role": "main"})
+        or soup.find(class_=re.compile(r"(?i)article[-_]?body|post[-_]?content|entry[-_]?content"))
+        or soup
+    )
+    for tag in list(root.find_all(["nav", "footer", "aside", "header"])):
+        # Keep in-article headers (h1 wrappers); drop site chrome headers.
+        if tag.name == "header" and tag.find("h1"):
+            continue
+        tag.decompose()
+    for tag in list(root.find_all(True)):
+        attrs = getattr(tag, "attrs", None) or {}
+        raw_cls = attrs.get("class") if isinstance(attrs, dict) else None
+        if isinstance(raw_cls, (list, tuple)):
+            cls = " ".join(str(x) for x in raw_cls).lower()
+        else:
+            cls = str(raw_cls or "").lower()
+        tid = str(attrs.get("id") or "").lower() if isinstance(attrs, dict) else ""
+        role = str(attrs.get("role") or "").lower() if isinstance(attrs, dict) else ""
+        if role in {"navigation", "banner", "search", "complementary"}:
+            tag.decompose()
+            continue
+        if re.search(
+            r"(?i)(nav|menu|subscribe|newsletter|cookie|modal|popup|share[-_]?bar|"
+            r"social[-_]?share|site[-_]?header|global[-_]?header)",
+            f"{cls} {tid}",
+        ):
+            tag.decompose()
+    text = root.get_text(separator=" ", strip=True)
     text = re.sub(r"\s{3,}", "\n\n", text)
-    return text[:MAX_TEXT_CHARS]
+    return text[:limit]
 
 
-def _extract_text_from_pdf(content: bytes) -> str:
+def _extract_html_page_title(html: str) -> str | None:
+    """og:title / twitter:title / h1 — never nav chrome."""
+    soup = BeautifulSoup(html or "", "html.parser")
+    for key, attr in (
+        ("og:title", "property"),
+        ("twitter:title", "name"),
+        ("twitter:title", "property"),
+    ):
+        tag = soup.find("meta", attrs={attr: key})
+        if tag and tag.get("content"):
+            t = re.sub(r"\s+", " ", str(tag.get("content") or "")).strip()
+            t = re.sub(r"\s*[-|–]\s*BioSpace\s*$", "", t, flags=re.I).strip()
+            if len(t) >= 24:
+                return t[:300]
+    h1 = soup.find("h1")
+    if h1:
+        t = re.sub(r"\s+", " ", h1.get_text(" ", strip=True)).strip()
+        if len(t) >= 24 and not re.match(
+            r"(?i)^(subscribe|menu|show\s+search|search\s+query)\b", t
+        ):
+            return t[:300]
+    title_tag = soup.find("title")
+    if title_tag:
+        t = re.sub(r"\s+", " ", title_tag.get_text(" ", strip=True)).strip()
+        t = re.sub(r"\s*[-|–]\s*BioSpace\s*$", "", t, flags=re.I).strip()
+        if len(t) >= 24 and not re.match(
+            r"(?i)^(subscribe|menu|show\s+search)\b", t
+        ):
+            return t[:300]
+    return None
+
+
+def _dehyphenate_line_breaks(text: str) -> str:
+    """Join PDF soft hyphens split across line breaks (tetrahy- drocannabinol)."""
+
+    def _join(m: re.Match[str]) -> str:
+        left, right = m.group(1), m.group(2)
+        if right[:1].islower():
+            return left + right
+        return f"{left}- {right}"
+
+    out = text or ""
+    out = re.sub(r"(\w)-\s*\n\s*(\w)", _join, out)
+    out = re.sub(r"(\w)-\s+(\w)", _join, out)
+    return out
+
+
+def _words_to_reading_order(words: list[dict[str, Any]], *, y_tolerance: float = 3.0) -> str:
+    if not words:
+        return ""
+    ordered = sorted(
+        words,
+        key=lambda w: (round(float(w.get("top") or 0), 1), float(w.get("x0") or 0)),
+    )
+    lines: list[str] = []
+    cur_top: float | None = None
+    cur_parts: list[str] = []
+    for w in ordered:
+        top = float(w.get("top") or 0)
+        token = str(w.get("text") or "").strip()
+        if not token:
+            continue
+        if cur_top is None or abs(top - cur_top) <= y_tolerance:
+            cur_parts.append(token)
+            cur_top = top if cur_top is None else cur_top
+        else:
+            lines.append(" ".join(cur_parts))
+            cur_parts = [token]
+            cur_top = top
+    if cur_parts:
+        lines.append(" ".join(cur_parts))
+    return "\n".join(lines)
+
+
+def _extract_pdf_page_text(page: Any) -> str:
+    """Column-aware page text for journal PDFs (avoids interleaved two-column garbage)."""
+    try:
+        words = page.extract_words(use_text_flow=True, keep_blank_chars=False) or []
+    except TypeError:
+        words = page.extract_words() or []
+    if len(words) < 30:
+        plain = page.extract_text() or ""
+        return _dehyphenate_line_breaks(plain)
+    width = float(getattr(page, "width", 0) or 0)
+    if width <= 0:
+        plain = page.extract_text() or ""
+        return _dehyphenate_line_breaks(plain)
+    mid = width * 0.52
+    left = [w for w in words if float(w.get("x0") or 0) < mid]
+    right = [w for w in words if float(w.get("x0") or 0) >= mid]
+    if len(left) >= 20 and len(right) >= 20:
+        return _dehyphenate_line_breaks(
+            _words_to_reading_order(left) + "\n\n" + _words_to_reading_order(right)
+        )
+    plain = page.extract_text() or ""
+    return _dehyphenate_line_breaks(plain)
+
+
+def repair_pdf_text(text: str) -> str:
+    """Normalize extracted PDF text while preserving paragraph/section line breaks."""
+    s = (text or "").replace("\r\n", "\n").replace("\r", "\n")
+    s = _dehyphenate_line_breaks(s)
+    lines: list[str] = []
+    for ln in s.split("\n"):
+        ln = re.sub(r"[ \t]+", " ", ln).strip()
+        if ln:
+            lines.append(ln)
+    s = "\n".join(lines)
+    return re.sub(r"\n{3,}", "\n\n", s).strip()
+
+
+def _extract_text_from_pdf(content: bytes, *, max_chars: int | None = None) -> str:
+    limit = MAX_TEXT_CHARS if max_chars is None else max(1000, int(max_chars))
+    if not content:
+        return ""
+    # pdfplumber (layout-aware)
     try:
         import io
         import pdfplumber
 
         with pdfplumber.open(io.BytesIO(content)) as pdf:
             parts: list[str] = []
-            for page in pdf.pages[:6]:
-                t = page.extract_text() or ""
+            for page in pdf.pages[:30]:
+                t = _extract_pdf_page_text(page)
                 parts.append(t)
-                if sum(len(p) for p in parts) >= MAX_TEXT_CHARS:
+                if sum(len(p) for p in parts) >= limit:
                     break
-        return "\n".join(parts)[:MAX_TEXT_CHARS]
+        text = repair_pdf_text("\n\n".join(parts))[:limit].strip()
+        if len(text) >= 40:
+            return text
     except Exception as exc:
-        print(f"[CatalystFeed] PDF parse error: {exc}", flush=True)
+        print(f"[CatalystFeed] PDF pdfplumber error: {exc}", flush=True)
+
+    # pypdf fallback (common on scientific PDFs when pdfplumber yields empty)
+    try:
+        import io
+        from pypdf import PdfReader
+
+        reader = PdfReader(io.BytesIO(content))
+        parts = []
+        for page in reader.pages[:30]:
+            t = page.extract_text() or ""
+            parts.append(t)
+            if sum(len(p) for p in parts) >= limit:
+                break
+        return repair_pdf_text("\n\n".join(parts))[:limit].strip()
+    except Exception as exc:
+        print(f"[CatalystFeed] PDF pypdf error: {exc}", flush=True)
         return ""
 
 
-def _fetch_filing_text(cik10: str, accession: str, primary_doc: str) -> str | None:
+def _fetch_filing_text(
+    cik10: str,
+    accession: str,
+    primary_doc: str,
+    *,
+    max_chars: int | None = None,
+) -> str | None:
     url = _filing_html_url(cik10, accession, primary_doc)
     r = _edgar_get(url)
     if not r or r.status_code != 200:
         return None
     ct = r.headers.get("Content-Type", "")
     if "pdf" in ct.lower() or primary_doc.lower().endswith(".pdf"):
-        return _extract_text_from_pdf(r.content) or None
-    return _extract_text_from_html(r.text) or None
+        return _extract_text_from_pdf(r.content, max_chars=max_chars) or None
+    return _extract_text_from_html(r.text, max_chars=max_chars) or None
+
+
+def _filing_index_docs(cik10: str, accession: str) -> list[dict[str, Any]]:
+    """EDGAR filing index.json document list (primary + exhibits)."""
+    cik_int = str(int(cik10))
+    accession_flat = accession.replace("-", "")
+    url = (
+        f"https://www.sec.gov/Archives/edgar/data/"
+        f"{cik_int}/{accession_flat}/index.json"
+    )
+    r = _edgar_get(url)
+    if not r or r.status_code != 200:
+        return []
+    try:
+        data = r.json()
+    except Exception:
+        return []
+    items = (((data or {}).get("directory") or {}).get("item")) or []
+    if isinstance(items, dict):
+        items = [items]
+    out: list[dict[str, Any]] = []
+    for it in items:
+        name = str(it.get("name") or "")
+        if not name:
+            continue
+        out.append(
+            {
+                "name": name,
+                "type": str(it.get("type") or ""),
+                "size": int(it.get("size") or 0) if str(it.get("size") or "").isdigit() else 0,
+            }
+        )
+    return out
+
+
+def _fetch_8k_bundle_text(
+    cik10: str,
+    accession: str,
+    primary_doc: str,
+    *,
+    max_chars: int = 120_000,
+    fetch_exhibits: bool = True,
+    force_exhibits: bool = False,
+    meta_out: dict[str, Any] | None = None,
+) -> str | None:
+    """
+    Primary 8-K body + optional Ex-99 press-release exhibits (where catalyst dates live).
+
+    The AI Catalyst Feed still uses short ``_fetch_filing_text`` truncations;
+    Calendar / Financial dossier need the full PR language (PDUFA / 2H / Qx / $).
+
+    ``force_exhibits=True``: always try Ex-99 (wrapper Items 2.02/7.01/8.01/5.02),
+    ignoring the keyword early-skip. Prefer truncating the primary over exhibits
+    when the combined bundle would exceed ``max_chars``.
+    """
+    if meta_out is not None:
+        meta_out.clear()
+        meta_out.update(
+            {
+                "bundle_chars_primary": 0,
+                "bundle_chars_exhibit": 0,
+                "exhibit_names": [],
+                "exhibit_fetch_mode": "skipped",
+            }
+        )
+
+    # Leave headroom for exhibits when we intend to fetch them.
+    primary_cap = max_chars
+    if fetch_exhibits:
+        # Keep ≥25k (or 35% of budget) for Ex-99 when forcing / normally fetching.
+        reserve = max(25_000, int(max_chars * 0.35)) if force_exhibits else max(8_000, int(max_chars * 0.15))
+        primary_cap = max(12_000, max_chars - reserve)
+
+    primary = _fetch_filing_text(cik10, accession, primary_doc, max_chars=primary_cap)
+    primary_len = len(primary or "")
+    if meta_out is not None:
+        meta_out["bundle_chars_primary"] = primary_len
+
+    if not fetch_exhibits:
+        if meta_out is not None:
+            meta_out["exhibit_fetch_mode"] = "disabled"
+        return (primary or "")[:max_chars] if primary else None
+
+    # Legacy keyword skip — only when NOT forcing exhibits (Calendar/light paths).
+    primary_has_signal = bool(
+        primary
+        and re.search(
+            r"(?i)\b(?:pdufa|topline|top[- ]line|read[- ]?out|advisory\s+committee|"
+            r"2H\s*20|1H\s*20|Q[1-4]\s*20|second\s+half|target\s+action)\b",
+            primary,
+        )
+    )
+    if (
+        not force_exhibits
+        and primary_has_signal
+        and primary
+        and len(primary) >= 8000
+    ):
+        if meta_out is not None:
+            meta_out["exhibit_fetch_mode"] = "keyword_skip"
+        return primary[:max_chars]
+
+    docs = _filing_index_docs(cik10, accession)
+    primary_l = primary_doc.lower()
+    candidates: list[tuple[int, str]] = []
+    for d in docs:
+        name = d["name"]
+        nl = name.lower()
+        if nl == primary_l:
+            continue
+        if not (nl.endswith(".htm") or nl.endswith(".html") or nl.endswith(".txt")):
+            continue
+        if (
+            "ex99" in nl
+            or "ex-99" in nl
+            or "exhibit99" in nl
+            or re.search(r"ex[_-]?99", nl)
+        ):
+            candidates.append((d.get("size") or 0, name))
+    candidates.sort(key=lambda x: -x[0])
+
+    exhibit_parts: list[tuple[str, str]] = []  # (name, text)
+    budget = max_chars - (len(primary) if primary else 0)
+    if budget < 2000 and force_exhibits and primary:
+        # Trim primary further so at least one exhibit can fit.
+        keep = max(8_000, max_chars - 30_000)
+        primary = primary[:keep]
+        budget = max_chars - len(primary)
+        if meta_out is not None:
+            meta_out["bundle_chars_primary"] = len(primary)
+
+    for _size, name in candidates[:2]:
+        if budget < 2000:
+            break
+        part = _fetch_filing_text(cik10, accession, name, max_chars=min(budget, 60_000))
+        if part and len(part) > 200:
+            exhibit_parts.append((name, part))
+            budget = max_chars - (len(primary) if primary else 0) - sum(len(t) for _, t in exhibit_parts)
+
+    exhibit_blob = "\n\n".join(t for _, t in exhibit_parts)
+    exhibit_names = [n for n, _ in exhibit_parts]
+    if meta_out is not None:
+        meta_out["bundle_chars_exhibit"] = len(exhibit_blob)
+        meta_out["exhibit_names"] = exhibit_names
+        meta_out["exhibit_fetch_mode"] = (
+            "forced" if force_exhibits else ("fetched" if exhibit_parts else "none_found")
+        )
+
+    # Prefer keeping exhibits intact; trim primary if over budget.
+    sep = "\n\n"
+    if primary and exhibit_blob:
+        overhead = len(sep)
+        total = len(primary) + overhead + len(exhibit_blob)
+        if total > max_chars:
+            room = max_chars - len(exhibit_blob) - overhead
+            primary = primary[: max(0, room)]
+            if meta_out is not None:
+                meta_out["bundle_chars_primary"] = len(primary)
+        out = f"{primary}{sep}{exhibit_blob}"
+    elif exhibit_blob:
+        out = exhibit_blob[:max_chars]
+    elif primary:
+        out = primary[:max_chars]
+    else:
+        return None
+    return out[:max_chars]
 
 
 # ── Claude extraction ──────────────────────────────────────────────────────────
@@ -544,11 +905,13 @@ def _run() -> dict[str, Any]:
 
     seen_tickers: set[str] = set()
     work: list[dict[str, Any]] = []
-    for row in rows[:MAX_COMPANIES]:
+    for row in rows:
         ticker = str(row.get("Ticker", "")).strip().upper()
         if not ticker or ticker in seen_tickers:
             continue
         seen_tickers.add(ticker)
+        if len(seen_tickers) > MAX_COMPANIES:
+            break
         cik10 = _parse_cik_field(row.get(COL_CIK, ""))
         if not cik10:
             continue
@@ -632,6 +995,31 @@ def _run() -> dict[str, Any]:
         if (ev.get("extracted") or {}).get("confidence", 0) > 0
         and not ai_provider.is_stale_extraction(ev.get("extracted"))
     )
+
+    # Per-run diagnostics: distinguish error from legitimately empty
+    provider = ai_provider.active_provider()
+    no_provider = not ai_provider.is_available()
+    result: dict[str, Any] = {
+        "processed": len(events),
+        "ai_ok": ai_ok,
+        "total": len(work),
+        "provider": provider or "none",
+        "status": (
+            "no_provider"   if no_provider else
+            "ok"            if ai_ok > 0 else
+            "provider_error"
+        ),
+        "note": (
+            "No AI key configured — add ANTHROPIC_API_KEY, GITHUB_TOKEN, or "
+            "OPENAI_API_KEY to .env and re-run to get AI-enriched extractions."
+            if no_provider else
+            f"Provider '{provider}' active but all AI calls returned None — "
+            "check API key validity and quota."
+            if ai_ok == 0 and len(events) > 0 else
+            None
+        ),
+    }
+
     ts = datetime.now(timezone.utc).isoformat()
     _set_status(
         running=False,
@@ -640,7 +1028,7 @@ def _run() -> dict[str, Any]:
         message=f"8-K: {len(events)} filing — {ai_ok} con headline AI",
         finished_at=ts,
     )
-    return {"processed": len(events), "ai_ok": ai_ok, "total": len(work)}
+    return result
 
 
 # ── Helpers ────────────────────────────────────────────────────────────────────
@@ -725,3 +1113,11 @@ def _build_event(
         "delta_d3": item["delta_d3"],
         "extracted": extracted or {},
     }
+
+
+if __name__ == "__main__":
+    import sys
+
+    result = run_catalyst_feed_refresh()
+    print(json.dumps(result, indent=2, default=str))
+    sys.exit(1 if result.get("error") else 0)

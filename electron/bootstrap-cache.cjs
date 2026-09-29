@@ -6,7 +6,7 @@ const path = require("path");
 const fs = require("fs");
 const os = require("os");
 
-const APP_NAME = "SuperNova";
+const APP_NAME = (process.env.SUPERNOVA_APP_NAME || "SuperNova").trim() || "SuperNova";
 const localAppData =
   process.env.LOCALAPPDATA || path.join(os.homedir(), "AppData", "Local");
 const userDataDir = path.join(localAppData, APP_NAME);

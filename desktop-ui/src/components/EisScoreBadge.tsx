@@ -1,5 +1,12 @@
 import { summarizeTickerEis } from "../sheet/tickerEisSummary";
-import { eisBarPercent, eisColor } from "../sheet/eventImpactScore";
+import { eisBarPercent } from "../sheet/eventImpactScore";
+
+/** Navy UI: any positive green, any negative red (incl. mild −1.0). */
+function brightEisColor(score: number): string {
+  if (score > 0) return "#34D399";
+  if (score < 0) return "#F87185";
+  return "#F3F5FA";
+}
 
 export function EisScoreBadge({
   ticker,
@@ -21,7 +28,7 @@ export function EisScoreBadge({
 
   if (score == null || !Number.isFinite(score)) {
     const inner = (
-      <span className={`text-[10px] text-ink-muted/70 ${className}`.trim()}>
+      <span className={`text-[10px] font-semibold text-[#F3F5FA] ${className}`.trim()}>
         EIS —
       </span>
     );
@@ -35,7 +42,7 @@ export function EisScoreBadge({
     return inner;
   }
 
-  const color = eisColor(score);
+  const color = brightEisColor(score);
   const w = eisBarPercent(score);
   const arrow = score >= 5 ? "↑" : score <= -5 ? "↓" : "–";
   const feeds =
@@ -55,7 +62,7 @@ export function EisScoreBadge({
       className={`inline-flex items-center gap-1 font-bold rounded-full ${
         compact ? "text-[10px] px-1.5 py-0.5" : "text-[11px] px-2 py-0.5"
       } ${onClick ? "hover:ring-2 hover:ring-[rgb(var(--accent))]/25 transition" : ""}`}
-      style={{ background: `${color}18`, color, border: `1px solid ${color}40` }}
+      style={{ background: `${color}33`, color, border: `1px solid ${color}` }}
     >
       {arrow} EIS {score >= 0 ? "+" : ""}
       {score.toFixed(1)}
@@ -108,13 +115,13 @@ export function EisScoreInline({
       <button
         type="button"
         onClick={onClick}
-        className="text-[11px] text-ink-muted/70 hover:text-[rgb(var(--accent))] hover:underline"
+        className="text-[11px] font-semibold text-[#F3F5FA] hover:text-[rgb(var(--accent))] hover:underline"
       >
         EIS —
       </button>
     );
   }
-  const color = eisColor(score);
+  const color = brightEisColor(score);
   const arrow = score >= 5 ? "↑" : score <= -5 ? "↓" : "–";
   return (
     <button

@@ -1,20 +1,8 @@
-import type { CoherenceCriticalIssue, CoherenceMetricId } from "../sheet/crossTabCoherenceHealth";
+import { useEffect } from "react";
+import type React from "react";
+import { createPortal } from "react-dom";
+import type { CoherenceCriticalIssue } from "../sheet/crossTabCoherenceHealth";
 import { useT } from "../shared/i18n";
-
-function primaryNavForIssue(
-  id: CoherenceMetricId,
-): "dashboard" | "simulation" | null {
-  if (id === "buyPriceInputs") return "simulation";
-  if (
-    id === "storeFreshness" ||
-    id === "storeAlignment" ||
-    id === "publishSource" ||
-    id === "relaxedDrift"
-  ) {
-    return "dashboard";
-  }
-  return "dashboard";
-}
 
 export function CoherenceAlertModal({
   open,
@@ -22,31 +10,51 @@ export function CoherenceAlertModal({
   onClose,
   onOpenSystem,
   onOpenDashboard,
-  onOpenSimulation,
 }: {
   open: boolean;
   issues: CoherenceCriticalIssue[];
   onClose: () => void;
   onOpenSystem?: () => void;
   onOpenDashboard?: () => void;
-  onOpenSimulation?: () => void;
 }) {
   const t = useT();
+
+  useEffect(() => {
+    if (!open) return;
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === "Escape") {
+        e.preventDefault();
+        e.stopPropagation();
+        onClose();
+      }
+    };
+    window.addEventListener("keydown", onKey, true);
+    return () => window.removeEventListener("keydown", onKey, true);
+  }, [open, onClose]);
+
   if (!open || issues.length === 0) return null;
 
-  const lead = issues[0]!;
-  const primaryNav = primaryNavForIssue(lead.id);
-  const primaryHandler =
-    primaryNav === "simulation" ? onOpenSimulation : onOpenDashboard;
+  const fireClose = (e: React.SyntheticEvent) => {
+    e.preventDefault();
+    e.stopPropagation();
+    onClose();
+  };
 
-  return (
+  const handleBackdropClick = (e: React.MouseEvent<HTMLDivElement>) => {
+    // Only close when the user clicks the *backdrop* itself, not the card.
+    if (e.target === e.currentTarget) onClose();
+  };
+
+  if (typeof document === "undefined") return null;
+
+  return createPortal(
     <div
-      className="fixed inset-0 z-[65] flex items-center justify-center bg-black/60 p-4"
-      onClick={onClose}
+      className="fixed inset-0 z-[220] flex items-center justify-center p-4 bg-black/55 pointer-events-auto"
       role="presentation"
+      onClick={handleBackdropClick}
     >
       <div
-        className="coherence-alert-modal w-full max-w-lg max-h-[85vh] flex flex-col overflow-hidden shadow-2xl rounded-xl"
+        className="coherence-alert-modal w-full max-w-lg max-h-[85vh] flex flex-col overflow-hidden shadow-2xl rounded-xl relative"
         onClick={(e) => e.stopPropagation()}
         role="alertdialog"
         aria-labelledby="coherence-alert-title"
@@ -69,9 +77,10 @@ export function CoherenceAlertModal({
           </div>
           <button
             type="button"
-            className="coherence-alert-modal-close shrink-0 px-2 py-1 text-sm rounded-md"
-            onClick={onClose}
+            className="coherence-alert-modal-close shrink-0 flex items-center justify-center w-8 h-8 text-lg font-bold rounded-md pointer-events-auto relative z-20"
+            onClick={fireClose}
             aria-label={t("common.close")}
+            title={t("common.close")}
           >
             ✕
           </button>
@@ -107,25 +116,27 @@ export function CoherenceAlertModal({
 
         <div className="coherence-alert-modal-footer px-4 py-3 shrink-0 flex flex-col gap-2 bg-white border-t border-[rgb(var(--panel-feed-border))]/60">
           <div className="flex flex-wrap justify-end gap-2">
-            {primaryHandler ? (
+            {onOpenDashboard ? (
               <button
                 type="button"
                 className="coherence-alert-modal-btn text-sm px-4 py-2 rounded-lg font-semibold"
-                onClick={() => {
-                  primaryHandler();
+                onClick={(e) => {
+                  e.preventDefault();
+                  e.stopPropagation();
+                  onOpenDashboard();
                   onClose();
                 }}
               >
-                {primaryNav === "simulation"
-                  ? t("coherenceAlert.modal.goSimulation")
-                  : t("coherenceAlert.modal.goDashboard")}
+                {t("coherenceAlert.modal.goDashboard")}
               </button>
             ) : null}
             {onOpenSystem ? (
               <button
                 type="button"
-                className="btn-ghost text-sm px-3 text-[rgb(var(--panel-feed-accent-strong))]"
-                onClick={() => {
+                className="btn-ghost text-sm px-3 py-2 rounded-lg text-[rgb(var(--panel-feed-accent-strong))]"
+                onClick={(e) => {
+                  e.preventDefault();
+                  e.stopPropagation();
                   onOpenSystem();
                   onClose();
                 }}
@@ -135,8 +146,8 @@ export function CoherenceAlertModal({
             ) : null}
             <button
               type="button"
-              className="btn-ghost text-sm px-3 text-ink-muted"
-              onClick={onClose}
+              className="btn-ghost text-sm px-3 py-2 rounded-lg font-medium text-ink-muted pointer-events-auto relative z-20"
+              onClick={fireClose}
             >
               {t("coherenceAlert.modal.gotIt")}
             </button>
@@ -146,6 +157,7 @@ export function CoherenceAlertModal({
           </p>
         </div>
       </div>
-    </div>
+    </div>,
+    document.body,
   );
 }

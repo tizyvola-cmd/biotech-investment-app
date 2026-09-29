@@ -1,0 +1,86 @@
+﻿Files never using i18n primitives: 16
+Total JSX-text English literals in those files: 51
+
+
+-- desktop-ui\src\components\SimulationAnalysisView.tsx  (9) --
+  L804  Company A
+  L822  Company B
+  L841  Curve visibili
+  L868  Curve ┬╡ distribuzione
+  L879  Post + (rialzo)
+  L880  Post ΓêÆ (ribasso)
+  L881  Post Γåö (neutro)
+  L882  Post-CD all
+  L883  SN + Post-CD
+
+-- desktop-ui\src\components\NewBioIpoModal.tsx  (7) --
+  L253  Finnhub returned:
+  L257  New biotech added:
+  L305  IPO date
+  L307  Sector ┬╖ Industry
+  L309  Market cap
+  L310  Price $
+  L376  Start refresh
+
+-- desktop-ui\src\components\ConditionalFormatSettings.tsx  (6) --
+  L136  Conditional formatting
+  L193  * All numeric columns
+  L204  Color scale
+  L227  Bar color
+  L282  Icon set
+  L314  Priority (application order)
+
+-- desktop-ui\src\components\PredictionGuidePanel.tsx  (6) --
+  L352  Loading Accuracy sheetΓÇª
+  L372  Computing curvesΓÇª
+  L383  Prediction Guide
+  L446  Week comparison:
+  L507  Visible curves (Post-CD)
+  L572  Visible curves (Pre-CD)
+
+-- desktop-ui\src\components\TableViewSettings.tsx  (5) --
+  L112  Dimensione testo
+  L120  Piccolo (10px)
+  L121  Medio (14px)
+  L122  Grande (16px)
+  L126  Spaziatura celle
+
+-- desktop-ui\src\components\CdPatternPolygonAccuracySection.tsx  (4) --
+  L67  Number.isFinite(y) && Math.abs(y)
+  L305  Caricamento dati...
+  L348  Dati proxy
+  L391  Prerequisito: export Python mancante
+
+-- desktop-ui\src\components\ClinicalSimulationView.tsx  (3) --
+  L273  Not yet refreshed
+  L392  CLINICAL_HOT_CD_DAYS && e.daysToCd
+  L574  Primary Completion Date
+
+-- desktop-ui\src\components\RegulatoryRiskPanel.tsx  (3) --
+  L220  Segnali CMC / CRL
+  L237  Non registrata
+  L275  Nessuna menzione in catalyst o flag
+
+-- desktop-ui\src\components\CatalystCopilotChat.tsx  (1) --
+  L469  Enter ┬╖ Shift+Enter newline
+
+-- desktop-ui\src\components\EisDetailPanel.tsx  (1) --
+  L122  KPI / sent
+
+-- desktop-ui\src\components\RiskBenefitClosedCorrelationPanel.tsx  (1) --
+  L34  Number.isFinite(y) && Math.abs(y)
+
+-- desktop-ui\src\components\SecK8SimulationView.tsx  (1) --
+  L28  SEC 8-K
+
+-- desktop-ui\src\components\SimulationCurveChart.tsx  (1) --
+  L1131  Prices not available.
+
+-- desktop-ui\src\components\SimulationPortfolioSheetView.tsx  (1) --
+  L232  Completion Date (Simulation)
+
+-- desktop-ui\src\components\StudySummaryModal.tsx  (1) --
+  L162  This may take 15ΓÇô25 seconds
+
+-- desktop-ui\src\sheet\simulationSparkline.tsx  (1) --
+  L1043  Model curve (fallback to sheet columns; chart bundle not loaded)

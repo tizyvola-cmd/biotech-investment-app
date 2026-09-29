@@ -5,7 +5,8 @@ type Props = {
   placeholder?: string;
   inputClassName: string;
   wrapperClassName?: string;
-  onCommit: (value: number) => void;
+  rejectTitle?: string;
+  onCommit: (value: number) => boolean | void;
 };
 
 export function SimTableCapitalCell({
@@ -13,6 +14,7 @@ export function SimTableCapitalCell({
   placeholder,
   inputClassName,
   wrapperClassName = "flex flex-col gap-0.5 min-w-0 items-center w-full",
+  rejectTitle,
   onCommit,
 }: Props) {
   return (
@@ -21,6 +23,7 @@ export function SimTableCapitalCell({
         className={inputClassName}
         value={capital > 0 ? capital : 0}
         placeholder={placeholder}
+        rejectTitle={rejectTitle}
         onCommit={onCommit}
       />
     </div>

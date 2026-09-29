@@ -22,6 +22,21 @@ import { SIM_HOT_ZONE_DAYS, SIM_MONITOR_HORIZON_DAYS } from "./cdHorizons";
 export type PrecatRegime = "flat" | "moderate" | "btr" | "ctr";
 export type UncertaintyLabel = "BASSA" | "MEDIA" | "ALTA" | "MOLTO ALTA";
 
+/** Display label for the uncertainty tier, localized. */
+export function uncertaintyLabelDisplay(u: UncertaintyLabel, it: boolean): string {
+  if (it) return u;
+  switch (u) {
+    case "BASSA":
+      return "LOW";
+    case "MEDIA":
+      return "MEDIUM";
+    case "ALTA":
+      return "HIGH";
+    case "MOLTO ALTA":
+      return "VERY HIGH";
+  }
+}
+
 export type PrecatWaypoint = {
   /** Days relative to the CD (negative, e.g. -7 = T-7) */
   daysToCd: number;

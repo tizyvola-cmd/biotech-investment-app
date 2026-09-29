@@ -92,7 +92,7 @@ describe("shouldRunDecisionSimTick market window", () => {
     expect(shouldRunDecisionSimTick(state, saturday)).toBe(false);
   });
 
-  it("allows first tick inside window", () => {
+  it("allows first hourly tick in experiment mode (Mon–Fri 15–22 Rome)", () => {
     const state = {
       ...defaultDecisionSimState(),
       config: {
@@ -105,6 +105,27 @@ describe("shouldRunDecisionSimTick market window", () => {
     };
     const wed = romeWallToUtc("2026-06-10", 16);
     expect(shouldRunDecisionSimTick(state, wed)).toBe(true);
+  });
+
+  it("week run ticks only at 18:00 Rome once per day", () => {
+    const state = {
+      ...defaultDecisionSimState(),
+      config: {
+        ...defaultDecisionSimState().config,
+        enabled: true,
+        experimentMode: false,
+        intervalHours: 1,
+      },
+      lastDailyEvaluationDayKey: null,
+    };
+    expect(shouldRunDecisionSimTick(state, romeWallToUtc("2026-06-10", 16))).toBe(false);
+    expect(shouldRunDecisionSimTick(state, romeWallToUtc("2026-06-10", 18))).toBe(true);
+    expect(
+      shouldRunDecisionSimTick(
+        { ...state, lastDailyEvaluationDayKey: "2026-06-10" },
+        romeWallToUtc("2026-06-10", 18, 30),
+      ),
+    ).toBe(false);
   });
 });
 

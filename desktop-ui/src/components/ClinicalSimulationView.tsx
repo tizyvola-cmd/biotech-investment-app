@@ -12,6 +12,7 @@ import {
 } from "../sheet/clinicalSimulationFilter";
 import { ClinicalStudyCardsPanel } from "./ClinicalStudyCards";
 import { StudySummaryModal } from "./StudySummaryModal";
+import { useLang } from "../shared/i18n";
 
 // ── Helpers ──────────────────────────────────────────────────────────────────
 
@@ -42,11 +43,11 @@ function urgencyClass(days: number): string {
   return "text-ink-muted";
 }
 
-function cdBadge(days: number): string {
-  if (days === 0) return "⚡ Today";
-  if (days <= 7) return `🔴 ${days}d`;
-  if (days <= 14) return `⚠ ${days}d`;
-  return `${days}d`;
+function cdBadge(days: number, it: boolean): string {
+  if (days === 0) return it ? "⚡ Oggi" : "⚡ Today";
+  if (days <= 7) return `🔴 ${days}${it ? "g" : "d"}`;
+  if (days <= 14) return `⚠ ${days}${it ? "g" : "d"}`;
+  return `${days}${it ? "g" : "d"}`;
 }
 
 // ── Quarterly refresh hook ────────────────────────────────────────────────────
@@ -115,7 +116,8 @@ function DiffPopup({
   diff: DiffResult;
   onClose: () => void;
 }) {
-  // Auto-close after 6 s if no change
+  const { lang } = useLang();
+  const it = lang === "it";
   useEffect(() => {
     if (!diff.noChange) return;
     const t = setTimeout(onClose, 6000);
@@ -148,20 +150,22 @@ function DiffPopup({
           <div className="flex-1 min-w-0">
             <p className="text-sm font-semibold text-ink">
               {diff.noChange
-                ? "Clinical data up to date"
-                : `${diff.newEntries.length} new entr${diff.newEntries.length === 1 ? "y" : "ies"} detected`}
+                ? (it ? "Dati clinici aggiornati" : "Clinical data up to date")
+                : (it
+                    ? `${diff.newEntries.length} ${diff.newEntries.length === 1 ? "nuova voce rilevata" : "nuove voci rilevate"}`
+                    : `${diff.newEntries.length} new entr${diff.newEntries.length === 1 ? "y" : "ies"} detected`)}
             </p>
             <p className="text-[11px] text-ink-muted">
               {diff.noChange
-                ? "No new clinical trials since last refresh"
-                : "New clinical trials added since last refresh"}
+                ? (it ? "Nessun nuovo studio clinico dall'ultimo aggiornamento" : "No new clinical trials since last refresh")
+                : (it ? "Nuovi studi clinici aggiunti dall'ultimo aggiornamento" : "New clinical trials added since last refresh")}
             </p>
           </div>
           <button
             type="button"
             className="shrink-0 w-6 h-6 rounded flex items-center justify-center text-ink-muted hover:text-ink hover:bg-[rgb(var(--surface-3))] text-sm"
             onClick={onClose}
-            aria-label="Close"
+            aria-label={it ? "Chiudi" : "Close"}
           >
             ✕
           </button>
@@ -205,14 +209,14 @@ function DiffPopup({
                         rel="noopener noreferrer"
                         className="text-[9px] text-[rgb(var(--accent))] hover:underline"
                       >
-                        {e.nct ?? "View"}
+                        {e.nct ?? (it ? "Apri" : "View")}
                       </a>
                     )}
                   </div>
                 </div>
                 <div className="shrink-0 text-right mt-0.5">
                   <p className={`text-[11px] tabular-nums ${urgencyClass(e.daysToCd)}`}>
-                    {cdBadge(e.daysToCd)}
+                    {cdBadge(e.daysToCd, it)}
                   </p>
                   <p className="text-[10px] text-ink-muted/60 tabular-nums">{e.cdDisplay}</p>
                 </div>
@@ -228,7 +232,7 @@ function DiffPopup({
             className="btn-ghost text-xs px-3 py-1"
             onClick={onClose}
           >
-            {diff.noChange ? "OK" : "Dismiss"}
+            {diff.noChange ? "OK" : (it ? "Chiudi" : "Dismiss")}
           </button>
         </div>
       </div>
@@ -249,9 +253,11 @@ function RefreshHeader({
   loading: boolean;
   onTrigger: () => void;
 }) {
+  const { lang } = useLang();
+  const it = lang === "it";
   const fmtDate = (d: Date | null) =>
     d
-      ? d.toLocaleDateString("en-US", { day: "2-digit", month: "short", year: "numeric" })
+      ? d.toLocaleDateString(it ? "it-IT" : "en-US", { day: "2-digit", month: "short", year: "numeric" })
       : "—";
 
   const daysToNext = nextRefresh
@@ -262,24 +268,25 @@ function RefreshHeader({
     <div className="clinical-view-refresh flex items-center gap-3 px-3 py-2 text-[11px]">
       <span className="text-[rgb(var(--accent))]">↻</span>
       <span className="text-ink-muted">
-        CD auto-refresh <strong className="text-ink">quarterly</strong>
+        {it ? "Auto-refresh CD " : "CD auto-refresh "}
+        <strong className="text-ink">{it ? "trimestrale" : "quarterly"}</strong>
       </span>
       <span className="text-ink-muted/60">·</span>
       {lastRefresh ? (
         <span className="text-ink-muted">
-          Last: <span className="text-ink tabular-nums">{fmtDate(lastRefresh)}</span>
+          {it ? "Ultimo:" : "Last:"} <span className="text-ink tabular-nums">{fmtDate(lastRefresh)}</span>
         </span>
       ) : (
-        <span className="text-ink-muted">Not yet refreshed</span>
+        <span className="text-ink-muted">{it ? "Non ancora aggiornato" : "Not yet refreshed"}</span>
       )}
       {nextRefresh && daysToNext !== null && (
         <>
           <span className="text-ink-muted/60">·</span>
           <span className="text-ink-muted">
-            Next auto:{" "}
+            {it ? "Prossimo auto:" : "Next auto:"}{" "}
             <span className="text-ink tabular-nums">
               {fmtDate(nextRefresh)}{" "}
-              <span className="text-ink-muted">({daysToNext}d)</span>
+              <span className="text-ink-muted">({daysToNext}{it ? "g" : "d"})</span>
             </span>
           </span>
         </>
@@ -289,10 +296,10 @@ function RefreshHeader({
         className="ml-auto btn-ghost text-[11px] px-2.5 py-1 flex items-center gap-1.5 disabled:opacity-50"
         onClick={onTrigger}
         disabled={loading}
-        title="Reload clinical snapshot now and reset the 3-month timer"
+        title={it ? "Ricarica ora lo snapshot clinico e resetta il timer di 3 mesi" : "Reload clinical snapshot now and reset the 3-month timer"}
       >
         <span className={loading ? "animate-spin inline-block" : ""}>↻</span>
-        {loading ? "Loading…" : "Refresh now"}
+        {loading ? (it ? "Caricamento…" : "Loading…") : (it ? "Aggiorna ora" : "Refresh now")}
       </button>
     </div>
   );
@@ -309,6 +316,8 @@ function CdCalendarRow({
   entry: FutureCdEntry;
   onOpenSummary: (t: SummaryTarget) => void;
 }) {
+  const { lang } = useLang();
+  const it = lang === "it";
   return (
     <div className="clinical-view-divider flex items-start gap-3 py-2 border-b last:border-0">
       <span className="shrink-0 w-[52px] text-center px-1 py-0.5 rounded text-[10px] font-bold bg-accent/15 text-[rgb(var(--accent))]">
@@ -343,9 +352,9 @@ function CdCalendarRow({
               target="_blank"
               rel="noopener noreferrer"
               className="text-[9px] text-[rgb(var(--accent))] hover:underline"
-              title={entry.nct ?? "Open study"}
+              title={entry.nct ?? (it ? "Apri studio" : "Open study")}
             >
-              {entry.nct ?? "View"}
+              {entry.nct ?? (it ? "Apri" : "View")}
             </a>
           )}
           {entry.nct && (
@@ -360,19 +369,21 @@ function CdCalendarRow({
                 })
               }
               className="clinical-ai-summary-btn text-[9px] font-semibold px-1.5 py-0.5 rounded-full transition"
-              title="Generate AI summary of study outcomes"
+              title={it ? "Genera riepilogo AI degli outcome dello studio" : "Generate AI summary of study outcomes"}
             >
-              ✦ AI Summary
+              {it ? "✦ Riepilogo AI" : "✦ AI Summary"}
             </button>
           )}
           {!entry.hasClinicalData && (
-            <span className="text-[9px] text-ink-muted/50 italic">no study matched</span>
+            <span className="text-[9px] text-ink-muted/50 italic">
+              {it ? "nessuno studio corrispondente" : "no study matched"}
+            </span>
           )}
         </div>
       </div>
       <div className="shrink-0 text-right">
         <p className={`text-[11px] tabular-nums ${urgencyClass(entry.daysToCd)}`}>
-          {cdBadge(entry.daysToCd)}
+          {cdBadge(entry.daysToCd, it)}
         </p>
         <p className="text-[10px] text-ink-muted/70 tabular-nums">{entry.cdDisplay}</p>
       </div>
@@ -387,6 +398,8 @@ function ClinicalCdCalendar({
   calendar: FutureCdEntry[];
   onOpenSummary: (t: SummaryTarget) => void;
 }) {
+  const { lang } = useLang();
+  const it = lang === "it";
   const withinHot = calendar.filter((e) => e.daysToCd <= CLINICAL_HOT_CD_DAYS);
   const withinWatch = calendar.filter(
     (e) => e.daysToCd > CLINICAL_HOT_CD_DAYS && e.daysToCd <= CLINICAL_MAX_CD_DAYS,
@@ -396,7 +409,9 @@ function ClinicalCdCalendar({
   if (calendar.length === 0) {
     return (
       <p className="text-xs text-ink-muted/60 py-4 text-center">
-        No upcoming CDs within {CLINICAL_6M_DAYS} days in the Simulation sheet.
+        {it
+          ? `Nessun CD in arrivo entro ${CLINICAL_6M_DAYS} giorni nel foglio Simulation.`
+          : `No upcoming CDs within ${CLINICAL_6M_DAYS} days in the Simulation sheet.`}
       </p>
     );
   }
@@ -406,7 +421,9 @@ function ClinicalCdCalendar({
       {withinHot.length > 0 && (
         <div>
           <p className="text-[10px] font-semibold uppercase tracking-widest text-[rgb(var(--warn))] mb-2">
-            ⚡ Hot zone (≤{CLINICAL_HOT_CD_DAYS}d) — {withinHot.length} catalyst{withinHot.length !== 1 ? "s" : ""}
+            {it
+              ? `⚡ Zona calda (≤${CLINICAL_HOT_CD_DAYS}g) — ${withinHot.length} ${withinHot.length !== 1 ? "catalizzatori" : "catalizzatore"}`
+              : `⚡ Hot zone (≤${CLINICAL_HOT_CD_DAYS}d) — ${withinHot.length} catalyst${withinHot.length !== 1 ? "s" : ""}`}
           </p>
           <div>
             {withinHot.map((e) => (
@@ -418,7 +435,9 @@ function ClinicalCdCalendar({
       {withinWatch.length > 0 && (
         <div>
           <p className="text-[10px] font-semibold uppercase tracking-widest text-[rgb(var(--accent))] mb-2">
-            👁 Watch ({CLINICAL_HOT_CD_DAYS + 1}–{CLINICAL_MAX_CD_DAYS}d) — {withinWatch.length} catalyst{withinWatch.length !== 1 ? "s" : ""}
+            {it
+              ? `👁 Monitorare (${CLINICAL_HOT_CD_DAYS + 1}–${CLINICAL_MAX_CD_DAYS}g) — ${withinWatch.length} ${withinWatch.length !== 1 ? "catalizzatori" : "catalizzatore"}`
+              : `👁 Watch (${CLINICAL_HOT_CD_DAYS + 1}–${CLINICAL_MAX_CD_DAYS}d) — ${withinWatch.length} catalyst${withinWatch.length !== 1 ? "s" : ""}`}
           </p>
           <div>
             {withinWatch.map((e) => (
@@ -430,7 +449,9 @@ function ClinicalCdCalendar({
       {beyondMonitor.length > 0 && (
         <div>
           <p className="text-[10px] font-semibold uppercase tracking-widest text-ink-muted mb-2">
-            Beyond {CLINICAL_MAX_CD_DAYS}d — {beyondMonitor.length}
+            {it
+              ? `Oltre ${CLINICAL_MAX_CD_DAYS}g — ${beyondMonitor.length}`
+              : `Beyond ${CLINICAL_MAX_CD_DAYS}d — ${beyondMonitor.length}`}
           </p>
           <div className="opacity-60">
             {beyondMonitor.map((e) => (
@@ -458,7 +479,8 @@ export function ClinicalSimulationView({
   error: string | null;
   onReload: () => void;
 }) {
-  // ── Diff popup state ────────────────────────────────────────────────────────
+  const { lang } = useLang();
+  const it = lang === "it";
   const [diffResult, setDiffResult] = useState<DiffResult | null>(null);
 
   // ── AI Study Summary modal ───────────────────────────────────────────────────
@@ -558,21 +580,30 @@ export function ClinicalSimulationView({
         <section>
           <div className="mb-2 flex items-center gap-2">
             <span className="text-[10px] font-semibold uppercase tracking-widest text-[rgb(var(--signal-up))]">
-              ⚡ Next 2 months — Simulation studies
+              {it ? "⚡ Prossimi 2 mesi — studi Simulation" : "⚡ Next 2 months — Simulation studies"}
             </span>
             <span className="clinical-view-section-muted text-[10px]">
-              (CD ≤ {CLINICAL_MAX_CD_DAYS} d · OpenFDA match)
+              (CD ≤ {CLINICAL_MAX_CD_DAYS} {it ? "g" : "d"} · {it ? "match OpenFDA" : "OpenFDA match"})
             </span>
           </div>
           <ClinicalStudyCardsPanel
-            title="Clinical — Simulation catalyst study"
+            title={it ? "Clinico — studio catalizzatore Simulation" : "Clinical — Simulation catalyst study"}
             sourceHint={
-              <>
-                Simulation tickers with CD within{" "}
-                <strong className="text-ink">{CLINICAL_MAX_CD_DAYS} days</strong>
-                {" "}and OpenFDA match on{" "}
-                <strong className="text-ink">Primary Completion Date</strong> (±7 d) and NCT
-              </>
+              it ? (
+                <>
+                  Ticker Simulation con CD entro{" "}
+                  <strong className="text-ink">{CLINICAL_MAX_CD_DAYS} giorni</strong>
+                  {" "}e match OpenFDA su{" "}
+                  <strong className="text-ink">Primary Completion Date</strong> (±7 g) e NCT
+                </>
+              ) : (
+                <>
+                  Simulation tickers with CD within{" "}
+                  <strong className="text-ink">{CLINICAL_MAX_CD_DAYS} days</strong>
+                  {" "}and OpenFDA match on{" "}
+                  <strong className="text-ink">Primary Completion Date</strong> (±7 d) and NCT
+                </>
+              )
             }
             simTable={simTable}
             dataTable={cdTable}
@@ -581,12 +612,13 @@ export function ClinicalSimulationView({
             error={error}
             onReload={onReload}
             simCdByTicker={simCdByTicker}
-            emptyTickerHint="No clinical study with matching CD/NCT"
+            emptyTickerHint={it ? "Nessuno studio clinico con match CD/NCT" : "No clinical study with matching CD/NCT"}
           />
           {missingCd.length > 0 && !loading && (
             <p className="text-xs text-ink-muted px-1 mt-1">
-              No clinical match: {missingCd.join(", ")} — check NCT/CD in the Simulation sheet
-              or update the OpenFDA file.
+              {it
+                ? `Nessun match clinico: ${missingCd.join(", ")} — verifica NCT/CD nel foglio Simulation o aggiorna il file OpenFDA.`
+                : `No clinical match: ${missingCd.join(", ")} — check NCT/CD in the Simulation sheet or update the OpenFDA file.`}
             </p>
           )}
         </section>
@@ -595,21 +627,23 @@ export function ClinicalSimulationView({
         <section>
           <div className="mb-3 flex items-center gap-2">
             <span className="text-[10px] font-semibold uppercase tracking-widest text-[rgb(var(--accent))]">
-              📅 Full CD calendar — Next 6 months
+              {it ? "📅 Calendario CD completo — Prossimi 6 mesi" : "📅 Full CD calendar — Next 6 months"}
             </span>
             <span className="clinical-view-section-muted text-[10px]">
-              (all Simulation tickers · CD ≤ {CLINICAL_6M_DAYS} d)
+              {it
+                ? `(tutti i ticker Simulation · CD ≤ ${CLINICAL_6M_DAYS} g)`
+                : `(all Simulation tickers · CD ≤ ${CLINICAL_6M_DAYS} d)`}
             </span>
             {calendar.length > 0 && (
               <span className="ml-auto text-[10px] font-semibold px-2 py-0.5 rounded-full bg-accent/15 text-[rgb(var(--accent))]">
-                {calendar.length} upcoming
+                {calendar.length} {it ? "in arrivo" : "upcoming"}
               </span>
             )}
           </div>
           <div className="clinical-view-panel px-3 py-2">
             {loading ? (
               <p className="text-xs text-ink-muted/60 py-4 text-center animate-pulse">
-                Loading clinical data…
+                {it ? "Caricamento dati clinici…" : "Loading clinical data…"}
               </p>
             ) : (
               <ClinicalCdCalendar calendar={calendar} onOpenSummary={setSelectedStudy} />

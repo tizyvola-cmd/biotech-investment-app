@@ -13,6 +13,7 @@
     "test:coherence": "vitest run src/sheet/crossTabCoherence.test.ts src/sheet/crossTabCoherenceHealth.test.ts src/sheet/sdsTopOppGate.test.ts"
   },
   "dependencies": {
+    "@tanstack/react-virtual": "^3.14.12",
     "@xyflow/react": "^12.3.6",
     "chart.js": "^4.5.1",
     "react": "^18.3.1",

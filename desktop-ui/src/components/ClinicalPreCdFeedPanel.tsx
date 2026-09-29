@@ -13,20 +13,35 @@ import {
 } from "../api/supernova";
 import type { SheetTable } from "../types";
 import { PortfolioScopeToggle, PortfolioTickerMark } from "./PortfolioScopeToggle";
-import { useLang } from "../shared/i18n";
+import { useLang, useT } from "../shared/i18n";
 import { SHEET_GRID_TABLE_CLASS, gridTd, gridTh } from "../sheet/sheetGridTable";
 import { SheetGridColgroup } from "../sheet/SheetGridColgroup";
 import {
-  hydrateClinicalPreCdRecords,
+  readBaseClinicalPreCdRecords,
   readClinicalPreCdSnapshotCache,
   writeClinicalPreCdSnapshotCache,
 } from "../sheet/clinicalPreCdSnapshotCache";
+import {
+  MANUAL_FEED_EVENTS_CHANGED_EVENT,
+  mergeManualEventsIntoRecords,
+  parseManualFeedEventId,
+  recordHasManualEvents,
+  removeManualFeedEvent,
+  resolveMergedFeedEventEis,
+} from "../sheet/manualFeedEvents";
+import { CLINICAL_PRE_CD_CHANGED_EVENT } from "../hooks/useClinicalPreCdRecords";
 import {
   recordMatchesScope,
   useSimulationPortfolioScope,
   type PortfolioScopeMode,
 } from "../sheet/portfolioScope";
-import { eisBarPercent, eisColor, resolveEventEis } from "../sheet/eventImpactScore";
+import {
+  eisBarPercent,
+  eisColor,
+  formatEisIntrinsicShort,
+  isUnverifiedHypothesis,
+} from "../sheet/eventImpactScore";
+import { mergeVirtualRegulatoryIndicators } from "../sheet/regulatoryVirtualKpi";
 import {
   isClinicalPreCdRecordTrusted,
   isEventReferenceVerified,
@@ -35,6 +50,8 @@ import {
   verifyEventReference,
 } from "../sheet/referenceVerification";
 import { AiApiKeysPanel } from "./AiApiKeysPanel";
+import { ManualFeedNewsBox } from "./ManualFeedNewsBox";
+import { ManualNewsDetailModal } from "./ManualNewsDetailModal";
 import { AiProviderSwitch } from "./AiProviderSwitch";
 import { CatalystCopilotChat } from "./CatalystCopilotChat";
 import {
@@ -44,10 +61,9 @@ import {
 } from "./catalystCopilotFocus";
 import { ClinicalIndicatorChips } from "./ClinicalIndicatorSummary";
 import {
-  cleanClinicalIndicators as cleanIndicators,
-  dedupeClinicalIndicators as dedupeIndicators,
-  indicatorIsOutcome,
-  prioritizeClinicalIndicators as prioritizeIndicators,
+  indicatorsForFeedEvent,
+  markClinicalIndicatorsShown,
+  studyIndicatorsForFeedHeader,
 } from "../sheet/clinicalIndicators";
 import {
   buildCompanyUnifiedTimeline,
@@ -61,9 +77,9 @@ import {
   type UnifiedTimelineRow,
 } from "../sheet/clinicalTimeline";
 
-/** Wider indicators column for readable KPI chips (sums to 100). */
-const FEED_TIMELINE_COL_PCT = [6, 7, 15, 7, 18, 20, 5, 11, 11];
-const FEED_STUDY_COL_PCT = [7, 17, 8, 20, 22, 10, 6, 10];
+/** Wider date column so "27 Sep 2026" is not clipped by TYPE badges (sums to 100). */
+const FEED_TIMELINE_COL_PCT = [10, 7, 14, 7, 17, 19, 5, 11, 10];
+const FEED_STUDY_COL_PCT = [10, 16, 8, 19, 21, 10, 6, 10];
 
 /** Eventi più recenti in cima, poi via via più indietro nel tempo. */
 function eventsNewestFirst(events: ClinicalPublicationEvent[]): ClinicalPublicationEvent[] {
@@ -81,10 +97,20 @@ function eventDrug(ev: ClinicalPublicationEvent): string {
   return String(raw ?? "—").trim() || "—";
 }
 
-function EventTypeBadge({ ev, it }: { ev: ClinicalPublicationEvent; it: boolean }) {
-  const { label, className } = timelineBadge(timelineKind(ev), it ? "it" : "en");
+function EventTypeBadge({
+  ev,
+  it,
+  className = "",
+}: {
+  ev: ClinicalPublicationEvent;
+  it: boolean;
+  className?: string;
+}) {
+  const { label, className: badgeCls } = timelineBadge(timelineKind(ev), it ? "it" : "en");
   return (
-    <span className={`inline-block mt-1 text-[9px] font-semibold px-1.5 py-0.5 rounded-full ${className}`}>
+    <span
+      className={`inline-block text-[9px] font-semibold px-1.5 py-0.5 rounded-full whitespace-nowrap ${badgeCls} ${className}`}
+    >
       {label}
     </span>
   );
@@ -107,7 +133,11 @@ function fmtDate(iso: string | null | undefined, it: boolean): string {
   if (!iso) return "—";
   const d = new Date(`${iso}T12:00:00`);
   if (Number.isNaN(d.getTime())) return iso;
-  return d.toLocaleDateString(it ? "it-IT" : "en-US", { day: "numeric", month: "short", year: "numeric" });
+  return d.toLocaleDateString(it ? "it-IT" : "en-GB", {
+    day: "2-digit",
+    month: "short",
+    year: "numeric",
+  });
 }
 
 function fmtPrice(n: number | null | undefined): string {
@@ -276,6 +306,50 @@ function eisContextHint(eis: NonNullable<ClinicalPublicationEvent["eis"]>, it: b
   return parts.join(" · ");
 }
 
+function fmtWindow(start?: string | null, end?: string | null): string {
+  const fmt = (iso?: string | null) => {
+    if (!iso) return "";
+    const d = new Date(`${iso}T12:00:00`);
+    return Number.isNaN(d.getTime())
+      ? iso
+      : d.toLocaleDateString("it-IT", { month: "short", year: "numeric" });
+  };
+  const a = fmt(start);
+  const b = fmt(end);
+  if (a && b) return a === b ? a : `${a} → ${b}`;
+  return a || b;
+}
+
+/**
+ * Unconfirmed hypothesis: kept in the feed as a lead, never scored. The verifier
+ * looks for the real abstract/paper when the window opens.
+ */
+function HypothesisColumn({ ev, it }: { ev: ClinicalPublicationEvent; it: boolean }) {
+  const window = fmtWindow(ev.expected_window_start, ev.expected_window_end);
+  return (
+    <div
+      className="min-w-[100px]"
+      title={
+        it
+          ? "Ipotesi non confermata: nessuna fonte reale. Nessun EIS finché la verifica non trova un abstract o un articolo."
+          : "Unconfirmed hypothesis: no real source. No EIS until verification finds an abstract or paper."
+      }
+    >
+      <span className="inline-flex items-center gap-1 text-[10px] font-bold px-2 py-0.5 rounded-full bg-amber-500/12 text-amber-700 dark:text-amber-400 border border-amber-500/30">
+        ⏳ {it ? "Da verificare" : "To verify"}
+      </span>
+      <p className="mt-1 text-[9px] feed-panel-muted leading-snug max-w-[200px]">
+        {it ? "Ipotesi senza fonte — EIS sospeso" : "Hypothesis without source — EIS on hold"}
+      </p>
+      {window ? (
+        <p className="mt-0.5 text-[9px] feed-panel-muted leading-snug tabular-nums">
+          {it ? "Finestra attesa" : "Expected window"}: {window}
+        </p>
+      ) : null}
+    </div>
+  );
+}
+
 function EisColumn({
   ev,
   indicators,
@@ -285,9 +359,12 @@ function EisColumn({
   indicators?: ClinicalStudyIndicator[];
   it: boolean;
 }) {
-  const resolved = resolveEventEis(ev, indicators);
+  const resolved = resolveMergedFeedEventEis(ev, indicators);
   const score = resolved?.score;
   const { contextNote } = splitImpactNote(ev.impact_note);
+  if (isUnverifiedHypothesis(ev)) {
+    return <HypothesisColumn ev={ev} it={it} />;
+  }
   if (score == null || !Number.isFinite(score)) {
     return (
       <div className="min-w-[100px]">
@@ -304,6 +381,11 @@ function EisColumn({
   const w = eisBarPercent(score);
   const arrow = score >= 5 ? "↑" : score <= -5 ? "↓" : "–";
   const hint = resolved ? eisContextHint(resolved, it) : "";
+  const intLabel = formatEisIntrinsicShort(resolved?.eis_intrinsic);
+  const intColor =
+    resolved?.eis_intrinsic != null && Number.isFinite(resolved.eis_intrinsic)
+      ? eisColor(resolved.eis_intrinsic)
+      : color;
   return (
     <div className="min-w-[100px]" title={hint || undefined}>
       <span
@@ -312,6 +394,15 @@ function EisColumn({
       >
         {arrow} EIS {score >= 0 ? "+" : ""}{score.toFixed(1)}
       </span>
+      {intLabel ? (
+        <p
+          className="mt-0.5 text-[9px] font-semibold tabular-nums leading-tight"
+          style={{ color: intColor }}
+          title={it ? "EIS intrinseco (KPI clinico/regolatorio)" : "EIS intrinsic (clinical/regulatory KPI)"}
+        >
+          {intLabel}
+        </p>
+      ) : null}
       <div className="h-1.5 bg-[rgb(var(--panel-mint-bg-soft))] rounded-full mt-1.5 overflow-hidden max-w-[100px]">
         <div className="h-full rounded-full transition-all" style={{ width: `${w}%`, background: color }} />
       </div>
@@ -325,28 +416,130 @@ function EisColumn({
   );
 }
 
-/** Outcome KPIs first; no study-level fallback on SEC 8-K rows. */
+/** Outcome KPIs first; SEC 8-K keeps only virtual regulatory chips (approval / CRL / hold). */
+function feedBriefNeedsExpand(text: string): boolean {
+  const t = text.trim();
+  if (!t) return false;
+  if (t.split(/\r?\n/).filter(Boolean).length > 5) return true;
+  return t.length > 360;
+}
+
+function FeedBriefCell({
+  ev,
+  ticker,
+  it,
+  indicators = [],
+}: {
+  ev: ClinicalPublicationEvent;
+  ticker: string;
+  it: boolean;
+  indicators?: ClinicalStudyIndicator[];
+}) {
+  const t = useT();
+  const [open, setOpen] = useState(false);
+  const manualId = parseManualFeedEventId(ev);
+  const raw = ev.summary?.trim() || ev.event_title?.trim();
+  if (!raw) return <span className="feed-panel-muted">—</span>;
+
+  const expandable = feedBriefNeedsExpand(raw);
+  const eisScore =
+    resolveMergedFeedEventEis(ev, indicators)?.score ?? ev.eis?.score ?? 0;
+
+  const handleRemoveManual = () => {
+    if (!manualId) return;
+    removeManualFeedEvent(manualId);
+  };
+
+  return (
+    <div className="flex items-start gap-1.5 min-w-0">
+      <div className="min-w-0 flex-1">
+        <p className={expandable ? "feed-panel-brief-clamp" : undefined}>{raw}</p>
+        {expandable ? (
+          <button
+            type="button"
+            className="mt-1 block text-[10px] font-semibold feed-panel-link hover:underline"
+            onClick={() => setOpen(true)}
+          >
+            {it ? "Leggi tutto →" : "Read full brief →"}
+          </button>
+        ) : null}
+      </div>
+      {manualId ? (
+        <button
+          type="button"
+          className="shrink-0 mt-0.5 w-6 h-6 rounded text-[15px] leading-none feed-panel-muted hover:text-rose-600 hover:bg-rose-500/10 opacity-70 hover:opacity-100 transition-colors"
+          title={t("manualFeed.remove")}
+          aria-label={t("manualFeed.remove")}
+          onClick={handleRemoveManual}
+        >
+          ×
+        </button>
+      ) : null}
+      {open ? (
+        <ManualNewsDetailModal
+          payload={{
+            ticker,
+            eventDate: ev.event_date ?? null,
+            title: ev.event_title?.trim() || raw.slice(0, 160),
+            body: raw,
+            source: ev.link_label ?? ev.source_type ?? null,
+            link: ev.link ?? null,
+            eisScore,
+          }}
+          it={it}
+          onClose={() => setOpen(false)}
+        />
+      ) : null}
+    </div>
+  );
+}
+
 function indicatorsForDisplay(
   ev: ClinicalPublicationEvent,
   rec: ClinicalPreCdRecord,
+  alreadyShownKeys?: ReadonlySet<string>,
 ): ClinicalStudyIndicator[] | undefined {
-  if (isSecK8Event(ev)) return undefined;
+  if (isSecK8Event(ev)) {
+    const virtualOnly = mergeVirtualRegulatoryIndicators(ev, []);
+    return virtualOnly.length ? virtualOnly : undefined;
+  }
 
-  const local = cleanIndicators(ev.indicators ?? []);
-  const study = cleanIndicators(rec.clinical_indicators ?? []);
-  const localOutcomes = local.filter(indicatorIsOutcome);
-  const studyOutcomes = study.filter(indicatorIsOutcome);
+  const picked = indicatorsForFeedEvent(ev, rec.clinical_indicators, {
+    alreadyShownKeys,
+  });
+  const merged = mergeVirtualRegulatoryIndicators(ev, picked);
+  return merged.length ? merged : undefined;
+}
 
-  if (localOutcomes.length) {
-    return dedupeIndicators(prioritizeIndicators(local)).slice(0, 4);
+function sumVisibleTickerDims(
+  tickerRows: UnifiedTimelineRow[],
+): { clinical: number | null; financial: number | null; access: number | null } {
+  let clin = 0;
+  let fin = 0;
+  let acc = 0;
+  let nClin = 0;
+  let nFin = 0;
+  let nAcc = 0;
+  for (const row of tickerRows) {
+    const ev = row.event;
+    if (typeof ev.clinical_score === "number" && Number.isFinite(ev.clinical_score)) {
+      clin += ev.clinical_score;
+      nClin += 1;
+    }
+    if (typeof ev.financial_score === "number" && Number.isFinite(ev.financial_score)) {
+      fin += ev.financial_score;
+      nFin += 1;
+    }
+    if (typeof ev.market_access_score === "number" && Number.isFinite(ev.market_access_score)) {
+      acc += ev.market_access_score;
+      nAcc += 1;
+    }
   }
-  if (studyOutcomes.length) {
-    return dedupeIndicators(prioritizeIndicators([...studyOutcomes.slice(0, 3), ...local])).slice(0, 4);
-  }
-  if (local.length) {
-    return dedupeIndicators(prioritizeIndicators(local)).slice(0, 2);
-  }
-  return undefined;
+  return {
+    clinical: nClin > 0 ? Math.round(clin * 10) / 10 : null,
+    financial: nFin > 0 ? Math.round(fin * 10) / 10 : null,
+    access: nAcc > 0 ? Math.round(acc * 10) / 10 : null,
+  };
 }
 
 function RefBadge({ ev, rec, it }: { ev: ClinicalPublicationEvent; rec: ClinicalPreCdRecord; it: boolean }) {
@@ -378,6 +571,7 @@ function UnifiedCompanyTimeline({
   verifiedOnly,
   sourceFilter,
   isPortfolioTicker,
+  simRowByTicker,
   onDeepenStudy: _onDeepenStudy,
   onTickerSummary,
 }: {
@@ -387,6 +581,7 @@ function UnifiedCompanyTimeline({
   verifiedOnly: boolean;
   sourceFilter: EventSourceFilter;
   isPortfolioTicker: (t: string) => boolean;
+  simRowByTicker: Map<string, Record<string, unknown>>;
   onDeepenStudy?: (focus: CopilotStudyFocus) => void;
   onTickerSummary?: (ticker: string) => void;
 }) {
@@ -428,6 +623,31 @@ function UnifiedCompanyTimeline({
         .map(([ticker, tickerRows]) => {
           const company = tickerRows[0]?.company ?? ticker;
           const inPortfolio = isPortfolioTicker(ticker);
+          const dimSums = sumVisibleTickerDims(tickerRows);
+          const clinColor =
+            dimSums.clinical != null && Number.isFinite(dimSums.clinical)
+              ? eisColor(dimSums.clinical)
+              : null;
+          const finColor =
+            dimSums.financial != null && Number.isFinite(dimSums.financial)
+              ? eisColor(dimSums.financial)
+              : null;
+          const accColor =
+            dimSums.access != null && Number.isFinite(dimSums.access)
+              ? eisColor(dimSums.access)
+              : null;
+          const primaryRec = (() => {
+            const list = recordsByTicker.get(ticker) ?? [];
+            const nct = tickerRows[0]?.nctId;
+            if (nct) {
+              const hit = list.find((x) => x.nct_id === nct);
+              if (hit) return hit;
+            }
+            return list[0] ?? null;
+          })();
+          const headerKpis = studyIndicatorsForFeedHeader(primaryRec?.clinical_indicators);
+          const shownKeys = new Set<string>();
+          markClinicalIndicatorsShown(shownKeys, headerKpis);
           return (
             <div
               key={ticker}
@@ -439,14 +659,94 @@ function UnifiedCompanyTimeline({
               }
             >
               <div className="px-4 pt-3 pb-2.5 flex items-center justify-between gap-3 flex-nowrap border-b border-[rgb(var(--panel-feed-border-soft))] bg-[rgb(var(--panel-mint-bg-soft)/0.55)]">
-                <p className="text-[13px] font-bold feed-panel-text flex items-center gap-x-1.5 min-w-0 truncate">
-                  {company} (
-                  <PortfolioTickerMark ticker={ticker} inPortfolio={inPortfolio} />)
-                  <span className="feed-panel-muted font-medium text-[11px] shrink-0">
-                    — {it ? "Timeline unificata" : "Unified timeline"} · {tickerRows.length}{" "}
-                    {it ? "eventi" : "events"}
-                  </span>
-                </p>
+                <div className="flex items-center gap-x-1.5 min-w-0 flex-1 flex-wrap">
+                  <p className="text-[13px] font-bold feed-panel-text truncate">
+                    {company} (
+                    <PortfolioTickerMark
+                      ticker={ticker}
+                      inPortfolio={inPortfolio}
+                      simRow={simRowByTicker.get(ticker) ?? null}
+                    />
+                    )
+                    <span className="feed-panel-muted font-medium text-[11px]">
+                      {" "}
+                      — {it ? "Timeline unificata" : "Unified timeline"} · {tickerRows.length}{" "}
+                      {it ? "eventi" : "events"}
+                    </span>
+                  </p>
+                  {dimSums.clinical != null && clinColor ? (
+                    <span
+                      className="inline-flex items-center gap-1 text-[11px] font-bold px-2 py-0.5 rounded-full shrink-0 tabular-nums"
+                      style={{
+                        background: `${clinColor}18`,
+                        color: clinColor,
+                        border: `1px solid ${clinColor}40`,
+                      }}
+                      title={
+                        it
+                          ? "Somma Clinical (non EIS)"
+                          : "Clinical sum (not EIS)"
+                      }
+                    >
+                      Σ Clin {dimSums.clinical >= 0 ? "+" : ""}
+                      {dimSums.clinical.toFixed(1)}
+                    </span>
+                  ) : null}
+                  {dimSums.financial != null && finColor ? (
+                    <span
+                      className="inline-flex items-center gap-1 text-[11px] font-bold px-2 py-0.5 rounded-full shrink-0 tabular-nums"
+                      style={{
+                        background: `${finColor}18`,
+                        color: finColor,
+                        border: `1px solid ${finColor}40`,
+                      }}
+                      title={
+                        it
+                          ? "Somma Financial (non EIS)"
+                          : "Financial sum (not EIS)"
+                      }
+                    >
+                      Σ Fin {dimSums.financial >= 0 ? "+" : ""}
+                      {dimSums.financial.toFixed(1)}
+                    </span>
+                  ) : null}
+                  {dimSums.access != null && accColor ? (
+                    <span
+                      className="inline-flex items-center gap-1 text-[11px] font-bold px-2 py-0.5 rounded-full shrink-0 tabular-nums"
+                      style={{
+                        background: `${accColor}18`,
+                        color: accColor,
+                        border: `1px solid ${accColor}40`,
+                      }}
+                      title={
+                        it
+                          ? "Somma Access (non EIS)"
+                          : "Access sum (not EIS)"
+                      }
+                    >
+                      Σ Acc {dimSums.access >= 0 ? "+" : ""}
+                      {dimSums.access.toFixed(1)}
+                    </span>
+                  ) : null}
+                  {headerKpis.length ? (
+                    <div
+                      className="w-full basis-full mt-1.5"
+                      title={
+                        it
+                          ? "Ultimi esiti studio (una sola volta). Nelle news sotto solo dati nuovi."
+                          : "Latest study outcomes (once). News rows below show only new KPIs."
+                      }
+                    >
+                      <ClinicalIndicatorChips
+                        indicators={headerKpis}
+                        it={it}
+                        variant="table"
+                        maxShown={4}
+                      />
+                    </div>
+                  ) : null}
+                </div>
+                <div className="flex items-center gap-2 shrink-0">
                 {onTickerSummary ? (
                   <button
                     type="button"
@@ -462,6 +762,7 @@ function UnifiedCompanyTimeline({
                     {it ? `Summary ${ticker}` : `${ticker} summary`}
                   </button>
                 ) : null}
+                </div>
               </div>
               <div className="overflow-x-auto">
                 <table className={`${SHEET_GRID_TABLE_CLASS} feed-panel-table text-[11px] border-collapse min-w-[1280px]`}>
@@ -494,12 +795,19 @@ function UnifiedCompanyTimeline({
                       const rec =
                         recs.find((x) => x.nct_id === row.nctId) ?? recs[0];
                       const ev = row.event;
+                      const rowInds = rec
+                        ? indicatorsForDisplay(ev, rec, shownKeys)
+                        : undefined;
+                      if (rowInds?.length) markClinicalIndicatorsShown(shownKeys, rowInds);
                       return (
                         <tr key={`${row.event.event_date}-${i}`} className="align-top">
-                          <td className={`${gridTd("left", "py-3")} feed-panel-muted whitespace-nowrap`}>
+                          <td
+                            className={`${gridTd("left", "py-3")} feed-panel-date-col feed-panel-muted whitespace-nowrap tabular-nums`}
+                            title={ev.event_date ?? undefined}
+                          >
                             {fmtDate(ev.event_date, it)}
                           </td>
-                          <td className={gridTd("left", "py-3")}>
+                          <td className={`${gridTd("left", "py-3")} feed-panel-type-col`}>
                             <EventTypeBadge ev={ev} it={it} />
                           </td>
                           <td className={gridTd("left", "py-3")}>
@@ -528,11 +836,16 @@ function UnifiedCompanyTimeline({
                             <DrugBadge drug={eventDrug(ev)} />
                           </td>
                           <td className={`${gridTd("left", "py-3")} feed-panel-muted leading-relaxed`}>
-                            <p>{ev.summary ?? "—"}</p>
+                            <FeedBriefCell
+                              ev={ev}
+                              ticker={row.ticker}
+                              it={it}
+                              indicators={rowInds ?? []}
+                            />
                             {rec?.data_gaps ? (
                               <p
                                 className="mt-1 text-[10px] text-amber-800/90 leading-snug"
-                                title={it ? "Lacune dati (snapshot)" : "Data gaps (snapshot)"}
+                                title={it ? "Lacune dati (istantanea)" : "Data gaps (snapshot)"}
                               >
                                 ⚠ {String(rec.data_gaps).slice(0, 120)}
                                 {String(rec.data_gaps).length > 120 ? "…" : ""}
@@ -540,9 +853,9 @@ function UnifiedCompanyTimeline({
                             ) : null}
                           </td>
                           <td className={`${gridTd("left", "py-3")} min-w-[220px]`}>
-                            {rec ? (
+                            {rowInds?.length ? (
                               <ClinicalIndicatorChips
-                                indicators={indicatorsForDisplay(ev, rec)}
+                                indicators={rowInds}
                                 it={it}
                                 variant="table"
                                 maxShown={3}
@@ -571,7 +884,7 @@ function UnifiedCompanyTimeline({
                           <td className={gridTd("center", "py-3")}>
                             <EisColumn
                               ev={ev}
-                              indicators={indicatorsForDisplay(ev, rec)}
+                              indicators={rowInds}
                               it={it}
                             />
                           </td>
@@ -594,6 +907,7 @@ function ClinicalEventsTable({
   verifiedOnly,
   sourceFilter,
   inPortfolio,
+  simRow,
   onDeepenStudy,
 }: {
   rec: ClinicalPreCdRecord;
@@ -601,6 +915,7 @@ function ClinicalEventsTable({
   verifiedOnly: boolean;
   sourceFilter: EventSourceFilter;
   inPortfolio: boolean;
+  simRow?: Record<string, unknown> | null;
   onDeepenStudy?: (focus: CopilotStudyFocus) => void;
 }) {
   let events = eventsNewestFirst(filterEventsBySource(trustedRecordEvents(rec), sourceFilter));
@@ -608,6 +923,14 @@ function ClinicalEventsTable({
     events = events.filter((ev) => isEventReferenceVerified(ev, rec));
   }
   const ticker = rec.ticker ?? "";
+  const headerKpis = studyIndicatorsForFeedHeader(rec.clinical_indicators);
+  const shownKeys = new Set<string>();
+  markClinicalIndicatorsShown(shownKeys, headerKpis);
+  const rowIndicators = events.map((ev) => {
+    const inds = indicatorsForDisplay(ev, rec, shownKeys) ?? [];
+    if (inds.length) markClinicalIndicatorsShown(shownKeys, inds);
+    return inds;
+  });
 
   if (!events.length) {
     return (
@@ -615,7 +938,9 @@ function ClinicalEventsTable({
         {sourceFilter === "clinical"
           ? (it ? "Nessun evento clinico in questa finestra." : "No clinical events in this window.")
           : sourceFilter === "k8"
-            ? (it ? "Nessun 8-K SEC in questa finestra." : "No SEC 8-K in this window.")
+            ? (it
+              ? "Gli 8-K SEC sono nella tab Financial (dossier EDGAR)."
+              : "SEC 8-K filings are in the Financial tab (EDGAR dossier).")
             : verifiedOnly
               ? (it
                 ? "Nessun evento con referenza verificata (società o farmaco nel testo)."
@@ -634,11 +959,29 @@ function ClinicalEventsTable({
           <PortfolioTickerMark
             ticker={rec.ticker ?? "—"}
             inPortfolio={inPortfolio}
+            simRow={simRow}
           />
           )
         </span>
         <span className="feed-panel-muted font-medium">— {windowSubtitle(rec, it)}</span>
       </p>
+      {headerKpis.length ? (
+        <div
+          className="px-4 pb-2"
+          title={
+            it
+              ? "Ultimi esiti studio (una sola volta). Nelle news sotto solo dati nuovi."
+              : "Latest study outcomes (once). News rows below show only new KPIs."
+          }
+        >
+          <ClinicalIndicatorChips
+            indicators={headerKpis}
+            it={it}
+            variant="table"
+            maxShown={4}
+          />
+        </div>
+      ) : null}
       <table className={`${SHEET_GRID_TABLE_CLASS} feed-panel-table text-[11px] border-collapse min-w-[1240px]`}>
         <SheetGridColgroup widths={FEED_STUDY_COL_PCT} />
         <thead>
@@ -661,19 +1004,24 @@ function ClinicalEventsTable({
           </tr>
         </thead>
         <tbody>
-          {events.map((ev, i) => (
+          {events.map((ev, i) => {
+            const rowInds = rowIndicators[i] ?? [];
+            return (
             <tr
               key={`${ev.event_date}-${ev.event_title}-${i}`}
               className="align-top"
             >
-              <td className={`${gridTd("left", "py-3")} feed-panel-muted whitespace-nowrap`}>
+              <td
+                className={`${gridTd("left", "py-3")} feed-panel-date-col feed-panel-muted whitespace-nowrap tabular-nums`}
+                title={ev.event_date ?? undefined}
+              >
                 {fmtDate(ev.event_date, it)}
               </td>
               <td className={gridTd("left", "py-3")}>
                 <p className="font-bold feed-panel-text text-[12px] leading-snug">
                   {ev.event_title ?? "—"}
                 </p>
-                <EventTypeBadge ev={ev} it={it} />
+                <EventTypeBadge ev={ev} it={it} className="mt-1" />
                 <RefBadge ev={ev} rec={rec} it={it} />
                 {onDeepenStudy ? (
                   <button
@@ -696,15 +1044,24 @@ function ClinicalEventsTable({
                 <DrugBadge drug={eventDrug(ev)} />
               </td>
               <td className={`${gridTd("left", "py-3")} feed-panel-muted leading-relaxed`}>
-                {ev.summary ?? "—"}
+                <FeedBriefCell
+                  ev={ev}
+                  ticker={ticker}
+                  it={it}
+                  indicators={rowInds}
+                />
               </td>
               <td className={`${gridTd("left", "py-3")} min-w-[220px]`}>
-                <ClinicalIndicatorChips
-                  indicators={indicatorsForDisplay(ev, rec)}
-                  it={it}
-                  variant="table"
-                  maxShown={3}
-                />
+                {rowInds.length ? (
+                  <ClinicalIndicatorChips
+                    indicators={rowInds}
+                    it={it}
+                    variant="table"
+                    maxShown={3}
+                  />
+                ) : (
+                  <span className="feed-panel-muted">—</span>
+                )}
               </td>
               <td className={gridTd("center", "py-3")}>
                 <PriceSummary ev={ev} it={it} />
@@ -726,19 +1083,20 @@ function ClinicalEventsTable({
               <td className={gridTd("center", "py-3")}>
                 <EisColumn
                   ev={ev}
-                  indicators={indicatorsForDisplay(ev, rec)}
+                  indicators={rowInds}
                   it={it}
                 />
               </td>
             </tr>
-          ))}
+            );
+          })}
         </tbody>
       </table>
       <p className="px-4 py-2 text-[9px] feed-panel-muted border-t border-[rgb(var(--panel-feed-border-soft))] mt-1">
         {it
-          ? "KPI esito = ORR/PFS/OS, endpoint raggiunto, esito studio, pubblicazione dati · CTX = reclutamento/status CT.gov · "
-          : "Outcome KPIs = ORR/PFS/OS, endpoint met, study success, data readouts · CTX = registry enrollment/status · "}
-        EIS = 0.35×ΔP₁d + 0.35×ΔP₃d + 0.15×(vol−1)×20 + 0.15×KPI×10 (KPI da endpoint/ORR/EASI/IGA) ·{" "}
+          ? "KPI esito in header = ultimi dati studio (una volta). Nelle news solo KPI nuovi o datati sull’evento · CTX = reclutamento/status CT.gov · "
+          : "Header outcome KPIs = latest study data (once). News rows show only new or event-dated KPIs · CTX = registry enrollment/status · "}
+        EIS = 0.35×ΔP₁d + 0.35×ΔP₃d + 0.15×vol_term + 0.15×(KPI×10) · vol_term=(min(vol_ratio,10)−1)×20×reaction · int = clamp(KPI,±2)×10 ·{" "}
         {it
           ? "Timeline: Intelligence + PubMed + press RSS + SEC 8-K + milestone CD/CT.gov"
           : "Timeline: Intelligence + PubMed + press RSS + SEC 8-K + CD/CT.gov milestones"}
@@ -766,8 +1124,13 @@ export function ClinicalPreCdFeedPanel({
 }) {
   const { lang } = useLang();
   const it = lang === "it";
-  const [records, setRecords] = useState<ClinicalPreCdRecord[]>(() =>
-    hydrateClinicalPreCdRecords(),
+  const [baseRecords, setBaseRecords] = useState<ClinicalPreCdRecord[]>(() =>
+    readBaseClinicalPreCdRecords(),
+  );
+  const [manualVersion, setManualVersion] = useState(0);
+  const records = useMemo(
+    () => mergeManualEventsIntoRecords(baseRecords),
+    [baseRecords, manualVersion],
   );
   const [snapshotUpdatedAt, setSnapshotUpdatedAt] = useState<string | null>(
     () => readClinicalPreCdSnapshotCache()?.updated_at ?? null,
@@ -814,18 +1177,29 @@ export function ClinicalPreCdFeedPanel({
   const { portfolioTickers, watchTickers, counts, isPortfolioTicker } =
     useSimulationPortfolioScope(simTable);
 
-  const loadSnapshot = useCallback(async () => {
+  const simRowByTicker = useMemo(() => {
+    const map = new Map<string, Record<string, unknown>>();
+    for (const row of simTable?.rows ?? []) {
+      const tk = String(row.Ticker ?? row.ticker ?? "")
+        .trim()
+        .toUpperCase();
+      if (tk && !map.has(tk)) map.set(tk, row);
+    }
+    return map;
+  }, [simTable?.rows]);
+
+  const loadSnapshot = useCallback(async (opts?: { preferApi?: boolean }) => {
     try {
-      const snap = await fetchClinicalPreCdSnapshot();
+      const snap = await fetchClinicalPreCdSnapshot({ preferApi: opts?.preferApi });
       const rows = Array.isArray(snap.records) ? snap.records : [];
-      setRecords(rows);
+      setBaseRecords(rows);
       writeClinicalPreCdSnapshotCache(snap);
       setSnapshotUpdatedAt(snap.updated_at ?? null);
       setLoadError(null);
     } catch (e) {
       const cached = readClinicalPreCdSnapshotCache();
       if (cached?.records?.length) {
-        setRecords(cached.records);
+        setBaseRecords(cached.records);
         setSnapshotUpdatedAt(cached.updated_at ?? null);
       }
       setLoadError(e instanceof Error ? e.message : String(e));
@@ -838,7 +1212,8 @@ export function ClinicalPreCdFeedPanel({
       setStatus(s);
       if (!s.running) {
         if (pollRef.current) { clearInterval(pollRef.current); pollRef.current = null; }
-        await loadSnapshot();
+        // Enrich just finished on API/VPS — pull remote, do not reuse stale local JSON.
+        await loadSnapshot({ preferApi: true });
         setLoading(false);
         if (s.error) {
           setLoadError(s.error);
@@ -863,6 +1238,22 @@ export function ClinicalPreCdFeedPanel({
   useEffect(() => {
     if (reloadSnapshotToken > 0) void loadSnapshot();
   }, [reloadSnapshotToken, loadSnapshot]);
+
+  useEffect(() => {
+    const onManualChanged = () => setManualVersion((v) => v + 1);
+    window.addEventListener(MANUAL_FEED_EVENTS_CHANGED_EVENT, onManualChanged);
+    return () =>
+      window.removeEventListener(MANUAL_FEED_EVENTS_CHANGED_EVENT, onManualChanged);
+  }, []);
+
+  useEffect(() => {
+    const onClinicalChanged = () => {
+      void loadSnapshot({ preferApi: true });
+    };
+    window.addEventListener(CLINICAL_PRE_CD_CHANGED_EVENT, onClinicalChanged);
+    return () =>
+      window.removeEventListener(CLINICAL_PRE_CD_CHANGED_EVENT, onClinicalChanged);
+  }, [loadSnapshot]);
 
   /** Ricarica snapshot da disco quando si torna alla tab / finestra. */
   useEffect(() => {
@@ -901,7 +1292,8 @@ export function ClinicalPreCdFeedPanel({
       records.filter(
         (r) =>
           isClinicalPreCdRecordTrusted(r) &&
-          recordMatchesScope(r.ticker, listMode, portfolioTickers, watchTickers),
+          (recordMatchesScope(r.ticker, listMode, portfolioTickers, watchTickers) ||
+            recordHasManualEvents(r)),
       ),
     [records, listMode, portfolioTickers, watchTickers],
   );
@@ -915,13 +1307,16 @@ export function ClinicalPreCdFeedPanel({
     [sourceFilter, verifiedOnly],
   );
 
-  const filtered = scoped
-    .filter((r) => {
-      if (!tickerFilter.trim()) return true;
-      return (r.ticker ?? "").toUpperCase().includes(tickerFilter.trim().toUpperCase());
-    })
-    .filter((r) => sourceFilter === "all" || recordHasVisibleEvents(r))
-    .sort((a, b) => recordLatestEventMs(b) - recordLatestEventMs(a));
+  const filtered = useMemo(() => {
+    const q = tickerFilter.trim().toUpperCase();
+    return scoped
+      .filter((r) => {
+        if (!q) return true;
+        return (r.ticker ?? "").toUpperCase().includes(q);
+      })
+      .filter((r) => sourceFilter === "all" || recordHasVisibleEvents(r))
+      .sort((a, b) => recordLatestEventMs(b) - recordLatestEventMs(a));
+  }, [scoped, tickerFilter, sourceFilter, recordHasVisibleEvents]);
 
   const recordsByTicker = useMemo(() => groupRecordsByTicker(scoped), [scoped]);
 
@@ -950,18 +1345,27 @@ export function ClinicalPreCdFeedPanel({
   const aiUnavailable = aiProvider?.available === false;
 
   return (
-    <div className="flex flex-1 min-h-0">
-      <div className="flex flex-col flex-1 min-h-0 min-w-0">
+    <div className="flex w-full min-w-0 items-start">
+      <div className="flex flex-col flex-1 min-w-0">
       <div className="shrink-0 px-4 py-2 text-[11px] feed-panel-header flex gap-2 items-start">
         <span>🧬</span>
         <span>
           {it
-            ? "Feed 6 mesi pre-CD: timeline unificata (🧬 clinico · 📰 press · ◆ 8-K · 📅 CD/CT.gov) oppure vista per studio."
-            : "6-month pre-CD feed: unified timeline (🧬 clinical · 📰 press · ◆ 8-K · 📅 CD/CT.gov) or per-study view."}
+            ? "Feed 6 mesi pre-CD: timeline unificata (🧬 clinico · 📰 press · ◆ 8-K · 📅 CD/CT.gov · ✍ manuale) oppure vista per studio."
+            : "6-month pre-CD feed: unified timeline (🧬 clinical · 📰 press · ◆ 8-K · 📅 CD/CT.gov · ✍ manual) or per-study view."}
           {" "}
           {aiProvider?.last_success ? `${providerLabel} attivo.` : `${providerLabel} — .env`}
         </span>
       </div>
+
+      <ManualFeedNewsBox
+        defaultExpanded={false}
+        onSaved={(meta) => {
+          if (meta?.tickers?.length === 1) {
+            setTickerFilter(meta.tickers[0]!);
+          }
+        }}
+      />
 
       <div className="shrink-0 px-4 py-2 border-b border-[rgb(var(--border))]/30 feed-panel-toolbar space-y-2">
         <AiProviderSwitch
@@ -981,8 +1385,8 @@ export function ClinicalPreCdFeedPanel({
           <span className="shrink-0">⚠️</span>
           <span>
             {it
-              ? "Intelligence non configurata: apri «Chiavi API (Claude…)» sopra e incolla la ANTHROPIC_API_KEY dopo aver ricaricato i crediti, oppure usa Copilot (GITHUB_TOKEN). Senza AI restano solo dati CT.gov. Poi «Arricchisci portfolio»."
-              : "Intelligence not configured: open «API keys (Claude…)» above and paste your ANTHROPIC_API_KEY after adding credits, or use Copilot (GITHUB_TOKEN). Without AI you only get CT.gov data. Then «Enrich portfolio»."}
+              ? "Intelligence non configurata: apri «Chiavi API» sopra, incolla la GEMINI_API_KEY (gratis) o ANTHROPIC_API_KEY, salva, poi «Arricchisci portfolio». Senza AI restano solo dati CT.gov."
+              : "Intelligence not configured: open «API keys» above, paste GEMINI_API_KEY (free) or ANTHROPIC_API_KEY, save, then «Enrich portfolio». Without AI you only get CT.gov data."}
             {it && aiProvider?.hint_it
               ? ` ${aiProvider.hint_it}`
               : !it && aiProvider?.hint_en
@@ -1091,7 +1495,6 @@ export function ClinicalPreCdFeedPanel({
               ["all", it ? "Tutti" : "All"],
               ["clinical", it ? "Clinico" : "Clinical"],
               ["press", "Press"],
-              ["k8", "8-K"],
               ["cd", "CD"],
             ] as const
           ).map(([id, label]) => (
@@ -1126,12 +1529,12 @@ export function ClinicalPreCdFeedPanel({
           <button
             type="button"
             disabled={inFlight}
-            onClick={() => void loadSnapshot()}
+            onClick={() => void loadSnapshot({ preferApi: true })}
             className="px-3 py-1.5 rounded-lg text-[12px] font-semibold feed-panel-input hover:bg-[rgb(var(--panel-mint-bg-soft))] disabled:opacity-50 transition"
             title={
               it
-                ? "Ricarica solo lo snapshot JSON (veloce, senza AI)"
-                : "Reload JSON snapshot only (fast, no AI)"
+                ? "Ricarica lo snapshot dal server (preferisce API se più fresco del JSON locale)"
+                : "Reload snapshot from server (prefers API if newer than local JSON)"
             }
           >
             {it ? "↻ Snapshot" : "↻ Snapshot"}
@@ -1152,16 +1555,16 @@ export function ClinicalPreCdFeedPanel({
           <button
             type="button"
             disabled={inFlight}
-            onClick={() => void handleRefresh()}
+            onClick={() => void handleRefresh({ force: true })}
             className="px-3 py-1.5 rounded-lg text-[12px] font-semibold text-white feed-panel-btn-primary disabled:opacity-50 transition"
             title={
               enrichPortfolioOnly
                 ? it
-                  ? "Arricchimento AI solo ticker in Portfolio (capitale > 0); deep auto ogni 7g"
-                  : "AI enrich for Portfolio tickers (deep auto every 7d)"
+                  ? "Arricchimento AI portfolio (force: riscrive anche SoC/MoA se la cache 30g li ha lasciati vuoti)"
+                  : "AI enrich portfolio (force: also rewrites empty SoC/MoA past the 30d cache)"
                 : it
-                  ? "Arricchimento AI su tutti gli studi SEC 8-K"
-                  : "AI enrich for all SEC 8-K studies"
+                  ? "Arricchimento AI tutti gli studi (force: non salta la cache 30g)"
+                  : "AI enrich all studies (force: does not skip the 30d cache)"
             }
           >
             {inFlight
@@ -1185,7 +1588,7 @@ export function ClinicalPreCdFeedPanel({
         </div>
       )}
 
-      <div className="flex-1 min-h-0 overflow-y-auto px-3 py-3 space-y-4">
+      <div className="px-3 py-3 pb-6 space-y-4">
         {viewMode === "unified" && unifiedRows.length > 0 && (
           <UnifiedCompanyTimeline
             rows={unifiedRows}
@@ -1194,6 +1597,7 @@ export function ClinicalPreCdFeedPanel({
             verifiedOnly={verifiedOnly}
             sourceFilter={sourceFilter}
             isPortfolioTicker={isPortfolioTicker}
+            simRowByTicker={simRowByTicker}
             onDeepenStudy={handleDeepenStudy}
             onTickerSummary={runTickerSummary}
           />
@@ -1213,8 +1617,8 @@ export function ClinicalPreCdFeedPanel({
                 : "No companies with clinical events under current filters.")
               : sourceFilter === "k8"
                 ? (it
-                  ? "Nessuna società con 8-K SEC nel filtro corrente."
-                  : "No companies with SEC 8-K under current filters.")
+                  ? "Gli 8-K SEC sono nella tab Financial (dossier EDGAR)."
+                  : "SEC 8-K filings are in the Financial tab (EDGAR dossier).")
                 : listMode === "portfolio"
               ? (it
                 ? "Nessun feed AI per ticker in Portfolio — verifica capitale investito in Simulation."
@@ -1241,6 +1645,7 @@ export function ClinicalPreCdFeedPanel({
                 verifiedOnly={verifiedOnly}
                 sourceFilter={sourceFilter}
                 inPortfolio={inPortfolio}
+                simRow={simRowByTicker.get(rec.ticker ?? "") ?? null}
                 onDeepenStudy={handleDeepenStudy}
               />
             </div>

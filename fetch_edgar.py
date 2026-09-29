@@ -705,9 +705,13 @@ def _match_one_orch(q: str, candidate: str) -> str:
         if common and len(common) / len(q_words) >= 0.70:
             return "Partial"
 
-    # 4. Similarità caratteri (abbreviazioni / typo)
-    if _SM(None, q, candidate).ratio() >= 0.85:
-        return "Partial"
+    # 4. Similarità caratteri — solo nucleo significativo (no False Partial
+    # "Eton Pharmaceuticals" ≈ "PMV Pharmaceuticals").
+    q_sig = " ".join(w for w in q.split() if w not in _SPONSOR_STOPWORDS)
+    c_sig = " ".join(w for w in candidate.split() if w not in _SPONSOR_STOPWORDS)
+    if q_sig and c_sig and len(q_sig) >= 3 and len(c_sig) >= 3:
+        if _SM(None, q_sig, c_sig).ratio() >= 0.85:
+            return "Partial"
 
     return ""
 

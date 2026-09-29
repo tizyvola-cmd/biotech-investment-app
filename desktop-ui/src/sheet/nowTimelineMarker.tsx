@@ -23,11 +23,12 @@ export function resolvePinLabelLayout(
   const rightZone = x > w * 0.72;
 
   if (leftZone) {
+    const nudge = x < 80 ? 16 : 10;
     return {
       anchor: "start",
-      tx: x + 8,
-      tyMain: y + 4,
-      tySub: y + 16,
+      tx: x + nudge,
+      tyMain: y + 6,
+      tySub: y + 18,
     };
   }
   if (rightZone) {

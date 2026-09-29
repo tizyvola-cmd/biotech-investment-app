@@ -9,15 +9,26 @@ param(
 )
 
 $ErrorActionPreference = "Stop"
+# Vite/npm write progress to stderr; do not treat that as a terminating error (PS 5.1).
+$PSNativeCommandUseErrorActionPreference = $false
 $Root = Split-Path -Parent $PSScriptRoot
 Set-Location $Root
 
 if (-not $SkipBuild) {
+    $prevEap = $ErrorActionPreference
+    $ErrorActionPreference = "Continue"
     & "$PSScriptRoot\build_desktop_web.ps1"
+    if ($LASTEXITCODE -and $LASTEXITCODE -ne 0) {
+        throw "[deploy] build_desktop_web.ps1 failed (exit $LASTEXITCODE)"
+    }
     $py = Join-Path $Root ".venv\Scripts\python.exe"
     if (-not (Test-Path $py)) { $py = "py" }
     & $py (Join-Path $PSScriptRoot "gen_mobile_pwa_icons.py")
     & "$PSScriptRoot\build_mobile_vps.ps1"
+    if ($LASTEXITCODE -and $LASTEXITCODE -ne 0) {
+        throw "[deploy] build_mobile_vps.ps1 failed (exit $LASTEXITCODE)"
+    }
+    $ErrorActionPreference = $prevEap
 }
 
 $Stamp = Get-Date -Format "yyyyMMdd_HHmmss"
@@ -47,12 +58,32 @@ Write-Host "[deploy] Estrazione + restart supernova-web ..." -ForegroundColor Cy
 $deployCmd = "cd '$RemoteDir' && tar -xzf '$RemoteTar' && rm -f '$RemoteTar' && systemctl restart supernova-web && sleep 2 && systemctl is-active supernova-web && curl -s -o /dev/null -w 'health:%{http_code}\n' http://127.0.0.1:8765/api/health"
 ssh $SshHost $deployCmd
 
-Write-Host "[deploy] Sync desktop-ui/dist (bundle + index.html) ..." -ForegroundColor Cyan
+# Always ship the *web* dist to VPS. Electron bake (VITE_API_BASE=127.0.0.1)
+# must never be uploaded — it makes the browser show «API offline».
+$webIndex = Join-Path $Root "desktop-ui\dist\index.html"
+if (-not (Test-Path $webIndex)) {
+    throw "[deploy] Missing desktop-ui/dist/index.html - run without -SkipBuild"
+}
+$indexHtml = Get-Content -Raw $webIndex
+if ($indexHtml -notlike '*src="/assets/*') {
+    Write-Host "[deploy] dist looks like Electron (relative ./assets) - rebuilding web ..." -ForegroundColor Yellow
+    & "$PSScriptRoot\build_desktop_web.ps1"
+    $indexHtml = Get-Content -Raw $webIndex
+    if ($indexHtml -notlike '*src="/assets/*') {
+        throw "[deploy] desktop-ui/dist is still not a web build"
+    }
+}
+
+Write-Host "[deploy] Sync desktop-ui/dist (purge stale hashed assets first) ..." -ForegroundColor Cyan
+ssh $SshHost 'rm -rf /opt/biotech/desktop-ui/dist/assets; mkdir -p /opt/biotech/desktop-ui/dist/assets'
 scp -r (Join-Path $Root "desktop-ui\dist\*") "${SshHost}:/opt/biotech/desktop-ui/dist/"
 
-Write-Host "[deploy] Sync mobile-ui/dist -> /mobile/ ..." -ForegroundColor Cyan
-ssh $SshHost "mkdir -p /opt/biotech/mobile-ui/dist"
+Write-Host "[deploy] Sync mobile-ui/dist -> /mobile/ (purge stale assets first) ..." -ForegroundColor Cyan
+ssh $SshHost 'rm -rf /opt/biotech/mobile-ui/dist/assets; mkdir -p /opt/biotech/mobile-ui/dist/assets /opt/biotech/mobile-ui/dist'
 scp -r (Join-Path $Root "mobile-ui\dist\*") "${SshHost}:/opt/biotech/mobile-ui/dist/"
+
+Write-Host "[deploy] Warm API workers (avoid 30s cold /api/health after restart) ..." -ForegroundColor Cyan
+ssh $SshHost 'for i in 1 2 3; do curl -s -o /dev/null -m 60 http://127.0.0.1:8765/api/health; done; curl -s -o /dev/null -w "health_warm:%{time_total}s\n" http://127.0.0.1:8765/api/health'
 
 Remove-Item $TarLocal -Force -ErrorAction SilentlyContinue
 if (-not $SkipBuild) {
@@ -67,3 +98,4 @@ if (-not $SkipBuild) {
 Write-Host "[deploy] OK" -ForegroundColor Green
 Write-Host "  Desktop: http://91.99.15.48:8765/" -ForegroundColor Green
 Write-Host "  Mobile:  http://91.99.15.48:8765/mobile/" -ForegroundColor Green
+Write-Host "  Push:    SUPERNOVA_VAPID_PUBLIC/PRIVATE/SUBJECT + pywebpush (HTTPS recommended)" -ForegroundColor DarkCyan

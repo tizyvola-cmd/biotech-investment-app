@@ -153,13 +153,17 @@ export function ModelStretchPanel({ view }: { view: ModelStretchView | null }) {
       if (s.kind === "next" || s.kind === "planned") labels.add(s.label);
     }
     const sorted = [...labels].sort();
-    const byLabel = new Map(view.history.map((h) => [h.label, h.calFactor]));
-    return sorted.map((label) => ({
-      label: label.slice(5),
-      fullLabel: label,
-      calFactor: byLabel.get(label) ?? null,
-      isPlanned: !byLabel.has(label),
-    }));
+    const byLabel = new Map(view.history.map((h) => [h.label, h]));
+    return sorted.map((label) => {
+      const row = byLabel.get(label);
+      return {
+        label: label.slice(5),
+        fullLabel: label,
+        calFactor: row?.calFactor ?? null,
+        source: row?.source ?? null,
+        isPlanned: !row,
+      };
+    });
   }, [view]);
 
   const yDomain = useMemo(() => {
@@ -328,6 +332,17 @@ export function ModelStretchPanel({ view }: { view: ModelStretchView | null }) {
             <p className="text-[9px] text-ink-muted leading-snug mt-0.5">
               {t("modelLab.qc.modelStretch.historyCaption")}
             </p>
+            {view.lastStretchIso ? (
+              <p className="text-[9px] text-ink-muted/80 mt-0.5">
+                {t("modelLab.qc.modelStretch.lastCheckpoint", {
+                  when: new Date(view.lastStretchIso).toLocaleString(lang === "it" ? "it-IT" : "en-US", {
+                    dateStyle: "medium",
+                    timeStyle: "short",
+                    hour12: false,
+                  }),
+                })}
+              </p>
+            ) : null}
           </div>
           <div className="h-[130px] w-full">
             <ViewErrorBoundary label="Model stretch history">
@@ -416,9 +431,16 @@ export function ModelStretchPanel({ view }: { view: ModelStretchView | null }) {
                             : it
                               ? "neutro"
                               : "neutral";
+                      const srcLabel =
+                        row.source === "monitor"
+                          ? t("modelLab.qc.modelStretch.sourceMonitor")
+                          : row.source === "recalibration"
+                            ? t("modelLab.qc.modelStretch.sourceRecalibration")
+                            : t("modelLab.qc.modelStretch.sourceHistory");
                       return (
                         <div className="rounded-md border bg-white px-2 py-1.5 text-[10px] shadow-md">
                           <p className="font-semibold">{row.fullLabel ?? row.label}</p>
+                          <p className="text-ink-muted">{srcLabel}</p>
                           <p>
                             {t("modelLab.qc.modelStretch.tooltipFactor")}: ×{row.calFactor.toFixed(4)}
                           </p>
@@ -445,7 +467,17 @@ export function ModelStretchPanel({ view }: { view: ModelStretchView | null }) {
                       if (payload?.calFactor == null || cx == null || cy == null) {
                         return <circle cx={cx ?? 0} cy={cy ?? 0} r={0} fill="transparent" />;
                       }
-                      return <circle cx={cx} cy={cy} r={3} fill="#ea580c" stroke="#fff" strokeWidth={1} />;
+                      const isMonitor = payload.source === "monitor";
+                      return (
+                        <circle
+                          cx={cx}
+                          cy={cy}
+                          r={isMonitor ? 2.5 : 3.5}
+                          fill={isMonitor ? "#fff" : "#ea580c"}
+                          stroke="#ea580c"
+                          strokeWidth={isMonitor ? 2 : 1}
+                        />
+                      );
                     }}
                     connectNulls={false}
                   />

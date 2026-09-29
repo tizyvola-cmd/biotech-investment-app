@@ -6,7 +6,7 @@ export type PortfolioSellHandler = (
   key: string,
   simRow?: Record<string, unknown> | null,
   opts?: { confirm?: boolean },
-) => PortfolioSellResult | void;
+) => PortfolioSellResult | void | Promise<PortfolioSellResult | void>;
 
 function failureMessage(
   reason: PortfolioSellFailure,
@@ -46,13 +46,16 @@ export function PortfolioSellButton({
   const [armed, setArmed] = useState(false);
   const [busy, setBusy] = useState(false);
 
-  const runSell = (confirm: boolean) => {
+  const runSell = async (confirm: boolean) => {
     setBusy(true);
     try {
-      const result = onSell(simKey, simRow ?? null, { confirm });
+      const result = await Promise.resolve(onSell(simKey, simRow ?? null, { confirm }));
       if (result && !result.ok && result.reason !== "cancelled") {
         const msg = failureMessage(result.reason, t);
         if (msg && typeof window !== "undefined") window.alert(msg);
+      }
+      if (result?.ok && !result.diskPersisted && typeof window !== "undefined") {
+        window.alert(t("sim.pnl.sellDiskPersistFailed"));
       }
       if (!result || result.ok) setArmed(false);
     } finally {

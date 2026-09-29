@@ -1,4 +1,4 @@
-const CACHE_PATHS = require("./bootstrap-cache.cjs");
+﻿const CACHE_PATHS = require("./bootstrap-cache.cjs");
 const {
   app,
   BrowserWindow,
@@ -7,6 +7,7 @@ const {
   protocol,
   net,
   shell,
+  Menu,
 } = require("electron");
 const {
   configureElectronCachePaths,
@@ -19,7 +20,7 @@ const { spawn } = require("child_process");
 const http = require("http");
 const { pathToFileURL } = require("url");
 
-configureElectronCachePaths(app, { appName: "SuperNova" });
+configureElectronCachePaths(app, { appName: (process.env.SUPERNOVA_APP_NAME || "SuperNova").trim() || "SuperNova" });
 console.log("[electron] userData:", CACHE_PATHS.userDataDir);
 
 // Sharper rendering on Windows HiDPI / fractional scaling displays.
@@ -29,6 +30,8 @@ const ROOT = path.resolve(__dirname, "..");
 warnIfProjectOnOneDrive(ROOT);
 
 function resolveAppIconPath() {
+  const envIcon = (process.env.SUPERNOVA_APP_ICON || "").trim();
+  if (envIcon && fs.existsSync(envIcon)) return envIcon;
   const candidates = [
     path.join(ROOT, "assets", "SuperNova_Desktop.ico"),
     path.join(ROOT, "assets", "supernova_app_icon.ico"),
@@ -94,6 +97,127 @@ let mainWindow = null;
 let splashWindow = null;
 let consoleHookedForSplash = false;
 let splashVisibleAt = 0;
+/** Secondary windows opened from the sidebar (screen id → BrowserWindow). */
+const popoutWindows = new Map();
+
+const POPOUT_SCREENS = new Set([
+  "main",
+  "catalyst",
+  "simulation",
+  "clinical",
+  "secK8",
+  "financial",
+  "models",
+  "decisionLab",
+  "wind",
+  "piggyBank",
+  "catalystFeed",
+  "testerMonitor",
+  "system",
+]);
+
+const SCREEN_WINDOW_TITLES = {
+  main: "Dashboard",
+  catalyst: "Catalyst Hub",
+  simulation: "Evaluation Lab",
+  clinical: "Clinical",
+  secK8: "SEC K-8",
+  financial: "Financial",
+  models: "Model Lab",
+  decisionLab: "Decision Lab",
+  wind: "Wind",
+  piggyBank: "Piggy Bank",
+  catalystFeed: "Catalyst Feed",
+  testerMonitor: "Tester Monitor",
+  system: "System",
+};
+
+function broadcastToAllWindows(channel, ...args) {
+  for (const win of BrowserWindow.getAllWindows()) {
+    try {
+      if (win && !win.isDestroyed() && win.webContents && !win.webContents.isDestroyed()) {
+        win.webContents.send(channel, ...args);
+      }
+    } catch {
+      /* ignore */
+    }
+  }
+}
+
+function attachRendererGuards(win) {
+  const wc = win.webContents;
+  wc.setWindowOpenHandler(({ url }) => {
+    if (/^https?:\/\//i.test(url)) {
+      void shell.openExternal(url);
+      return { action: "deny" };
+    }
+    return { action: "allow" };
+  });
+  wc.on("will-navigate", (event, url) => {
+    const current = wc.getURL();
+    if (/^https?:\/\//i.test(url) && url !== current) {
+      event.preventDefault();
+      void shell.openExternal(url);
+    }
+  });
+}
+
+function loadUiIntoWindow(win, hash) {
+  if (IS_DEV_UI) {
+    const base = DEV_UI_URL.replace(/\/$/, "");
+    void win.loadURL(`${base}/#${hash}`);
+    return;
+  }
+  if (!fs.existsSync(DESKTOP_UI_DIST)) {
+    dialog.showErrorBox(
+      "SuperNova - UI mancante",
+      `File non trovato:\n${DESKTOP_UI_DIST}\n\nEsegui:\n  cd desktop-ui\n  npm run build:electron`,
+    );
+    return;
+  }
+  void win.loadFile(DESKTOP_UI_DIST, { hash });
+}
+
+function createPopoutWindow(screen) {
+  const id = String(screen || "").trim();
+  if (!POPOUT_SCREENS.has(id)) {
+    return { ok: false, error: "invalid_screen" };
+  }
+  const existing = popoutWindows.get(id);
+  if (existing && !existing.isDestroyed()) {
+    if (existing.isMinimized()) existing.restore();
+    existing.show();
+    existing.focus();
+    return { ok: true, reused: true, screen: id };
+  }
+
+  const titleSuffix = SCREEN_WINDOW_TITLES[id] || id;
+  const win = new BrowserWindow({
+    autoHideMenuBar: true,
+    width: 1280,
+    height: 900,
+    minWidth: 880,
+    minHeight: 600,
+    show: true,
+    backgroundColor: "#0f1419",
+    title: `SuperNova — ${titleSuffix}`,
+    ...(APP_ICON ? { icon: APP_ICON } : {}),
+    webPreferences: {
+      preload: path.join(__dirname, "preload-modern.cjs"),
+      contextIsolation: true,
+      nodeIntegration: false,
+    },
+  });
+
+  popoutWindows.set(id, win);
+  win.on("closed", () => {
+    if (popoutWindows.get(id) === win) popoutWindows.delete(id);
+  });
+
+  attachRendererGuards(win);
+  loadUiIntoWindow(win, `screen=${encodeURIComponent(id)}&popout=1`);
+  return { ok: true, reused: false, screen: id };
+}
 
 if (
   !acquireSingleInstanceLock(() => {
@@ -108,7 +232,7 @@ if (
       splashWindow.focus();
       return;
     }
-    console.warn("[electron] second-instance: nessuna finestra — riavvio UI");
+    console.warn("[electron] second-instance: nessuna finestra â€” riavvio UI");
     createSplashWindow();
     hookConsoleForSplash();
     createWindow();
@@ -158,7 +282,7 @@ function hookConsoleForSplash() {
 function createSplashWindow() {
   if (splashWindow && !splashWindow.isDestroyed()) return;
   if (!fs.existsSync(SPLASH_HTML)) {
-    console.warn("[splash] splash.html non trovato — skip");
+    console.warn("[splash] splash.html non trovato â€” skip");
     return;
   }
   splashWindow = new BrowserWindow({
@@ -201,8 +325,8 @@ function relativePathFromProjectDataUrl(requestUrl) {
   const u = new URL(requestUrl);
   let rel = decodeURIComponent(u.pathname || "").replace(/^\/+/, "");
   const host = (u.hostname || "").toLowerCase();
-  // Chromium normalizza project-data:///file.json → project-data://file.json
-  // (hostname = nome file, pathname vuoto) → altrimenti HTTP 400.
+  // Chromium normalizza project-data:///file.json â†’ project-data://file.json
+  // (hostname = nome file, pathname vuoto) â†’ altrimenti HTTP 400.
   if (host && !PROJECT_DATA_HOSTS.has(host)) {
     rel = rel ? `${host}/${rel}` : host;
   }
@@ -385,7 +509,7 @@ async function ensureApi() {
     console.log("[api] Gia attiva su", API_URL);
     return true;
   } catch {
-    /* non risponde — libera porta zombie prima di riavviare */
+    /* non risponde â€” libera porta zombie prima di riavviare */
     killPids(getPidsListeningOnPort(API_PORT));
     await new Promise((r) => setTimeout(r, 600));
     try {
@@ -434,6 +558,7 @@ function createWindow() {
     minWidth: 1200,
     minHeight: 760,
     show: false,
+    autoHideMenuBar: true,
     backgroundColor: "#0f1419",
     title: "SuperNova",
     ...(APP_ICON ? { icon: APP_ICON } : {}),
@@ -454,7 +579,7 @@ function createWindow() {
     wc.on("did-fail-load", (_event, code, desc) => {
       console.error("[ui] Dev load failed:", code, desc);
       dialog.showErrorBox(
-        "SuperNova — UI dev non disponibile",
+        "SuperNova - UI dev non disponibile",
         `Impossibile caricare ${DEV_UI_URL}\n(${code}: ${desc})\n\n` +
           "Avvia Vite in un altro terminale:\n  cd desktop-ui\n  npm run dev\n\n" +
           "Oppure usa scripts\\Avvia_Biotech_Desktop.bat (build produzione)."
@@ -464,31 +589,47 @@ function createWindow() {
     mainWindow.webContents.openDevTools({ mode: "detach" });
   } else if (!fs.existsSync(DESKTOP_UI_DIST)) {
     dialog.showErrorBox(
-      "SuperNova — UI mancante",
+      "SuperNova - UI mancante",
       `File non trovato:\n${DESKTOP_UI_DIST}\n\nEsegui dalla root del progetto:\n  cd desktop-ui\n  npm run build:electron`
     );
     app.exit(1);
     return;
   } else {
     mainWindow.loadFile(DESKTOP_UI_DIST);
+    // Big single-bundle Electron builds can take >5s to parse on first open.
+    // Retry before alarming â€” false "UI non caricata" when gate is still mounting.
+    const checkUiMounted = (attempt) => {
+      if (!mainWindow || mainWindow.isDestroyed()) return;
+      void wc
+        .executeJavaScript(
+          "Boolean(document.querySelector('#root')?.childElementCount > 0 || document.getElementById('root')?.innerHTML?.trim())",
+        )
+        .then((hasContent) => {
+          if (hasContent || !mainWindow || mainWindow.isDestroyed()) return;
+          if (attempt < 2) {
+            setTimeout(() => checkUiMounted(attempt + 1), 8000);
+            return;
+          }
+          dialog.showMessageBox(mainWindow, {
+            type: "error",
+            title: "SuperNova - UI non caricata",
+            message: [
+              "La finestra e' vuota: il bundle JavaScript non si e' avviato.",
+              "",
+              "Ricompila la UI:",
+              "  cd desktop-ui",
+              "  npm run build:electron",
+              "",
+              "Poi riapri con scripts\\Avvia_Biotech_Desktop.bat",
+            ].join("\n"),
+          });
+        })
+        .catch(() => {
+          /* ignore */
+        });
+    };
     wc.on("did-finish-load", () => {
-      setTimeout(() => {
-        if (!mainWindow || mainWindow.isDestroyed()) return;
-        void wc
-          .executeJavaScript("Boolean(document.getElementById('root')?.innerHTML?.trim())")
-          .then((hasContent) => {
-            if (hasContent || !mainWindow || mainWindow.isDestroyed()) return;
-            dialog.showMessageBox(mainWindow, {
-              type: "error",
-              title: "SuperNova — UI non caricata",
-              message:
-                "La finestra e' vuota: il bundle JavaScript non si e' avviato.\n\n" +
-                "Ricompila la UI:\n  cd desktop-ui\n  npm run build:electron\n\n" +
-                "Poi riapri con scripts\\Avvia_Biotech_Desktop.bat",
-            });
-          })
-          .catch(() => { /* ignore */ });
-      }, 5000);
+      setTimeout(() => checkUiMounted(0), 12000);
     });
   }
 
@@ -496,28 +637,23 @@ function createWindow() {
     console.error("[ui] render-process-gone", details);
     if (mainWindow && !mainWindow.isDestroyed()) {
       dialog.showErrorBox(
-        "SuperNova — crash interfaccia",
+        "SuperNova - crash interfaccia",
         `Il processo grafico si e' chiuso (${details.reason || "unknown"}).\n` +
           "Riavvia l'app. Se succede sulla scheda AI clinico, apri DevTools (F12) e segnala l'errore in console."
       );
     }
   });
 
-  wc.setWindowOpenHandler(({ url }) => {
-    if (/^https?:\/\//i.test(url)) {
-      void shell.openExternal(url);
-      return { action: "deny" };
-    }
-    return { action: "allow" };
-  });
-  wc.on("will-navigate", (event, url) => {
-    const current = wc.getURL();
-    if (/^https?:\/\//i.test(url) && url !== current) {
-      event.preventDefault();
-      void shell.openExternal(url);
-    }
-  });
+  attachRendererGuards(mainWindow);
 }
+
+ipcMain.handle("desktop-open-screen-window", (_evt, screen) => {
+  try {
+    return createPopoutWindow(screen);
+  } catch (err) {
+    return { ok: false, error: String(err && err.message ? err.message : err) };
+  }
+});
 
 ipcMain.handle("get-api-token", () => API_TOKEN);
 ipcMain.on("get-project-root", (evt) => {
@@ -591,7 +727,15 @@ ipcMain.handle("desktop-open-data-dir", () => {
 });
 
 ipcMain.handle("desktop-open-external", (_evt, url) => {
-  const u = String(url || "").trim();
+  let u = String(url || "").trim();
+  if (!u) throw new Error("URL non valido");
+  if (/^\/\//.test(u)) u = "https:" + u;
+  else if (!/^https?:\/\//i.test(u)) {
+    // bare www.example.com / example.com/...
+    if (/^(www\.)?[a-z0-9][a-z0-9.-]*\.[a-z]{2,}([/:?#].*)?$/i.test(u)) {
+      u = "https://" + u;
+    }
+  }
   if (!/^https?:\/\//i.test(u)) {
     throw new Error("URL non valido");
   }
@@ -599,28 +743,29 @@ ipcMain.handle("desktop-open-external", (_evt, url) => {
 });
 
 app.whenReady().then(async () => {
+  Menu.setApplicationMenu(null);
   createSplashWindow();
   hookConsoleForSplash();
-  splashLog("SuperNova — avvio…");
+  splashLog("SuperNova â€” avvioâ€¦");
   fs.mkdirSync(DATA_DIR, { recursive: true });
   registerProjectDataProtocol();
-  splashLog("Connessione API Python…");
+  splashLog("Connessione API Pythonâ€¦");
   const apiOk = await ensureApi();
-  splashLog(apiOk ? "API pronta" : "API non disponibile — modalità offline");
+  splashLog(apiOk ? "API pronta" : "API non disponibile â€” modalitÃ  offline");
   const missing = listMissingDataFiles();
   if (apiOk && missing.length > 0) {
     const wb = path.join(DATA_DIR, "biotech_orchestrated_output.xlsx");
     if (fs.existsSync(wb)) {
-      splashLog("Export snapshot da workbook…");
-      console.log("[data] Snapshot mancanti, export da workbook…", missing.join(", "));
+      splashLog("Export snapshot da workbookâ€¦");
+      console.log("[data] Snapshot mancanti, export da workbookâ€¦", missing.join(", "));
       await postExportSnapshots();
     }
   }
-  splashLog("Caricamento interfaccia…");
+  splashLog("Caricamento interfacciaâ€¦");
   createWindow();
   const missingAfter = listMissingDataFiles();
   if (mainWindow && missingAfter.length > 0) {
-    const lines = missingAfter.map((f) => `  • data\\${f}`).join("\n");
+    const lines = missingAfter.map((f) => `  â€¢ data\\${f}`).join("\n");
     dialog.showMessageBox(mainWindow, {
       type: "warning",
       title: "Dati non trovati",
@@ -630,7 +775,7 @@ app.whenReady().then(async () => {
         "\n\n" +
         lines +
         "\n\n" +
-        "Se il progetto è su OneDrive, apri la cartella con i dati (es. C:\\coding\\Biotech_Investment app 6) " +
+        "Se il progetto Ã¨ su OneDrive, apri la cartella con i dati (es. C:\\coding\\Biotech_Investment app 6) " +
         "oppure esegui scripts\\Export_Desktop_Snapshots.bat dopo un refresh.",
     });
   }
@@ -642,13 +787,13 @@ app.whenReady().then(async () => {
         "L'app si apre con i dati in data/ (snapshot JSON).\n\n" +
         "L'API su porta " +
         API_PORT +
-        " non risponde: per «Refresh giornaliero» chiudi altre istanze Python su quella porta " +
+        " non risponde: per Â«Refresh giornalieroÂ» chiudi altre istanze Python su quella porta " +
         "o riavvia il PC, poi riapri l'app.",
     });
   }
 });
 
-// ── Watcher: notifica renderer quando accuracy monitor JSON cambia ────────────
+// â”€â”€ Watcher: notifica renderer quando accuracy monitor JSON cambia â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 // Controlla ogni 5 min il mtime del file. Quando il task settimanale domenica
 // (accuracy_monitor_snapshot.py) scrive un nuovo snapshot, il renderer riceve
 // "accuracy-monitor-updated" e ricarica automaticamente la vista.
@@ -665,10 +810,8 @@ app.whenReady().then(async () => {
       const mtime = fs.statSync(monitorJson).mtimeMs;
       if (mtime <= lastMtime) return;
       lastMtime = mtime;
-      if (mainWindow?.webContents && !mainWindow.webContents.isDestroyed()) {
-        mainWindow.webContents.send("accuracy-monitor-updated");
-        console.log("[watcher] model_accuracy_monitor_history.json aggiornato → notifica renderer");
-      }
+      broadcastToAllWindows("accuracy-monitor-updated");
+        console.log("[watcher] model_accuracy_monitor_history.json aggiornato — notifica renderer");
     } catch { /* ignore */ }
   }, 15_000); // ogni 15 s (run manuale + task settimanale)
 })();
@@ -679,3 +822,4 @@ app.on("window-all-closed", () => {
 });
 
 app.on("before-quit", () => stopApi());
+

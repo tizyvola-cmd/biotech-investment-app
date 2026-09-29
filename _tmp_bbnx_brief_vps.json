@@ -1,0 +1,273 @@
+﻿{
+    "ok":  true,
+    "brief":  {
+                  "detail_summary":  "Beta Bionics (BBNX) is evolving into a multi-product diabetes franchise following FDA clearance for its Mint patch pump, scheduled for a full U.S. launch in Q1 2027. The rollout is supported by a $150 million equity raise and a pharmacy channel strategy covering approximately 40% of insured U.S. lives, despite a 2026 revenue guidance reduction due to demand deferral.",
+                  "news_kind":  "financial",
+                  "indication":  null,
+                  "dates":  [
+
+                            ],
+                  "results":  null,
+                  "key_results":  [
+
+                                  ],
+                  "abstract":  null,
+                  "section_summaries":  [
+                                            {
+                                                "heading":  "Multi-Engine Growth Strategy",
+                                                "summary":  "Beta Bionics is transforming into a multi-product platform company with the FDA clearance of the Mint patch pump, expanding its addressable market and driving a shift toward pharmacy distribution."
+                                            },
+                                            {
+                                                "heading":  "Financial and Guidance Adjustments",
+                                                "summary":  "The company reduced 2026 revenue guidance due to patient demand deferral ahead of the Mint launch, while securing $150 million in equity financing to fund the rollout and manufacturing scale-up."
+                                            },
+                                            {
+                                                "heading":  "Product and Regulatory Details",
+                                                "summary":  "Mint features a reusable and disposable design requiring no recharging, CGM integration, and smartphone control, alongside 3D Intelligence dosing algorithm 510(k) reviews for iLet 3D and Mint 3D."
+                                            }
+                                        ],
+                  "is_paper":  false,
+                  "product":  null,
+                  "study":  null,
+                  "phase":  null,
+                  "key_points":  [
+                                     "Beta Bionics: Mint Clearance Marks The Shift Toward A Multi-Engine Growth Story (BBNX)",
+                                     "Beta Bionics: Mint Clearance Marks The Shift Toward A Multi-Engine Growth Story (BBNX) Beta Bionics (BBNX) is evolving into a multi-product, platform-driven diabetes franchise with the FDA-cleared Mint patch pump launchi",
+                                     "The bull case is clearer as Beta adds a second growth engine via Mint and shifts toward pharmacy distribution."
+                                 ],
+                  "source_url":  "https://seekingalpha.com/article/4947349-beta-bionics-mint-clearance-marks-the-shift-toward-a-multi-engine-growth-story",
+                  "ticker":  "BBNX",
+                  "digest_method":  "ai",
+                  "digest_answers":  [
+                                         {
+                                             "id":  "headline",
+                                             "question_en":  "What is the article headline?",
+                                             "question_it":  "Qual Ã¨ il titolo (headline) dellâarticolo?",
+                                             "search":  "title tag / H1 / RSS title / first line",
+                                             "present":  true,
+                                             "answer":  "Beta Bionics: Mint Clearance Marks The Shift Toward A Multi-Engine Growth Story (BBNX)"
+                                         },
+                                         {
+                                             "id":  "has_summary",
+                                             "question_en":  "Is there an editorial summary or lede paragraph?",
+                                             "question_it":  "CâÃ¨ un summary / sommario editoriale o lede?",
+                                             "search":  "lede after headline; Summary / Abstract / Overview heading",
+                                             "present":  true,
+                                             "answer":  "yes"
+                                         },
+                                         {
+                                             "id":  "has_bullet_summary",
+                                             "question_en":  "Is there a bullet key-points block near the top of the page?",
+                                             "question_it":  "CâÃ¨ un blocco bullet riassuntivo a inizio pagina?",
+                                             "search":  "Key points / Puntos clave / Key takeaways / TL;DR / Highlights",
+                                             "present":  true,
+                                             "answer":  "yes"
+                                         },
+                                         {
+                                             "id":  "bullet_points",
+                                             "question_en":  "What are those bullet key points (verbatim if short)?",
+                                             "question_it":  "Quali sono i bullet point (verbatim se brevi)?",
+                                             "search":  "list items under key-points heading",
+                                             "present":  true,
+                                             "answer":  [
+                                                            "A $150M equity raise funds Mint rollout and expansion, balancing near-term dilution against de-risked growth; valuation reflects both upside and execution risk.",
+                                                            "FDA clearance covers a reusable/disposable patch pump with no recharging, CGM integration and smartphone control; full U.S.",
+                                                            "3D Intelligence dosing algorithm is under FDA 510(k) review for iLet 3D and Mint 3D."
+                                                        ]
+                                         },
+                                         {
+                                             "id":  "tickers_companies",
+                                             "question_en":  "Which tickers / companies are named?",
+                                             "question_it":  "Quali ticker / societÃ  sono citati?",
+                                             "search":  "Nasdaq/NYSE tickers; company proper names",
+                                             "present":  true,
+                                             "answer":  [
+                                                            "BBNX"
+                                                        ]
+                                         },
+                                         {
+                                             "id":  "news_event_type",
+                                             "question_en":  "What type of news is this (closed M\u0026A, speculative M\u0026A, clinical, financing, other)?",
+                                             "question_it":  "Che tipo di news Ã¨ (M\u0026A chiuso, M\u0026A speculativo, clinico, financing, altro)?",
+                                             "search":  "closed/announced acquisition vs \u0027next buyout\u0027 / candidates / rumor",
+                                             "present":  true,
+                                             "answer":  "other"
+                                         },
+                                         {
+                                             "id":  "products_assets",
+                                             "question_en":  "Which products / drug codes / assets are discussed?",
+                                             "question_it":  "Quali prodotti / codici farmaco / asset sono discussi?",
+                                             "search":  "INN, CODE-123, brand names (Keytruda, GPS, Sonelokimabâ¦)",
+                                             "present":  false,
+                                             "answer":  [
+
+                                                        ]
+                                         },
+                                         {
+                                             "id":  "clinical_status",
+                                             "question_en":  "What is the clinical / regulatory status stated?",
+                                             "question_it":  "Qual Ã¨ lo status clinico / regolatorio dichiarato?",
+                                             "search":  "Phase, trial name, events reached, FDA filing, PDUFA, patent cliff",
+                                             "present":  false,
+                                             "answer":  null
+                                         },
+                                         {
+                                             "id":  "hard_numbers",
+                                             "question_en":  "What hard numbers appear ($ revenue, %, n=, events, dates)?",
+                                             "question_it":  "Quali numeri duri compaiono ($ ricavi, %, n=, eventi, date)?",
+                                             "search":  "$X billion, percentages, event counts, years",
+                                             "present":  true,
+                                             "answer":  [
+                                                            "sales ahead of full Mint availability. 2026 revenue guidance was cut due to demand deferral, but this s",
+                                                            "d deferral, but this sets up a stronger 2027 ramp as patients await Mint launch. A $150M equity raise fu",
+                                                            "7 ramp as patients await Mint launch. A $150M equity raise funds Mint rollout and expansion, balancing ne",
+                                                            "e control; full U.S. launch expected Q1 2027 with capacity for at least 1.5 million disposable units and"
+                                                        ]
+                                         },
+                                         {
+                                             "id":  "deal_economics",
+                                             "question_en":  "If a real deal: upfront / milestones / royalties? If speculative: say so.",
+                                             "question_it":  "Se deal reale: upfront / milestone / royalty? Se speculativo: dirlo.",
+                                             "search":  "upfront, consideration, definitive agreement vs rumor/candidates",
+                                             "present":  false,
+                                             "answer":  null
+                                         },
+                                         {
+                                             "id":  "catalyst_dates",
+                                             "question_en":  "Which catalyst dates should go on the calendar?",
+                                             "question_it":  "Quali date-catalizzatore vanno in calendario?",
+                                             "search":  "readout, PDUFA, filing, conference, close date",
+                                             "present":  false,
+                                             "answer":  [
+
+                                                        ]
+                                         },
+                                         {
+                                             "id":  "investor_takeaway",
+                                             "question_en":  "One dense investor takeaway paragraph (no invented facts).",
+                                             "question_it":  "Un paragrafo denso di takeaway per lâinvestitore (niente fatti inventati).",
+                                             "search":  "synthesize only from headline + bullets + body facts",
+                                             "present":  true,
+                                             "answer":  "Beta Bionics (BBNX) is evolving into a multi-product, platform-driven diabetes franchise with the FDA-cleared Mint patch pump launching in 1Q27. Mint expands BBNX addressable market, accelerates pharmacy channel mix, and alongside 3D Intelligence strengthens ecosystem retention and differentiation."
+                                         }
+                                     ],
+                  "has_summary":  true,
+                  "has_bullet_summary":  true,
+                  "headline":  "Beta Bionics: Mint Clearance Marks The Shift Toward A Multi-Engine Growth Story (BBNX)",
+                  "title":  "Beta Bionics: Mint Clearance Marks The Shift Toward A Multi-Engine Growth Story (BBNX)",
+                  "fetch_error":  "(\u0027Connection aborted.\u0027, ConnectionResetError(104, \u0027Connection reset by peer\u0027))",
+                  "article_fp":  "2c1475b82696480ab5e9",
+                  "brief_schema":  7,
+                  "clinical_score":  3.0,
+                  "financial_score":  -3.0,
+                  "corporate_score":  -1.5,
+                  "eis_score":  3.0,
+                  "eis":  {
+                              "score":  3.0,
+                              "delta_p_1d":  null,
+                              "delta_p_3d":  null,
+                              "delta_p_3d_effective":  null,
+                              "vol_ratio":  1.0,
+                              "vol_ratio_capped":  1.0,
+                              "vol_term":  0.0,
+                              "vol_reaction_weight":  0.0,
+                              "sentiment":  2.0,
+                              "kpi_score":  null,
+                              "eis_intrinsic":  null,
+                              "sent_term":  20.0,
+                              "weights":  {
+                                              "w1":  0.35,
+                                              "w2":  0.35,
+                                              "w3":  0.15,
+                                              "w4":  0.15
+                                          }
+                          },
+                  "market_access_score":  1.0,
+                  "market_access_notes":  "Inclusione in formulario â initial pharmacy access for about 40% of insured U.S. lives",
+                  "taxonomy_version":  8,
+                  "taxonomy_method":  "ai",
+                  "taxonomy_dimensions":  {
+                                              "clinical":  {
+                                                               "score":  3.0,
+                                                               "event_id":  "CLIN_APPROVAL_GRANTED",
+                                                               "event_type":  "Approvazione FDA/EMA",
+                                                               "evidence":  "FDA clearance covers a reusable/disposable patch pump with no recharging",
+                                                               "modifiers_applied":  [
+
+                                                                                     ],
+                                                               "base_weight":  3.0,
+                                                               "multiplier_product":  1.0,
+                                                               "review_flag":  false,
+                                                               "unclassified":  false,
+                                                               "classification_method":  "ai",
+                                                               "thermometer_importance":  0.2,
+                                                               "benchmark_label":  "EMA / ex-US approval",
+                                                               "benchmark_id":  "bm.clin.ema-ex-us-approval"
+                                                           },
+                                              "financial":  {
+                                                                "score":  -3.0,
+                                                                "event_id":  "FIN_GUIDANCE_CUT",
+                                                                "event_type":  "Guidance tagliata/ritirata",
+                                                                "evidence":  "2026 revenue guidance was cut due to demand deferral",
+                                                                "modifiers_applied":  [
+                                                                                          {
+                                                                                              "id":  "amount_pct_market_cap_over_20",
+                                                                                              "category":  "Importo finanziario (% market cap)",
+                                                                                              "modifier":  "\u003e 20% market cap",
+                                                                                              "multiplier":  1.5
+                                                                                          }
+                                                                                      ],
+                                                                "base_weight":  -2.0,
+                                                                "multiplier_product":  1.5,
+                                                                "review_flag":  false,
+                                                                "unclassified":  false,
+                                                                "classification_method":  "ai",
+                                                                "thermometer_importance":  -0.35,
+                                                                "benchmark_label":  "Full-year commercial guidance lowered",
+                                                                "benchmark_id":  "bm.fina.full-year-commercial-guidance-lowered"
+                                                            },
+                                              "corporate":  {
+                                                                "score":  -1.5,
+                                                                "event_id":  "FIN_DILUTIVE_OFFERING",
+                                                                "event_type":  "Offerta azionaria dilutiva / utilizzo shelf",
+                                                                "evidence":  "$150 million in equity financing",
+                                                                "modifiers_applied":  [
+
+                                                                                      ],
+                                                                "base_weight":  -1.5,
+                                                                "multiplier_product":  1.0,
+                                                                "review_flag":  false,
+                                                                "unclassified":  false,
+                                                                "classification_method":  "ai",
+                                                                "thermometer_importance":  -0.35,
+                                                                "benchmark_label":  "Dilutive equity raise, steep discount / distressed pricing",
+                                                                "benchmark_id":  "bm.fina.dilutive-equity-raise-steep-discount-distressed-pricing"
+                                                            },
+                                              "market_access":  {
+                                                                    "score":  1.0,
+                                                                    "event_id":  "ACCESS_FORMULARY_INCLUSION",
+                                                                    "event_type":  "Inclusione in formulario",
+                                                                    "evidence":  "initial pharmacy access for about 40% of insured U.S. lives",
+                                                                    "modifiers_applied":  [
+
+                                                                                          ],
+                                                                    "base_weight":  1.0,
+                                                                    "multiplier_product":  1.0,
+                                                                    "review_flag":  false,
+                                                                    "unclassified":  false,
+                                                                    "classification_method":  "ai",
+                                                                    "thermometer_importance":  0.35,
+                                                                    "benchmark_label":  "Favorable formulary inclusion / preferred tier",
+                                                                    "benchmark_id":  "bm.cov.access-formulary-inclusion"
+                                                                }
+                                          },
+                  "taxonomy_review_flags":  [
+
+                                            ],
+                  "taxonomy_audit":  "Approvazione FDA/EMA: FDA clearance covers a reusable/disposable patch pump with no recharging; Guidance tagliata/ritirata: 2026 revenue guidance was cut due to demand deferral; Offerta azionaria dilutiva / utilizzo shelf: $150 million in equity financing; Inclusione in formulario: initial pharmacy access for about 40% of insured U.S. lives",
+                  "heuristic_rev":  7
+              },
+    "cached":  false,
+    "article_fp":  "2c1475b82696480ab5e9",
+    "elapsed_ms":  5230
+}

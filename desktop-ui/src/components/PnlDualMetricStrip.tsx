@@ -6,6 +6,7 @@ import {
   portfolioPnlTone,
 } from "../sheet/portfolioGainLossStyle";
 import { useLang, useT } from "../shared/i18n";
+import type { ReactNode } from "react";
 
 function isRecovering(
   entryPct: number | null | undefined,
@@ -80,6 +81,55 @@ function MetricCell({
   );
 }
 
+function TodayMetricWithAside({
+  label,
+  pct,
+  eur,
+  eurFmt = "usd",
+  title,
+  aside,
+}: {
+  label: string;
+  pct: number | null | undefined;
+  eur: number | null | undefined;
+  eurFmt?: "usd" | "eur";
+  title?: string;
+  aside: ReactNode;
+}) {
+  const accent = portfolioPnlAccentClass(eur, pct);
+  const tone = portfolioPnlTone(eur, pct);
+  const borderTone =
+    tone === "gain"
+      ? "border-emerald-300/70 bg-emerald-50/50 dark:bg-emerald-950/15"
+      : tone === "loss"
+        ? "border-rose-300/60 bg-rose-50/40 dark:bg-rose-950/15"
+        : "border-[rgb(var(--border))]/45 bg-white/50 dark:bg-black/10";
+
+  return (
+    <div
+      className={`rounded-lg border flex flex-wrap items-stretch overflow-hidden ${borderTone}`}
+      title={title}
+    >
+      <div className="shrink-0 px-3 py-2 min-w-[7.5rem] border-r border-inherit/50">
+        <p className="text-[10px] uppercase tracking-wide font-semibold text-ink-muted leading-tight">
+          {label}
+        </p>
+        <p className={`text-xl font-bold tabular-nums leading-tight mt-0.5 ${accent}`}>
+          {pct != null && Number.isFinite(pct) ? fmtPortfolioPnlPct(pct) : "—"}
+        </p>
+        <p className={`text-[13px] font-semibold tabular-nums ${accent}`}>
+          {eur != null && Number.isFinite(eur)
+            ? eurFmt === "eur"
+              ? fmtSignedEurPnl(eur)
+              : fmtPortfolioPnlUsd(eur)
+            : "—"}
+        </p>
+      </div>
+      <div className="flex-1 min-w-[12rem] px-3 py-2 flex flex-col justify-center gap-1.5">{aside}</div>
+    </div>
+  );
+}
+
 /** Tre orizzonti P&L: portafoglio (ingresso) · ultima lettura · giornata borsa. */
 export function PnlDualMetricStrip({
   pnlEur,
@@ -93,6 +143,7 @@ export function PnlDualMetricStrip({
   hasReadingDelta = true,
   capitalEur,
   className = "",
+  aside,
 }: {
   pnlEur?: number | null;
   pnlPct?: number | null;
@@ -105,6 +156,8 @@ export function PnlDualMetricStrip({
   hasReadingDelta?: boolean;
   capitalEur?: number | null;
   className?: string;
+  /** Extra plan/target context shown beside the trading-day cell (opportunity cards). */
+  aside?: ReactNode;
 }) {
   const t = useT();
   const { lang } = useLang();
@@ -121,6 +174,20 @@ export function PnlDualMetricStrip({
   if (!showEntry && !showReading && !showToday) return null;
 
   const readingSub = fmtReadingTime(priorReadingTs, it);
+
+  if (aside && showToday && !showEntry && !showReading) {
+    return (
+      <div className={`space-y-1.5 ${className}`} title={t("sim.lossAnalysis.pnlDual.tip")}>
+        <TodayMetricWithAside
+          label={t("sim.lossAnalysis.pnlDual.todayLabel")}
+          pct={pnlPctToday}
+          eur={pnlEurToday}
+          title={t("sim.lossAnalysis.pnlDual.todayTip")}
+          aside={aside}
+        />
+      </div>
+    );
+  }
 
   return (
     <div className={`space-y-1.5 ${className}`} title={t("sim.lossAnalysis.pnlDual.tip")}>

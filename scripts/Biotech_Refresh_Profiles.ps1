@@ -98,6 +98,13 @@ function Set-BiotechWeeklyFullEnv {
     $env:YF_CACHE_STICKY = "1"
     $env:YF_QUOTE_REFRESH_HOURS = "4"
     $env:LIQUIDITY_YF_FORCE = "1"
+    $env:ORCH_SKIP_RETROSPECTIVE = "1"
+    $env:ORCH_SKIP_VARIATIONS_RETRY = "1"
+    $env:FORCE_SIGN_CURVE_DAILY = "1"
+    $env:SIGN_CURVE_DAILY_SKIP_IF_FRESH_DAYS = "0"
+    $env:ACCURACY_MONITOR_EVERY_RUN = "1"
+    $env:ACCURACY_MONITOR_TRIGGER = "weekly_full"
+    $env:POST_REFRESH_ACCURACY_SNAPSHOT = "1"
     if ($SkipYfinanceFetch) {
         $env:ORCH_SKIP_FETCH = "1"
     }

@@ -91,6 +91,7 @@ export function SynthGainImpactPanel({
 
   const mineEq = mine.winRatePct;
   const mineWt = mine.weightedWinRatePct;
+  const simEq = sim.winRatePct;
   const simWt  = sim.weightedWinRatePct;
   const mineDelta = mine.weightingImpactPp;
   const simDelta  = sim.weightingImpactPp;
@@ -105,39 +106,39 @@ export function SynthGainImpactPanel({
       </p>
       <p className="text-[10px] text-ink-muted leading-snug">
         {it
-          ? `Win rate su ${n} trade chiusi (equal = globale, weighted = pesata per capitale corrente). ${hasAdvice ? `Accuracy su ${adviceAccuracy!.scoredCount} consigli valutati.` : ""}`
-          : `Win rate across ${n} closed trades (equal = global, weighted = capital-weighted). ${hasAdvice ? `Accuracy across ${adviceAccuracy!.scoredCount} scored advice points.` : ""}`}
+          ? `Win rate su ${n} trade chiusi decisivi (P&L € ≠ 0, equal = nell'universo del portfolio). Weighted = pesata per capitale corrente. ${hasAdvice ? `Accuracy su ${adviceAccuracy!.scoredCount} consigli.` : ""}`
+          : `Win rate across ${n} decisive closed trades (P&L € ≠ 0, equal = portfolio universe). Weighted = capital-weighted. ${hasAdvice ? `Accuracy across ${adviceAccuracy!.scoredCount} advice points.` : ""}`}
       </p>
 
       {/* KPI grid */}
       <div className="grid grid-cols-2 sm:grid-cols-4 gap-2">
         <KpiCell
-          label={it ? "Win rate equal" : "Win rate equal"}
+          label={it ? "Portfolio reale" : "Real portfolio"}
           value={fmtPct(mineEq)}
           valueCls={winRateClass(mineEq)}
+          sub={mineWt != null && mineWt !== mineEq ? `${it ? "pesata" : "wtd"} ${fmtPct(mineWt)}` : fmtDelta(mineDelta)}
+          subCls={mineWt != null && mineWt !== mineEq ? winRateClass(mineWt) : deltaClass(mineDelta)}
           hint={it
-            ? `Win rate globale del sistema su ${n} round-trip chiusi. Uguale per Portfolio e Sim loop (stesso universo).`
-            : `Global system win rate across ${n} closed round-trips. Same for Portfolio and Sim loop (same universe).`}
+            ? `Win rate su chiusure nell'universo portfolio (n=${mine.sampleSize} decisivi, P&L € ≠ 0).`
+            : `Win rate on closes in portfolio universe (n=${mine.sampleSize} decisive, P&L € ≠ 0).`}
         />
         <KpiCell
-          label={it ? "Weighted portf." : "Weighted portf."}
-          value={fmtPct(mineWt)}
-          valueCls={winRateClass(mineWt)}
-          sub={fmtDelta(mineDelta)}
-          subCls={deltaClass(mineDelta)}
+          label={it ? "Sim loop uniforme" : "Sim loop uniform"}
+          value={fmtPct(simEq)}
+          valueCls={winRateClass(simEq)}
           hint={it
-            ? `Win rate ponderata per il capitale allocato su ogni ticker nel tuo portfolio. ${mineDelta != null ? `Δ vs equal: ${fmtDelta(mineDelta)} — ${mineDelta < 0 ? "il weighting orienta verso titoli storicamente più deboli" : "orienta verso titoli più forti"}.` : ""}`
-            : `Win rate weighted by capital allocated per ticker in your portfolio. ${mineDelta != null ? `Δ vs equal: ${fmtDelta(mineDelta)} — ${mineDelta < 0 ? "weighting shifts toward historically weaker tickers" : "shifts toward stronger tickers"}.` : ""}`}
+            ? `Win rate su chiusure nell'universo sim loop (n=${sim.sampleSize} decisivi, P&L € ≠ 0).`
+            : `Win rate on closes in sim loop universe (n=${sim.sampleSize} decisive, P&L € ≠ 0).`}
         />
         <KpiCell
-          label={it ? "Weighted sim loop" : "Weighted sim loop"}
-          value={fmtPct(simWt)}
-          valueCls={winRateClass(simWt)}
+          label={it ? "Sim loop pesato" : "Sim loop weighted"}
+          value={fmtPct(simWt ?? simEq)}
+          valueCls={winRateClass(simWt ?? simEq)}
           sub={fmtDelta(simDelta)}
           subCls={deltaClass(simDelta)}
           hint={it
-            ? `Win rate ponderata per il capitale allocato su ogni ticker nel sim loop. ${simDelta != null ? `Δ vs equal: ${fmtDelta(simDelta)}.` : ""}`
-            : `Win rate weighted by capital allocated per ticker in the sim loop. ${simDelta != null ? `Δ vs equal: ${fmtDelta(simDelta)}.` : ""}`}
+            ? `Win rate pesata per capitale allocato nel sim loop approvato. ${simDelta != null ? `Δ vs equal: ${fmtDelta(simDelta)}.` : ""}`
+            : `Capital-weighted win rate on sim loop approved allocation. ${simDelta != null ? `Δ vs equal: ${fmtDelta(simDelta)}.` : ""}`}
         />
         {hasAdvice ? (
           <KpiCell

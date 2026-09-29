@@ -1,4 +1,4 @@
-const { contextBridge, ipcRenderer } = require("electron");
+const { contextBridge, ipcRenderer, webFrame } = require("electron");
 
 const API_BASE = "http://127.0.0.1:8765";
 
@@ -22,6 +22,14 @@ contextBridge.exposeInMainWorld("supernova", {
     ipcRenderer.on("accuracy-monitor-updated", wrapped);
     return () => ipcRenderer.removeListener("accuracy-monitor-updated", wrapped);
   },
+  openScreenWindow: (screen) =>
+    ipcRenderer.invoke("desktop-open-screen-window", screen),
+  setPageZoomFactor: (z) => {
+    const n = Math.min(1.6, Math.max(0.8, Number(z) || 1));
+    webFrame.setZoomFactor(n);
+    return n;
+  },
+  getPageZoomFactor: () => webFrame.getZoomFactor(),
   shell: {
     openWorkbook: () => ipcRenderer.invoke("desktop-open-workbook"),
     openPath: (filePath) => ipcRenderer.invoke("desktop-open-path", filePath),

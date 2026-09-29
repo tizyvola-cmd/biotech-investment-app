@@ -1,6 +1,5 @@
 import { useMemo, useState } from "react";
 import { FeedPanel, SegToggle } from "./MobileUi";
-import { MobileCurveChartsSheet } from "./MobileCurveChartsSheet";
 import { MobileEisSheet } from "./MobileEisSheet";
 import { MobileRecalibSparkline } from "./MobileRecalibSparkline";
 import { MobileTargetDistanceDonut } from "./MobileTargetDistanceDonut";
@@ -29,10 +28,6 @@ type Props = {
 
 type EisDrawer = { ticker: string; eisScore: number | null; eisHint: string | null };
 
-type CurveDrawer = {
-  row: MobileActionRow;
-};
-
 function readingCellTitle(
   row: MobileActionRow,
   t: (key: I18nKey) => string,
@@ -42,11 +37,10 @@ function readingCellTitle(
   return undefined;
 }
 
-export function MobileActionsTable({ rows, sheet, inputs, onOpenDetail }: Props) {
+export function MobileActionsTable({ rows, onOpenDetail }: Props) {
   const { t } = useMobileLang();
   const [profileFilter, setProfileFilter] = useState<ActionsProfileFilter>("all");
   const [eisDrawer, setEisDrawer] = useState<EisDrawer | null>(null);
-  const [curveDrawer, setCurveDrawer] = useState<CurveDrawer | null>(null);
   const counts = useMemo(() => recommendationCounts(rows), [rows]);
   const filtered = useMemo(
     () => filterRecommendationsByProfile(rows, profileFilter),
@@ -103,27 +97,15 @@ export function MobileActionsTable({ rows, sheet, inputs, onOpenDetail }: Props)
                     </span>
                     <span className="actions-company-ticker">{row.ticker}</span>
                   </td>
-                  <td className="actions-curve" onClick={(e) => e.stopPropagation()}>
-                    <button
-                      type="button"
-                      className="actions-curve-btn"
-                      aria-label={t("curve.openCharts", { ticker: row.ticker })}
-                      onClick={() => setCurveDrawer({ row })}
-                    >
+                  <td className="actions-curve">
+                    <div className="actions-curve-btn" aria-hidden>
                       <MobileRecalibSparkline
                         points={row.curvePoints}
                         completionDate={row.completionDate}
                         todayOffset={row.curveCharts?.todayOffset ?? null}
                         daysToCd={row.daysToCd}
                       />
-                    </button>
-                    <button
-                      type="button"
-                      className="actions-curve-link"
-                      onClick={() => setCurveDrawer({ row })}
-                    >
-                      {t("curve.details")} →
-                    </button>
+                    </div>
                   </td>
                   <td className="actions-rec">
                     <span className={`actions-action ${recActionToneClass(row.action)}`}>{row.action}</span>
@@ -218,21 +200,6 @@ export function MobileActionsTable({ rows, sheet, inputs, onOpenDetail }: Props)
           </table>
         </div>
       )}
-
-      <MobileCurveChartsSheet
-        open={curveDrawer != null}
-        ticker={curveDrawer?.row.ticker ?? null}
-        companyName={curveDrawer?.row.companyName ?? null}
-        rowKey={curveDrawer?.row.key ?? null}
-        charts={curveDrawer?.row.curveCharts}
-        sheet={sheet}
-        inputs={inputs}
-        daysToCd={curveDrawer?.row.daysToCd ?? null}
-        planReturnPct={curveDrawer?.row.planReturnPct ?? null}
-        hasPosition={curveDrawer?.row.profile === "portfolio"}
-        completionDate={curveDrawer?.row.completionDate ?? null}
-        onClose={() => setCurveDrawer(null)}
-      />
 
       <MobileEisSheet
         open={eisDrawer != null}

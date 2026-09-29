@@ -105,6 +105,19 @@ describe("buildPortfolioGainPlanAggregateSeries", () => {
 });
 
 describe("summarizePlanGap", () => {
+  /*
+   * ``summarizePlanGap`` resolves "today" via ``holdingDayFractionFromInvestedAt(investedAt)``
+   * which uses ``Date.now()`` and IGNORES ``holdDaysElapsed`` when
+   * ``investedAt`` is present. Hardcoding an ISO string (e.g. 2026-06-01)
+   * therefore drifts as the wall clock moves forward — the planned value
+   * at the resolved day grows past the intended horizon and the gap
+   * assertion fails a few weeks after authoring. We anchor
+   * ``investedAt`` to ``Date.now() - N days`` instead so the resolved
+   * hold-day is always exactly ``N`` at test time.
+   */
+  const daysAgoIso = (n: number): string =>
+    new Date(Date.now() - n * 86_400_000).toISOString();
+
   it("uses planned value at hold-day today, not the last future horizon point", () => {
     const rows: PortfolioGainChartRow[] = [
       {
@@ -113,7 +126,7 @@ describe("summarizePlanGap", () => {
         ticker: "BDSX",
         pnlEur: 314,
         pnlUnavailable: false,
-        investedAt: "2026-06-01T10:00:00.000Z",
+        investedAt: daysAgoIso(17),
         expectedHoldDays: 133,
         daysToTarget: 133,
         expectedGainEur: 3000,
@@ -151,7 +164,7 @@ describe("summarizePlanGap", () => {
         ticker: "PTCT",
         pnlEur: 706,
         pnlUnavailable: false,
-        investedAt: "2026-06-01T10:00:00.000Z",
+        investedAt: daysAgoIso(17),
         expectedHoldDays: 30,
         daysToTarget: 30,
         expectedGainEur: 2000,
@@ -165,9 +178,12 @@ describe("summarizePlanGap", () => {
         chartPoints: null,
       },
     ];
+    // History snapshot slightly before "now" (11 days ago) so it remains in
+    // the hold window regardless of the wall clock. actualNowEur must still
+    // come from row.pnlEur (live MTM), not from this stale snapshot.
     const history: InvestSimHistoryPoint[] = [
       {
-        ts: "2026-06-17T08:00:00.000Z",
+        ts: new Date(Date.now() - 11 * 86_400_000).toISOString(),
         capital: 5000,
         value: 5300,
         pnl: 300,

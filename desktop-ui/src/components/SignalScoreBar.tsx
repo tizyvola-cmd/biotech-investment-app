@@ -8,6 +8,7 @@ export function SignalScoreBar({
   barClassName = "w-[4.5rem]",
   stacked = false,
   showLabel = false,
+  barOnly = false,
   lang = "it",
   onClick,
 }: {
@@ -17,6 +18,8 @@ export function SignalScoreBar({
   stacked?: boolean;
   /** Mostra fascia testuale sotto il numero (es. «Alta», «Buona»). */
   showLabel?: boolean;
+  /** Solo barra colorata (niente numero / label) — colonna Reliability compatta. */
+  barOnly?: boolean;
   lang?: "it" | "en";
   onClick?: () => void;
 }) {
@@ -26,7 +29,9 @@ export function SignalScoreBar({
   const Wrapper = onClick ? "button" : "div";
   const bar = (
     <div
-      className={`${stacked ? "w-full" : barClassName} h-2 rounded-full bg-slate-200/90 overflow-hidden shrink-0`}
+      className={`${stacked && !barOnly ? "w-full" : barClassName} ${
+        barOnly ? "h-1.5" : "h-2"
+      } rounded-full bg-slate-200/90 overflow-hidden shrink-0 mx-auto`}
       aria-hidden
     >
       <div
@@ -35,6 +40,24 @@ export function SignalScoreBar({
       />
     </div>
   );
+  if (barOnly) {
+    const tip =
+      detailTitle ??
+      `${clamped}% · ${tierLabel}`;
+    return (
+      <Wrapper
+        type={onClick ? "button" : undefined}
+        className={`min-w-0 flex justify-center ${
+          onClick ? "cursor-pointer hover:opacity-90" : "cursor-help"
+        }`}
+        title={tip}
+        onClick={onClick}
+        aria-label={`${clamped}% ${tierLabel}`}
+      >
+        {bar}
+      </Wrapper>
+    );
+  }
   const num = (
     <span className={`text-[11px] tabular-nums shrink-0 ${rel.textClass}`}>{clamped}</span>
   );
@@ -52,7 +75,7 @@ export function SignalScoreBar({
         {num}
         {showLabel ? (
           <span
-            className={`text-[8px] font-semibold uppercase tracking-wide leading-none ${rel.textClass}`}
+            className={`text-[11px] font-semibold uppercase tracking-wide leading-none ${rel.textClass}`}
           >
             {tierLabel}
           </span>

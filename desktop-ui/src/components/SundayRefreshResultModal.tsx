@@ -1,6 +1,8 @@
+import { createPortal } from "react-dom";
 import { useLang, useT } from "../shared/i18n";
 import type { OrchestratorRunSummary } from "../api/refresh";
 import type { SundayRefreshResult } from "../shared/refreshStatusStore";
+import { formatOrchestratorSummaryMessage } from "../sheet/orchestratorSummaryMessage";
 
 function fmtElapsed(sec: number): string {
   const m = Math.floor(sec / 60);
@@ -27,11 +29,16 @@ export function SundayRefreshResultModal({
 }) {
   const t = useT();
   const { lang } = useLang();
-  if (!open || !result) return null;
+  if (!open || !result || typeof document === "undefined") return null;
 
   const ok = result.success;
   const summary = result.summary;
   const it = lang === "it";
+  const langCode = it ? "it" : "en";
+  const localizedMessage =
+    formatOrchestratorSummaryMessage(summary, langCode) ||
+    result.message ||
+    (ok ? t("sundayRefresh.popup.okDefault") : t("sundayRefresh.popup.errDefault"));
   const exitNote =
     result.exitCode != null && result.exitCode !== 0
       ? it
@@ -48,14 +55,18 @@ export function SundayRefreshResultModal({
   const newTickers = newTickerList(summary);
   const newCd = summary?.new_catalyst_rows ?? [];
 
-  return (
+  return createPortal(
     <div
-      className="fixed inset-0 z-[60] flex items-center justify-center bg-black/55 p-4"
-      onClick={onClose}
+      className="fixed inset-0 z-[10000] flex items-center justify-center bg-black/55 p-4"
+      role="dialog"
+      aria-modal="true"
+      onMouseDown={(e) => {
+        if (e.target === e.currentTarget) onClose();
+      }}
     >
       <div
         className="card w-full max-w-lg flex flex-col overflow-hidden shadow-xl max-h-[90vh]"
-        onClick={(e) => e.stopPropagation()}
+        onMouseDown={(e) => e.stopPropagation()}
       >
         <div className="px-4 py-3 border-b border-[rgb(var(--border))]/60 flex items-start gap-3 shrink-0">
           <span className="text-2xl leading-none" aria-hidden>
@@ -69,6 +80,14 @@ export function SundayRefreshResultModal({
               {t("sundayRefresh.popup.subtitle")}
             </p>
           </div>
+          <button
+            type="button"
+            className="shrink-0 rounded-md px-2 py-1 text-sm text-ink-muted hover:bg-[rgb(var(--surface-2))] hover:text-ink"
+            aria-label={t("common.close")}
+            onClick={onClose}
+          >
+            ✕
+          </button>
         </div>
         <div className="px-4 py-3 space-y-3 text-sm overflow-y-auto min-h-0">
           <div className="grid grid-cols-1 sm:grid-cols-2 gap-2 text-xs">
@@ -99,7 +118,7 @@ export function SundayRefreshResultModal({
                 : "border-[rgb(var(--signal-down))]/35 bg-[rgb(var(--signal-down))]/8 text-ink"
             }`}
           >
-            {result.message || (ok ? t("sundayRefresh.popup.okDefault") : t("sundayRefresh.popup.errDefault"))}
+            {localizedMessage}
           </p>
 
           {summary ? (
@@ -151,7 +170,10 @@ export function SundayRefreshResultModal({
                         </span>
                         <span className="text-ink-muted"> · {row.nct_relation_type}</span>
                         {(row.company || row.sponsor) && (
-                          <p className="text-ink-muted/90 mt-0.5 truncate" title={`${row.company} ↔ ${row.sponsor}`}>
+                          <p
+                            className="text-ink-muted/90 mt-0.5 truncate"
+                            title={`${row.company} ↔ ${row.sponsor}`}
+                          >
                             {row.company || "—"}
                             <span className="opacity-70"> ↔ </span>
                             {row.sponsor || "—"}
@@ -180,6 +202,7 @@ export function SundayRefreshResultModal({
           </button>
         </div>
       </div>
-    </div>
+    </div>,
+    document.body,
   );
 }

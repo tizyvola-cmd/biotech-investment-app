@@ -68,7 +68,15 @@ export function OpportunitiesView({
               key={row.id}
               ticker={row.ticker}
               title={row.title}
-              badge={row.eis != null ? `EIS ${row.eis >= 0 ? "+" : ""}${row.eis.toFixed(1)}` : undefined}
+              badge={
+                row.manual
+                  ? row.eis != null
+                    ? `Manual EIS ${row.eis >= 0 ? "+" : ""}${row.eis.toFixed(1)}`
+                    : "Manual"
+                  : row.eis != null
+                    ? `EIS ${row.eis >= 0 ? "+" : ""}${row.eis.toFixed(1)}`
+                    : undefined
+              }
               badgeTone={row.eis != null && row.eis >= 0 ? "up" : row.eis != null ? "down" : "neutral"}
               metaLeft={fmtFeedDate(row.eventDate, lang)}
               metaRight={
@@ -83,7 +91,7 @@ export function OpportunitiesView({
 
       <section className="opp-table-section">
         <h2 className="opp-table-title">{t("opportunities.tableTitle", { n: totalOpps })}</h2>
-        <MobileSimTable rows={rows} onRowClick={onOpenDetail} />
+        <MobileSimTable rows={rows} dashSnapshot={dashSnapshot} onRowClick={onOpenDetail} />
       </section>
     </>
   );

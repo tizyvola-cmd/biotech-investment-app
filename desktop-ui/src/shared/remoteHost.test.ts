@@ -4,7 +4,10 @@ import {
   isLocalDesktopShell,
   isRemoteDataMode,
   resolveApiBase,
+  resolveMobileSyncApiBase,
   resolveProjectDataBase,
+  resolveTesterFeedbackApiBase,
+  resolveWeeklyFullApiBase,
   setRemoteApiBase,
 } from "./remoteHost";
 
@@ -36,6 +39,7 @@ describe("remoteHost Electron priority", () => {
 
   afterEach(() => {
     vi.unstubAllGlobals();
+    vi.unstubAllEnvs();
   });
 
   it("ignores stale VPS sn_api_base when Electron shell is present", () => {
@@ -81,5 +85,43 @@ describe("remoteHost Electron priority", () => {
     setRemoteApiBase("http://91.99.15.48:8765");
 
     expect(resolveApiBase()).toBe("http://127.0.0.1:8765");
+  });
+
+  it("ignores loopback sn_api_base when browser is on a remote host", () => {
+    vi.stubGlobal("window", {
+      location: { hostname: "91.99.15.48", port: "8765" },
+      localStorage: storage,
+      dispatchEvent: vi.fn(),
+    });
+    setRemoteApiBase("http://127.0.0.1:8765");
+    expect(getRemoteApiBase()).toBe("");
+    expect(resolveTesterFeedbackApiBase()).toBe("");
+  });
+
+  it("ignores leftover VPS/LAN sn_api_base on hosted web so login stays same-origin", () => {
+    vi.stubGlobal("window", {
+      location: { hostname: "91.99.15.48", port: "8765" },
+      localStorage: storage,
+      dispatchEvent: vi.fn(),
+    });
+    setRemoteApiBase("http://192.168.1.203:8765");
+    expect(getRemoteApiBase()).toBe("");
+    expect(resolveTesterFeedbackApiBase()).toBe("");
+    setRemoteApiBase("http://91.99.15.48:8765");
+    expect(resolveTesterFeedbackApiBase()).toBe("");
+  });
+
+  it("routes mobile snapshot sync to VPS when Electron uses local API", () => {
+    vi.stubGlobal("window", {
+      supernova: {
+        apiBase: "http://127.0.0.1:8765",
+        projectDataBase: "project-data://local",
+      },
+      localStorage: storage,
+      dispatchEvent: vi.fn(),
+    });
+    setRemoteApiBase("http://91.99.15.48:8765");
+    expect(resolveMobileSyncApiBase()).toBe("http://91.99.15.48:8765");
+    expect(resolveWeeklyFullApiBase()).toBe("http://91.99.15.48:8765");
   });
 });

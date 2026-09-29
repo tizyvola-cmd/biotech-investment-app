@@ -1,14 +1,15 @@
 import { lazy, Suspense, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { ViewErrorBoundary } from "./ViewErrorBoundary";
 import { useInvestSimInputs } from "../hooks/useInvestSimInputs";
-import { InvestmentSimulationView } from "./InvestmentSimulationView";
 import type { SimulationNavFocus } from "../sheet/investSimStorage";
 import {
   loadSimulationChartsBundle,
   invalidateSimulationChartsCache,
   simulationRowSeriesKey,
 } from "../data/simulationCharts";
-import type { ChartPoint, SheetTable } from "../types";
+import type { ChartBundle, ChartPoint, SheetTable } from "../types";
+import type { LossRiskCatalog } from "../hooks/useLossRiskCatalog";
+import type { LossRiskEntry } from "./LossRiskPoopCell";
 import {
   exportDesktopSnapshots,
   fetchPostRefreshPipelineLog,
@@ -32,22 +33,22 @@ import {
   type RefreshProfile,
 } from "../shared/refreshStatusStore";
 import { RefreshControls } from "./RefreshControls";
-import { SupernovaDistanceScoreView } from "./SupernovaDistanceScoreView";
 import { publishDashboardRecommendationsFromSimulation } from "../sheet/topOppsFromSimulation";
 
-const CdPatternRecommendationView = lazy(() =>
-  import("./CdPatternRecommendationView").then((m) => ({ default: m.CdPatternRecommendationView })),
-);
-const PortfolioBuilderLabView = lazy(() =>
-  import("./PortfolioBuilderLabView").then((m) => ({ default: m.PortfolioBuilderLabView })),
+const InvestmentSimulationView = lazy(() =>
+  import("./InvestmentSimulationView").then((m) => ({
+    default: m.InvestmentSimulationView,
+  })),
 );
 import { loadPortfolioSnapshotBeforeRefresh } from "../sheet/portfolioRefreshAlerts";
 import { markSaturdayAutostartDone } from "../shared/sundayRefreshSchedule";
+import { acknowledgeWeeklyFullServerRun } from "../shared/weeklyFullServerWatch";
 import { AntiqueClockIcon } from "./AntiqueClockIcon";
 import { useLang, useT } from "../shared/i18n";
 
-type LabTab = "monitor" | "sds" | "patterns" | "builder";
-export type DecisionLabTab = LabTab;
+type LabTab = "monitor";
+/** Legacy deep-link ids remapped to monitor (builder / sds tabs removed). */
+export type DecisionLabTab = LabTab | "builder" | "sds";
 // RefreshDataModal — "Refresh data" button that launches the server-side refresh
 // (exported to be reused in other tabs — e.g. Simulation — so buttons and
 // live badges are identical everywhere).
@@ -670,6 +671,10 @@ export function RefreshDataModal({
             exitCode: sundayExitRef.current,
             summary: summary && Object.keys(summary).length > 0 ? summary : null,
           });
+          acknowledgeWeeklyFullServerRun(
+            summary?.finished_at,
+            summary?.finished_at_display?.replace(" ", "T"),
+          );
         })();
         playRefreshDoneBeep(success);
         flashDocumentTitle(
@@ -1018,9 +1023,7 @@ export type InvestmentDecisionLabViewProps = {
   simLoading: boolean;
   simError?: string | null;
   onReloadSimulation?: () => void | Promise<SheetTable | null | undefined>;
-  onNavigateToSimulation?: (ticker: string, action: "buy" | "sell", cd?: string) => void;
   onOpenCatalystFeed?: () => void;
-  onOpenClinicalFeed?: (ticker: string) => void;
   onOpenSlopeErrorCharts?: (ticker?: string) => void;
   onOpenPredictionCharts?: (focus: { seriesKey: string | null; ticker: string }) => void;
   focusSignal?: { ticker: string; cd?: string } | null;
@@ -1034,6 +1037,11 @@ export type InvestmentDecisionLabViewProps = {
   /** Apri tab SuperNova con ticker selezionato (navigazione da Dashboard/Simulation). */
   sdsFocusTicker?: string | null;
   onSdsFocusConsumed?: () => void;
+  /** App-level shared catalog — avoids a second three-portfolio build in Pick stocks. */
+  sharedLossRiskCatalog?: LossRiskCatalog | null;
+  sharedLossRiskByRowKey?: Map<string, LossRiskEntry> | null;
+  /** App chart bundle — skip a second snapshot load when present. */
+  sharedChartBundle?: ChartBundle | null;
 };
 
 export function InvestmentDecisionLabView({
@@ -1041,9 +1049,7 @@ export function InvestmentDecisionLabView({
   simLoading,
   simError,
   onReloadSimulation,
-  onNavigateToSimulation,
   onOpenCatalystFeed: _onOpenCatalystFeed,
-  onOpenClinicalFeed,
   onOpenSlopeErrorCharts,
   onOpenPredictionCharts,
   focusSignal,
@@ -1055,13 +1061,13 @@ export function InvestmentDecisionLabView({
   onInitialTabConsumed,
   sdsFocusTicker,
   onSdsFocusConsumed,
+  sharedLossRiskCatalog = null,
+  sharedLossRiskByRowKey = null,
+  sharedChartBundle = null,
 }: InvestmentDecisionLabViewProps) {
   const t = useT();
   const { apiOk } = useRefreshStatus();
-  const [labTab, setLabTab] = useState<LabTab>("monitor");
   const [sdsMonitorFocus, setSdsMonitorFocus] = useState<SimulationNavFocus | null>(null);
-  const [sdsTabFocusTicker, setSdsTabFocusTicker] = useState<string | null>(null);
-  const [patternTabFocusTicker, setPatternTabFocusTicker] = useState<string | null>(null);
   const [signalsReloadToken, setSignalsReloadToken] = useState(0);
   const [labReloadToken, setLabReloadToken] = useState(0);
   const [labRefreshing, setLabRefreshing] = useState(false);
@@ -1071,6 +1077,10 @@ export function InvestmentDecisionLabView({
   >(null);
 
   useEffect(() => {
+    if (sharedChartBundle) {
+      setLabChartsBundle(sharedChartBundle);
+      return;
+    }
     let cancelled = false;
     void loadSimulationChartsBundle().then(({ bundle }) => {
       if (!cancelled) setLabChartsBundle(bundle);
@@ -1078,68 +1088,29 @@ export function InvestmentDecisionLabView({
     return () => {
       cancelled = true;
     };
-  }, [simTable?.rows?.length, labReloadToken]);
+  }, [simTable?.rows?.length, labReloadToken, sharedChartBundle]);
 
-  const labChartsBySeriesKey = useMemo(() => {
-    const m = new Map<string, ChartPoint[]>();
-    if (!simTable?.rows?.length || !labChartsBundle?.series) return m;
-    for (const row of simTable.rows) {
-      const sk = simulationRowSeriesKey(row);
-      if (!sk) continue;
-      const pts = labChartsBundle.series[sk]?.points;
-      if (pts?.length) m.set(sk, pts);
-    }
-    return m;
-  }, [simTable, labChartsBundle]);
-
-  const labSimChartsByTicker = useMemo(() => {
-    const m = new Map<string, { row: Record<string, unknown>; points: ChartPoint[] }>();
-    if (!simTable?.rows?.length) return m;
-    for (const row of simTable.rows) {
-      const sk = simulationRowSeriesKey(row);
-      if (!sk) continue;
-      const pts = labChartsBySeriesKey.get(sk);
-      if (!pts?.length) continue;
-      const tk = String(row.Ticker ?? row.ticker ?? "")
-        .trim()
-        .toUpperCase();
-      if (tk) m.set(tk, { row, points: pts });
-    }
-    return m;
-  }, [simTable, labChartsBySeriesKey]);
+  const effectiveLabCharts = sharedChartBundle ?? labChartsBundle;
 
   useEffect(() => {
     if (!initialTab || initialTab === "portfolio") return;
-    setLabTab(initialTab);
     onInitialTabConsumed?.();
   }, [initialTab, onInitialTabConsumed]);
 
   useEffect(() => {
     const tk = sdsFocusTicker?.trim().toUpperCase();
     if (!tk) return;
-    setLabTab("sds");
-    setSdsTabFocusTicker(tk);
+    // Legacy SuperNova deep-link → Opportunità (Simulation embed).
+    setSdsMonitorFocus({ ticker: tk });
     onSdsFocusConsumed?.();
   }, [sdsFocusTicker, onSdsFocusConsumed]);
 
   const handleOpenSupernovaScreen = useCallback((ticker?: string) => {
-    setLabTab("sds");
     const tk = ticker?.trim().toUpperCase();
-    setSdsTabFocusTicker(tk || null);
+    if (tk) setSdsMonitorFocus({ ticker: tk });
   }, []);
-
-  const handleOpenPatternScreen = useCallback((ticker?: string) => {
-    setLabTab("patterns");
-    const tk = ticker?.trim().toUpperCase();
-    setPatternTabFocusTicker(tk || null);
-  }, []);
-
-  useEffect(() => {
-    if (focusSignal || monitorFocus || sdsMonitorFocus) setLabTab("monitor");
-  }, [focusSignal, monitorFocus, sdsMonitorFocus]);
 
   const handleOpenSimulationTabRow = useCallback((focus: SimulationNavFocus) => {
-    setLabTab("monitor");
     setSdsMonitorFocus({
       ticker: focus.ticker?.trim().toUpperCase(),
       cd: focus.cd?.trim() || undefined,
@@ -1197,51 +1168,14 @@ export function InvestmentDecisionLabView({
 
   return (
     <section
-      className={`card decision-lab-view flex flex-col flex-1 min-w-0`}
+      className={`card decision-lab-view flex flex-col flex-1 min-h-0 min-w-0 h-full overflow-hidden`}
     >
       <div className="sticky top-0 z-10 shrink-0 flex flex-wrap items-center gap-3 border-b border-[rgb(var(--border))] px-4 py-3 bg-[rgb(var(--panel-lab-shell-bg))]">
         <div className="flex-1 min-w-[220px] max-w-3xl">
           <h2 className="text-lg font-semibold">{t("decisionLab.title")}</h2>
           <p className="text-xs text-ink-muted">
-            {labTab === "sds"
-              ? t("decisionLab.subtitle.sds")
-              : labTab === "patterns"
-                ? t("decisionLab.subtitle.patterns")
-                : labTab === "builder"
-                  ? "Build optimal portfolios with rebalancing & simulation"
-                  : t("decisionLab.subtitle.monitor")}
+            {t("decisionLab.subtitle.monitor")}
           </p>
-        </div>
-        {labTab !== "monitor" ? (
-          <button
-            type="button"
-            className="btn-ghost text-[11px] font-semibold shrink-0 border border-[rgb(var(--border))]/50"
-            title={t("decisionLab.nav.openSimulationTip")}
-            onClick={() => setLabTab("monitor")}
-          >
-            {t("decisionLab.nav.openSimulation")}
-          </button>
-        ) : null}
-        <div className="flex gap-0.5 p-0.5 rounded-md seg-toggle-track sim-workspace-toolbar">
-          {(
-            [
-              ["monitor", t("decisionLab.tab.monitor")],
-              ["sds", t("decisionLab.tab.sds")],
-              ["patterns", t("decisionLab.tab.patterns")],
-              ["builder", "Portfolio Builder"],
-            ] as const
-          ).map(([id, label]) => (
-            <button
-              key={id}
-              type="button"
-              className={`rounded px-2.5 py-1 text-[10px] font-medium transition ${
-                labTab === id ? "seg-btn-active" : "seg-btn"
-              }`}
-              onClick={() => setLabTab(id)}
-            >
-              {label}
-            </button>
-          ))}
         </div>
         <div className="ml-auto">
           <RefreshControls
@@ -1258,88 +1192,38 @@ export function InvestmentDecisionLabView({
       </div>
 
 
-      <div className="flex flex-col flex-1 relative bg-[rgb(var(--panel-lab-shell-bg))]">
-        {labTab === "sds" ? (
-          <div className="flex flex-col flex-1 bg-[rgb(var(--panel-lab-shell-bg))]">
-            <ViewErrorBoundary label="SuperNova">
-              <SupernovaDistanceScoreView
-                simChartsByTicker={labSimChartsByTicker}
-                investInputs={investInputs}
-                simTableColumns={simTable?.columns}
-                onOpenSimulationRow={handleOpenSimulationTabRow}
-                focusTicker={sdsTabFocusTicker}
-                onFocusTickerConsumed={() => setSdsTabFocusTicker(null)}
-                parentReloadToken={labReloadToken}
-              />
-            </ViewErrorBoundary>
-          </div>
-        ) : null}
-        {labTab === "patterns" ? (
-          <div className="flex flex-col flex-1 bg-[rgb(var(--panel-lab-shell-bg))]">
-            <ViewErrorBoundary label="CD Pattern">
-              <Suspense
-                fallback={
-                  <p className="px-4 py-8 text-sm text-ink-muted">{t("decisionLab.pattern.loading")}</p>
-                }
-              >
-                <CdPatternRecommendationView
-                  simTable={simTable}
-                  chartsBySeriesKey={labChartsBySeriesKey}
-                  chartsBundle={labChartsBundle}
-                  investInputs={investInputs}
-                  focusTicker={patternTabFocusTicker}
-                  onFocusTickerConsumed={() => setPatternTabFocusTicker(null)}
-                  onOpenClinicalFeed={onOpenClinicalFeed}
-                  onNavigateToSimulation={onNavigateToSimulation}
-                  onOpenSimulationRow={handleOpenSimulationTabRow}
-                  parentReloadToken={labReloadToken}
-                />
-              </Suspense>
-            </ViewErrorBoundary>
-          </div>
-        ) : null}
-        {labTab === "monitor" ? (
-          <div className="flex flex-col flex-1 bg-[rgb(var(--panel-lab-shell-bg))]">
+      <div className="flex flex-col flex-1 min-h-0 relative overflow-hidden bg-[rgb(var(--panel-lab-shell-bg))]">
+        <div className="flex flex-col flex-1 min-h-0 overflow-hidden bg-[rgb(var(--panel-lab-shell-bg))]">
             <ViewErrorBoundary label="CD opportunities">
-              <InvestmentSimulationView
-                embedMode="decisionLab"
-                simTable={simTable}
-                simLoading={simLoading}
-                simError={simError ?? null}
-                onReloadSimulation={onReloadSimulation ?? (() => {})}
-                parentReloadToken={labReloadToken}
-                onOpenPredictionCharts={onOpenPredictionCharts ?? (() => {})}
-                onOpenSlopeCharts={onOpenSlopeErrorCharts}
-                focusTicker={effectiveMonitorFocus}
-                onFocusConsumed={() => {
-                  setSdsMonitorFocus(null);
-                  onMonitorFocusConsumed?.();
-                  onFocusSignalConsumed?.();
-                }}
-                onOpenSimulationRow={handleOpenSimulationTabRow}
-                onOpenSupernovaScreen={handleOpenSupernovaScreen}
-                onOpenPatternScreen={handleOpenPatternScreen}
-              />
-            </ViewErrorBoundary>
-          </div>
-        ) : null}
-        {labTab === "builder" ? (
-          <div className="flex flex-col flex-1 bg-[rgb(var(--panel-lab-shell-bg))]">
-            <ViewErrorBoundary label="Portfolio Builder">
               <Suspense
                 fallback={
-                  <p className="px-4 py-8 text-sm text-ink-muted">Loading Portfolio Builder...</p>
+                  <p className="px-4 py-8 text-sm text-ink-muted">Loading simulation…</p>
                 }
               >
-                <PortfolioBuilderLabView
+                <InvestmentSimulationView
+                  embedMode="decisionLab"
                   simTable={simTable}
-                  investInputs={investInputs}
-                  pointsBySeriesKey={labChartsBySeriesKey}
+                  simLoading={simLoading}
+                  simError={simError ?? null}
+                  onReloadSimulation={onReloadSimulation ?? (() => {})}
+                  parentReloadToken={labReloadToken}
+                  onOpenPredictionCharts={onOpenPredictionCharts ?? (() => {})}
+                  onOpenSlopeCharts={onOpenSlopeErrorCharts}
+                  focusTicker={effectiveMonitorFocus}
+                  onFocusConsumed={() => {
+                    setSdsMonitorFocus(null);
+                    onMonitorFocusConsumed?.();
+                    onFocusSignalConsumed?.();
+                  }}
+                  onOpenSimulationRow={handleOpenSimulationTabRow}
+                  onOpenSupernovaScreen={handleOpenSupernovaScreen}
+                  sharedLossRiskCatalog={sharedLossRiskCatalog}
+                  sharedLossRiskByRowKey={sharedLossRiskByRowKey}
+                  sharedChartBundle={sharedChartBundle ?? effectiveLabCharts}
                 />
               </Suspense>
             </ViewErrorBoundary>
-          </div>
-        ) : null}
+        </div>
       </div>
 
     </section>

@@ -4,15 +4,19 @@ import { loadDecisionSimState } from "../sheet/investDecisionSimStorage";
 import {
   computeLossRescue,
   computeEisFeedWindowScore,
+  deriveCauseInputFromSdsRow,
   RESCUE_BUDGET_FRACTION,
   type LossRescueResult,
   type RescueAllocation,
+  type RescueCauseInput,
 } from "../sheet/lossRescueEngine";
+import type { SdsRow } from "../api/supernova";
 import { buildTickerEisDetail } from "../sheet/tickerEisSummary";
 import { useLang } from "../shared/i18n";
 import type { SheetTable } from "../types";
 import { detectPortfolioLossAlerts } from "../sheet/portfolioLossUrgent";
-import { getInvestSimInputsSnapshot, resolveInvestedAt, loadInvestSimHistory } from "../sheet/investSimStorage";
+import { getInvestSimInputsSnapshot, resolveInvestedAt, loadInvestSimHistory, type InvestSimInputs } from "../sheet/investSimStorage";
+import { useInvestSimInputsMutable } from "../hooks/useInvestSimInputs";
 import type { PaperPosition } from "../sheet/investDecisionSimLoop";
 import type { ExperimentPiggyBank } from "../sheet/investDecisionSimExperiment";
 import { pickSignalFromSimRow } from "../sheet/top2FromSimulation";
@@ -302,7 +306,9 @@ function AllocationCard({
   aiUpdatedAt,
   loadingAi,
   onRequestAi,
-  onOpenSimulation,
+  onExecuteAllocation,
+  isExecuted,
+  sdsRow,
 }: {
   alloc: RescueAllocation;
   it: boolean;
@@ -310,7 +316,9 @@ function AllocationCard({
   aiUpdatedAt?: string | null;
   loadingAi: boolean;
   onRequestAi: () => void;
-  onOpenSimulation?: () => void;
+  onExecuteAllocation?: () => void;
+  isExecuted?: boolean;
+  sdsRow?: SdsRow | null;
 }) {
   const { position: pos } = alloc;
   const [expanded, setExpanded] = useState(false);
@@ -318,9 +326,13 @@ function AllocationCard({
 
   // Breakdown for score modal — use engine-computed breakdown if available, else recompute
   const breakdown = alloc.scoreBreakdown ?? {
-    probPt: Math.round(Math.max(0, Math.min((pos.entryProbPct ?? 50) - 30, 55))),
-    lossPt: Math.round(Math.max(0, Math.min(Math.abs(pos.lastMarkPct) * 0.88, 25))),
-    eisPt: pos.eisWindowScore != null ? Math.round(Math.min(Math.max(0, (pos.eisWindowScore / 25) * 20), 20)) : 0,
+    probPt: Math.round(Math.max(0, Math.min((pos.entryProbPct ?? 50) - 30, 40))),
+    lossPt: Math.round(Math.max(0, Math.min(Math.abs(pos.lastMarkPct) * 0.7, 20))),
+    eisPt: pos.eisWindowScore != null ? Math.round(Math.min(Math.max(0, (pos.eisWindowScore / 25) * 15), 15)) : 0,
+    volPenalty: 0,
+    extBonus: 0,
+    cashPenalty: 0,
+    rescoreScore: alloc.rescoreScore,
   };
 
   return (
@@ -367,7 +379,7 @@ function AllocationCard({
                 <span className="text-ink">
                   {it ? "P(plan) ingresso" : "Entry P(plan)"}
                   <span className="text-ink-muted ml-1">
-                    ({pos.entryProbPct != null ? `${pos.entryProbPct.toFixed(0)}%` : "~50%"} → max 55 pt)
+                    ({pos.entryProbPct != null ? `${pos.entryProbPct.toFixed(0)}%` : "~50%"} → max 40 pt)
                   </span>
                 </span>
                 <span className="font-semibold text-indigo-600 dark:text-indigo-400 tabular-nums">
@@ -378,7 +390,7 @@ function AllocationCard({
                 <span className="text-ink">
                   {it ? "Profondità perdita" : "Loss depth"}
                   <span className="text-ink-muted ml-1">
-                    ({fmtPct(pos.lastMarkPct)}, max 25 pt)
+                    ({fmtPct(pos.lastMarkPct)}, max 20 pt)
                   </span>
                 </span>
                 <span className="font-semibold text-red-500 tabular-nums">+{breakdown.lossPt} pt</span>
@@ -388,13 +400,35 @@ function AllocationCard({
                   {it ? "Attività EIS (da data crollo)" : "EIS activity (from crash date)"}
                   <span className="text-ink-muted ml-1">
                     ({pos.eisWindowScore != null
-                      ? `EIS ${pos.eisWindowScore >= 0 ? "+" : ""}${pos.eisWindowScore.toFixed(1)} → max 20 pt`
+                      ? `EIS ${pos.eisWindowScore >= 0 ? "+" : ""}${pos.eisWindowScore.toFixed(1)} → max 15 pt`
                       : it ? "nessun evento nella finestra" : "no events in window"})
                   </span>
                 </span>
                 <span className={`font-semibold tabular-nums ${breakdown.eisPt > 0 ? "text-emerald-600 dark:text-emerald-400" : "text-ink-muted"}`}>
                   +{breakdown.eisPt} pt
                 </span>
+              </div>
+              {/* Cause attribution components */}
+              <div className="flex items-center justify-between gap-2">
+                <span className={breakdown.extBonus > 0 ? "text-sky-700" : "text-ink"}>
+                  {it ? "Allineamento settore (causa esterna)" : "Sector alignment (external cause)"}
+                  <span className="text-ink-muted ml-1">(max +10 pt)</span>
+                </span>
+                <span className={`font-semibold tabular-nums ${breakdown.extBonus > 0 ? "text-sky-600 dark:text-sky-400" : "text-ink-muted"}`}>+{breakdown.extBonus} pt</span>
+              </div>
+              <div className="flex items-center justify-between gap-2">
+                <span className={breakdown.volPenalty > 0 ? "text-rose-700" : "text-ink"}>
+                  {it ? "Volume anomalo (causa interna)" : "Volume anomaly (internal cause)"}
+                  <span className="text-ink-muted ml-1">(max −10 pt)</span>
+                </span>
+                <span className={`font-semibold tabular-nums ${breakdown.volPenalty > 0 ? "text-rose-600 dark:text-rose-400" : "text-ink-muted"}`}>−{breakdown.volPenalty} pt</span>
+              </div>
+              <div className="flex items-center justify-between gap-2">
+                <span className={breakdown.cashPenalty > 0 ? "text-rose-700" : "text-ink"}>
+                  {it ? "Rischio cash runway" : "Cash runway risk"}
+                  <span className="text-ink-muted ml-1">(max −5 pt)</span>
+                </span>
+                <span className={`font-semibold tabular-nums ${breakdown.cashPenalty > 0 ? "text-rose-600 dark:text-rose-400" : "text-ink-muted"}`}>−{breakdown.cashPenalty} pt</span>
               </div>
               <div className="border-t border-[rgb(var(--border))]/40 pt-2 flex items-center justify-between gap-2 font-semibold">
                 <span className="text-ink">{it ? "Totale" : "Total"}</span>
@@ -405,8 +439,8 @@ function AllocationCard({
             {/* Formula note */}
             <p className="text-[10px] text-ink-muted leading-relaxed">
               {it
-                ? "Score = P(plan) live (max 55 pt) + profondità perdita (max 25 pt) + EIS dalla data del crollo (max 20 pt). La finestra EIS inizia quando il ticker è entrato in perdita significativa — cattura eventi clinici post-crollo che segnalano un potenziale inflection point."
-                : "Score = live P(plan) (max 55 pt) + loss depth (max 25 pt) + EIS from crash date (max 20 pt). The EIS window starts when the ticker entered significant loss — capturing post-crash clinical events that may signal a recovery inflection point."}
+                ? "Score = P(plan) (max 40) + profondità perdita (max 20) + EIS dal crollo (max 15) + allineamento settore (max +10, causa esterna) − volume anomalo (max −10, causa interna) − rischio cash runway (max −5). Causa esterna (settore in calo) aumenta la probabilità di recupero. Causa interna (volume anomalo, diluzione) la riduce."
+                : "Score = P(plan) (max 40) + loss depth (max 20) + EIS from crash (max 15) + sector alignment (max +10, external cause) − anomalous volume (max −10, internal cause) − cash runway risk (max −5). External cause (sector decline) increases recovery odds. Internal cause (volume spike, dilution) decreases them."}
             </p>
 
             {/* AI deep analysis — shown after Analyse now */}
@@ -544,10 +578,14 @@ function AllocationCard({
       )}
 
       {/* Header row — labelled */}
-      <button
-        type="button"
-        className="w-full flex items-center gap-4 px-4 py-3 hover:bg-slate-50 dark:hover:bg-white/5 transition-colors text-left"
+      {/* div instead of button: row contains inner <button> elements (score, simulation, AI),
+          nested <button> inside <button> is invalid HTML and breaks click/close handling */}
+      <div
+        role="button"
+        tabIndex={0}
+        className="w-full flex items-center gap-4 px-4 py-3 hover:bg-slate-50 dark:hover:bg-white/5 transition-colors text-left cursor-pointer"
         onClick={() => setExpanded((v) => !v)}
+        onKeyDown={(e) => { if (e.key === "Enter" || e.key === " ") { e.preventDefault(); setExpanded((v) => !v); } }}
       >
         {/* Ticker */}
         <span className="text-[13px] font-bold text-ink tracking-wide w-14 shrink-0">
@@ -613,30 +651,251 @@ function AllocationCard({
             alloc.rescoreScore >= 45 ? "border-amber-300 text-amber-700 dark:text-amber-300" :
             "border-red-300 text-red-600 dark:text-red-400"
           }`}
-          title={it ? "Livello di rischio basato sul rescue score (P(plan) + perdita + EIS)" : "Risk level based on rescue score (P(plan) + loss depth + EIS)"}
+          title={it ? "Livello di rischio basato sul rescue score (P(plan) + perdita + EIS + cause attribution)" : "Risk level based on rescue score (P(plan) + loss depth + EIS + cause attribution)"}
         >
           {alloc.rescoreScore >= 70 ? (it ? "BASSO RISCHIO" : "LOW RISK") :
            alloc.rescoreScore >= 45 ? (it ? "RISCHIO MEDIO" : "MED RISK") :
            (it ? "ALTO RISCHIO" : "HIGH RISK")}
         </span>
 
-        {onOpenSimulation && (
-          <button
-            type="button"
-            onClick={(e) => { e.stopPropagation(); onOpenSimulation(); }}
-            className="shrink-0 text-[10px] font-semibold px-2 py-1 rounded border border-indigo-300 dark:border-indigo-700 text-indigo-700 dark:text-indigo-300 hover:bg-indigo-50 dark:hover:bg-indigo-900/30 transition-colors"
-            title={it ? `Apri ${alloc.position.ticker} in Simulation` : `Open ${alloc.position.ticker} in Simulation`}
-          >
-            {it ? "Simulation →" : "Simulation →"}
-          </button>
-        )}
         <span className="text-ink-muted text-[11px]">{expanded ? "▲" : "▼"}</span>
-      </button>
+      </div>
 
       {expanded && (
 
         <div className="border-t border-[rgb(var(--border))]/40 px-4 py-3 space-y-3">
-          {/* Stats grid */}
+          {/* ── Full Rescue Score Breakdown (mirrors 24h tab) ── */}
+          <div className="rounded-lg border border-[rgb(var(--border))]/50 bg-surface/40 p-2.5 space-y-2">
+            {/* Header + bar + score */}
+            <div className="flex items-center justify-between">
+              <span className="text-[11px] font-bold uppercase tracking-wide text-ink">Rescue Score</span>
+              <div className="flex items-center gap-2">
+                <div className="w-20 h-2 rounded-full bg-gray-200 overflow-hidden">
+                  <div
+                    className="h-full rounded-full transition-all"
+                    style={{
+                      width: `${Math.min(100, alloc.rescoreScore)}%`,
+                      backgroundColor:
+                        alloc.rescoreScore >= 70 ? "#10b981" :
+                        alloc.rescoreScore >= 45 ? "#d97706" : "#ef4444",
+                    }}
+                  />
+                </div>
+                <span className={`text-[17px] font-bold tabular-nums leading-none ${scoreColor(alloc.rescoreScore)}`}>
+                  {alloc.rescoreScore}
+                </span>
+              </div>
+            </div>
+
+            {/* Diagnosis summary */}
+            <p className="text-[11px] text-ink font-medium leading-snug">
+              {alloc.rescoreScore >= 70
+                ? (it ? "Alta probabilità di recupero" : "High recovery probability")
+                : alloc.rescoreScore >= 45
+                  ? (it ? "Recupero possibile — monitorare" : "Recovery possible — monitor")
+                  : (it ? "Recupero incerto — causa interna o fondamentali deboli" : "Uncertain recovery — internal cause or weak fundamentals")}
+            </p>
+
+            {/* Breakdown chips */}
+            <div className="flex flex-wrap gap-1.5">
+              <span className="inline-flex items-center gap-1 rounded border border-[rgb(var(--border))]/50 bg-surface/60 px-2 py-0.5 text-[10px] font-medium leading-none">
+                <span className="text-ink-muted">P(plan)</span>
+                <span className="font-bold tabular-nums text-indigo-600">+{breakdown.probPt}</span>
+              </span>
+              <span className="inline-flex items-center gap-1 rounded border border-[rgb(var(--border))]/50 bg-surface/60 px-2 py-0.5 text-[10px] font-medium leading-none">
+                <span className="text-ink-muted">{it ? "Profondità" : "Depth"}</span>
+                <span className="font-bold tabular-nums text-red-500">+{breakdown.lossPt}</span>
+              </span>
+              <span className="inline-flex items-center gap-1 rounded border border-[rgb(var(--border))]/50 bg-surface/60 px-2 py-0.5 text-[10px] font-medium leading-none">
+                <span className="text-ink-muted">EIS</span>
+                <span className={`font-bold tabular-nums ${breakdown.eisPt > 0 ? "text-emerald-600" : "text-ink-muted"}`}>+{breakdown.eisPt}</span>
+              </span>
+              <span className={`inline-flex items-center gap-1 rounded border px-2 py-0.5 text-[10px] font-medium leading-none ${breakdown.extBonus > 0 ? "border-sky-300 bg-sky-50" : "border-[rgb(var(--border))]/50 bg-surface/60"}`}>
+                <span className={breakdown.extBonus > 0 ? "text-sky-700" : "text-ink-muted"}>{it ? "Settore" : "Sector"}</span>
+                <span className={`font-bold tabular-nums ${breakdown.extBonus > 0 ? "text-sky-700" : "text-ink-muted"}`}>+{breakdown.extBonus}</span>
+              </span>
+              <span className={`inline-flex items-center gap-1 rounded border px-2 py-0.5 text-[10px] font-medium leading-none ${breakdown.volPenalty > 0 ? "border-rose-300 bg-rose-50" : "border-[rgb(var(--border))]/50 bg-surface/60"}`}>
+                <span className={breakdown.volPenalty > 0 ? "text-rose-700" : "text-ink-muted"}>Vol.</span>
+                <span className={`font-bold tabular-nums ${breakdown.volPenalty > 0 ? "text-rose-700" : "text-ink-muted"}`}>{`\u2212`}{breakdown.volPenalty}</span>
+              </span>
+              <span className={`inline-flex items-center gap-1 rounded border px-2 py-0.5 text-[10px] font-medium leading-none ${breakdown.cashPenalty > 0 ? "border-rose-300 bg-rose-50" : "border-[rgb(var(--border))]/50 bg-surface/60"}`}>
+                <span className={breakdown.cashPenalty > 0 ? "text-rose-700" : "text-ink-muted"}>Cash</span>
+                <span className={`font-bold tabular-nums ${breakdown.cashPenalty > 0 ? "text-rose-700" : "text-ink-muted"}`}>{`\u2212`}{breakdown.cashPenalty}</span>
+              </span>
+            </div>
+
+            {/* Indicator cards — 2 columns (matching 24h tab) */}
+            <div className="grid grid-cols-2 gap-1.5">
+              {/* P(plan) */}
+              <div className="border-l-[3px] border-l-indigo-400 rounded bg-white/80 p-2 space-y-0.5">
+                <span className="text-[10px] text-ink-muted">{it ? "Prob. ingresso" : "Entry probability"}</span>
+                <p className="text-[13px] font-bold text-ink leading-tight">
+                  {pos.entryProbPct != null ? `${pos.entryProbPct.toFixed(0)}%` : "~50%"}
+                  {" "}<span className="text-[10px] font-normal text-ink-muted">{`\u2192`} +{breakdown.probPt}/40</span>
+                </p>
+                <p className="text-[9px] text-ink-muted leading-snug">
+                  {it
+                    ? "Probabilità calcolata dal modello SuperNova al momento dell'ingresso. Più alta = fondamentali solidi."
+                    : "Model-computed probability at entry. Higher = stronger fundamentals."}
+                </p>
+              </div>
+
+              {/* Loss depth */}
+              <div className="border-l-[3px] border-l-red-400 rounded bg-white/80 p-2 space-y-0.5">
+                <span className="text-[10px] text-ink-muted">{it ? "Profondità perdita" : "Loss depth"}</span>
+                <p className="text-[13px] font-bold text-ink leading-tight">
+                  {fmtPct(pos.lastMarkPct)}
+                  {" "}<span className="text-[10px] font-normal text-ink-muted">{`\u2192`} +{breakdown.lossPt}/20</span>
+                </p>
+                <p className="text-[9px] text-ink-muted leading-snug">
+                  {it
+                    ? `Formula: 0.7 × |${pos.lastMarkPct.toFixed(1)}%| = ${(Math.abs(pos.lastMarkPct) * 0.7).toFixed(1)} pt (cap 20). Drawdown profondi in biotech con fondamentali intatti mostrano rebound medio +35-50% entro 6 mesi.`
+                    : `Formula: 0.7 × |${pos.lastMarkPct.toFixed(1)}%| = ${(Math.abs(pos.lastMarkPct) * 0.7).toFixed(1)} pt (cap 20). Deep drawdowns in biotech with intact fundamentals show avg +35-50% rebound within 6 months.`}
+                </p>
+                <a href={`https://finance.yahoo.com/quote/${pos.ticker}`} target="_blank" rel="noopener noreferrer" className="text-[9px] text-[rgb(var(--accent))] hover:underline" onClick={(e) => e.stopPropagation()}>Yahoo Finance {`\u2197`}</a>
+              </div>
+
+              {/* EIS activity */}
+              <div className={`border-l-[3px] rounded bg-white/80 p-2 space-y-0.5 ${breakdown.eisPt > 0 ? "border-l-emerald-400" : "border-l-gray-300"}`}>
+                <span className="text-[10px] text-ink-muted">{it ? "Attività EIS" : "EIS activity"}</span>
+                <p className="text-[13px] font-bold text-ink leading-tight">
+                  {pos.eisWindowScore != null
+                    ? `EIS ${pos.eisWindowScore >= 0 ? "+" : ""}${pos.eisWindowScore.toFixed(1)}`
+                    : (it ? "Nessun evento" : "No events")}
+                  {" "}<span className="text-[10px] font-normal text-ink-muted">{`\u2192`} +{breakdown.eisPt}/15</span>
+                </p>
+                <p className="text-[9px] text-ink-muted leading-snug">
+                  {pos.eisWindowScore != null
+                    ? (it
+                      ? "Score EIS cumulativo nella finestra post-crollo."
+                      : "Cumulative EIS score in post-crash window.")
+                    : (it
+                      ? "Nessun filing SEC o press release rilevante nella finestra di rescue."
+                      : "No SEC filings or press releases found in rescue window.")}
+                </p>
+                <a href={`https://www.sec.gov/cgi-bin/browse-edgar?action=getcompany&company=${pos.ticker}&type=8-K&dateb=&owner=include&count=10`} target="_blank" rel="noopener noreferrer" className="text-[9px] text-[rgb(var(--accent))] hover:underline" onClick={(e) => e.stopPropagation()}>SEC EDGAR {`\u2197`}</a>
+              </div>
+
+              {/* Sector alignment */}
+              {(() => {
+                const ca = sdsRow?.cause_attribution;
+                const tickerRet = ca?.external_alignment?.ticker_return_pct;
+                const xbiRet = ca?.external_alignment?.xbi_return_pct;
+                const gap = ca?.external_alignment?.return_gap_pct;
+                const hasCA = ca?.external_alignment?.score != null;
+                const xbiRS = (sdsRow as any)?.cluster_c?.xbi_relative_strength;
+                const fbTickerRet = xbiRS?.ticker_return_90d;
+                const fbXbiRet = xbiRS?.xbi_return_90d;
+                const fbRS = xbiRS?.rs_90d;
+                const hasAny = hasCA || fbTickerRet != null;
+                return (
+                  <div className={`border-l-[3px] rounded bg-white/80 p-2 space-y-0.5 ${breakdown.extBonus > 0 ? "border-l-sky-400" : "border-l-gray-300"}`}>
+                    <span className="text-[10px] text-ink-muted">{it ? "Allineamento settore" : "Sector alignment"}</span>
+                    <p className="text-[13px] font-bold text-ink leading-tight">
+                      {hasCA
+                        ? `${tickerRet != null ? `${tickerRet > 0 ? "+" : ""}${(tickerRet as number).toFixed(1)}%` : "—"} vs XBI ${xbiRet != null ? `${xbiRet > 0 ? "+" : ""}${(xbiRet as number).toFixed(1)}%` : "—"}`
+                        : hasAny
+                          ? `${pos.ticker} ${fbTickerRet != null ? `${fbTickerRet > 0 ? "+" : ""}${fbTickerRet.toFixed(1)}%` : "—"} vs XBI ${fbXbiRet != null ? `${fbXbiRet > 0 ? "+" : ""}${fbXbiRet.toFixed(1)}%` : "—"}`
+                          : (it ? "Nessun dato" : "No data")}
+                      {" "}<span className="text-[10px] font-normal text-ink-muted">{`\u2192`} +{breakdown.extBonus}/10</span>
+                    </p>
+                    <p className="text-[9px] text-ink-muted leading-snug">
+                      {hasCA
+                        ? (it
+                          ? `Gap ticker-settore (5d): ${gap != null ? `${gap > 0 ? "+" : ""}${(gap as number).toFixed(1)}%` : "—"}. Calo allineato = causa esterna = recupero più probabile.`
+                          : `Ticker-sector gap (5d): ${gap != null ? `${gap > 0 ? "+" : ""}${(gap as number).toFixed(1)}%` : "—"}. Aligned drop = external cause = recovery more likely.`)
+                        : hasAny
+                          ? (it
+                            ? `RS 90d: ${fbRS != null ? fbRS.toFixed(2) : "N/D"}. Dati 5d non disponibili.`
+                            : `RS 90d: ${fbRS != null ? fbRS.toFixed(2) : "N/A"}. 5d data unavailable.`)
+                          : (it ? "Nessun dato settoriale. Score +0." : "No sector data. Score +0.")}
+                    </p>
+                    <a href="https://finance.yahoo.com/quote/XBI" target="_blank" rel="noopener noreferrer" className="text-[9px] text-[rgb(var(--accent))] hover:underline" onClick={(e) => e.stopPropagation()}>XBI — Yahoo Finance {`\u2197`}</a>
+                  </div>
+                );
+              })()}
+
+              {/* Volume anomaly */}
+              {(() => {
+                const ca = sdsRow?.cause_attribution;
+                const zScore = ca?.volume_anomaly?.volume_zscore;
+                const caAvg20d = ca?.volume_anomaly?.avg_volume_20d;
+                const volToday = ca?.volume_anomaly?.volume_today;
+                const hasCA = ca?.volume_anomaly?.score != null;
+                const volR = (sdsRow as any)?.cluster_c?.volume_ratio;
+                const fbRatio5v20 = volR?.ratio_5d_vs_20d;
+                const hasAny = hasCA || fbRatio5v20 != null;
+                const fmtVol = (v: number | null | undefined) => v == null ? "—" : v > 1e6 ? `${(v / 1e6).toFixed(1)}M` : v > 1e3 ? `${(v / 1e3).toFixed(0)}K` : `${v.toFixed(0)}`;
+                return (
+                  <div className={`border-l-[3px] rounded bg-white/80 p-2 space-y-0.5 ${breakdown.volPenalty > 0 ? "border-l-rose-400" : "border-l-gray-300"}`}>
+                    <span className="text-[10px] text-ink-muted">{it ? "Volume anomalo" : "Volume anomaly"}</span>
+                    <p className="text-[13px] font-bold text-ink leading-tight">
+                      {hasCA
+                        ? `z=${zScore != null ? (zScore as number).toFixed(1) : "—"}`
+                        : hasAny
+                          ? `Ratio 5d/20d: ${fbRatio5v20 != null ? fbRatio5v20.toFixed(2) : "—"}x`
+                          : (it ? "Nessuna penalità" : "No penalty")}
+                      {" "}<span className="text-[10px] font-normal text-ink-muted">{`\u2192`} {`\u2212`}{breakdown.volPenalty}/10</span>
+                    </p>
+                    <p className="text-[9px] text-ink-muted leading-snug">
+                      {hasCA
+                        ? (it
+                          ? `Vol. oggi ${fmtVol(volToday as number | null | undefined)} vs media 20d ${fmtVol(caAvg20d as number | null | undefined)}. Spike = possibile evento interno.`
+                          : `Today vol. ${fmtVol(volToday as number | null | undefined)} vs 20d avg ${fmtVol(caAvg20d as number | null | undefined)}. Spike = possible internal event.`)
+                        : (it ? "Nessun dato volume disponibile." : "No volume data available.")}
+                    </p>
+                    <a href={`https://finance.yahoo.com/quote/${pos.ticker}/history`} target="_blank" rel="noopener noreferrer" className="text-[9px] text-[rgb(var(--accent))] hover:underline" onClick={(e) => e.stopPropagation()}>{it ? "Storico volume" : "Volume history"} — Yahoo {`\u2197`}</a>
+                  </div>
+                );
+              })()}
+
+              {/* Cash runway */}
+              {(() => {
+                const ca = sdsRow?.cause_attribution;
+                const caMonths = ca?.cash_runway_risk?.cash_runway_months;
+                const hasCA = ca?.cash_runway_risk?.score != null;
+                const cashD = (sdsRow as any)?.cluster_d?.cash_runway;
+                const fbMonths = cashD?.runway_months;
+                const fbCash = cashD?.total_cash_mm;
+                const fbBurn = cashD?.monthly_burn_mm;
+                const months = hasCA ? caMonths : fbMonths;
+                const hasAny = hasCA || fbMonths != null || fbCash != null;
+                return (
+                  <div className={`border-l-[3px] rounded bg-white/80 p-2 space-y-0.5 ${breakdown.cashPenalty > 0 || (months != null && (months as number) < 12) ? "border-l-rose-400" : "border-l-gray-300"}`}>
+                    <span className="text-[10px] text-ink-muted">Cash runway</span>
+                    <p className="text-[13px] font-bold text-ink leading-tight">
+                      {months != null
+                        ? `${(months as number).toFixed(0)} ${it ? "mesi" : "months"}`
+                        : hasAny
+                          ? (it ? "cash disponibile" : "cash available")
+                          : (it ? "Nessuna penalità" : "No penalty")}
+                      {" "}<span className="text-[10px] font-normal text-ink-muted">{`\u2192`} {`\u2212`}{breakdown.cashPenalty}/5</span>
+                    </p>
+                    <p className="text-[9px] text-ink-muted leading-snug">
+                      {hasCA && caMonths != null
+                        ? (it
+                          ? `Runway: ${(caMonths as number).toFixed(0)} mesi. ${(caMonths as number) < 12 ? "Rischio diluzione." : "Runway adeguato."}`
+                          : `Runway: ${(caMonths as number).toFixed(0)} months. ${(caMonths as number) < 12 ? "Dilution risk." : "Adequate runway."}`)
+                        : hasAny
+                          ? (it
+                            ? `Cash: ${fbCash != null ? `$${fbCash.toFixed(0)}M` : "N/D"} · Burn: ${fbBurn != null ? `$${fbBurn.toFixed(1)}M/mese` : "N/D"}`
+                            : `Cash: ${fbCash != null ? `$${fbCash.toFixed(0)}M` : "N/A"} · Burn: ${fbBurn != null ? `$${fbBurn.toFixed(1)}M/mo` : "N/A"}`)
+                          : (it ? "Nessun dato cash disponibile." : "No cash data available.")}
+                    </p>
+                  </div>
+                );
+              })()}
+            </div>
+
+            {/* Formula note */}
+            <p className="text-[9px] text-ink-muted/60 leading-snug">
+              Score = P(plan) + {it ? "profondità" : "depth"} + EIS + {it ? "settore" : "sector"} {`\u2212`} vol. {`\u2212`} cash.
+              {sdsRow?.cause_attribution?.internal_cause_flag && (it ? " Causa interna \u2193" : " Internal cause \u2193")}
+              {sdsRow?.cause_attribution?.external_cause_flag && (it ? " Causa esterna \u2191 recupero" : " External cause \u2191 recovery")}
+            </p>
+          </div>
+
+          {/* Stats grid (compact summary) */}
           <div className="grid grid-cols-3 gap-3 text-[11px]">
             <div>
               <p className="text-ink-muted">{it ? "Capitale" : "Capital"}</p>
@@ -773,14 +1032,41 @@ function AllocationCard({
           {/* ── Upcoming recovery events ── */}
           <UpcomingEventsBlock ticker={pos.ticker} it={it} />
 
-          {/* Suggested reallocation note */}
-          {alloc.suggestedEur > 0 && (
-            <p className="text-[11px] text-ink-muted">
-              {it
-                ? `Allocazione suggerita dal rescue budget: ${fmtEur(alloc.suggestedEur)} (proporzionale al P(plan) di ingresso).`
-                : `Suggested allocation from rescue budget: ${fmtEur(alloc.suggestedEur)} (proportional to entry P(plan)).`}
-            </p>
-          )}
+          {/* Suggested action: invest more (high score) vs disinvest (low score) */}
+          {alloc.rescoreScore < 30 ? (
+            <div className="rounded-lg border-2 border-red-300 dark:border-red-700 bg-red-50/50 dark:bg-red-900/10 px-3 py-2 space-y-1">
+              <p className="text-[11px] font-bold text-red-700 dark:text-red-300">
+                {it ? "⚠ Raccomandazione: DISINVESTIRE" : "⚠ Recommendation: DISINVEST"}
+              </p>
+              <p className="text-[10px] text-red-600 dark:text-red-400 leading-relaxed">
+                {it
+                  ? `Rescue score ${alloc.rescoreScore}/100 — probabilità di recupero molto bassa. Considerare la vendita per limitare ulteriori perdite prima di un possibile ulteriore calo. Il capitale può essere riallocato su posizioni con score più alto.`
+                  : `Rescue score ${alloc.rescoreScore}/100 — very low recovery probability. Consider selling to limit further losses before a possible continued decline. Capital can be reallocated to higher-score positions.`}
+              </p>
+            </div>
+          ) : alloc.suggestedEur > 0 ? (
+            <div className="flex items-center gap-3">
+              <p className="text-[11px] text-ink-muted flex-1">
+                {it
+                  ? `Allocazione suggerita dal rescue budget: ${fmtEur(alloc.suggestedEur)} (proporzionale al rescue score: ${alloc.rescoreScore}/100).`
+                  : `Suggested allocation from rescue budget: ${fmtEur(alloc.suggestedEur)} (proportional to rescue score: ${alloc.rescoreScore}/100).`}
+              </p>
+              {onExecuteAllocation && !isExecuted && (
+                <button
+                  type="button"
+                  onClick={(e) => { e.stopPropagation(); onExecuteAllocation(); }}
+                  className="shrink-0 text-[10px] font-bold px-3 py-1.5 rounded-lg border-2 border-indigo-400 dark:border-indigo-600 bg-indigo-50 dark:bg-indigo-900/30 text-indigo-700 dark:text-indigo-300 hover:bg-indigo-100 dark:hover:bg-indigo-900/50 transition-colors"
+                >
+                  {it ? `Alloca +${fmtEur(alloc.suggestedEur)}` : `Allocate +${fmtEur(alloc.suggestedEur)}`}
+                </button>
+              )}
+              {isExecuted && (
+                <span className="shrink-0 text-[10px] font-semibold text-emerald-600 dark:text-emerald-400 px-2 py-1 rounded-lg bg-emerald-50 dark:bg-emerald-900/20 border border-emerald-200 dark:border-emerald-800">
+                  ✓ {it ? "Allocato" : "Allocated"}
+                </span>
+              )}
+            </div>
+          ) : null}
         </div>
       )}
     </div>
@@ -823,10 +1109,10 @@ function fmtUpdatedAt(iso: string, it: boolean): string {
 
 export function LossRescuePanel({
   simTable,
-  onOpenSimulationRow,
+  sdsRows,
 }: {
   simTable?: SheetTable | null;
-  onOpenSimulationRow?: (focus: { ticker: string; cd?: string; rowKey?: string }) => void;
+  sdsRows?: SdsRow[] | null;
 }) {
   const { lang } = useLang();
   const it = lang === "it";
@@ -835,6 +1121,21 @@ export function LossRescuePanel({
   const [aiCache, setAiCache] = useState<AiNotesCache>(() => loadAiNotesCache());
   const [loadingKeys, setLoadingKeys] = useState<Set<string>>(new Set());
   const [universe, setUniverse] = useState<"simloop" | "real">("simloop");
+  const [executedKeys, setExecutedKeys] = useState<Set<string>>(new Set());
+
+  // Capital management: patch investSimInputs to increase capital on a position
+  const { patchInputs } = useInvestSimInputsMutable(simTable ?? null);
+
+  // Build causeByTicker map from SDS rows for rescue score computation
+  const causeByTicker = useMemo(() => {
+    if (!sdsRows?.length) return null;
+    const m = new Map<string, RescueCauseInput>();
+    for (const row of sdsRows) {
+      const ci = deriveCauseInputFromSdsRow(row);
+      if (ci) m.set(row.ticker.trim().toUpperCase(), ci);
+    }
+    return m;
+  }, [sdsRows]);
 
   const aiNotes: Record<string, AiRescueResult> = Object.fromEntries(
     Object.entries(aiCache).map(([k, v]) => [k, v.result]),
@@ -846,14 +1147,25 @@ export function LossRescuePanel({
     const history = loadInvestSimHistory();
     const rowByKey = simTable?.rows?.length ? buildSimRowByKeyMap(simTable.rows) : new Map<string, Record<string, unknown>>();
     const portfolioWithEis: PaperPosition[] = state.paperPortfolio.map((p) => {
-      // Use live raScore from simTable for consistency with Real Portfolio view
+      // Use live P(plan) from simTable Affidabilità column (aligned with 24h tab)
       let liveProb: number | null = null;
       const simRow = rowByKey.get(p.key);
       if (simRow) {
-        const pick = pickSignalFromSimRow(simRow, inputs, null, null);
-        const sol = resolveSimulationEntrySolidity(pick, undefined, lang, "rascore");
-        const ra = sol?.composite.total ?? null;
-        if (ra != null && Number.isFinite(ra)) liveProb = Math.round(ra);
+        const colAffid = Object.keys(simRow).find((c) =>
+          c.toLowerCase().includes("affidabilit"),
+        ) ?? "";
+        const affidRaw = parseFloat(String(simRow[colAffid] ?? ""));
+        const affidPct = Number.isFinite(affidRaw)
+          ? affidRaw > 1 ? affidRaw : affidRaw * 100
+          : null;
+        if (affidPct != null && affidPct > 0) {
+          liveProb = Math.round(affidPct);
+        } else {
+          const pick = pickSignalFromSimRow(simRow, inputs, null, null);
+          const sol = resolveSimulationEntrySolidity(pick, undefined, lang, "rascore");
+          const ra = sol?.composite.total ?? null;
+          if (ra != null && Number.isFinite(ra)) liveProb = Math.round(ra);
+        }
       }
       return {
         ...p,
@@ -864,9 +1176,10 @@ export function LossRescuePanel({
     return computeLossRescue(
       portfolioWithEis as PaperPosition[],
       { closedPnlEur: summarizePaperClosedDeals(state.ticks).rawPnlEur } as ExperimentPiggyBank,
+      causeByTicker,
     );
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [refreshToken, lang, simTable]);
+  }, [refreshToken, lang, simTable, causeByTicker]);
 
   const realPortfolioResult = useMemo((): LossRescueResult => {
     if (!simTable?.rows?.length) {
@@ -879,17 +1192,33 @@ export function LossRescuePanel({
     const syntheticPortfolio: (PaperPosition & { eisWindowScore: number | null })[] = alerts.map((a) => {
       const investedAt = resolveInvestedAt(a.key, inputs[a.key], []);
       const entryAt = investedAt ?? a.completionDate ?? new Date().toISOString().slice(0, 10);
-      // Use saved entryProbPct (captured at buy time) if available; fallback to live raScore
-      const savedProb = inputs[a.key]?.entryProbPct;
-      let entryProbPct: number | null =
-        savedProb != null && Number.isFinite(savedProb) ? Math.round(savedProb) : null;
-      if (entryProbPct == null) {
-        const simRow = rowByKey.get(a.key);
-        if (simRow) {
+      // Use live P(plan) from simTable (same source as 24h tab) for consistent rescue score
+      let entryProbPct: number | null = null;
+      const simRow = rowByKey.get(a.key);
+      if (simRow) {
+        // Primary: read Affidabilità column directly (same as 24h tab)
+        const colAffid = Object.keys(simRow).find((c) =>
+          c.toLowerCase().includes("affidabilit"),
+        ) ?? "";
+        const affidRaw = parseFloat(String(simRow[colAffid] ?? ""));
+        const affidPct = Number.isFinite(affidRaw)
+          ? affidRaw > 1 ? affidRaw : affidRaw * 100
+          : null;
+        if (affidPct != null && affidPct > 0) {
+          entryProbPct = Math.round(affidPct);
+        } else {
+          // Secondary: resolve from signal picker
           const pick = pickSignalFromSimRow(simRow, inputs, null, null);
           const sol = resolveSimulationEntrySolidity(pick, undefined, lang, "rascore");
           const ra = sol?.composite.total ?? null;
           if (ra != null && Number.isFinite(ra)) entryProbPct = Math.round(ra);
+        }
+      }
+      // Fallback to saved entryProbPct if live value unavailable
+      if (entryProbPct == null) {
+        const savedProb = inputs[a.key]?.entryProbPct;
+        if (savedProb != null && Number.isFinite(savedProb) && savedProb > 0) {
+          entryProbPct = Math.round(savedProb);
         }
       }
       return {
@@ -910,9 +1239,9 @@ export function LossRescuePanel({
       }
     }
     const realPiggy = { closedPnlEur: realClosedPnlEur } as ExperimentPiggyBank;
-    return computeLossRescue(syntheticPortfolio as PaperPosition[], realPiggy);
+    return computeLossRescue(syntheticPortfolio as PaperPosition[], realPiggy, causeByTicker);
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [refreshToken, simTable, lang]);
+  }, [refreshToken, simTable, lang, causeByTicker]);
 
   const result = universe === "simloop" ? simLoopResult : realPortfolioResult;
 
@@ -1018,18 +1347,18 @@ export function LossRescuePanel({
       {/* Description */}
       <p className="text-[11px] text-ink-muted leading-relaxed px-1">
         {it
-          ? `Le posizioni aperte con PnL < -2% sono ordinate per perdita. Il rescue score combina P(plan) all'ingresso e profondità della perdita. Il budget di riallocazione (${Math.round(RESCUE_BUDGET_FRACTION * 100)}% dei gain chiusi) viene distribuito proporzionalmente al P(plan) di ingresso. Clicca "Analizza ora" per un'analisi AI sulla probabilità di ripresa.`
-          : `Open positions with PnL < -2% are ranked by loss. The rescue score combines entry P(plan) and loss depth. The reallocation budget (${Math.round(RESCUE_BUDGET_FRACTION * 100)}% of closed gains) is distributed proportionally to entry P(plan). Click "Analyse now" for an AI recovery probability analysis.`}
+          ? `Le posizioni aperte sotto il prezzo di ingresso (PnL < 0%) sono ordinate per perdita. Il rescue score combina P(plan), profondità perdita, attività EIS, allineamento settoriale, volume anomalo e rischio cash runway. Il budget di riallocazione (${Math.round(RESCUE_BUDGET_FRACTION * 100)}% dei gain chiusi) viene distribuito proporzionalmente al rescue score (posizioni con bassa probabilità di recupero ricevono raccomandazione di disinvestimento). Clicca "Analizza ora" per un'analisi AI sulla probabilità di ripresa.`
+          : `Open positions below entry price (PnL < 0%) are ranked by loss. The rescue score combines P(plan), loss depth, EIS activity, sector alignment, anomalous volume, and cash runway risk. The reallocation budget (${Math.round(RESCUE_BUDGET_FRACTION * 100)}% of closed gains) is distributed proportionally to rescue score (positions with low recovery probability receive a disinvestment recommendation). Click "Analyse now" for an AI recovery probability analysis.`}
       </p>
 
       {/* No positions message */}
       {lossPositions.length === 0 && (
         <div className="rounded-xl border border-emerald-200/60 dark:border-emerald-800/40 bg-emerald-50/50 dark:bg-emerald-900/10 px-4 py-6 text-center">
           <p className="text-[13px] font-semibold text-emerald-700 dark:text-emerald-400">
-            {it ? "Nessuna posizione in perdita significativa" : "No positions in significant loss"}
+            {it ? "Nessuna posizione sotto il prezzo di ingresso" : "No positions below entry price"}
           </p>
           <p className="text-[11px] text-ink-muted mt-1">
-            {it ? "Tutte le posizioni aperte sono sopra la soglia -2%." : "All open positions are above the -2% threshold."}
+            {it ? "Tutte le posizioni aperte sono al di sopra del prezzo di acquisto." : "All open positions are above their entry price."}
           </p>
         </div>
       )}
@@ -1066,23 +1395,42 @@ export function LossRescuePanel({
                   aiUpdatedAt={aiCache[alloc.position.key]?.updatedAt ?? null}
                   loadingAi={loadingKeys.has(alloc.position.key)}
                   onRequestAi={() => requestAnalysis(alloc.position.ticker, alloc.position.key, alloc.position.entryAt, alloc.position.lastMarkPct)}
-                  onOpenSimulation={onOpenSimulationRow ? () => onOpenSimulationRow({ ticker: alloc.position.ticker, rowKey: alloc.position.key }) : undefined}
+                  isExecuted={executedKeys.has(alloc.position.key)}
+                  sdsRow={sdsRows?.find((r) => r.ticker.trim().toUpperCase() === alloc.position.ticker.trim().toUpperCase()) ?? null}
+                  onExecuteAllocation={universe === "real" && alloc.suggestedEur > 0 ? () => {
+                    const key = alloc.position.key;
+                    const addEur = alloc.suggestedEur;
+                    const ok = window.confirm(
+                      it
+                        ? `Aggiungere +${fmtEur(addEur)} al capitale di ${alloc.position.ticker}? L'importo verrà sommato al capitale investito in Pick Stocks.`
+                        : `Add +${fmtEur(addEur)} to ${alloc.position.ticker} capital? The amount will be added to the invested capital in Pick Stocks.`,
+                    );
+                    if (!ok) return;
+                    patchInputs((prev: InvestSimInputs) => {
+                      const cur = prev[key];
+                      if (!cur) return prev;
+                      return { ...prev, [key]: { ...cur, capital: (cur.capital ?? 0) + addEur } };
+                    });
+                    setExecutedKeys((prev) => new Set([...prev, key]));
+                    setRefreshToken((n) => n + 1);
+                  } : undefined}
                 />
               ))
             : lossPositions.map((pos) => {
-                const probPt = Math.round(Math.max(0, Math.min((pos.entryProbPct ?? 50) - 30, 55)));
-                const lossPt = Math.round(Math.max(0, Math.min(Math.abs(pos.lastMarkPct) * 0.88, 25)));
-                const eisPt = pos.eisWindowScore != null ? Math.round(Math.min(Math.max(0, (pos.eisWindowScore / 25) * 20), 20)) : 0;
+                const probPt = Math.round(Math.max(0, Math.min((pos.entryProbPct ?? 50) - 30, 40)));
+                const lossPt = Math.round(Math.max(0, Math.min(Math.abs(pos.lastMarkPct) * 0.7, 20)));
+                const eisPt = pos.eisWindowScore != null ? Math.round(Math.min(Math.max(0, (pos.eisWindowScore / 25) * 15), 15)) : 0;
+                const rescoreScore = Math.round(Math.max(0, Math.min(probPt + lossPt + eisPt, 100)));
                 return (
                 <AllocationCard
                   key={pos.key}
-                  alloc={{ position: pos, suggestedEur: 0, rescoreScore: Math.min(probPt + lossPt + eisPt, 100), scoreBreakdown: { probPt, lossPt, eisPt } }}
+                  alloc={{ position: pos, suggestedEur: 0, rescoreScore, scoreBreakdown: { probPt, lossPt, eisPt, volPenalty: 0, extBonus: 0, cashPenalty: 0, rescoreScore } }}
                   it={it}
                   aiResult={aiNotes[pos.key] ?? null}
                   aiUpdatedAt={aiCache[pos.key]?.updatedAt ?? null}
                   loadingAi={loadingKeys.has(pos.key)}
                   onRequestAi={() => requestAnalysis(pos.ticker, pos.key, pos.entryAt, pos.lastMarkPct)}
-                  onOpenSimulation={onOpenSimulationRow ? () => onOpenSimulationRow({ ticker: pos.ticker, rowKey: pos.key }) : undefined}
+                  sdsRow={sdsRows?.find((r) => r.ticker.trim().toUpperCase() === pos.ticker.trim().toUpperCase()) ?? null}
                 />
               );
               })

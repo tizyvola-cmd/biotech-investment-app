@@ -5,7 +5,18 @@
 import type { ChartPoint, SheetTable } from "../types";
 import { simulationRowSeriesKey } from "../data/simulationCharts";
 import { buildSimRowByKeyMap } from "./investSimKeys";
-import type { InvestSimInputs } from "./investSimStorage";
+import type { InvestSimHistoryPoint, InvestSimInputs } from "./investSimStorage";
+import type { RegulatoryRiskSnapshot } from "../api/supernova";
+import {
+  lookupLossRisk,
+  lookupLossRiskByRowKey,
+  type LossRiskCatalog,
+} from "../hooks/useLossRiskCatalog";
+import type { LossRiskEntry } from "../components/LossRiskPoopCell";
+import { resolveRegSignedScoreForTicker } from "./decisionChartBuild";
+import { regRiskFromSignedScore } from "./decisionChartLogic";
+import { capturePaperBuyEntrySnapshots } from "./paperBuyEntrySnapshot";
+import { priorSessionDayPnlByKey } from "./urgentSellBookLegs";
 import {
   auditAssessmentChartHarmony,
   canonicalTodayOffset,
@@ -29,9 +40,61 @@ import {
 } from "./top2DecisionHelpers";
 import { DEFAULT_PLAN_CAPITAL_EUR } from "./expectedRoiDisplay";
 import { SIM_HOT_ZONE_DAYS } from "./cdHorizons";
-import { RECOVERY_HOLD_PROB_MIN } from "./recoveryProbability";
+import { RECOVERY_HOLD_PROB_MIN, P_ENTRY_MIN } from "./recoveryProbability";
+import {
+  buildMarketContextDecisionCtx,
+  getCachedMarketContextSnapshot,
+  type MarketContextDecisionCtx,
+} from "./marketContextScore";
 import { portfolioExitRecoveryGuardsActive } from "./portfolioDeclineSell";
 import { demoteAction, type AdviceFeedback } from "./adviceFeedback";
+import {
+  attachContCutPriority,
+  evaluateSoftBuyGrade1,
+  evaluateSoftSellGrade1,
+  evaluateSoftSellGiveback,
+  peakPnlEurFromHistory,
+  softSellG1IsDeepFloor,
+  evaluateUrgentSellGrade2Book,
+  evaluateSoftBuyGrade1c,
+  evaluateSoftBuyHighVol,
+  evaluateSoftBuyDay1Catalyst,
+  SOFT_BUY_G1_MIN_PLAN_RETURN_PCT,
+  SOFT_BUY_G1_SDS_MIN,
+  SOFT_BUY_G1_PPLAN_MIN,
+  SOFT_BUY_G1C_SDS_MIN,
+  SOFT_BUY_G1C_PPLAN_MIN,
+} from "./softSignalGrades";
+import {
+  newsDimensionBearish,
+  newsDimensionBullish,
+  type NewsDimensionScores,
+} from "./newsDimensionScores";
+import { isVolumeSurge } from "./volumeVsPrevSession";
+import { nyseSessionsElapsedSince } from "./marketSession";
+import { recordSoftSellFireOnce } from "./softSellFireSnapshotStore";
+import {
+  SOFT_BUY_RISING_DAYS_MIN,
+  softBuyRisingStreakOk,
+} from "./softBuyRisingStreak";
+import { softBuyBlockedByBookSell } from "./softBuyPostSellCooldown";
+import {
+  currentPriceFromRow,
+  dailyChangePctFromRow,
+  isWarrantTicker,
+} from "./simulationPosition";
+import {
+  applyDirectionalSignalDemotion,
+  buildRecommendationSignalCtx,
+} from "./recommendationSignalGates";
+import {
+  shouldContinuationExhaustedSell,
+  softBuyContinuationAllows,
+  softBuyEarlyPeakHit,
+  softBuyWindOrEarlyPeakHit,
+  softBuyWindRunHit,
+  resolveDisplayPContinuation,
+} from "./continuationScore";
 import type { SimLoopExecutionOpts } from "./simLoopDailyEvaluation";
 import {
   DEFAULT_MAX_OPEN_POSITIONS,
@@ -156,8 +219,16 @@ export type PaperPosition = {
   entryPlanReturnPct: number | null;
   /** P(plan) al momento dell'ingresso paper. */
   entryProbPct?: number | null;
+  /** SDS at paper BUY (frozen entry score). */
+  entrySds?: number | null;
+  /** EIS feed window score at paper BUY. */
+  entryEisScore?: number | null;
+  /** Signed regulatory score at paper BUY. */
+  entryRegulatoryScore?: number | null;
   /** Ultimo P&L % mark-to-market (tick precedente). */
   lastMarkPct?: number | null;
+  /** Spot USD at paper entry — MTM vs sheet current (not opportunity pnlPct≡0). */
+  entryBuyPrice?: number | null;
 };
 
 export type PaperTradeEvent = {
@@ -248,13 +319,130 @@ export type DecisionSimContext = {
   badBuyScoredKeys?: Set<string>;
   /** Learning loop corrections — demotions block paper auto-sell. */
   adviceFeedback?: AdviceFeedback | null;
-  /** Daily solid gate + synth capital (auto tick at 18:00). */
+  /** Auto tick: Soft BUY pass-through + synth capital sizing. */
   simLoopExecution?: SimLoopExecutionOpts | null;
+  /** Portfolio history — prior-session legs for Urgent SELL G2 (+ PnL items). */
+  history?: InvestSimHistoryPoint[] | null;
+  /** Risk v2 catalog — Soft SELL G1 (same as Home Cutoff / Pulse). */
+  lossRiskCatalog?: LossRiskCatalog | null;
+  catalogByRowKey?: Map<string, LossRiskEntry> | null;
+  autoRegSnap?: RegulatoryRiskSnapshot | null;
 };
 
 export type SimulatePaperTradesOpts = {
   resolveBuyCapital?: (ev: TickerSimEvaluation) => number;
+  /** Capture entry spot on BUY for subsequent MTM. */
+  simRowByKey?: Map<string, Record<string, unknown>>;
 };
+
+function sanitizeMarkPct(pct: number | null | undefined): number | null {
+  if (pct == null || !Number.isFinite(pct)) return null;
+  if (Math.abs(pct) > 500) return null;
+  return pct;
+}
+
+/**
+ * Paper mark from sheet: total % vs entryBuyPrice (or lastMark), day % from Var. Giorn.
+ * Used so Soft SELL / G2 / stamp see real tape — not opportunity pnlPct≡0.
+ */
+export function resolvePaperPositionMarks(
+  pos: PaperPosition,
+  simRow: Record<string, unknown> | null | undefined,
+): {
+  totalPnlPct: number | null;
+  dayPnlPct: number | null;
+  dayPnlEur: number;
+} {
+  const dayPct = simRow ? dailyChangePctFromRow(simRow) : null;
+  const curr = simRow ? currentPriceFromRow(simRow) : null;
+  let totalPct: number | null = null;
+  if (
+    pos.entryBuyPrice != null &&
+    Number.isFinite(pos.entryBuyPrice) &&
+    pos.entryBuyPrice > 0 &&
+    curr != null &&
+    curr > 0
+  ) {
+    totalPct = Math.round(((curr - pos.entryBuyPrice) / pos.entryBuyPrice) * 10000) / 100;
+    // Same-day / stale Prezzo Corrente: entry was stamped to spot at buy, so
+    // (curr−entry)/entry stays 0 forever while Var. Giorn. % already moved.
+    // Flash Test equity curves and Soft SELL marks need that daily tape.
+    if (
+      Math.abs(totalPct) < 0.05 &&
+      dayPct != null &&
+      Number.isFinite(dayPct) &&
+      Math.abs(dayPct) >= 0.05 &&
+      Math.abs(pos.entryBuyPrice - curr) / curr <= 0.001
+    ) {
+      totalPct = Math.round(dayPct * 100) / 100;
+    }
+  } else {
+    totalPct = sanitizeMarkPct(pos.lastMarkPct);
+    if (totalPct == null && dayPct != null && Number.isFinite(dayPct)) {
+      totalPct = dayPct;
+    }
+  }
+  const dayPnlEur =
+    dayPct != null && Number.isFinite(dayPct) && pos.capital > 0
+      ? Math.round(((pos.capital * dayPct) / 100) * 100) / 100
+      : 0;
+  return {
+    totalPnlPct: totalPct != null && Number.isFinite(totalPct) ? totalPct : null,
+    dayPnlPct: dayPct != null && Number.isFinite(dayPct) ? dayPct : null,
+    dayPnlEur,
+  };
+}
+
+/** Overlay paper MTM onto opportunity items (keeps hasPosition=false for Top2 entry semantics). */
+export function overlayPaperMarksOnLossItem(
+  item: PortfolioLossAnalysisItem,
+  pos: PaperPosition | null | undefined,
+  simRow: Record<string, unknown> | null | undefined,
+): PortfolioLossAnalysisItem {
+  if (!pos) return item;
+  const marks = resolvePaperPositionMarks(pos, simRow);
+  const total = marks.totalPnlPct;
+  const day = marks.dayPnlPct;
+  const capital = pos.capital > 0 ? pos.capital : item.capital;
+  return {
+    ...item,
+    capital,
+    pnlPct: total ?? item.pnlPct,
+    pnlEur:
+      total != null && capital > 0
+        ? Math.round(((capital * total) / 100) * 100) / 100
+        : item.pnlEur,
+    pnlPct24h: day ?? item.pnlPct24h,
+    pnlEur24h:
+      marks.dayPnlEur !== 0
+        ? marks.dayPnlEur
+        : day != null && capital > 0
+          ? Math.round(((capital * day) / 100) * 100) / 100
+          : item.pnlEur24h,
+    inLoss: total != null ? total < 0 : item.inLoss,
+  };
+}
+
+/** Backfill missing entryBuyPrice from current spot (± lastMark). */
+export function backfillPaperEntryBuyPrices(
+  portfolio: PaperPosition[],
+  simRowByKey: Map<string, Record<string, unknown>>,
+): PaperPosition[] {
+  return portfolio.map((p) => {
+    if (p.entryBuyPrice != null && p.entryBuyPrice > 0) return p;
+    const row = simRowByKey.get(p.key);
+    const curr = row ? currentPriceFromRow(row) : null;
+    if (curr == null || curr <= 0) return p;
+    const mark = sanitizeMarkPct(p.lastMarkPct);
+    if (mark != null && mark > -99.9) {
+      const entry = curr / (1 + mark / 100);
+      if (entry > 0 && Number.isFinite(entry)) {
+        return { ...p, entryBuyPrice: Math.round(entry * 10000) / 10000 };
+      }
+    }
+    return { ...p, entryBuyPrice: curr };
+  });
+}
 
 const TARGET_SN_GAP_PP = 2.5;
 const SPOT_MODEL_GAP_PCT = 8;
@@ -536,9 +724,9 @@ export function precatVerdictAgrees(item: PortfolioLossAnalysisItem): boolean {
   return item.investVerdict === "wait";
 }
 
-const SIM_BUY_PROB_MIN = 40;
-/** Top2 wait + precat enter/accumulate + P(plan) ≥ soglia → buy watchlist. */
-const SIM_BUY_WATCH_PROB_MIN = 45;
+const SIM_BUY_PROB_MIN = P_ENTRY_MIN;
+/** @deprecated Watchlist buy rimosso — Buy solo con Top2 sì + evidenze studio. */
+const SIM_BUY_WATCH_PROB_MIN = P_ENTRY_MIN;
 /** Var. giorn. minima per override momentum (allineato a missed-opp audit). */
 export const MOMENTUM_24H_BUY_MIN = 0.5;
 /** P(plan) minima per buy momentum quando Top2 no / precat avoid ma titolo sale oggi. */
@@ -587,18 +775,367 @@ export function forwardBuyGainOutlookPositive(
   return false;
 }
 
-function buyIfGainExpected(
-  item: PortfolioLossAnalysisItem,
-  scoreCtx?: CompositeScoreContext | null,
-): TickerSimEvaluation["suggestedAction"] {
-  if (forwardBuyGainOutlookPositive(item)) return "buy";
-  const composite = computeCompositeForLossItem(item, scoreCtx);
-  if (composite.score >= COMPOSITE_REVIEW_MIN && !item.hasPosition) return "review";
-  return item.exitDecision === "hold" ? "hold" : "review";
+/**
+ * Soft BUY forward bar — stricter than generic >0 so WAIT + Target +1.3%
+ * cannot paint Operative BUY (HAE).
+ */
+export function softBuyForwardGainAdequate(
+  item: Pick<
+    PortfolioLossAnalysisItem,
+    "planReturnPct" | "curvePeakReturnPct" | "daysToCurvePeak"
+  >,
+): boolean {
+  if (
+    item.planReturnPct != null &&
+    Number.isFinite(item.planReturnPct) &&
+    item.planReturnPct >= SOFT_BUY_G1_MIN_PLAN_RETURN_PCT
+  ) {
+    return true;
+  }
+  if (
+    item.curvePeakReturnPct != null &&
+    Number.isFinite(item.curvePeakReturnPct) &&
+    item.curvePeakReturnPct >= SOFT_BUY_G1_MIN_PLAN_RETURN_PCT &&
+    item.daysToCurvePeak != null &&
+    item.daysToCurvePeak > 0
+  ) {
+    return true;
+  }
+  return false;
 }
 
-function shouldHoldPortfolioExit(item: PortfolioLossAnalysisItem): boolean {
-  return portfolioExitRecoveryGuardsActive(item);
+/**
+ * Soft BUY Top2 filter — WAIT is allowed (volume trial); only hard NO blocks G1.
+ * G1c can still override NO when study is strong.
+ */
+export function softBuyTop2Allows(item: Pick<PortfolioLossAnalysisItem, "investVerdict">): boolean {
+  const v = String(item.investVerdict ?? "").trim().toLowerCase();
+  return v !== "no";
+}
+
+/** Top2 yes + precat enter/accumulate — allow forward >0 instead of ≥3%. */
+export function softBuyEntryAligned(
+  item: Pick<PortfolioLossAnalysisItem, "investVerdict" | "precatKind">,
+): boolean {
+  const v = String(item.investVerdict ?? "").trim().toLowerCase();
+  if (v !== "yes") return false;
+  return item.precatKind === "enter" || item.precatKind === "accumulate";
+}
+
+/**
+ * Soft BUY G1c / legacy forward bar (not required for Soft BUY G1 volume when ↑≥2d):
+ * - Top2 WAIT → forward ≥3%
+ * - Top2 yes + ENTER/accumulate → forward >0
+ * - otherwise → forward ≥3%
+ */
+export function softBuyForwardForPath(
+  item: Pick<
+    PortfolioLossAnalysisItem,
+    | "planReturnPct"
+    | "curvePeakReturnPct"
+    | "daysToCurvePeak"
+    | "pred5Pp"
+    | "curveRisingHold"
+    | "slope5d"
+    | "investVerdict"
+    | "precatKind"
+  >,
+): boolean {
+  if (softBuyForwardGainAdequate(item)) return true;
+  const v = String(item.investVerdict ?? "").trim().toLowerCase();
+  if (v === "wait") return false;
+  if (softBuyEntryAligned(item) && forwardBuyGainOutlookPositive(item)) return true;
+  return false;
+}
+
+function resolveSoftBuyDayPct(
+  item: Pick<PortfolioLossAnalysisItem, "pnlPct24h">,
+  dayPctFromSim?: number | null,
+): number | null {
+  if (item.pnlPct24h != null && Number.isFinite(item.pnlPct24h)) return item.pnlPct24h;
+  if (dayPctFromSim != null && Number.isFinite(dayPctFromSim)) return dayPctFromSim;
+  return null;
+}
+
+/**
+ * Intraday Var. Giorn. noise around 0% — a −0.2% print must not wipe Home
+ * Suggested BUY on the next 30-min refresh.
+ */
+export const SOFT_BUY_DAY_RED_EPS = -0.35;
+
+/**
+ * Soft BUY: do not enter a name that is meaningfully red on the session.
+ * Unknown day → allow (no false block). Tiny red prints stay allowed.
+ */
+export function softBuyDayNotRed(
+  item: Pick<PortfolioLossAnalysisItem, "pnlPct24h">,
+  dayPctFromSim?: number | null,
+): boolean {
+  const day = resolveSoftBuyDayPct(item, dayPctFromSim);
+  if (day == null) return true;
+  return day >= SOFT_BUY_DAY_RED_EPS;
+}
+
+/** Block Soft BUY on fresh crash tape (JSPR −47% day lesson). */
+export function softBuyTapeNotCatastrophic(
+  item: Pick<PortfolioLossAnalysisItem, "pnlPct24h" | "pnlPct">,
+  dayPctFromSim?: number | null,
+): boolean {
+  const day = resolveSoftBuyDayPct(item, dayPctFromSim);
+  if (day != null && day <= -10) return false;
+  if (item.pnlPct != null && Number.isFinite(item.pnlPct) && item.pnlPct <= -8) {
+    return false;
+  }
+  return true;
+}
+
+/** Soft BUY: today green + prior sessions green (≥2 total). */
+export function softBuyRisingStreakAllows(
+  item: PortfolioLossAnalysisItem,
+  dayPctFromSim?: number | null,
+  enhanceCtx?: SuggestedActionEnhanceCtx | null,
+): boolean {
+  const today = resolveSoftBuyDayPct(item, dayPctFromSim);
+  return softBuyRisingStreakOk({
+    row: enhanceCtx?.simRow ?? null,
+    chartPoints: enhanceCtx?.chartPts,
+    todayPct: today,
+    minDays: SOFT_BUY_RISING_DAYS_MIN,
+    priorSessionPcts: enhanceCtx?.priorSessionPcts,
+  });
+}
+
+/**
+ * Soft BUY list rank — higher first. Wind-run is the volume promoter;
+ * Top2 / rising / no-cooldown / higher P(cont) lift priority.
+ */
+export function softBuySuggestionPriority(
+  item: PortfolioLossAnalysisItem,
+  dayPctFromSim?: number | null,
+  enhanceCtx?: SuggestedActionEnhanceCtx | null,
+): number {
+  const simRow = enhanceCtx?.simRow ?? null;
+  let score = 0;
+  const dayPct = resolveSoftBuyDayPct(item, dayPctFromSim);
+  if (softBuyWindRunHit(simRow)) score += 100;
+  else if (softBuyEarlyPeakHit(simRow, dayPct)) score += 90;
+  if (enhanceCtx?.volumeAccel?.flagged) score += 85;
+  else if (softBuyCatalystVolSurge(enhanceCtx) && softBuyCatalystNewsBullish(enhanceCtx)) {
+    score += 80;
+  }
+  if (softBuyTop2Allows(item)) score += 40;
+  if (softBuyRisingStreakAllows(item, dayPctFromSim, enhanceCtx)) score += 30;
+  if (!enhanceCtx?.recentlySoldBlocked) score += 20;
+  if (softBuyContinuationAllows(simRow)) score += 10;
+  const pCont = resolveDisplayPContinuation(simRow);
+  if (pCont != null && Number.isFinite(pCont)) {
+    score += Math.min(40, Math.max(0, pCont - 50));
+  }
+  const sds = item.sdsScore;
+  if (sds != null && Number.isFinite(sds)) score += Math.min(20, sds * 0.25);
+  return score;
+}
+
+/** Soft BUY G1c study override — strong SDS/P clears Top2/precat conflict. */
+export function qualifiesSoftBuyGrade1c(
+  item: PortfolioLossAnalysisItem,
+  dayPctFromSim?: number | null,
+  enhanceCtx?: SuggestedActionEnhanceCtx | null,
+): boolean {
+  const g1c = evaluateSoftBuyGrade1c({
+    hasPosition: Boolean(item.hasPosition),
+    sdsScore: item.sdsScore,
+    pplan: item.recoveryProbabilityPct,
+  });
+  if (!g1c.hit) return false;
+  if (!softBuyDayNotRed(item, dayPctFromSim)) return false;
+  if (!softBuyRisingStreakAllows(item, dayPctFromSim, enhanceCtx)) return false;
+  if (!softBuyTapeNotCatastrophic(item, dayPctFromSim)) return false;
+  if (!softBuyContinuationAllows(enhanceCtx?.simRow ?? null)) return false;
+  return softBuyForwardGainAdequate(item);
+}
+
+/** Min SDS — setup distanza/solidità. */
+export const STUDY_EVIDENCE_SDS_MIN = 50;
+/** Min EIS super-score — catalizzatore clinico/regolatorio osservato. */
+export const STUDY_EVIDENCE_EIS_MIN = 45;
+
+export type StudyEvidenceSignals = Pick<
+  PortfolioLossAnalysisItem,
+  "sdsScore" | "sdsVeto" | "eisSuperScore" | "stabilityVerdict"
+>;
+
+/** Evidenze reali (SDS + EIS) — polygon match rimosso (r≈0 vs outcome). */
+export function studySetupEvidenceSupportsBuy(signals: StudyEvidenceSignals): boolean {
+  if (signals.sdsVeto) return false;
+  if (signals.stabilityVerdict === "exit" || signals.stabilityVerdict === "avoid") {
+    return false;
+  }
+  const sds = signals.sdsScore;
+  const eis = signals.eisSuperScore;
+  if (sds == null || sds < STUDY_EVIDENCE_SDS_MIN) return false;
+  if (eis == null || eis < STUDY_EVIDENCE_EIS_MIN) return false;
+  return true;
+}
+
+/** Buy off-portfolio: Top2 sì + ENTER + P(plan) + target forward + evidenze studio. */
+export function qualifiesStrictOpportunityBuy(item: PortfolioLossAnalysisItem): boolean {
+  if (item.hasPosition) return false;
+  if (item.investVerdict !== "yes") return false;
+  if (item.exitDecision !== "hold") return false;
+  const precatBuy = item.precatKind === "enter" || item.precatKind === "accumulate";
+  if (!precatBuy) return false;
+  const p = item.recoveryProbabilityPct;
+  if (p == null || p < SIM_BUY_PROB_MIN) return false;
+  if (!forwardBuyGainOutlookPositive(item)) return false;
+  return studySetupEvidenceSupportsBuy(item);
+}
+
+export type SuggestedActionEnhanceCtx = {
+  marketContext?: MarketContextDecisionCtx | null;
+  regulatoryRiskScore?: number | null;
+  externalAlignmentScore?: number | null;
+  volumeAnomalyScore?: number | null;
+  /** Book-level Urgent SELL G2 keys (20% purchased+gains budget). */
+  urgentSellG2Keys?: ReadonlySet<string> | null;
+  /** Per-ticker Risk v2 (0–100) for Soft SELL G1. */
+  riskV2?: number | null;
+  /** Per-ticker regulatory risk (0–100) for Soft SELL G1. */
+  regRisk?: number | null;
+  /** Simulation row — BETA / LIQ / Var.% for BUY quality gates. */
+  simRow?: Record<string, unknown> | null;
+  /** Chart points — fallback for 7d / 3M / 6M when sheet columns missing. */
+  chartPts?: ChartPoint[] | null;
+  /**
+   * Prior session returns newest-first (Yahoo intraday 1h), for Soft BUY
+   * rising ≥2d when CD charts are sparse/stale.
+   */
+  priorSessionPcts?: Array<number | null | undefined>;
+  /**
+   * Real book was sold recently (ignoreSheet+soldAt within cooldown) —
+   * block Soft BUY so we do not re-propose the same name immediately.
+   */
+  recentlySoldBlocked?: boolean;
+  /**
+   * Peak open MTM € from invest_sim_history for this key (Gen 4 giveback Soft SELL).
+   * Giveback only promotes SELL when current open MTM € ≤ 0.
+   */
+  peakPnlEur?: number | null;
+  /**
+   * Confirmed 5m volume acceleration (T_double ≤30 min) — Soft BUY High Vol.
+   */
+  volumeAccel?: {
+    flagged: boolean;
+    score?: number | null;
+    doublingMinutes?: number | null;
+    rvol?: number | null;
+  } | null;
+  /**
+   * Catalyst desk VOL vs prev % — Soft BUY day-1 when ≥150% (with news bullish).
+   */
+  volSurgePct?: number | null;
+  /**
+   * Catalyst desk Clin/Fin/Corp/Access scores (36h) — Soft BUY day-1 / Soft SELL boost.
+   */
+  newsScores?: NewsDimensionScores | null;
+};
+
+/** True when desk Vol surge and/or T_double High Vol is active. */
+export function softBuyCatalystVolSurge(
+  enhanceCtx?: SuggestedActionEnhanceCtx | null,
+): boolean {
+  if (enhanceCtx?.volumeAccel?.flagged === true) return true;
+  return isVolumeSurge(enhanceCtx?.volSurgePct);
+}
+
+/** Soft BUY day-1 news leg (Scores Σ > 0). */
+export function softBuyCatalystNewsBullish(
+  enhanceCtx?: SuggestedActionEnhanceCtx | null,
+): boolean {
+  return newsDimensionBullish(enhanceCtx?.newsScores ?? null);
+}
+
+/** Soft SELL catalyst boost (Scores Σ < 0). */
+export function softSellCatalystNewsBearish(
+  enhanceCtx?: SuggestedActionEnhanceCtx | null,
+): boolean {
+  return newsDimensionBearish(enhanceCtx?.newsScores ?? null);
+}
+
+function finalizeSuggestedAction(
+  action: TickerSimEvaluation["suggestedAction"],
+  enhanceCtx?: SuggestedActionEnhanceCtx | null,
+  dayPctFromSim?: number | null,
+): TickerSimEvaluation["suggestedAction"] {
+  if (action !== "buy") return action;
+  const simRow = enhanceCtx?.simRow ?? null;
+  const dayPct =
+    dayPctFromSim ??
+    (simRow ? buildRecommendationSignalCtx(simRow, enhanceCtx?.chartPts).d1 : null);
+  // Wind-run / early-peak Soft BUY: β / liq / multi-horizon demote → ranking only, not drop.
+  if (softBuyWindOrEarlyPeakHit(simRow, dayPct)) return "buy";
+  if (enhanceCtx?.volumeAccel?.flagged) return "buy";
+  // Day-1 catalyst Soft BUY — same: desk Vol+news aligned, skip quality demote.
+  if (
+    softBuyCatalystVolSurge(enhanceCtx) &&
+    softBuyCatalystNewsBullish(enhanceCtx)
+  ) {
+    return "buy";
+  }
+  const signalCtx = buildRecommendationSignalCtx(
+    enhanceCtx?.simRow,
+    enhanceCtx?.chartPts,
+  );
+  return applyDirectionalSignalDemotion(action, signalCtx).action;
+}
+
+function shouldHoldPortfolioExit(
+  item: PortfolioLossAnalysisItem,
+  enhance?: SuggestedActionEnhanceCtx | null,
+): boolean {
+  const marketContext =
+    enhance?.marketContext ?? buildMarketContextDecisionCtx(getCachedMarketContextSnapshot());
+  return portfolioExitRecoveryGuardsActive({
+    curveRisingHold: item.curveRisingHold,
+    investVerdict: item.investVerdict,
+    recoveryProbabilityPct: item.recoveryProbabilityPct,
+    recoveryCoversLoss: item.recoveryCoversLoss,
+    pnlPct24h: item.pnlPct24h,
+    pnlPct: item.pnlPct,
+    planReturnPct: item.planReturnPct,
+    curvePeakReturnPct: item.curvePeakReturnPct,
+    stabilityVerdict: item.stabilityVerdict,
+    marketContext,
+    regulatoryRiskScore: enhance?.regulatoryRiskScore,
+    externalAlignmentScore: enhance?.externalAlignmentScore,
+    volumeAnomalyScore: enhance?.volumeAnomalyScore,
+    simRow: enhance?.simRow,
+  });
+}
+
+/** Session green (Var. Giorn. > 0) — never recommend SELL into a rising day (CERS +13% / −2.8% total). */
+export function sessionDayIsGreen(
+  item: Pick<PortfolioLossAnalysisItem, "pnlPct24h">,
+  dayPctFromSim?: number | null,
+): boolean {
+  const day =
+    item.pnlPct24h != null && Number.isFinite(item.pnlPct24h)
+      ? item.pnlPct24h
+      : dayPctFromSim != null && Number.isFinite(dayPctFromSim)
+        ? dayPctFromSim
+        : null;
+  return day != null && day > 0;
+}
+
+/** Borderline recovery → Review; failed thesis → stay on Sell path. */
+function shouldDemotePortfolioExitToReview(
+  item: PortfolioLossAnalysisItem,
+  composite: CompositeScoreResult,
+): boolean {
+  if (composite.zone !== "loss" || composite.score < COMPOSITE_LOSS_REVIEW_MIN) return false;
+  const p = item.recoveryProbabilityPct;
+  if (p == null || !Number.isFinite(p)) return false;
+  return p >= RECOVERY_HOLD_PROB_MIN - 10 && item.recoveryCoversLoss !== false;
 }
 
 /** Allinea chip P(plan) all'azione sim loop (non solo exitDecision grezzo). */
@@ -632,7 +1169,7 @@ export type BuyRecommendationSignals = Pick<
 >;
 
 export function isOffPortfolioBuyRecommended(signals: BuyRecommendationSignals): boolean {
-  return deriveSuggestedAction(signals as PortfolioLossAnalysisItem, false) === "buy";
+  return qualifiesStrictOpportunityBuy(signals as PortfolioLossAnalysisItem);
 }
 
 /** Soglia P(plan) minima per buy nel loop sim — esportata per UI/tooltip. */
@@ -649,8 +1186,9 @@ export function evaluateSimBuyGate(
   item: PortfolioLossAnalysisItem,
   inPaper: boolean,
   lang: "it" | "en",
+  enhanceCtx?: SuggestedActionEnhanceCtx | null,
 ): SimBuyGateResult {
-  if (deriveSuggestedAction(item, inPaper) === "buy") {
+  if (deriveSuggestedAction(item, inPaper, null, null, enhanceCtx) === "buy") {
     return { allowed: true, reason: null };
   }
   return { allowed: false, reason: explainBuyBlockReason(item, inPaper, lang) };
@@ -668,106 +1206,328 @@ export function buildSimBuyGateByKey(
   return map;
 }
 
+function softSellG1ForItem(
+  item: PortfolioLossAnalysisItem,
+  enhanceCtx?: SuggestedActionEnhanceCtx | null,
+  simRow?: Record<string, unknown> | null,
+) {
+  return evaluateSoftSellGrade1({
+    hasPosition: true,
+    pnlPct: item.pnlPct,
+    pplan: item.recoveryProbabilityPct,
+    riskV2: enhanceCtx?.riskV2,
+    regRisk: enhanceCtx?.regRisk ?? enhanceCtx?.regulatoryRiskScore,
+    simRow: simRow === undefined ? enhanceCtx?.simRow : simRow,
+    investedAt: item.investedAt,
+    catalystBearish: softSellCatalystNewsBearish(enhanceCtx),
+  });
+}
+
+function maybeRecordSoftSellFire(
+  item: PortfolioLossAnalysisItem,
+  inPaper: boolean,
+  enhanceCtx: SuggestedActionEnhanceCtx | null | undefined,
+  action: TickerSimEvaluation["suggestedAction"],
+): void {
+  if (action !== "sell") return;
+  if (!inPaper && !item.hasPosition) return;
+  try {
+    const g1 = softSellG1ForItem(item, enhanceCtx);
+    recordSoftSellFireOnce({
+      key: item.key,
+      ticker: item.ticker,
+      investedAt: item.investedAt ?? null,
+      ts: new Date().toISOString(),
+      pnlPct: item.pnlPct ?? null,
+      pplan: item.recoveryProbabilityPct ?? null,
+      riskV2: enhanceCtx?.riskV2 ?? null,
+      reg: enhanceCtx?.regRisk ?? enhanceCtx?.regulatoryRiskScore ?? null,
+      sessionsElapsed: nyseSessionsElapsedSince(item.investedAt),
+      deepFloor: softSellG1IsDeepFloor(g1),
+      g1Hit: g1.hit,
+      g2: Boolean(enhanceCtx?.urgentSellG2Keys?.has(item.key)),
+      reason: g1.reason,
+    });
+  } catch {
+    /* snapshot must never block REC */
+  }
+}
+
 export function deriveSuggestedAction(
   item: PortfolioLossAnalysisItem,
   inPaper: boolean,
   scoreCtx?: CompositeScoreContext | null,
   adviceFeedback?: AdviceFeedback | null,
+  enhanceCtx?: SuggestedActionEnhanceCtx | null,
+): TickerSimEvaluation["suggestedAction"] {
+  const raw = deriveSuggestedActionRaw(
+    item,
+    inPaper,
+    scoreCtx,
+    adviceFeedback,
+    enhanceCtx,
+  );
+  const finalized = finalizeSuggestedAction(
+    raw,
+    enhanceCtx,
+    buildRecommendationSignalCtx(enhanceCtx?.simRow, enhanceCtx?.chartPts).d1,
+  );
+  maybeRecordSoftSellFire(item, inPaper, enhanceCtx, finalized);
+  return finalized;
+}
+
+function deriveSuggestedActionRaw(
+  item: PortfolioLossAnalysisItem,
+  inPaper: boolean,
+  scoreCtx?: CompositeScoreContext | null,
+  adviceFeedback?: AdviceFeedback | null,
+  enhanceCtx?: SuggestedActionEnhanceCtx | null,
 ): TickerSimEvaluation["suggestedAction"] {
   const composite = computeCompositeForLossItem(item, scoreCtx);
 
   if (inPaper) {
+    const paperMtmUp =
+      item.pnlPct != null && Number.isFinite(item.pnlPct) && item.pnlPct > 0;
+    if (
+      !paperMtmUp &&
+      evaluateSoftSellGiveback({
+        hasPosition: true,
+        peakPnlEur: enhanceCtx?.peakPnlEur,
+        pnlEur: item.pnlEur,
+        capitalEur: item.capital,
+        investedAt: item.investedAt,
+      }).hit
+    ) {
+      return "sell";
+    }
     if (item.exitDecision === "exit") {
-      if (shouldHoldPortfolioExit(item)) return "hold";
+      if (paperMtmUp) {
+        return "hold";
+      }
+      // Deep Soft SELL (−12%) beats green-day HOLD (same as live book).
+      {
+        const softSell = softSellG1ForItem(item, enhanceCtx);
+        if (softSellG1IsDeepFloor(softSell)) return "sell";
+      }
+      if (sessionDayIsGreen(item)) return "hold";
+      if (shouldHoldPortfolioExit(item, enhanceCtx)) return "hold";
       if (
         adviceFeedback &&
         demoteAction("sell", item.recoveryProbabilityPct, adviceFeedback).demotedTo === "review"
       ) {
         return "hold";
       }
-      if (composite.zone === "loss" && composite.score >= COMPOSITE_LOSS_REVIEW_MIN) {
-        return "review";
-      }
+      if (shouldDemotePortfolioExitToReview(item, composite)) return "review";
       return "sell";
+    }
+    // Paper: Urgent SELL G2 / Soft SELL G1 still apply when marked in loss.
+    if (
+      item.pnlPct != null &&
+      Number.isFinite(item.pnlPct) &&
+      item.pnlPct <= 0
+    ) {
+      if (enhanceCtx?.urgentSellG2Keys?.has(item.key)) return "sell";
+      {
+        const softSell = softSellG1ForItem(item, enhanceCtx);
+        if (softSell.hit) {
+          // Deep floor ignores recovery + green-day HOLD; milder Soft SELL does not.
+          if (
+            softSellG1IsDeepFloor(softSell) ||
+            (!sessionDayIsGreen(item) && !shouldHoldPortfolioExit(item, enhanceCtx))
+          ) {
+            return "sell";
+          }
+        }
+      }
     }
     if (item.exitDecision === "hold") return "hold";
     return "review";
   }
 
-  /** Portafoglio reale: vendi solo con uscita netta — rispetta recovery / curva ↑ / watch accumulate. */
-  if (item.hasPosition && item.exitDecision === "exit") {
-    if (shouldHoldPortfolioExit(item)) return "hold";
-    if (composite.zone === "loss" && composite.score >= COMPOSITE_LOSS_REVIEW_MIN) {
+  /** Portafoglio reale: soft/urgent SELL before sticky HOLD/rescue. */
+  if (item.hasPosition) {
+    const mtmUp =
+      item.pnlPct != null && Number.isFinite(item.pnlPct) && item.pnlPct > 0;
+    const dayGreen = sessionDayIsGreen(item);
+    // Gen 4 giveback — only when open MTM € is underwater (flat €0 ≠ exit).
+    if (
+      !mtmUp &&
+      evaluateSoftSellGiveback({
+        hasPosition: true,
+        peakPnlEur: enhanceCtx?.peakPnlEur,
+        pnlEur: item.pnlEur,
+        capitalEur: item.capital,
+        investedAt: item.investedAt,
+      }).hit
+    ) {
+      return "sell";
+    }
+    // Continuation exhaustion — take-profit is manual while MTM > 0.
+    if (
+      !mtmUp &&
+      shouldContinuationExhaustedSell({
+        hasPosition: true,
+        pnlPct: item.pnlPct,
+        simRow: enhanceCtx?.simRow,
+      })
+    ) {
+      return "sell";
+    }
+    if (!mtmUp) {
+      // Urgent G2 + deep Soft SELL (−12%) beat green-day HOLD.
+      // Mild red + green bounce still HOLD (CERS −2.8% / +13% day case).
+      if (enhanceCtx?.urgentSellG2Keys?.has(item.key)) {
+        return "sell";
+      }
+      const softSell = softSellG1ForItem(item, enhanceCtx);
+      if (softSellG1IsDeepFloor(softSell)) {
+        return "sell";
+      }
+      if (
+        !dayGreen &&
+        softSell.hit &&
+        !shouldHoldPortfolioExit(item, enhanceCtx)
+      ) {
+        return "sell";
+      }
+    }
+    // Mild losses: never SELL into a green session (bounce day).
+    if (dayGreen) {
+      if (item.exitDecision === "exit" || item.exitDecision === "hold") return "hold";
+      // Decent P(plan) → Hold, not blanket Uncertain on a green session.
+      if (
+        item.recoveryProbabilityPct != null &&
+        Number.isFinite(item.recoveryProbabilityPct) &&
+        item.recoveryProbabilityPct >= SOFT_BUY_G1_PPLAN_MIN
+      ) {
+        return "hold";
+      }
       return "review";
     }
-    return "sell";
-  }
-
-  const precatBuy = item.precatKind === "enter" || item.precatKind === "accumulate";
-  const probOk =
-    item.recoveryProbabilityPct == null || item.recoveryProbabilityPct >= SIM_BUY_PROB_MIN;
-  if (item.investVerdict === "yes") {
-    if (item.exitDecision === "hold" || item.exitDecision === "review") {
-      return buyIfGainExpected(item, scoreCtx);
+    if (item.exitDecision === "exit") {
+      if (mtmUp) return "hold";
+      if (shouldHoldPortfolioExit(item, enhanceCtx)) return "hold";
+      if (shouldDemotePortfolioExitToReview(item, composite)) return "review";
+      return "sell";
     }
-    if (item.exitDecision === "exit" && precatBuy && probOk) {
-      return buyIfGainExpected(item, scoreCtx);
+    if (item.exitDecision === "hold") {
+      return "hold";
     }
-  }
-  if (
-    item.investVerdict === "wait" &&
-    precatBuy &&
-    item.recoveryProbabilityPct != null &&
-    item.recoveryProbabilityPct >= SIM_BUY_WATCH_PROB_MIN
-  ) {
-    return buyIfGainExpected(item, scoreCtx);
-  }
-
-  const mom24 = item.pnlPct24h;
-  const hasMomentum = mom24 != null && mom24 >= MOMENTUM_24H_BUY_MIN;
-  const probPct = item.recoveryProbabilityPct;
-
-  /** Gainer 24h + P(plan) forte: override Top2 no / precat avoid (recall opportunità perse). */
-  if (
-    hasMomentum &&
-    probPct != null &&
-    probPct >= MOMENTUM_P_STRONG_MIN &&
-    item.precatKind !== "sell" &&
-    !(item.precatKind === "avoid" && isForwardModelDeclining(item))
-  ) {
-    return buyIfGainExpected(item, scoreCtx);
+    // Top2 wait / unclear exit with P≥50 → Hold (same band as score pplan_hold).
+    if (
+      item.recoveryProbabilityPct != null &&
+      Number.isFinite(item.recoveryProbabilityPct) &&
+      item.recoveryProbabilityPct >= SOFT_BUY_G1_PPLAN_MIN
+    ) {
+      return "hold";
+    }
+    return "review";
   }
 
-  /** Watch zone T−61…T−120: accumulate + P(plan) ok. */
-  if (
-    precatBuy &&
-    item.daysToCd != null &&
-    item.daysToCd > SIM_HOT_ZONE_DAYS &&
-    probPct != null &&
-    probPct >= SIM_BUY_PROB_MIN &&
-    item.investVerdict !== "no"
-  ) {
-    return buyIfGainExpected(item, scoreCtx);
+  /** Off-book BUY: Soft G1 / G1w / G1c then strict Top2 path. */
+  if (!item.hasPosition) {
+    // Warrants (JSPRW…): never Soft/Top2 BUY — trade the common (JSPR) only.
+    if (isWarrantTicker(item.ticker)) {
+      if (composite.score >= COMPOSITE_REVIEW_MIN) return "review";
+      return "review";
+    }
+    const dayPctFromSim = buildRecommendationSignalCtx(
+      enhanceCtx?.simRow,
+      enhanceCtx?.chartPts,
+    ).d1;
+    const softBuy = evaluateSoftBuyGrade1({
+      hasPosition: false,
+      sdsScore: item.sdsScore,
+      pplan: item.recoveryProbabilityPct,
+    });
+    const precatHardBlock = item.precatKind === "sell";
+    const tapeOk = softBuyTapeNotCatastrophic(item, dayPctFromSim);
+    // Hard: never Soft BUY into a red session (KZIA −7.85% with G1w wind).
+    // Rising ≥2d already implies green today for G1; G1w used to skip rising.
+    const dayOk = softBuyDayNotRed(item, dayPctFromSim);
+    const windRun = softBuyWindOrEarlyPeakHit(enhanceCtx?.simRow ?? null, dayPctFromSim);
+    // Soft BUY G1w — vento + corsa forte (10d≥5% · P(cont)≥50 · edge≤0) or early peak (Δ≥8% · 0≤10d<5%).
+    // Top2 / ↑2d / cooldown only rank; still need SDS/P + green day + tape + !precat.
+    if (softBuy.hit && windRun && dayOk && tapeOk && !precatHardBlock) {
+      return "buy";
+    }
+    // Just sold from the real book — block classic Soft BUY (G1w already passed).
+    if (enhanceCtx?.recentlySoldBlocked) {
+      if (
+        item.recoveryProbabilityPct != null &&
+        Number.isFinite(item.recoveryProbabilityPct) &&
+        item.recoveryProbabilityPct >= SOFT_BUY_G1_PPLAN_MIN
+      ) {
+        return "hold";
+      }
+      return "review";
+    }
+    // Soft BUY G1v High Vol — T_double ≤30 min confirmed. SDS/P and ↑2d not required.
+    if (
+      evaluateSoftBuyHighVol({
+        hasPosition: false,
+        flagged: enhanceCtx?.volumeAccel?.flagged,
+      }).hit &&
+      !precatHardBlock &&
+      dayOk &&
+      tapeOk
+    ) {
+      return "buy";
+    }
+    // Soft BUY G1d day-1 catalyst — Vol surge + news Σ>0; ↑2d not required.
+    // Aligns Rec with Catalyst desk (Vol / Scores) on hot mover days.
+    if (
+      evaluateSoftBuyDay1Catalyst({
+        hasPosition: false,
+        sdsScore: item.sdsScore,
+        pplan: item.recoveryProbabilityPct,
+        volSurge: softBuyCatalystVolSurge(enhanceCtx),
+        newsBullish: softBuyCatalystNewsBullish(enhanceCtx),
+      }).hit &&
+      !precatHardBlock &&
+      dayOk &&
+      tapeOk
+    ) {
+      return "buy";
+    }
+    // Soft BUY G1 (volume) = Home what-if cutoff (Gen 4):
+    // SDS/P · rising ≥2 sessions · green day · tape · !precat sell.
+    // Top2 NO / P(cont) demote via ranking only (not hard block).
+    // Forward ≥3% is NOT required here (BBNX Target +0.8% still BUY if ↑≥2d).
+    // Book risk is capped by Urgent SELL G2 (20% purchased+gains) + giveback 20%.
+    if (
+      softBuy.hit &&
+      !precatHardBlock &&
+      dayOk &&
+      softBuyRisingStreakAllows(item, dayPctFromSim, enhanceCtx) &&
+      tapeOk
+    ) {
+      return "buy";
+    }
+    // Soft BUY G1c: strong study — override Top2 NO / precat avoid.
+    if (qualifiesSoftBuyGrade1c(item, dayPctFromSim, enhanceCtx)) {
+      return "buy";
+    }
+    if (dayOk && qualifiesStrictOpportunityBuy(item)) {
+      return "buy";
+    }
+    // Not Soft BUY: P≥50 → HOLD (wait / no entry), not blanket Uncertain.
+    // Matches Decision Chart score path `pplan_hold` and keeps Soft BUY as the only BUY volume gate.
+    if (
+      item.recoveryProbabilityPct != null &&
+      Number.isFinite(item.recoveryProbabilityPct) &&
+      item.recoveryProbabilityPct >= SOFT_BUY_G1_PPLAN_MIN
+    ) {
+      return "hold";
+    }
+    if (item.exitDecision === "hold") {
+      if (composite.score >= COMPOSITE_REVIEW_MIN) return "review";
+      return "hold";
+    }
+    if (composite.score >= COMPOSITE_REVIEW_MIN) return "review";
+    return "review";
   }
 
-  /** Pre-CD vicino (late) + momentum: cattura gainers fuori finestra T−90→T−14. */
-  if (
-    item.precatKind === "late" &&
-    hasMomentum &&
-    probPct != null &&
-    probPct >= SIM_BUY_WATCH_PROB_MIN
-  ) {
-    return buyIfGainExpected(item, scoreCtx);
-  }
-
-  if (item.exitDecision === "hold") {
-    if (composite.score >= COMPOSITE_REVIEW_MIN && !item.hasPosition) return "review";
-    return "hold";
-  }
-  if (item.exitDecision === "review" && item.investVerdict === "yes") {
-    return buyIfGainExpected(item, scoreCtx);
-  }
-  if (composite.score >= COMPOSITE_REVIEW_MIN && !item.hasPosition) return "review";
   return "review";
 }
 
@@ -847,8 +1607,41 @@ export function explainBuyBlockReason(
   }
   if (item.investVerdict === "wait") {
     return lang === "it"
-      ? "Verdetto Top2 «wait» — ROI/timing non ancora ok"
-      : "Top2 verdict «wait» — ROI/timing not ready";
+      ? "Verdetto Top2 «wait» — timing/ROI non allineati; serve Top2 sì + ENTER"
+      : "Top2 verdict «wait» — timing/ROI not aligned; need Top2 yes + ENTER";
+  }
+  if (item.investVerdict === "yes" && item.exitDecision !== "hold") {
+    return lang === "it"
+      ? "Segnale ENTER non ancora allineato (badge WAIT/review) — no Buy tattico"
+      : "ENTER signal not aligned yet (WAIT/review badge) — no tactical Buy";
+  }
+  if (item.investVerdict === "yes" && item.exitDecision === "hold") {
+    const p = item.recoveryProbabilityPct;
+    if (p != null && p < SIM_BUY_PROB_MIN) {
+      return lang === "it"
+        ? `P(plan) ${Math.round(p)}% < ${SIM_BUY_PROB_MIN}%`
+        : `P(plan) ${Math.round(p)}% < ${SIM_BUY_PROB_MIN}%`;
+    }
+    if (!forwardBuyGainOutlookPositive(item)) {
+      return lang === "it"
+        ? "Target forward ≤ 0 — serve plusvalenza attesa sul piano"
+        : "Forward target ≤ 0 — positive plan gain required";
+    }
+    if (item.sdsVeto) {
+      return lang === "it" ? "SDS veto attivo" : "SDS veto active";
+    }
+    const sds = item.sdsScore;
+    if (sds == null || sds < STUDY_EVIDENCE_SDS_MIN) {
+      return lang === "it"
+        ? `SDS ${sds != null ? Math.round(sds) : "—"} < ${STUDY_EVIDENCE_SDS_MIN} — setup debole`
+        : `SDS ${sds != null ? Math.round(sds) : "—"} < ${STUDY_EVIDENCE_SDS_MIN} — weak setup`;
+    }
+    const eis = item.eisSuperScore;
+    if (eis == null || eis < STUDY_EVIDENCE_EIS_MIN) {
+      return lang === "it"
+        ? `EIS clinico assente o basso (${eis != null ? Math.round(eis) : "—"}) — servono dati studio favorevoli`
+        : `Clinical EIS missing or low (${eis != null ? Math.round(eis) : "—"}) — favorable study data required`;
+    }
   }
   if (item.investVerdict === "yes" && item.exitDecision === "exit") {
     if (
@@ -868,78 +1661,62 @@ export function explainBuyBlockReason(
 
 export type BuyReasonKind =
   | "top2_yes_hold"
-  | "top2_yes_review"
-  | "top2_yes_exit_precat"
-  | "top2_wait_precat"
-  | "momentum_override"
-  | "watch_zone_accumulate"
-  | "late_momentum";
+  | "soft_buy_g1"
+  | "soft_buy_g1c"
+  | "soft_buy_g1v"
+  | "soft_buy_g1d";
 
 function fmtBuyReasonPct(v: number | null | undefined): string {
   if (v == null || !Number.isFinite(v)) return "—";
   return `${Math.round(v)}%`;
 }
 
-function fmtBuyReasonMom(v: number | null | undefined): string {
-  if (v == null || !Number.isFinite(v)) return "—";
-  return `${v >= 0 ? "+" : ""}${v.toFixed(1)}%`;
-}
-
 /** Quale ramo di deriveSuggestedAction ha prodotto «buy» (null se non buy). */
 export function classifyBuyReasonKind(
   item: PortfolioLossAnalysisItem,
   inPaper: boolean,
+  enhanceCtx?: SuggestedActionEnhanceCtx | null,
 ): BuyReasonKind | null {
   if (inPaper) return null;
   if (item.hasPosition && item.exitDecision === "exit") return null;
-  if (deriveSuggestedAction(item, inPaper) !== "buy") return null;
-
-  const precatBuy = item.precatKind === "enter" || item.precatKind === "accumulate";
-  const probOk =
-    item.recoveryProbabilityPct == null || item.recoveryProbabilityPct >= SIM_BUY_PROB_MIN;
-  if (item.investVerdict === "yes") {
-    if (item.exitDecision === "hold") return "top2_yes_hold";
-    if (item.exitDecision === "review") return "top2_yes_review";
-    if (item.exitDecision === "exit" && precatBuy && probOk) return "top2_yes_exit_precat";
-  }
+  if (deriveSuggestedAction(item, inPaper, null, null, enhanceCtx) !== "buy") return null;
+  if (qualifiesStrictOpportunityBuy(item)) return "top2_yes_hold";
   if (
-    item.investVerdict === "wait" &&
-    precatBuy &&
-    item.recoveryProbabilityPct != null &&
-    item.recoveryProbabilityPct >= SIM_BUY_WATCH_PROB_MIN
+    evaluateSoftBuyHighVol({
+      hasPosition: Boolean(item.hasPosition),
+      flagged: enhanceCtx?.volumeAccel?.flagged,
+    }).hit
   ) {
-    return "top2_wait_precat";
+    return "soft_buy_g1v";
   }
-
-  const mom24 = item.pnlPct24h;
-  const hasMomentum = mom24 != null && mom24 >= MOMENTUM_24H_BUY_MIN;
-  const probPct = item.recoveryProbabilityPct;
-
+  const soft = evaluateSoftBuyGrade1({
+    hasPosition: Boolean(item.hasPosition),
+    sdsScore: item.sdsScore,
+    pplan: item.recoveryProbabilityPct,
+  });
+  const dayPctFromSim = buildRecommendationSignalCtx(
+    enhanceCtx?.simRow,
+    enhanceCtx?.chartPts,
+  ).d1;
   if (
-    hasMomentum &&
-    probPct != null &&
-    probPct >= MOMENTUM_P_STRONG_MIN &&
-    item.precatKind !== "sell"
+    evaluateSoftBuyDay1Catalyst({
+      hasPosition: Boolean(item.hasPosition),
+      sdsScore: item.sdsScore,
+      pplan: item.recoveryProbabilityPct,
+      volSurge: softBuyCatalystVolSurge(enhanceCtx),
+      newsBullish: softBuyCatalystNewsBullish(enhanceCtx),
+    }).hit
   ) {
-    return "momentum_override";
+    return "soft_buy_g1d";
   }
+  if (qualifiesSoftBuyGrade1c(item, dayPctFromSim, enhanceCtx)) return "soft_buy_g1c";
   if (
-    precatBuy &&
-    item.daysToCd != null &&
-    item.daysToCd > SIM_HOT_ZONE_DAYS &&
-    probPct != null &&
-    probPct >= SIM_BUY_PROB_MIN &&
-    item.investVerdict !== "no"
+    soft.hit &&
+    item.precatKind !== "sell" &&
+    softBuyRisingStreakAllows(item, dayPctFromSim, enhanceCtx) &&
+    softBuyTapeNotCatastrophic(item, dayPctFromSim)
   ) {
-    return "watch_zone_accumulate";
-  }
-  if (
-    item.precatKind === "late" &&
-    hasMomentum &&
-    probPct != null &&
-    probPct >= SIM_BUY_WATCH_PROB_MIN
-  ) {
-    return "late_momentum";
+    return "soft_buy_g1";
   }
   return null;
 }
@@ -949,56 +1726,53 @@ export function explainBuyReason(
   item: PortfolioLossAnalysisItem,
   inPaper: boolean,
   lang: "it" | "en",
+  enhanceCtx?: SuggestedActionEnhanceCtx | null,
 ): string | null {
-  const kind = classifyBuyReasonKind(item, inPaper);
+  const kind = classifyBuyReasonKind(item, inPaper, enhanceCtx);
   if (!kind) return null;
 
   const p = fmtBuyReasonPct(item.recoveryProbabilityPct);
-  const mom = fmtBuyReasonMom(item.pnlPct24h);
-  const precat = item.precatKind;
+  const sds =
+    item.sdsScore != null && Number.isFinite(item.sdsScore)
+      ? String(Math.round(item.sdsScore))
+      : "—";
 
   switch (kind) {
     case "top2_yes_hold":
-      return lang === "it" ? "Top2 sì + exit hold" : "Top2 yes + exit hold";
-    case "top2_yes_review":
-      return lang === "it" ? "Top2 sì + exit review" : "Top2 yes + exit review";
-    case "top2_yes_exit_precat":
       return lang === "it"
-        ? `Top2 sì + precat ${precat} + P(plan) ${p}`
-        : `Top2 yes + precat ${precat} + P(plan) ${p}`;
-    case "top2_wait_precat":
+        ? `Top2 sì + ENTER + P(plan) ${p} + match/SDS/EIS ok`
+        : `Top2 yes + ENTER + P(plan) ${p} + match/SDS/EIS ok`;
+    case "soft_buy_g1":
       return lang === "it"
-        ? `Top2 wait + precat ${precat} + P(plan) ${p}`
-        : `Top2 wait + precat ${precat} + P(plan) ${p}`;
-    case "momentum_override":
+        ? `Soft BUY G1: SDS ${sds} ≥ ${SOFT_BUY_G1_SDS_MIN} · P(plan) ${p} ≥ ${SOFT_BUY_G1_PPLAN_MIN} · Top2≠NO · rialzo ≥${SOFT_BUY_RISING_DAYS_MIN}g · forward>0`
+        : `Soft BUY G1: SDS ${sds} ≥ ${SOFT_BUY_G1_SDS_MIN} · P(plan) ${p} ≥ ${SOFT_BUY_G1_PPLAN_MIN} · Top2≠NO · rising ≥${SOFT_BUY_RISING_DAYS_MIN}d · forward>0`;
+    case "soft_buy_g1c":
       return lang === "it"
-        ? `Override momentum 24h ${mom} + P(plan) ${p}`
-        : `24h momentum override ${mom} + P(plan) ${p}`;
-    case "watch_zone_accumulate":
+        ? `Soft BUY G1c (studio): SDS ${sds} ≥ ${SOFT_BUY_G1C_SDS_MIN} · P(plan) ${p} ≥ ${SOFT_BUY_G1C_PPLAN_MIN} · rialzo ≥${SOFT_BUY_RISING_DAYS_MIN}g · target ≥${SOFT_BUY_G1_MIN_PLAN_RETURN_PCT}% (override Top2 NO)`
+        : `Soft BUY G1c (study): SDS ${sds} ≥ ${SOFT_BUY_G1C_SDS_MIN} · P(plan) ${p} ≥ ${SOFT_BUY_G1C_PPLAN_MIN} · rising ≥${SOFT_BUY_RISING_DAYS_MIN}d · target ≥${SOFT_BUY_G1_MIN_PLAN_RETURN_PCT}% (overrides Top2 NO)`;
+    case "soft_buy_g1v": {
+      const td = enhanceCtx?.volumeAccel?.doublingMinutes;
+      const tdLab =
+        td != null && Number.isFinite(td) ? `${Math.round(td)} min` : "≤30 min";
       return lang === "it"
-        ? `Watch zone T−61…120 + precat ${precat} + P(plan) ${p}`
-        : `Watch zone T−61…120 + precat ${precat} + P(plan) ${p}`;
-    case "late_momentum":
+        ? `Soft BUY High Vol: volume raddoppia ogni ${tdLab} (RVOL log-slope confermato)`
+        : `Soft BUY High Vol: volume doubling every ${tdLab} (confirmed RVOL log-slope)`;
+    }
+    case "soft_buy_g1d":
       return lang === "it"
-        ? `Precat late + momentum 24h ${mom} + P(plan) ${p}`
-        : `Precat late + 24h momentum ${mom} + P(plan) ${p}`;
+        ? `Soft BUY day-1 catalyst: SDS ${sds} ≥ ${SOFT_BUY_G1_SDS_MIN} · P(plan) ${p} ≥ ${SOFT_BUY_G1_PPLAN_MIN} · Vol surge · Scores Σ>0 (↑2d non richiesto)`
+        : `Soft BUY day-1 catalyst: SDS ${sds} ≥ ${SOFT_BUY_G1_SDS_MIN} · P(plan) ${p} ≥ ${SOFT_BUY_G1_PPLAN_MIN} · Vol surge · Scores Σ>0 (↑2d not required)`;
     default:
       return null;
   }
 }
 
-/** Avviso quando BUY momentum contraddice Top2/precat (brief P3-A). */
+/** Avviso quando BUY contraddice segnali deboli — riservato a estensioni future. */
 export function explainBuyWarning(
-  item: PortfolioLossAnalysisItem,
-  inPaper: boolean,
-  lang: "it" | "en",
+  _item: PortfolioLossAnalysisItem,
+  _inPaper: boolean,
+  _lang: "it" | "en",
 ): string | null {
-  if (classifyBuyReasonKind(item, inPaper) !== "momentum_override") return null;
-  if (item.investVerdict === "no" || item.precatKind === "avoid") {
-    return lang === "it"
-      ? "Top2 e precat negativi — solo segnale momentum"
-      : "Top2 and precat negative — momentum signal only";
-  }
   return null;
 }
 
@@ -1007,16 +1781,32 @@ export type SellReasonKind =
   | "stability_exit"
   | "top2_exit_yes"
   | "low_recovery"
-  | "precat_avoid";
+  | "precat_avoid"
+  | "soft_sell_g1"
+  | "urgent_sell_g2"
+  | "cont_exhaustion";
 
-/** Per popup/monitor: perché il sistema raccomanda SELL su portafoglio. */
+/** Per popup/monitor: perché il sistema raccomanda SELL (paper o portafoglio reale). */
 export function classifySellReasonKind(
   item: PortfolioLossAnalysisItem,
   inPaper: boolean,
+  enhanceCtx?: SuggestedActionEnhanceCtx | null,
 ): SellReasonKind | null {
-  if (inPaper || !item.hasPosition || deriveSuggestedAction(item, inPaper) !== "sell") {
-    return null;
+  if (deriveSuggestedAction(item, inPaper, null, null, enhanceCtx) !== "sell") return null;
+  // Need a book to exit: paper sim loop and/or real Simulation position.
+  if (!inPaper && !item.hasPosition) return null;
+  if (enhanceCtx?.urgentSellG2Keys?.has(item.key)) return "urgent_sell_g2";
+  if (
+    shouldContinuationExhaustedSell({
+      hasPosition: true,
+      pnlPct: item.pnlPct,
+      simRow: enhanceCtx?.simRow,
+    })
+  ) {
+    return "cont_exhaustion";
   }
+  const softSell = softSellG1ForItem(item, enhanceCtx);
+  if (softSell.hit && item.exitDecision !== "exit") return "soft_sell_g1";
   if (item.stabilityVerdict === "exit" || item.stabilityVerdict === "avoid") {
     return "stability_exit";
   }
@@ -1035,11 +1825,24 @@ export function explainSellReason(
   item: PortfolioLossAnalysisItem,
   inPaper: boolean,
   lang: "it" | "en",
+  enhanceCtx?: SuggestedActionEnhanceCtx | null,
 ): string | null {
-  const kind = classifySellReasonKind(item, inPaper);
+  const kind = classifySellReasonKind(item, inPaper, enhanceCtx);
   if (!kind) return null;
   const p = fmtBuyReasonPct(item.recoveryProbabilityPct);
   switch (kind) {
+    case "urgent_sell_g2":
+      return lang === "it"
+        ? "Urgent SELL G2 — budget 20% di (acquistato + guadagnato) sforato (taglio perdite day più drastiche)"
+        : "Urgent SELL G2 — 20% of (purchased + gains) budget breached (cut fastest day losers)";
+    case "cont_exhaustion":
+      return lang === "it"
+        ? "Take-profit — G10≥5% con edge esaurimento > base bucket"
+        : "Take-profit — G10≥5% with exhaustion edge above bucket base";
+    case "soft_sell_g1":
+      return lang === "it"
+        ? `Soft SELL G1 — P&L ≤ −2.5% con risk/reg/P(plan)/G10 deboli (P ${p})`
+        : `Soft SELL G1 — P&L ≤ −2.5% with weak risk/reg/P(plan)/G10 (P ${p})`;
     case "stability_exit":
       return lang === "it"
         ? "Pendenza instabile / segnale uscita — P(recovery) insufficiente"
@@ -1142,6 +1945,7 @@ function evaluateItem(
   paperKeys: Set<string>,
   lang: "it" | "en",
   adviceFeedback?: AdviceFeedback | null,
+  enhanceCtx?: SuggestedActionEnhanceCtx | null,
 ): TickerSimEvaluation {
   const harmonized = buildHarmonizedCurveContext(item.ticker, simRow, chartPts);
   const { ids, labels } = detectCurveMisalignments(item, harmonized.harmony, lang, harmonized);
@@ -1168,7 +1972,13 @@ function evaluateItem(
     entryVerdict: top2.entryVerdict,
     exitVerdict: top2.exitVerdict,
     probPct: item.recoveryProbabilityPct,
-    suggestedAction: deriveSuggestedAction(item, inPaper, scoreCtx, adviceFeedback),
+    suggestedAction: deriveSuggestedAction(
+      item,
+      inPaper,
+      scoreCtx,
+      adviceFeedback,
+      enhanceCtx,
+    ),
     planReturnPct: item.planReturnPct,
     pnlPct24h: item.pnlPct24h,
     pnlPct: item.pnlPct,
@@ -1226,7 +2036,10 @@ export function simulatePaperTrades(
     if (ev.suggestedAction !== "buy" || keys.has(ev.key)) continue;
     if (next.length >= maxOpenPositions) continue;
     const buyCapital = opts?.resolveBuyCapital?.(ev) ?? capitalPerTrade;
+    if (!(buyCapital > 0) || !Number.isFinite(buyCapital)) continue;
     const top2Label = getTop2Label(ev.hasPosition, ev.investVerdict, "en");
+    const buyRow = opts?.simRowByKey?.get(ev.key) ?? null;
+    const entrySpot = buyRow ? currentPriceFromRow(buyRow) : null;
     const pos: PaperPosition = {
       key: ev.key,
       ticker: ev.ticker,
@@ -1235,6 +2048,10 @@ export function simulatePaperTrades(
       entryReason: `${top2Label} · P ${ev.probPct?.toFixed(0) ?? "—"}%`,
       entryPlanReturnPct: ev.planReturnPct,
       entryProbPct: ev.probPct,
+      entryBuyPrice:
+        entrySpot != null && entrySpot > 0
+          ? Math.round(entrySpot * 10000) / 10000
+          : null,
     };
     next.push(pos);
     keys.add(ev.key);
@@ -1254,14 +2071,25 @@ export function simulatePaperTrades(
     if (ev.suggestedAction !== "sell" || !keys.has(ev.key)) continue;
     const pos = next.find((p) => p.key === ev.key);
     if (!pos) continue;
-    const pnlPct = ev.pnlPct ?? ev.pnlPct24h ?? 0;
+    // Prefer position MTM (stamped mark), then eval — same order as open-book piggy.
+    const pnlPct =
+      (typeof pos.lastMarkPct === "number" && Number.isFinite(pos.lastMarkPct)
+        ? pos.lastMarkPct
+        : null) ??
+      ev.pnlPct ??
+      ev.pnlPct24h ??
+      0;
     const pnlEur = Math.round((pos.capital * pnlPct) / 100 * 100) / 100;
+    const sellReason =
+      ev.exitDecision === "exit"
+        ? ev.exitReason?.trim() || "exit signal"
+        : "exit signal";
     trades.push({
       at,
       ticker: ev.ticker,
       key: ev.key,
       side: "sell",
-      reason: ev.exitReason ?? "exit signal",
+      reason: sellReason,
       capital: pos.capital,
       pnlPctSimulated: pnlPct,
       pnlEurSimulated: pnlEur,
@@ -1314,6 +2142,10 @@ function summarizeTick(evaluations: TickerSimEvaluation[], trades: PaperTradeEve
 export function buildDecisionSimEvaluations(ctx: DecisionSimContext): TickerSimEvaluation[] {
   const lang = ctx.lang;
   const paperKeys = new Set(ctx.paperPortfolio.map((p) => p.key));
+  const history = ctx.history ?? null;
+  const simRowByKey = buildSimRowByKeyMap(ctx.simTable?.rows ?? []);
+  const paperPortfolio = backfillPaperEntryBuyPrices(ctx.paperPortfolio, simRowByKey);
+  const paperByKey = new Map(paperPortfolio.map((p) => [p.key, p]));
 
   const portfolioItems = buildLossAnalysisItems(
     "portfolio",
@@ -1321,33 +2153,126 @@ export function buildDecisionSimEvaluations(ctx: DecisionSimContext): TickerSimE
     ctx.inputs,
     ctx.pointsBySeriesKey,
     lang,
-    null,
+    history,
     ctx.probOptions,
   );
+  // Match operative Cutoff / Pulse — hot + watch (not watch-only).
   const oppItems = buildLossAnalysisItems(
     "opportunities",
     ctx.simTable,
     ctx.inputs,
     ctx.pointsBySeriesKey,
     lang,
-    null,
+    history,
     ctx.probOptions,
-    "watch",
+    "all",
   );
 
   const byKey = new Map<string, PortfolioLossAnalysisItem>();
   for (const it of [...portfolioItems, ...oppItems]) {
     byKey.set(it.key, it);
   }
+  // Ensure every open paper name is evaluable even if outside CD filters.
+  for (const pos of paperPortfolio) {
+    if (byKey.has(pos.key)) continue;
+    const row = simRowByKey.get(pos.key);
+    if (!row) continue;
+    const stub = buildLossAnalysisItems(
+      "opportunities",
+      { sheet: "Simulation", columns: [], rows: [row] },
+      ctx.inputs,
+      ctx.pointsBySeriesKey,
+      lang,
+      history,
+      ctx.probOptions,
+      "all",
+    )[0];
+    if (stub) byKey.set(pos.key, stub);
+  }
 
-  const simRowByKey = buildSimRowByKeyMap(ctx.simTable?.rows ?? []);
+  // Overlay paper MTM onto items held in paper (opportunity pnlPct was 0).
+  for (const [key, item] of [...byKey.entries()]) {
+    const pos = paperByKey.get(key);
+    if (!pos) continue;
+    byKey.set(key, overlayPaperMarksOnLossItem(item, pos, simRowByKey.get(key) ?? null));
+  }
+
+  // Urgent SELL G2 on the **paper** book (not real hasPosition), + prior session €.
+  const paperOpenKeys = paperPortfolio.map((p) => p.key);
+  const prior = priorSessionDayPnlByKey(history, paperOpenKeys);
+  const paperLegs = paperPortfolio.map((pos) => {
+    const item = byKey.get(pos.key);
+    const simRow = simRowByKey.get(pos.key) ?? null;
+    const marks = resolvePaperPositionMarks(pos, simRow);
+    const dayPct = marks.dayPnlPct ?? item?.pnlPct24h ?? null;
+    const dayEur =
+      marks.dayPnlEur !== 0
+        ? marks.dayPnlEur
+        : dayPct != null && pos.capital > 0
+          ? Math.round(((pos.capital * dayPct) / 100) * 100) / 100
+          : 0;
+    const totalPct = marks.totalPnlPct ?? item?.pnlPct ?? null;
+    const pnlEur =
+      item?.pnlEur != null && Number.isFinite(item.pnlEur)
+        ? item.pnlEur
+        : totalPct != null && pos.capital > 0
+          ? Math.round(((pos.capital * totalPct) / 100) * 100) / 100
+          : null;
+    return attachContCutPriority(
+      {
+        key: pos.key,
+        ticker: pos.ticker,
+        dayPnlEur: Math.round((dayEur + (prior.get(pos.key) ?? 0)) * 100) / 100,
+        dayPnlPct: dayPct,
+        totalPnlPct: totalPct,
+        capitalEur: pos.capital,
+        pnlEur,
+      },
+      simRow,
+    );
+  });
+  const urgentG2 = evaluateUrgentSellGrade2Book(paperLegs);
 
   const evaluations: TickerSimEvaluation[] = [];
   for (const item of byKey.values()) {
     const simRow = simRowByKey.get(item.key) ?? null;
     const sk = item.seriesKey ?? (simRow ? simulationRowSeriesKey(simRow) : null);
     const chartPts = sk ? ctx.pointsBySeriesKey.get(sk) : undefined;
-    evaluations.push(evaluateItem(item, simRow, chartPts, paperKeys, lang, ctx.adviceFeedback));
+    const lossRisk =
+      (ctx.catalogByRowKey
+        ? lookupLossRiskByRowKey(ctx.catalogByRowKey, item.key)
+        : null) ??
+      (ctx.lossRiskCatalog
+        ? lookupLossRisk(ctx.lossRiskCatalog, item.ticker)
+        : null);
+    const regSigned = resolveRegSignedScoreForTicker(
+      item.ticker,
+      simRow,
+      ctx.autoRegSnap ?? null,
+    );
+    const regRisk = regRiskFromSignedScore(regSigned);
+    const enhance: SuggestedActionEnhanceCtx = {
+      urgentSellG2Keys: urgentG2.urgentKeys,
+      riskV2: lossRisk?.riskScore ?? null,
+      regRisk,
+      regulatoryRiskScore: regRisk,
+      simRow,
+      chartPts: chartPts ?? null,
+      recentlySoldBlocked: softBuyBlockedByBookSell(ctx.inputs, {
+        key: item.key,
+        ticker: item.ticker,
+      }),
+      peakPnlEur: peakPnlEurFromHistory(
+        history,
+        item.key,
+        ctx.inputs?.[item.key]?.investedAt ??
+          paperByKey.get(item.key)?.entryAt ??
+          null,
+      ),
+    };
+    evaluations.push(
+      evaluateItem(item, simRow, chartPts, paperKeys, lang, ctx.adviceFeedback, enhance),
+    );
   }
 
   evaluations.sort((a, b) => a.ticker.localeCompare(b.ticker));
@@ -1366,19 +2291,54 @@ export function runDecisionSimTick(ctx: DecisionSimContext): DecisionSimTick {
 
   const maxOpen = ctx.maxOpenPositions ?? DEFAULT_MAX_OPEN_POSITIONS;
   const tickId = `tick_${Date.now()}`;
+  const simRowByKey = buildSimRowByKeyMap(ctx.simTable?.rows ?? []);
+  const paperWithEntry = backfillPaperEntryBuyPrices(ctx.paperPortfolio, simRowByKey);
 
   const { trades, portfolioAfter: rawAfter } = simulatePaperTrades(
     filtered,
-    ctx.paperPortfolio,
+    paperWithEntry,
     at,
     capital,
     maxOpen,
-    ctx.simLoopExecution
-      ? { resolveBuyCapital: ctx.simLoopExecution.resolveBuyCapital }
-      : undefined,
+    {
+      resolveBuyCapital: ctx.simLoopExecution?.resolveBuyCapital,
+      simRowByKey,
+    },
   );
 
-  const portfolioAfter = stampPortfolioMarks(rawAfter, filtered);
+  // Freeze P/SDS/EIS/Reg at BUY (before live drift) + stamp paper positions.
+  let stampedAfter = rawAfter;
+  if (trades.some((t) => t.side === "buy")) {
+    const entryByKey = capturePaperBuyEntrySnapshots({
+      trades,
+      evaluations: filtered,
+      simRowByKey,
+      sdsRows: ctx.probOptions?.sdsRows,
+      autoRegSnap: ctx.autoRegSnap ?? null,
+      lang: ctx.lang,
+    });
+    if (entryByKey.size > 0) {
+      stampedAfter = rawAfter.map((p) => {
+        const scores = entryByKey.get(p.key);
+        if (!scores) return p;
+        if (
+          p.entrySds != null ||
+          p.entryEisScore != null ||
+          p.entryRegulatoryScore != null
+        ) {
+          return p;
+        }
+        return {
+          ...p,
+          entrySds: scores.sds,
+          entryEisScore: scores.eisScore,
+          entryRegulatoryScore: scores.regulatoryScore,
+        };
+      });
+    }
+  }
+
+  const portfolioAfter = stampPortfolioMarks(stampedAfter, filtered);
   const summary = summarizeTick(filtered, trades);
 
   const badBuyKeys = new Set(ctx.badBuyScoredKeys ?? []);
@@ -1433,8 +2393,10 @@ export function runDecisionSimMarkTick(ctx: DecisionSimContext): DecisionSimTick
   const maxOpen = ctx.maxOpenPositions ?? DEFAULT_MAX_OPEN_POSITIONS;
   const tickId = `mark_${Date.now()}`;
   const trades: PaperTradeEvent[] = [];
+  const simRowByKey = buildSimRowByKeyMap(ctx.simTable?.rows ?? []);
+  const paperWithEntry = backfillPaperEntryBuyPrices(ctx.paperPortfolio, simRowByKey);
 
-  const portfolioAfter = stampPortfolioMarks(ctx.paperPortfolio, evaluations);
+  const portfolioAfter = stampPortfolioMarks(paperWithEntry, evaluations);
   const summary = summarizeTick(filtered, trades);
 
   const badBuyKeys = new Set(ctx.badBuyScoredKeys ?? []);
@@ -1533,12 +2495,12 @@ export function sellSolidityScore(item: PortfolioLossAnalysisItem): number {
 }
 
 /**
- * KPI snapshot: buy più solidi in cima, poi sell più solidi, poi hold/review.
- * `withinTier` optional (es. Match % poligono dentro ogni gruppo).
+ * KPI snapshot: displayed BUY (incl. Soft BUY) first, then SELL, then hold/uncertain.
+ * `recForItem` should match the REC column (Decision Chart / Soft BUY enhance).
  */
-export function sortLossItemsByActionSolidity(
+export function sortLossItemsByDisplayedRec(
   items: PortfolioLossAnalysisItem[],
-  inPaper = false,
+  recForItem: (item: PortfolioLossAnalysisItem) => "buy" | "hold" | "review" | "sell" | null | undefined,
   withinTier?: (tierItems: PortfolioLossAnalysisItem[]) => PortfolioLossAnalysisItem[],
 ): PortfolioLossAnalysisItem[] {
   const buy: PortfolioLossAnalysisItem[] = [];
@@ -1546,9 +2508,9 @@ export function sortLossItemsByActionSolidity(
   const other: PortfolioLossAnalysisItem[] = [];
 
   for (const item of items) {
-    const tier = actionSolidityTier(item, inPaper);
-    if (tier === "buy") buy.push(item);
-    else if (tier === "sell") sell.push(item);
+    const rec = recForItem(item);
+    if (rec === "buy") buy.push(item);
+    else if (rec === "sell") sell.push(item);
     else other.push(item);
   }
 
@@ -1571,6 +2533,28 @@ export function sortLossItemsByActionSolidity(
       ? withinTier([...other].sort((a, b) => a.ticker.localeCompare(b.ticker)))
       : [...other].sort((a, b) => a.ticker.localeCompare(b.ticker))),
   ];
+}
+
+/**
+ * KPI snapshot: buy più solidi in cima, poi sell più solidi, poi hold/review.
+ * `withinTier` optional (es. Match % poligono dentro ogni gruppo).
+ * Prefer {@link sortLossItemsByDisplayedRec} when the table shows Soft BUY.
+ */
+export function sortLossItemsByActionSolidity(
+  items: PortfolioLossAnalysisItem[],
+  inPaper = false,
+  withinTier?: (tierItems: PortfolioLossAnalysisItem[]) => PortfolioLossAnalysisItem[],
+): PortfolioLossAnalysisItem[] {
+  return sortLossItemsByDisplayedRec(
+    items,
+    (item) => {
+      const tier = actionSolidityTier(item, inPaper);
+      if (tier === "buy") return "buy";
+      if (tier === "sell") return "sell";
+      return "hold";
+    },
+    withinTier,
+  );
 }
 
 export { MISALIGN_LABELS };

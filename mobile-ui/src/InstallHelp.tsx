@@ -33,6 +33,7 @@ export function InstallHelp({ compact }: { compact?: boolean }) {
         <ol>
           <li>{t("install.ios1")}</li>
           <li>{t("install.ios2")}</li>
+          <li>{t("install.ios3")}</li>
         </ol>
       </details>
 
@@ -41,6 +42,7 @@ export function InstallHelp({ compact }: { compact?: boolean }) {
         <ol>
           <li>{t("install.android1")}</li>
           <li>{t("install.android2")}</li>
+          <li>{t("install.android3")}</li>
         </ol>
       </details>
     </div>

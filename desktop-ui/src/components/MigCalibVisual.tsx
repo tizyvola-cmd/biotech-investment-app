@@ -84,18 +84,18 @@ function layoutForVariant(variant: "compact" | "large" | "tile"): TripleLayout {
   }
   if (variant === "tile") {
     return {
-      vbW: 400,
-      vbH: 256,
-      cx: 56,
-      cy: 132,
-      arm: 248,
+      vbW: 320,
+      vbH: 200,
+      cx: 54,
+      cy: 104,
+      arm: 210,
       legendX: 0,
       legendY: 0,
-      fontLabel: 10,
-      fontLegend: 7,
-      legendLineLen: 6,
-      legendTextX: 8,
-      legendRowStep: 11,
+      fontLabel: 13,
+      fontLegend: 9,
+      legendLineLen: 8,
+      legendTextX: 10,
+      legendRowStep: 13,
       preArmScale: 0.98,
       postArmScale: 0.88,
       miiArmScale: 1,
@@ -139,10 +139,10 @@ function labelOffset(
   variant: "compact" | "large" | "tile" = "compact",
 ): { dx: number; dy: number } {
   const tile = variant === "tile";
-  if (angleDeg >= 15) return { dx: tile ? 8 : 10, dy: tile ? -8 : -10 };
-  if (angleDeg <= -15) return { dx: tile ? 8 : 10, dy: tile ? 8 : 16 };
-  if (angleDeg >= 0) return { dx: tile ? 8 : 10, dy: tile ? -5 : -6 };
-  return { dx: tile ? 8 : 10, dy: tile ? 2 : 12 };
+  if (angleDeg >= 15) return { dx: tile ? 10 : 10, dy: tile ? -6 : -10 };
+  if (angleDeg <= -15) return { dx: tile ? 10 : 10, dy: tile ? 10 : 16 };
+  if (angleDeg >= 0) return { dx: tile ? 10 : 10, dy: tile ? -4 : -6 };
+  return { dx: tile ? 10 : 10, dy: tile ? 4 : 12 };
 }
 
 function clampLabelPos(
@@ -171,10 +171,10 @@ function fittedTileArm(
   showAngleLabels: boolean,
 ): number {
   const { cx, cy, vbW, vbH, arm } = L;
-  const padTop = showAngleLabels ? 16 : 10;
-  const padBottom = 14;
-  const padRight = showAngleLabels ? 88 : 24;
-  const padLeft = 10;
+  const padTop = showAngleLabels ? 14 : 8;
+  const padBottom = 12;
+  const padRight = showAngleLabels ? 76 : 20;
+  const padLeft = 8;
 
   const segments: { deg: number; scale: number }[] = [{ deg: miiAngleDeg, scale: L.miiArmScale }];
   if (preAngleDeg != null) segments.push({ deg: preAngleDeg, scale: L.preArmScale });
@@ -200,7 +200,7 @@ function fittedTileArm(
       fitted = Math.min(fitted, (cx - padLeft) / (scale * -cosA));
     }
   }
-  return Math.max(72, Math.min(arm, fitted));
+  return Math.max(95, Math.min(arm, fitted));
 }
 
 /** Tre pendenze: pre (viola), post (blu), MII (verde/rosso). */
@@ -245,10 +245,10 @@ export function MigTripleSlopeGlyph({
   const uid = useId().replace(/:/g, "");
   const displayH = Math.round(size * (vbH / vbW));
   const isWide = variant === "large" || variant === "tile";
-  const swMii = isWide ? 2.75 : 2;
-  const swModel = isWide ? 2 : 1.45;
-  const swGlow = isWide ? 4 : 2.75;
-  const dotR = isWide ? 4.5 : 2.75;
+  const swMii = variant === "tile" ? 2.5 : isWide ? 2.75 : 2;
+  const swModel = variant === "tile" ? 2 : isWide ? 2 : 1.45;
+  const swGlow = variant === "tile" ? 3.5 : isWide ? 4 : 2.75;
+  const dotR = variant === "tile" ? 4.25 : isWide ? 4.5 : 2.75;
   const pad = isWide ? 16 : 8;
   const showInnerBg = variant !== "tile";
   const bgX = isWide ? 10 : 2;
@@ -314,7 +314,7 @@ export function MigTripleSlopeGlyph({
         <text
           x={pad + 2}
           y={cy - (variant === "tile" ? 6 : 8)}
-          fontSize={variant === "tile" ? 9 : 11}
+          fontSize={variant === "tile" ? 11 : 11}
           fill="#94a3b8"
           fontFamily="ui-monospace, monospace"
         >
@@ -420,7 +420,7 @@ export function MigTripleSlopeGlyph({
         : null}
       {showGapArc && gapPctPre != null && gapMid
         ? (() => {
-            const gapFont = variant === "tile" ? 10 : 12;
+            const gapFont = variant === "tile" ? 12 : 12;
             const pos = clampLabelPos(gapMid.x, gapMid.y, vbW, vbH, gapFont);
             return (
               <text

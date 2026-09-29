@@ -11,18 +11,32 @@
  *   SDS (oggi letto live da SdsRow → derivabile silenziosamente nel tempo)
  *   clinical phase (oggi letto live da SheetTable)
  *   clinical indication (oggi letto live da SheetTable)
+ *   EIS / Regulatory (aggiunti — preferibilmente congelati al paper BUY)
  *
  * Questo modulo "freeza" lato browser (localStorage) il primo valore osservato
- * di SDS/phase/indication per ciascun row_key di outcome chiuso. Dopo il freeze,
- * il calibration engine usa SEMPRE il valore congelato — anche se il sheet
- * cambia retroattivamente la classificazione di una ticker.
+ * per ciascun row_key. Preferenza: freeze al paper BUY; fallback: first closed
+ * analysis render. Dopo il freeze, il calibration engine usa SEMPRE il valore
+ * congelato — anche se il sheet cambia retroattivamente.
  *
- * NOTA: la fix strategica è aggiungere `entry_sds`, `entry_clinical_phase`,
- * `entry_clinical_indication` al record di outcome lato Python. Quando arriva,
- * questo store diventa opzionale (fallback per record vecchi).
+ * NOTA: la fix strategica è aggiungere `entry_sds`, `entry_eis`, `entry_reg`
+ * al record di outcome lato Python. Quando arriva, questo store resta fallback
+ * per record vecchi.
  */
 
 const STORAGE_KEY = "supernova.calibration.featureSnapshots.v1";
+
+export type FrozenEntryLiveScores = {
+  sds: number | null;
+  clinicalPhase: string | null;
+  clinicalIndication: string | null;
+  pplanPct: number | null;
+  /** EIS feed window score observable at entry (optional). */
+  eisScore?: number | null;
+  /** Signed regulatory −100…+100 at entry (optional). */
+  regulatoryScore?: number | null;
+  /** MCS global at entry date (optional). */
+  mcsAtEntry?: number | null;
+};
 
 export type FrozenEntryFeatures = {
   rowKey: string;
@@ -36,9 +50,14 @@ export type FrozenEntryFeatures = {
   /** P(plan) — we still freeze it here as a fallback, but normally prefer
    * SimOutcomeRow.entry_affidabilita_pct as the authoritative immutable value. */
   pplanPct: number | null;
+  eisScore?: number | null;
+  regulatoryScore?: number | null;
+  mcsAtEntry?: number | null;
 };
 
 type Store = Record<string, FrozenEntryFeatures>;
+
+let storeReadCache: Store | null = null;
 
 /**
  * In-memory fallback used when `window.localStorage` is not available
@@ -95,20 +114,39 @@ function safeRemoveItem(key: string): void {
 }
 
 function loadStore(): Store {
+  if (storeReadCache) return storeReadCache;
   const raw = safeGetItem(STORAGE_KEY);
-  if (!raw) return {};
+  if (!raw) {
+    storeReadCache = {};
+    return storeReadCache;
+  }
   try {
     const parsed = JSON.parse(raw);
-    if (parsed && typeof parsed === "object") return parsed as Store;
-    return {};
+    if (parsed && typeof parsed === "object") {
+      storeReadCache = parsed as Store;
+      return storeReadCache;
+    }
+    storeReadCache = {};
+    return storeReadCache;
   } catch {
-    return {};
+    storeReadCache = {};
+    return storeReadCache;
   }
+}
+
+/** One-shot read for batch lookups (avoids re-parsing localStorage per row). */
+export function readFrozenFeatureStoreSnapshot(): Store {
+  return loadStore();
+}
+
+export function invalidateFrozenFeatureStoreReadCache(): void {
+  storeReadCache = null;
 }
 
 function saveStore(s: Store): void {
   try {
     safeSetItem(STORAGE_KEY, JSON.stringify(s));
+    invalidateFrozenFeatureStoreReadCache();
   } catch {
     /* no-op */
   }
@@ -134,12 +172,7 @@ export function getFrozenFeatures(rowKey: string): FrozenEntryFeatures | null {
  */
 export function freezeFeaturesIfMissing(
   rowKey: string,
-  live: {
-    sds: number | null;
-    clinicalPhase: string | null;
-    clinicalIndication: string | null;
-    pplanPct: number | null;
-  },
+  live: FrozenEntryLiveScores,
 ): FrozenEntryFeatures {
   const s = loadStore();
   const existing = s[rowKey];
@@ -152,10 +185,62 @@ export function freezeFeaturesIfMissing(
     clinicalPhase: live.clinicalPhase,
     clinicalIndication: live.clinicalIndication,
     pplanPct: live.pplanPct,
+    eisScore: live.eisScore ?? null,
+    regulatoryScore: live.regulatoryScore ?? null,
+    mcsAtEntry: live.mcsAtEntry ?? null,
   };
   s[rowKey] = snap;
   saveStore(s);
   return snap;
+}
+
+/**
+ * Paper BUY path — freeze full entry scores on first observation.
+ * Same no-overwrite invariant as freezeFeaturesIfMissing.
+ */
+export function freezePaperBuyEntrySnapshot(
+  rowKey: string,
+  live: FrozenEntryLiveScores,
+): FrozenEntryFeatures {
+  return freezeFeaturesIfMissing(rowKey, live);
+}
+
+/**
+ * Fill only null/undefined optional score fields on an existing snap
+ * (never overwrite a previously frozen number). Used when an older snap
+ * had SDS/P only and a later BUY path can supply EIS/Reg/MCS.
+ */
+export function fillMissingFrozenEntryScores(
+  rowKey: string,
+  live: Partial<FrozenEntryLiveScores>,
+): FrozenEntryFeatures | null {
+  const s = loadStore();
+  const existing = s[rowKey];
+  if (!existing) return null;
+  const pick = <T,>(cur: T | null | undefined, next: T | null | undefined): T | null | undefined =>
+    cur != null ? cur : next;
+  const amended: FrozenEntryFeatures = {
+    ...existing,
+    sds: pick(existing.sds, live.sds) ?? null,
+    clinicalPhase: pick(existing.clinicalPhase, live.clinicalPhase) ?? null,
+    clinicalIndication: pick(existing.clinicalIndication, live.clinicalIndication) ?? null,
+    pplanPct: pick(existing.pplanPct, live.pplanPct) ?? null,
+    eisScore: pick(existing.eisScore, live.eisScore) ?? null,
+    regulatoryScore: pick(existing.regulatoryScore, live.regulatoryScore) ?? null,
+    mcsAtEntry: pick(existing.mcsAtEntry, live.mcsAtEntry) ?? null,
+  };
+  const changed =
+    amended.sds !== existing.sds ||
+    amended.clinicalPhase !== existing.clinicalPhase ||
+    amended.clinicalIndication !== existing.clinicalIndication ||
+    amended.pplanPct !== existing.pplanPct ||
+    amended.eisScore !== existing.eisScore ||
+    amended.regulatoryScore !== existing.regulatoryScore ||
+    amended.mcsAtEntry !== existing.mcsAtEntry;
+  if (!changed) return existing;
+  s[rowKey] = amended;
+  saveStore(s);
+  return amended;
 }
 
 /**

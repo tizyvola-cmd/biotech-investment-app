@@ -45,12 +45,15 @@ def _post(url: str, token: str) -> dict:
         return json.loads(r.read().decode())
 
 
-def refresh_remote(*, force: bool = True, deep: bool = False) -> int:
+def refresh_remote(*, force: bool = True, deep: bool = False, portfolio_only: bool = True) -> int:
     token = _token()
     if not token:
         print("SUPERNOVA_API_TOKEN mancante — impossibile POST sul remoto.", file=sys.stderr)
         return 2
-    qs = f"portfolio_only=true&force={'true' if force else 'false'}&deep={'true' if deep else 'false'}"
+    qs = (
+        f"portfolio_only={'true' if portfolio_only else 'false'}"
+        f"&force={'true' if force else 'false'}&deep={'true' if deep else 'false'}"
+    )
     url = f"{REMOTE}/api/clinical-pre-cd/refresh?{qs}"
     print(f"POST {url}")
     try:
@@ -82,11 +85,11 @@ def refresh_remote(*, force: bool = True, deep: bool = False) -> int:
     return 1
 
 
-def refresh_local(*, force: bool = True, deep: bool = False) -> int:
+def refresh_local(*, force: bool = True, deep: bool = False, portfolio_only: bool = True) -> int:
     from clinical_pre_cd_enrichment import run_clinical_pre_cd_refresh
 
-    print("Refresh locale portfolio…")
-    r = run_clinical_pre_cd_refresh(portfolio_only=True, force=force, deep=deep)
+    print(f"Refresh locale (portfolio_only={portfolio_only})…")
+    r = run_clinical_pre_cd_refresh(portfolio_only=portfolio_only, force=force, deep=deep)
     print(json.dumps(r, indent=2))
     try:
         from prediction.signal_audit import build_calibration_document
@@ -103,16 +106,22 @@ def main() -> int:
 
     ap = argparse.ArgumentParser()
     ap.add_argument("--local", action="store_true", help="forza refresh locale")
+    ap.add_argument(
+        "--all-tickers",
+        action="store_true",
+        help="portfolio_only=false — tutta la work list (workaround VPS scope 0/0)",
+    )
     ap.add_argument("--no-force", action="store_true")
     ap.add_argument("--deep", action="store_true")
     args = ap.parse_args()
     force = not args.no_force
+    portfolio_only = not args.all_tickers
     if args.local:
-        return refresh_local(force=force, deep=args.deep)
-    code = refresh_remote(force=force, deep=args.deep)
+        return refresh_local(force=force, deep=args.deep, portfolio_only=portfolio_only)
+    code = refresh_remote(force=force, deep=args.deep, portfolio_only=portfolio_only)
     if code == 2:
         print("Fallback -> refresh locale")
-        return refresh_local(force=force, deep=args.deep)
+        return refresh_local(force=force, deep=args.deep, portfolio_only=portfolio_only)
     return code
 
 

@@ -83,7 +83,7 @@ export function suggestedActionLabel(
     case "hold":
       return lang === "it" ? "MANTIENI" : "HOLD";
     case "review":
-      return "REVIEW";
+      return lang === "it" ? "INCERTO" : "UNCERTAIN";
     case "none":
     default:
       return lang === "it" ? "—" : "—";
@@ -195,7 +195,16 @@ export type SuggestionMonitorRow = TickerSimEvaluation & {
 export type SuggestionMonitorContext = Omit<
   Pick<
     DecisionSimContext,
-    "simTable" | "inputs" | "pointsBySeriesKey" | "lang" | "probOptions" | "paperPortfolio"
+    | "simTable"
+    | "inputs"
+    | "pointsBySeriesKey"
+    | "lang"
+    | "probOptions"
+    | "paperPortfolio"
+    | "history"
+    | "lossRiskCatalog"
+    | "catalogByRowKey"
+    | "autoRegSnap"
   >,
   "paperPortfolio"
 > & {
@@ -435,13 +444,14 @@ function lossItemsByKey(
   ctx: SuggestionMonitorContext,
 ): Map<string, PortfolioLossAnalysisItem & { profile: "portfolio" | "opportunity" }> {
   const map = new Map<string, PortfolioLossAnalysisItem & { profile: "portfolio" | "opportunity" }>();
+  const history = ctx.history ?? null;
   for (const it of buildLossAnalysisItems(
     "portfolio",
     ctx.simTable,
     ctx.inputs,
     ctx.pointsBySeriesKey,
     ctx.lang,
-    null,
+    history,
     ctx.probOptions,
   )) {
     map.set(it.key, { ...it, profile: "portfolio" });
@@ -452,7 +462,7 @@ function lossItemsByKey(
     ctx.inputs,
     ctx.pointsBySeriesKey,
     ctx.lang,
-    null,
+    history,
     ctx.probOptions,
     "watch",
   )) {

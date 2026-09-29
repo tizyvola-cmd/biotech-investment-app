@@ -50,7 +50,22 @@ export function computeMaturationChartYDomain(values: Array<number | null | unde
     /* keep zero in view when curves cross */
   } else if (min > 0) min = roundEur(Math.min(min, 0));
   else if (max < 0) max = roundEur(Math.max(max, 0));
-  return [min, max];
+  return stabilizeMaturationYDomain([min, max]);
+}
+
+/** Snap Y bounds to coarse steps so minor live P&L ticks don't jitter the axis. */
+export function stabilizeMaturationYDomain([min, max]: [number, number]): [number, number] {
+  const span = max - min;
+  if (!Number.isFinite(span) || span <= 0) return [min, max];
+  let step: number;
+  if (span > 50_000) step = 10_000;
+  else if (span > 20_000) step = 5_000;
+  else if (span > 8_000) step = 2_000;
+  else if (span > 3_000) step = 1_000;
+  else if (span > 1_200) step = 500;
+  else if (span > 400) step = 250;
+  else step = 100;
+  return [Math.floor(min / step) * step, Math.ceil(max / step) * step];
 }
 
 function sumSimLoopOpenPnl24h(

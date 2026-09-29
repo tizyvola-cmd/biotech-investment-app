@@ -28,12 +28,17 @@ export function CdPatternWithEisSection({
   sheetClinicalKpi,
   onOpenEisDetail,
   onOpenClinicalFeed,
+  eisOnly = false,
+  eisSuperScoreState,
 }: {
   rec: CdPatternTickerRecommendation;
   inPortfolio?: boolean;
   sheetClinicalKpi?: number | null;
   onOpenEisDetail?: () => void;
   onOpenClinicalFeed?: (ticker: string) => void;
+  /** Nasconde radar Polygon / arc panel — solo pannello EIS (tab 24h). */
+  eisOnly?: boolean;
+  eisSuperScoreState?: import("../api/eisSuperScore").EisSuperScoreState | null;
 }) {
   const t = useT();
   const { lang } = useLang();
@@ -54,6 +59,8 @@ export function CdPatternWithEisSection({
 
   return (
     <div className="space-y-3">
+      {!eisOnly ? (
+      <>
       <div className="flex flex-wrap items-start justify-between gap-3">
         <div className="min-w-0">
           <div className="flex flex-wrap items-center gap-2">
@@ -91,10 +98,22 @@ export function CdPatternWithEisSection({
           rec={rec}
           sheetClinicalKpi={sheetClinicalKpi}
           lang={lang === "it" ? "it" : "en"}
+          eisSuperScoreState={eisSuperScoreState}
           onOpenFeed={onOpenClinicalFeed}
           onOpenDetail={onOpenEisDetail ?? (() => {})}
         />
       </div>
+      </>
+      ) : (
+        <CdPatternEisPanel
+          rec={rec}
+          sheetClinicalKpi={sheetClinicalKpi}
+          lang={lang === "it" ? "it" : "en"}
+          eisSuperScoreState={eisSuperScoreState}
+          onOpenFeed={onOpenClinicalFeed}
+          onOpenDetail={onOpenEisDetail ?? (() => {})}
+        />
+      )}
     </div>
   );
 }

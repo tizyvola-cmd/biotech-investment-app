@@ -208,7 +208,7 @@ export function buildPaperMaturationSeries(
     const closedPnlEur = roundEur(livePiggy.closedPnlEur);
     const openMtmEur = roundEur(livePiggy.openMtmPnlEur);
     points.push({
-      at: new Date().toISOString(),
+      at: sorted.length > 0 ? sorted[sorted.length - 1]!.at : new Date().toISOString(),
       atLabel: live.atLabel ?? "· now",
       closedPnlEur,
       openMtmEur,

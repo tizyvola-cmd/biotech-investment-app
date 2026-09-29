@@ -59,27 +59,40 @@ describe("closedPiggyBank", () => {
     expect(s.tickers).toEqual(["OLMA", "BCAB"]);
   });
 
-  it("reset baseline offsets display", () => {
+  it("hero shows all-time even when a Reset baseline exists", () => {
     const summary = summarizeClosedPiggyBankFromLedger(ledger);
     const display = computeClosedPiggyBankDisplay(summary, {
       baselineEur: 249,
       resetAt: "2026-06-10T00:00:00.000Z",
     });
-    expect(display.pnlEur).toBe(0);
-    expect(display.fillPct).toBe(0);
+    expect(display.pnlEur).toBe(249);
+    expect(display.sinceResetPnlEur).toBe(0);
+    expect(display.fillPct).toBeGreaterThan(0);
   });
 
-  it("reset confirm uses display vs raw when baseline exists", () => {
+  it("reset confirm uses since-reset vs all-time when baseline exists", () => {
     const summary = { rawPnlEur: -1107.06, capitalEur: 65000, positionCount: 13, tickers: [] };
     const display = computeClosedPiggyBankDisplay(summary, {
       baselineEur: -365.79,
       resetAt: "2026-06-01T00:00:00.000Z",
     });
-    expect(display.pnlEur).toBe(-741.27);
+    expect(display.pnlEur).toBe(-1107.06);
+    expect(display.sinceResetPnlEur).toBe(-741.27);
     const vars = closedPiggyResetConfirmVars(display);
     expect(vars.hasBaseline).toBe(true);
     expect(vars.display).toBe("-741.27");
     expect(vars.raw).toBe("-1107.06");
+  });
+
+  it("pulse KPI hero matches all-time raw when baseline exists", () => {
+    const summary = { rawPnlEur: 5958, capitalEur: 50000, positionCount: 27, tickers: [] };
+    const display = computeClosedPiggyBankDisplay(summary, {
+      baselineEur: -366,
+      resetAt: "2026-06-01T00:00:00.000Z",
+    });
+    expect(display.pnlEur).toBe(5958);
+    expect(display.sinceResetPnlEur).toBe(6324);
+    expect(display.rawPnlEur).toBe(5958);
   });
 
   it("fill pct is zero on loss, positive on gain", () => {

@@ -2,7 +2,9 @@
 matter for the app, as structured data for the redesigned Model Recalibration tab:
 
   1. PREDICTION CURVE -> direction-hit % + calibration error (signed bias / MAE)
-  2. RECOMMENDATION   -> hit-rate of the recommended action (SDS + regime gate)
+  2. RECOMMENDATION   -> directional follow-through by action: BUY -> P(price up),
+                         SELL -> P(price down) after exit (by exit reason),
+                         HOLD -> rescue-score vs rebound (computed in the UI sheet)
   3. TRADING (output) -> P&L per trade + win-rate
 
 This mirrors the read-only diagnostic (``diag_loop_channel_impact.py``) but returns
@@ -30,12 +32,42 @@ import statistics
 from pathlib import Path
 from typing import Any, Callable
 
-from orchestrator_io_paths import DATA_DIR
+from orchestrator_io_paths import DATA_DIR, MODEL_SIGN_CURVE_DAILY_JSON
+from prediction.sign_curve_daily import (
+    RELIABILITY_BANDS,
+    reliability_bands,
+    reliability_stars,
+    reliability_window,
+)
 
 LEARNING_LOOP_WEEKLY_IMPACT_JSON = Path(DATA_DIR) / "learning_loop_weekly_impact.json"
 
+# Canonical evaluation window for system-efficiency KPIs (Behavior / Opportunity /
+# Gain). Matches RELIABILITY_BANDS key ``cd_m2_d10``: CD−60d → CD−11d inclusive
+# (days_to_cd at entry ∈ [11, 60]). Near-CD (−10→0) and post-CD are diagnostic only.
+EVAL_WINDOW_KEY = "cd_m2_d10"
+_EVAL_BAND = next(b for b in RELIABILITY_BANDS if b["key"] == EVAL_WINDOW_KEY)
+EVAL_WINDOW_LO_DAYS_TO_CD = abs(int(_EVAL_BAND["hi"]))  # 11
+EVAL_WINDOW_HI_DAYS_TO_CD = abs(int(_EVAL_BAND["lo"]))  # 60
+
 # Noise bands (pp): a calibration MAE move smaller than this is treated as noise.
 _MAE_NOISE_PP = 0.5
+
+# Pre-CD weekly improvement: a week needs this many sessions to be trusted, and the
+# week-over-week sign-hit must move at least this much to be flagged "significant".
+_PRED_WEEK_MIN_N = 20
+_PRED_SIGNIFICANT_PP = 3.0
+
+# Recommendation channel: a |move| under this band (pp) is treated as flat (no
+# direction), matching the sim's PNL_FLAT_PCT. SELL exits classified by these
+# reasons count as rule-driven SELL recommendations (see sds_investment_decision).
+_REC_FLAT_PCT = 1.0
+# Rule-driven SELL reasons (see sds_investment_decision). Exits that did not fire
+# a rule are bucketed under _GENERIC_EXIT_REASON: they are still sales (the
+# position was closed), so they count toward SELL -> P(down).
+_SELL_REASONS = ("stop_loss", "sds_below_40", "pre_cd_exit")
+_GENERIC_EXIT_REASON = "capital_removed"
+_SELL_REASON_ORDER = (*_SELL_REASONS, _GENERIC_EXIT_REASON)
 
 
 # ────────────────────────── numeric helpers ──────────────────────────
@@ -85,14 +117,96 @@ def _first_date(r: dict[str, Any], keys: tuple[str, ...]) -> str | None:
     return None
 
 
-# ────────────────────────── prediction metrics ──────────────────────────
-def _dir_hit(pairs: list[tuple[float, float]]) -> float | None:
-    usable = [(p, a) for p, a in pairs if p != 0 and a != 0]
-    if not usable:
+def _parse_iso_date(v: Any) -> _dt.date | None:
+    if not v:
         return None
-    return sum(1 for p, a in usable if (p > 0) == (a > 0)) / len(usable)
+    try:
+        return _dt.date.fromisoformat(str(v).strip()[:10])
+    except ValueError:
+        return None
 
 
+def _days_to_cd_at_entry(r: dict[str, Any]) -> int | None:
+    """Calendar days from entry to completion date (positive = still pre-CD)."""
+    entry = _parse_iso_date(_first_date(r, ("entry_ts", "entry_date")))
+    cd = _parse_iso_date(r.get("completion_date"))
+    if entry is None or cd is None:
+        return None
+    return (cd - entry).days
+
+
+def _in_eval_window(days_to_cd: int | None) -> bool:
+    if days_to_cd is None:
+        return False
+    return EVAL_WINDOW_LO_DAYS_TO_CD <= days_to_cd <= EVAL_WINDOW_HI_DAYS_TO_CD
+
+
+def _filter_eval_window(
+    rows: list[dict[str, Any]],
+) -> tuple[list[dict[str, Any]], dict[str, Any]]:
+    """Keep only positions entered inside the canonical CD−2m→−10d window."""
+    in_rows: list[dict[str, Any]] = []
+    n_out = 0
+    n_unknown = 0
+    for r in rows:
+        d = _days_to_cd_at_entry(r)
+        if d is None:
+            n_unknown += 1
+            continue
+        if _in_eval_window(d):
+            in_rows.append(r)
+        else:
+            n_out += 1
+    return in_rows, {
+        "n_total": len(rows),
+        "n_in_window": len(in_rows),
+        "n_out_of_window": n_out,
+        "n_unknown_timing": n_unknown,
+    }
+
+
+def _evaluation_frame(coverage: dict[str, Any] | None = None) -> dict[str, Any]:
+    frame: dict[str, Any] = {
+        "window_key": EVAL_WINDOW_KEY,
+        "lo_days_to_cd": EVAL_WINDOW_LO_DAYS_TO_CD,
+        "hi_days_to_cd": EVAL_WINDOW_HI_DAYS_TO_CD,
+        "label_it": str(_EVAL_BAND["label_it"]),
+        "label_en": str(_EVAL_BAND["label_en"]),
+        "layers": {
+            "A": {
+                "key": "behavior",
+                "channel": "prediction",
+                "label_it": "Comportamento / mercato",
+                "label_en": "Behavior / market",
+            },
+            "B": {
+                "key": "opportunity",
+                "channel": "recommendation",
+                "label_it": "Opportunità",
+                "label_en": "Opportunity",
+            },
+            "C": {
+                "key": "gain",
+                "channel": "trading",
+                "label_it": "Gain / decisione",
+                "label_en": "Gain / decision",
+            },
+        },
+        "note_it": (
+            "KPI di efficienza del sistema sulla finestra CD−2m→−10g. "
+            "Vicino-CD (−10→0) e post-CD sono solo diagnostici."
+        ),
+        "note_en": (
+            "System-efficiency KPIs on the CD−2m→−10d window. "
+            "Near-CD (−10→0) and post-CD are diagnostic only."
+        ),
+    }
+    if coverage:
+        frame.update(coverage)
+    return frame
+
+
+# ────────────────────────── prediction metrics ──────────────────────────
 def _bias(pairs: list[tuple[float, float]]) -> float | None:
     return statistics.mean(p - a for p, a in pairs) if pairs else None
 
@@ -112,6 +226,19 @@ def _load_outcomes() -> list[dict[str, Any]]:
             continue
         rows.append({**r, "pred": p, "actual": a})
     return rows
+
+
+def _load_sign_curve() -> dict[str, Any]:
+    """Read the pre-CD/post-CD sign-curve snapshot (read-only). Built by the
+    refresh pipeline (``sign_curve_daily.save_sign_curve_daily_json``)."""
+    p = Path(MODEL_SIGN_CURVE_DAILY_JSON)
+    if not p.is_file():
+        return {}
+    try:
+        doc = json.loads(p.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        return {}
+    return doc if isinstance(doc, dict) else {}
 
 
 def _load_positions() -> list[dict[str, Any]]:
@@ -187,6 +314,51 @@ def _winrate(rows: list[dict[str, Any]]) -> float | None:
     return (sum(wins) / len(wins)) if wins else None
 
 
+# ────────────────────────── directional follow-through (recommendation) ──────────────────────────
+def _price_up(r: dict[str, Any]) -> bool | None:
+    """Realized direction after a BUY: True if the price rose past the flat band,
+    False if it fell, None when flat/unknown (excluded from the hit-rate)."""
+    pnl = _num(r.get("pnl_pct"))
+    if pnl is None or abs(pnl) <= _REC_FLAT_PCT:
+        return None
+    return pnl > 0
+
+
+def _buy_up_rate(rows: list[dict[str, Any]]) -> tuple[float | None, int]:
+    """P(price up | BUY) over BUY positions with a non-flat realized move."""
+    graded = [u for r in rows if (u := _price_up(r)) is not None]
+    return ((sum(graded) / len(graded)) if graded else None, len(graded))
+
+
+def _sell_down_hit(r: dict[str, Any]) -> bool | None:
+    """Whether a SELL was followed by a price drop, from the post-exit move
+    already scored in the sim (``sell_signal_result``: exit price -> latest
+    market price). None when still pending/flat (excluded from the hit-rate)."""
+    res = r.get("sell_signal_result")
+    if res == "success":
+        return True
+    if res == "failure":
+        return False
+    return None
+
+
+def _is_sell(r: dict[str, Any]) -> bool:
+    """Every closed/exited position is a SELL (the position was sold). The sim
+    scores the post-exit move for all of them via ``sell_signal_result``; only
+    rows never exited (``not_applicable``/missing) are excluded."""
+    return r.get("sell_signal_result") not in (None, "not_applicable")
+
+
+def _sell_reason_bucket(r: dict[str, Any]) -> str:
+    reason = r.get("exit_reason")
+    return reason if reason in _SELL_REASONS else _GENERIC_EXIT_REASON
+
+
+def _sell_down_rate(rows: list[dict[str, Any]]) -> tuple[float | None, int]:
+    graded = [d for r in rows if (d := _sell_down_hit(r)) is not None]
+    return ((sum(graded) / len(graded)) if graded else None, len(graded))
+
+
 def _mean_pnl(rows: list[dict[str, Any]]) -> float | None:
     pnls = [p for r in rows if (p := _num(r.get("pnl_pct"))) is not None]
     return statistics.mean(pnls) if pnls else None
@@ -195,6 +367,57 @@ def _mean_pnl(rows: list[dict[str, Any]]) -> float | None:
 def _sum_eur(rows: list[dict[str, Any]]) -> float | None:
     eurs = [e for r in rows if (e := _num(r.get("pnl_eur"))) is not None]
     return sum(eurs) if eurs else None
+
+
+# ────────────────────────── regime attribution (trading) ──────────────────────────
+_REGIME_ORDER = ("RISK_ON", "NEUTRAL", "RISK_OFF", "CRISIS")
+
+
+def _regime_label(r: dict[str, Any]) -> str:
+    """Normalize the regime state recorded at entry into a fixed bucket."""
+    norm = str(r.get("entry_regime") or r.get("market_regime") or "").upper().replace("-", "_").replace(" ", "_")
+    if not norm:
+        return "UNKNOWN"
+    if "CRISIS" in norm:
+        return "CRISIS"
+    if "RISK_OFF" in norm:
+        return "RISK_OFF"
+    if "RISK_ON" in norm:
+        return "RISK_ON"
+    if "NEUTRAL" in norm:
+        return "NEUTRAL"
+    return "UNKNOWN"
+
+
+def _regime_breakdown(rows: list[dict[str, Any]], book_wr: float | None) -> tuple[list[dict[str, Any]], int]:
+    """Split closed trades by the regime state at entry, with win-rate lift vs the whole book.
+
+    This is observational attribution (P&L grouped by the regime that was active at entry),
+    NOT a counterfactual of the regime multiplier. It only fills in for trades that actually
+    carry an entry regime, so it populates as new cycles close after the logging change.
+    """
+    buckets: dict[str, list[dict[str, Any]]] = {}
+    for r in rows:
+        buckets.setdefault(_regime_label(r), []).append(r)
+    out: list[dict[str, Any]] = []
+    for reg in _REGIME_ORDER:
+        rs = buckets.get(reg)
+        if not rs:
+            continue
+        wr = _winrate(rs)
+        lift = (wr - book_wr) if (wr is not None and book_wr is not None) else None
+        out.append(
+            {
+                "regime": reg,
+                "n": len(rs),
+                "win_pct": _round_pct(wr),
+                "mean_pnl_pct": _round(_mean_pnl(rs)),
+                "total_eur": _round(_sum_eur(rs)),
+                "lift_vs_book_pp": _round_pct(lift),
+            }
+        )
+    known_n = sum(len(v) for k, v in buckets.items() if k != "UNKNOWN")
+    return out, known_n
 
 
 # ────────────────────────── weekly series ──────────────────────────
@@ -219,22 +442,13 @@ def _weekly_series(
     return out
 
 
-def _prediction_week(rs: list[dict[str, Any]]) -> dict[str, Any]:
-    pairs = [(r["pred"], r["actual"]) for r in rs]
-    return {
-        "direction_hit_pct": _round_pct(_dir_hit(pairs)),
-        "bias_pp": _round(_bias(pairs)),
-        "mae_pp": _round(_mae(pairs)),
-    }
-
-
 def _recommendation_week(rs: list[dict[str, Any]]) -> dict[str, Any]:
-    buy = [r for r in rs if _recommended_action(r).startswith("BUY")]
-    wins = [w for r in buy if (w := _is_win(r)) is not None]
+    buy = list(rs)  # every opened position is an executed BUY
+    rate, graded_n = _buy_up_rate(buy)
     return {
         "buy_n": len(buy),
-        "buy_win_pct": _round_pct((sum(wins) / len(wins)) if wins else None),
-        "buy_mean_pnl_pct": _round(_mean_pnl(buy)),
+        "buy_up_hit_pct": _round_pct(rate),
+        "buy_graded_n": graded_n,
     }
 
 
@@ -285,9 +499,21 @@ def _loop_effect(
     }
 
 
-def _prediction_channel(outcomes: list[dict[str, Any]]) -> dict[str, Any]:
+def _weekly_improvement(weekly: list[dict[str, Any]]) -> tuple[float | None, bool]:
+    """Week-over-week change of the pre-CD sign-hit, using the last two weeks that
+    clear the min-sample guard. Returns (delta_pp, is_significant)."""
+    usable = [
+        w for w in weekly
+        if (w.get("n") or 0) >= _PRED_WEEK_MIN_N and w.get("sign_hit_pct") is not None
+    ]
+    if len(usable) < 2:
+        return None, False
+    delta = float(usable[-1]["sign_hit_pct"]) - float(usable[-2]["sign_hit_pct"])
+    return _round(delta, 1), abs(delta) >= _PRED_SIGNIFICANT_PP
+
+
+def _prediction_loops(outcomes: list[dict[str, Any]]) -> list[dict[str, Any]]:
     pairs = [(r["pred"], r["actual"]) for r in outcomes]
-    bias = _bias(pairs)
     loops: list[dict[str, Any]] = []
     if outcomes:
         g, gfn = _global_factor_fn()
@@ -305,7 +531,7 @@ def _prediction_channel(outcomes: list[dict[str, Any]]) -> dict[str, Any]:
             "d_dir_hit_pp": 0.0,
             "is_lever": False,
             "verdict": "not_measurable",
-            "note": "regime non loggato sulle righe storiche di valutazione; misurato sul canale Trading",
+            "note": "effetto del regime mostrato come ripartizione del P&L per stato di regime nel canale Trading",
         }
     )
     loops.append(
@@ -318,83 +544,194 @@ def _prediction_channel(outcomes: list[dict[str, Any]]) -> dict[str, Any]:
             "d_dir_hit_pp": None,
             "is_lever": True,
             "verdict": "direction_lever",
-            "note": "unico loop che puo' muovere la direzione (rimodella la curva)",
+            "note": "ricalibra ogni giorno la curva pre-CD: l'unico loop che puo' muovere la direzione",
         }
     )
+    return loops
+
+
+def _pre_cd_reliability_curve(cohort: dict[str, Any]) -> list[dict[str, Any]]:
+    """Per-distance-to-CD sign-hit (the reliability curve) for the pre-CD nodes,
+    ordered from farthest (T-60) to closest (T-1). This is P(direction correct |
+    distance to CD), the index used to weight the live prediction."""
+    out: list[dict[str, Any]] = []
+    for row in cohort.get("by_offset") or []:
+        if not isinstance(row, dict):
+            continue
+        off = row.get("offset")
+        if off is None or int(off) >= 0:
+            continue
+        out.append({
+            "offset": int(off),
+            "label": f"T{int(off)}",
+            "sign_hit_pct": _num(row.get("sign_hit_pct")),
+            "n": row.get("n") or 0,
+        })
+    out.sort(key=lambda r: r["offset"])
+    return out
+
+
+def _prediction_channel(outcomes: list[dict[str, Any]], sign_curve: dict[str, Any]) -> dict[str, Any]:
+    """Pre-CD curve quality (sign-hit + price accuracy) of the Simulation cohort vs
+    the historical cohort, with a weekly-improvement signal.
+
+    The model targets the pre-CD window (~−60d → CD day); post-CD movement is
+    near coin-flip, so we measure the pre-CD sign-hit here, NOT the post-CD outcome.
+    """
+    cohorts = (sign_curve or {}).get("cohorts") or {}
+    sim = cohorts.get("simulation") or {}
+    retro = cohorts.get("retro") or {}
+    weekly = [w for w in (sim.get("weekly_pre_cd") or []) if isinstance(w, dict)]
+    sign_hit = _num(sim.get("overall_sign_hit_pre_cd_pct"))
+    delta, significant = _weekly_improvement(weekly)
+    available = sign_hit is not None
+    reliability = _pre_cd_reliability_curve(sim)
+    graded = [r for r in reliability if r["sign_hit_pct"] is not None]
+    best = max(graded, key=lambda r: r["sign_hit_pct"]) if graded else None
+    worst = min(graded, key=lambda r: r["sign_hit_pct"]) if graded else None
+    window = reliability_window(cohort="simulation", snapshot=sign_curve)
+    peak_pct = window["peak_pct"] if window else None
+    threshold_pct = window["threshold_pct"] if window else None
+    for node in reliability:
+        r = node["sign_hit_pct"]
+        in_win = (
+            window is not None and r is not None and r >= threshold_pct
+        )
+        node["reliable"] = in_win
+        node["stars"] = reliability_stars(r, peak_pct) if in_win else None
+    bands_raw = reliability_bands(cohort="simulation", snapshot=sign_curve) or []
+    bands: list[dict[str, Any]] = []
+    eval_band: dict[str, Any] | None = None
+    for b in bands_raw:
+        role = "canonical" if b.get("key") == EVAL_WINDOW_KEY else "diagnostic"
+        row = {**b, "role": role}
+        bands.append(row)
+        if role == "canonical":
+            eval_band = row
     return {
-        "n": len(pairs),
-        "direction_hit_pct": _round_pct(_dir_hit(pairs)),
-        "calibration_bias_pp": _round(bias),
-        "abs_bias_pp": _round(abs(bias)) if bias is not None else None,
-        "mae_pp": _round(_mae(pairs)),
-        "loops": loops,
-        "weekly": _weekly_series(outcomes, ("date",), _prediction_week),
+        "available": available,
+        "n_events": sim.get("n_events"),
+        "n_sessions": sim.get("n_sessions_pre_cd"),
+        "pre_cd_sign_hit_pct": sign_hit,
+        "pre_cd_price_accuracy_pct": _num(sim.get("overall_price_accuracy_pre_cd_pct")),
+        # Headline efficiency metric: n-weighted sign-hit on CD−2m→−10d only.
+        "eval_window_sign_hit_pct": (eval_band or {}).get("mean_pct"),
+        "eval_window_n": (eval_band or {}).get("n"),
+        "benchmark_sign_hit_pct": _num(retro.get("overall_sign_hit_pre_cd_pct")),
+        "benchmark_price_accuracy_pct": _num(retro.get("overall_price_accuracy_pre_cd_pct")),
+        "best_node": best,
+        "worst_node": worst,
+        "reliability_by_cd": reliability,
+        "reliability_window": window,
+        "reliability_bands": bands,
+        "weekly_delta_pp": delta,
+        "weekly_significant": significant,
+        "weekly": weekly,
+        "loops": _prediction_loops(outcomes),
+        "note": None if available else "curva pre-CD non disponibile: rigenera model_sign_curve_daily.json (cohorte Simulation)",
     }
 
 
 def _recommendation_channel(rows: list[dict[str, Any]]) -> dict[str, Any]:
-    book_wins = [w for r in rows if (w := _is_win(r)) is not None]
-    book_wr = (sum(book_wins) / len(book_wins)) if book_wins else None
-    have = [r for r in rows if _recommended_action(r) != "UNKNOWN"]
-    if not have:
-        return {
-            "available": False,
-            "n": 0,
-            "book_win_pct": _round_pct(book_wr),
-            "actions": [],
-            "weekly": [],
-            "note": "nessuna posizione porta ancora SDS/regime all'ingresso — si popola con i nuovi cicli",
-        }
-    buckets: dict[str, list[dict[str, Any]]] = {}
-    for r in have:
-        buckets.setdefault(_recommended_action(r), []).append(r)
-    actions: list[dict[str, Any]] = []
-    for act in ("BUY_FULL", "BUY_HALF", "HOLD"):
-        rs = buckets.get(act, [])
+    """Directional follow-through of the recommendation, by action.
+
+    BUY  -> P(price up | BUY): share of BUY positions whose realized move rose.
+    SELL -> P(price down | SELL): share of *all* exited positions (every sale)
+            followed by a price drop, from the post-exit move scored in the sim
+            (exit price -> latest market price), broken down by exit reason.
+    HOLD -> rescue-score vs actual rebound: computed in the UI sheet (the rescue
+            score lives there); the backend only reports the HOLD count here.
+    """
+    # Every opened sim position is an executed BUY (the engine only allocates
+    # capital when it recommends a buy), so the realized move of each position
+    # is the BUY follow-through. We do NOT re-derive the action from sds_score:
+    # historical positions whose CD has passed are absent from the live SDS
+    # snapshot, so that lookup is None and would drop them entirely (BUY n=0).
+    buy_rows = list(rows)
+    hold_rows = [r for r in rows if _recommended_action(r) == "HOLD"]
+    sell_rows = [r for r in rows if _is_sell(r)]
+
+    buy_rate, buy_graded = _buy_up_rate(buy_rows)
+    sell_rate, sell_graded = _sell_down_rate(sell_rows)
+    sell_pending = sum(1 for r in sell_rows if _sell_down_hit(r) is None)
+
+    by_reason: list[dict[str, Any]] = []
+    for reason in _SELL_REASON_ORDER:
+        rs = [r for r in sell_rows if _sell_reason_bucket(r) == reason]
         if not rs:
             continue
-        wr = _winrate(rs)
-        lift = (wr - book_wr) if (wr is not None and book_wr is not None) else None
-        actions.append(
+        rate, graded = _sell_down_rate(rs)
+        by_reason.append(
             {
-                "action": act,
+                "reason": reason,
                 "n": len(rs),
-                "win_pct": _round_pct(wr),
-                "mean_pnl_pct": _round(_mean_pnl(rs)),
-                "lift_vs_book_pp": _round_pct(lift),
+                "graded_n": graded,
+                "down_hit_pct": _round_pct(rate),
             }
         )
+
+    available = bool(buy_graded or sell_graded)
     return {
-        "available": True,
-        "n": len(have),
-        "book_win_pct": _round_pct(book_wr),
-        "actions": actions,
-        "weekly": _weekly_series(have, ("entry_ts", "entry_date", "exit_ts"), _recommendation_week),
+        "available": available,
+        "buy": {
+            "n": len(buy_rows),
+            "graded_n": buy_graded,
+            "up_hit_pct": _round_pct(buy_rate),
+        },
+        "sell": {
+            "n": len(sell_rows),
+            "graded_n": sell_graded,
+            "pending_n": sell_pending,
+            "down_hit_pct": _round_pct(sell_rate),
+            "by_reason": by_reason,
+        },
+        "hold": {
+            "n": len(hold_rows),
+            "rescue_available": False,
+            "note": "rimbalzo vs rescue score calcolato nella UI sheet",
+        },
+        "weekly": _weekly_series(buy_rows, ("entry_ts", "entry_date", "exit_ts"), _recommendation_week),
+        "note": None if available else (
+            "nessun BUY/SELL valutabile ancora — si popola con i cicli chiusi"
+        ),
     }
 
 
 def _trading_channel(rows: list[dict[str, Any]]) -> dict[str, Any]:
     pnls = [p for r in rows if (p := _num(r.get("pnl_pct"))) is not None]
+    book_wr = _winrate(rows)
+    regimes, regime_known_n = _regime_breakdown(rows, book_wr)
     return {
         "n": len(rows),
-        "win_pct": _round_pct(_winrate(rows)),
+        "win_pct": _round_pct(book_wr),
         "mean_pnl_pct": _round(_mean_pnl(rows)),
         "median_pnl_pct": _round(statistics.median(pnls)) if pnls else None,
         "total_eur": _round(_sum_eur(rows)),
         "weekly": _weekly_series(rows, ("entry_ts", "entry_date", "exit_ts"), _trading_week),
+        "regimes": regimes,
+        "regime_available": regime_known_n > 0,
+        "regime_n": regime_known_n,
     }
 
 
 # ────────────────────────── public API ──────────────────────────
 def compute_channel_impact() -> dict[str, Any]:
-    """Live, read-only computation of the 3-channel learning-loop impact."""
+    """Live, read-only computation of the 3-channel learning-loop impact.
+
+    Recommendation and trading KPIs are restricted to positions entered inside
+    the canonical CD−2m→−10d window. Prediction headlines that window via the
+    ``cd_m2_d10`` reliability band.
+    """
     outcomes = _load_outcomes()
     positions = _load_positions()
+    scoped, coverage = _filter_eval_window(positions)
+    sign_curve = _load_sign_curve()
     return {
         "generated_at": _now_iso(),
-        "prediction": _prediction_channel(outcomes),
-        "recommendation": _recommendation_channel(positions),
-        "trading": _trading_channel(positions),
+        "evaluation": _evaluation_frame(coverage),
+        "prediction": _prediction_channel(outcomes, sign_curve),
+        "recommendation": _recommendation_channel(scoped),
+        "trading": _trading_channel(scoped),
     }
 
 
@@ -431,22 +768,27 @@ def persist_weekly_channel_snapshot(impact: dict[str, Any] | None = None) -> dic
     trd = impact.get("trading") or {}
     doc = _load_weekly_doc()
     weeks: dict[str, Any] = doc["weeks"]
+    ev = impact.get("evaluation") or {}
     weeks[_current_iso_week()] = {
         "updated_at": _now_iso(),
+        "evaluation": {
+            "window_key": ev.get("window_key"),
+            "n_in_window": ev.get("n_in_window"),
+            "n_out_of_window": ev.get("n_out_of_window"),
+        },
         "prediction": {
-            "n": pred.get("n"),
-            "direction_hit_pct": pred.get("direction_hit_pct"),
-            "abs_bias_pp": pred.get("abs_bias_pp"),
-            "mae_pp": pred.get("mae_pp"),
+            "n_sessions": pred.get("n_sessions"),
+            "pre_cd_sign_hit_pct": pred.get("pre_cd_sign_hit_pct"),
+            "eval_window_sign_hit_pct": pred.get("eval_window_sign_hit_pct"),
+            "pre_cd_price_accuracy_pct": pred.get("pre_cd_price_accuracy_pct"),
+            "benchmark_sign_hit_pct": pred.get("benchmark_sign_hit_pct"),
         },
         "recommendation": {
-            "n": rec.get("n"),
             "available": rec.get("available"),
-            "book_win_pct": rec.get("book_win_pct"),
-            "buy_lift_pp": next(
-                (a.get("lift_vs_book_pp") for a in (rec.get("actions") or []) if a.get("action") == "BUY_FULL"),
-                None,
-            ),
+            "buy_up_hit_pct": (rec.get("buy") or {}).get("up_hit_pct"),
+            "buy_n": (rec.get("buy") or {}).get("graded_n"),
+            "sell_down_hit_pct": (rec.get("sell") or {}).get("down_hit_pct"),
+            "sell_n": (rec.get("sell") or {}).get("graded_n"),
         },
         "trading": {
             "n": trd.get("n"),

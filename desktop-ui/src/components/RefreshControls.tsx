@@ -7,10 +7,11 @@
  */
 
 import { useCallback, useState } from "react";
-import { RefreshLiveBadge } from "./InvestmentDecisionLabView";
+import { RefreshLiveBadge } from "./RefreshDataModal";
 import {
   markReloadCompleted,
   setRefreshModalOpen,
+  setWeeklyFullServerRunningOpen,
   useRefreshStatus,
 } from "../shared/refreshStatusStore";
 import { formatDataRefreshTimestamp } from "../shared/dataFreshness";
@@ -28,6 +29,7 @@ export function RefreshControls({
   extraInfo,
   className,
   dataUpdatedAt: _dataUpdatedAt,
+  compact = false,
 }: {
   /** @deprecated use onRefresh */
   onLocalReload?: () => void | Promise<void>;
@@ -44,6 +46,8 @@ export function RefreshControls({
   className?: string;
   /** @deprecated unused in UI — server snapshot shown in System only */
   dataUpdatedAt?: string | null;
+  /** Hide “last refresh” subtitle (e.g. AppTopBar 44px). */
+  compact?: boolean;
 }) {
   const [reloadFlash, setReloadFlash] = useState(false);
   const { life, finishedAt, lastReloadAt } = useRefreshStatus();
@@ -86,13 +90,26 @@ export function RefreshControls({
       <div className="flex items-center gap-2">
         <button
           type="button"
-          className={`btn-ghost text-xs disabled:opacity-50 transition-colors ${
-            reloadFlash ? "bg-positive/15 text-positive" : ""
+          className={`inline-flex items-center gap-1.5 rounded-full border border-white/[0.16] bg-transparent px-3.5 py-1.5 text-[12px] font-medium text-ink disabled:opacity-50 transition-colors ${
+            reloadFlash ? "bg-[rgb(var(--positive))]/15 text-[rgb(var(--positive))] border-[rgb(var(--positive))]/30" : "hover:border-[rgb(var(--accent))]/50 hover:text-ink"
           }`}
           disabled={busy}
           onClick={() => { void handleRefresh(); }}
           title={statusTitle}
         >
+          <svg
+            aria-hidden
+            viewBox="0 0 20 20"
+            className={`h-3.5 w-3.5 shrink-0 ${busy ? "animate-spin" : ""}`}
+            fill="none"
+            stroke="currentColor"
+            strokeWidth="1.7"
+            strokeLinecap="round"
+            strokeLinejoin="round"
+          >
+            <path d="M16.5 10a6.5 6.5 0 1 1-1.9-4.6" />
+            <path d="M16.5 3.8v3.6h-3.6" />
+          </svg>
           {busy
             ? (busyLabel ?? t("common.reloading"))
             : reloadFlash
@@ -103,11 +120,17 @@ export function RefreshControls({
           <RefreshLiveBadge
             info={life}
             finishedAt={finishedAt}
-            onOpenModal={() => setRefreshModalOpen(true)}
+            onOpenModal={() => {
+              if (life.fromServerWeeklyFull && life.state === "running") {
+                setWeeklyFullServerRunningOpen(true);
+                return;
+              }
+              setRefreshModalOpen(true);
+            }}
           />
         )}
       </div>
-      {pageReloadLabel ? (
+      {pageReloadLabel && !compact ? (
         <span
           className="text-[10px] text-ink-muted/70 leading-none tabular-nums text-right"
           title={statusTitle}

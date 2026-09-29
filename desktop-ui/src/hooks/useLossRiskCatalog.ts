@@ -10,10 +10,12 @@
  * +20 pattern-match bump). Consumers only need to pass the live simTable
  * and the SDS roster.
  */
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useDeferredValue, useEffect, useMemo, useRef, useState } from "react";
 import type { ChartBundle, SheetTable } from "../types";
 import {
-  closedSimOutcomeRowsFromDoc,
+  closedValidationOutcomeRowsFromDoc,
+} from "../sheet/simOutcomeCycleDedup";
+import {
   loadInvestmentSimOutcomes,
   type SimOutcomeRow,
 } from "../data/investmentSimOutcomesData";
@@ -60,7 +62,7 @@ export const LOSS_RISK_DEFAULT_BUDGET_EUR = 50_000;
  */
 export type LossRiskCatalog = Map<string, LossRiskEntry>;
 
-function dealToLossRiskEntry(
+export function dealToLossRiskEntry(
   deal: ComparisonDeal,
   sizing?: { eur: number; pct: number } | null,
   sizingAvailable = false,
@@ -87,30 +89,45 @@ export function useLossRiskCatalog(args: {
   reloadToken?: number;
   /** Bump after the user approves/clears a Phase B pattern. */
   patternStoreVersion?: number;
+  /** Skip sim-outcomes + three-portfolio until Home has painted. */
+  enabled?: boolean;
 }): {
   catalog: LossRiskCatalog;
   /** Row-key index — covers every sim/monitor row, not only BUY sim-loop deals. */
   catalogByRowKey: Map<string, LossRiskEntry>;
   loading: boolean;
 } {
-  const { simTable, sdsRows, chartBundle, reloadToken = 0, patternStoreVersion = 0 } = args;
+  const {
+    simTable,
+    sdsRows,
+    chartBundle,
+    reloadToken = 0,
+    patternStoreVersion = 0,
+    enabled = true,
+  } = args;
   const { lang } = useLang();
   const inputs = useInvestSimInputs(simTable, reloadToken);
+  // Buy/Sell must paint before rebuilding three-portfolio + monitor pipeline.
+  const deferredInputs = useDeferredValue(inputs);
   const [closedRows, setClosedRows] = useState<SimOutcomeRow[]>([]);
   const [outcomesLoading, setOutcomesLoading] = useState(true);
 
   useEffect(() => {
+    if (!enabled) {
+      setOutcomesLoading(false);
+      return;
+    }
     let cancelled = false;
     setOutcomesLoading(true);
     void loadInvestmentSimOutcomes().then(({ doc }) => {
       if (cancelled) return;
-      setClosedRows(closedSimOutcomeRowsFromDoc(doc));
+      setClosedRows(closedValidationOutcomeRowsFromDoc(doc));
       setOutcomesLoading(false);
     });
     return () => {
       cancelled = true;
     };
-  }, [reloadToken]);
+  }, [reloadToken, enabled]);
 
   // Approved Phase B pattern — re-read when parent bumps patternStoreVersion.
   const approvedPattern = useMemo<RiskPattern | null>(() => {
@@ -158,7 +175,7 @@ export function useLossRiskCatalog(args: {
   const { catalog, catalogByRowKey } = useMemo(() => {
     const byTicker: LossRiskCatalog = new Map();
     const byRowKey = new Map<string, LossRiskEntry>();
-    if (!simTable?.rows?.length) return { catalog: byTicker, catalogByRowKey: byRowKey };
+    if (!enabled || !simTable?.rows?.length) return { catalog: byTicker, catalogByRowKey: byRowKey };
     try {
       const sdsByTicker = new Map<string, SdsRow>();
       for (const s of sdsRows ?? []) {
@@ -187,7 +204,7 @@ export function useLossRiskCatalog(args: {
         closedRows,
         simTable,
         sdsRows: sdsRows ?? null,
-        inputs,
+        inputs: deferredInputs,
         pointsBySeriesKey,
         lang,
         calibrationSnapshot,
@@ -248,7 +265,7 @@ export function useLossRiskCatalog(args: {
       try {
         monitorRows = buildSuggestionMonitorRows({
           simTable,
-          inputs,
+          inputs: deferredInputs,
           pointsBySeriesKey,
           lang,
           paperPortfolio: [],
@@ -311,13 +328,14 @@ export function useLossRiskCatalog(args: {
     simTable,
     closedRows,
     sdsRows,
-    inputs,
+    deferredInputs,
     pointsBySeriesKey,
     lang,
     calibrationSnapshot,
     sdsBreakdown,
     phaseA,
     approvedPattern,
+    enabled,
   ]);
 
   // Keep a ref to detect changes without re-creating the consumer on every

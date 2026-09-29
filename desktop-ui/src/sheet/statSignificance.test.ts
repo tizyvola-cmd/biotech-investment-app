@@ -3,6 +3,8 @@ import {
   correlationTwoTailedPValue,
   criticalAbsCorrelation,
   formatCorrelationWithStars,
+  linearRegressionOLS,
+  linearRegressionTheilSen,
   mannWhitneyTwoTailedP,
   significanceStars,
 } from "./statSignificance";
@@ -46,5 +48,45 @@ describe("statSignificance", () => {
     const p = mannWhitneyTwoTailedP([5, 6, 7, 8], [5, 6, 7, 8]);
     expect(p).not.toBeNull();
     expect(p!).toBeGreaterThan(0.05);
+  });
+
+  it("linearRegressionOLS spans x domain for chart overlay", () => {
+    const reg = linearRegressionOLS([0, 50, 100], [0, 5, 10], { min: 0, max: 100 });
+    expect(reg).not.toBeNull();
+    expect(reg!.slope).toBeCloseTo(0.1, 4);
+    expect(reg!.line).toHaveLength(2);
+    expect(reg!.line[0]).toEqual({ x: 0, y: 0 });
+    expect(reg!.line[1]!.y).toBeCloseTo(10, 1);
+  });
+
+  it("linearRegressionTheilSen matches OLS on clean linear data", () => {
+    const reg = linearRegressionTheilSen(
+      [0, 25, 50, 75, 100],
+      [0, 2.5, 5, 7.5, 10],
+      { min: 0, max: 100 },
+    );
+    expect(reg).not.toBeNull();
+    expect(reg!.slope).toBeCloseTo(0.1, 3);
+    expect(reg!.intercept).toBeCloseTo(0, 3);
+  });
+
+  it("linearRegressionTheilSen is robust to a single outlier that OLS follows", () => {
+    // Perfect line y = 0.1·x, plus one outlier at (100, -50). OLS bends;
+    // Theil-Sen ignores the outlier because its slopes are minority.
+    const xs = [0, 20, 40, 60, 80, 100];
+    const ys = [0, 2, 4, 6, 8, -50];
+    const ols = linearRegressionOLS(xs, ys);
+    const robust = linearRegressionTheilSen(xs, ys);
+    expect(ols).not.toBeNull();
+    expect(robust).not.toBeNull();
+    // OLS slope is dragged strongly negative by the outlier
+    expect(ols!.slope).toBeLessThan(-0.3);
+    // Theil-Sen keeps close to the true +0.1 slope
+    expect(robust!.slope).toBeCloseTo(0.1, 1);
+  });
+
+  it("linearRegressionTheilSen returns null for degenerate inputs", () => {
+    expect(linearRegressionTheilSen([1, 2], [1, 2])).toBeNull();
+    expect(linearRegressionTheilSen([5, 5, 5], [1, 2, 3])).toBeNull();
   });
 });

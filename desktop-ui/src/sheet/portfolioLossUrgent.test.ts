@@ -4,6 +4,7 @@ import type { InvestSimHistoryPoint, InvestSimInputs } from "./investSimStorage"
 import {
   ackLossModalBatch,
   detectPortfolioLossAlerts,
+  detectPortfolioPositionAlerts,
   dismissPortfolioLossAlert,
   dismissPortfolioLossAlerts,
   isLossModalAutoShownThisSession,
@@ -11,6 +12,7 @@ import {
   isPortfolioLossAlertDismissed,
   lossAlertKeySig,
   markLossModalAutoShownThisSession,
+  sidecarCountsAsPortfolioHolding,
 } from "./portfolioLossUrgent";
 import { resolvePnlTabCardTone } from "./portfolioGainLossStyle";
 import { positionPnlForOpenRow, rowHasActivePortfolio } from "./simulationPosition";
@@ -146,6 +148,75 @@ describe("loss modal batch ack", () => {
     expect(isLossModalAutoShownThisSession()).toBe(false);
     markLossModalAutoShownThisSession();
     expect(isLossModalAutoShownThisSession()).toBe(true);
+  });
+});
+
+describe("detectPortfolioPositionAlerts — dead warrant quotes", () => {
+  it("keeps open JSPRW-like warrants in Evaluation when live quote is stale", () => {
+    const key = "JSPRW|2026-08-13";
+    const history: InvestSimHistoryPoint[] = [
+      {
+        ts: "2026-07-20T16:00:00.000Z",
+        capital: 1348,
+        value: 1328,
+        pnl: -20,
+        pnlPct: -1.5,
+        byTicker: { [key]: { value: 1328, pnl: -20, pnlPct: -1.5 } },
+      },
+    ];
+    const row = {
+      Ticker: "JSPRW",
+      "Completion Date": "13/08/2026",
+      "Prezzo Corrente ($)": null,
+      "Var. Giorn. %": null,
+      direction_live: "stale",
+    };
+    const inputs: InvestSimInputs = {
+      [key]: {
+        buyPrice: 0.0132,
+        capital: 1348,
+        ignoreSheet: false,
+        investedAt: "2026-07-14T14:51:21.512Z",
+      },
+    };
+    const alerts = detectPortfolioPositionAlerts(simTable([row]), inputs, history);
+    // Display unifies on tradeable common; identity key stays JSPRW|CD.
+    expect(alerts.map((a) => a.ticker)).toContain("JSPR");
+    const j = alerts.find((a) => a.ticker === "JSPR");
+    expect(j?.key).toBe(key);
+    expect(j?.livePriceDead).toBe(true);
+    expect(j?.pnlEur).toBe(-20);
+  });
+});
+
+describe("detectPortfolioPositionAlerts — Guidance Calendar sidecars", () => {
+  const lctxRow = {
+    Ticker: "LCTX",
+    "Completion Date": "01/01/2026",
+    "Prezzo Corrente ($)": 1.11,
+    "Prezzo Acquisto ($)": 1.2,
+    "Capitale Investito ($)": 5000,
+    guidance_calendar_catalyst: true,
+  };
+
+  it("does not put LCTX-like catalyst rows in Portfolio without a book buy", () => {
+    expect(sidecarCountsAsPortfolioHolding(lctxRow, {})).toBe(false);
+    const alerts = detectPortfolioPositionAlerts(simTable([lctxRow]), {}, []);
+    expect(alerts.map((a) => a.ticker)).not.toContain("LCTX");
+  });
+
+  it("still lists a catalyst ticker after a real Register Buy", () => {
+    const inputs: InvestSimInputs = {
+      "LCTX|2026-01-01": {
+        buyPrice: 1.2,
+        capital: 5000,
+        ignoreSheet: false,
+        investedAt: "2026-09-01T10:00:00.000Z",
+      },
+    };
+    expect(sidecarCountsAsPortfolioHolding(lctxRow, inputs)).toBe(true);
+    const alerts = detectPortfolioPositionAlerts(simTable([lctxRow]), inputs, []);
+    expect(alerts.map((a) => a.ticker)).toContain("LCTX");
   });
 });
 

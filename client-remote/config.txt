@@ -1,0 +1,8 @@
+# SuperNova — client remoto (Opzione A)
+# Gli aggiornamenti arrivano dal server: non serve reinstallare questo pacchetto.
+# Cambia solo l'URL se il tuo host è diverso.
+
+URL=http://91.99.15.48:8765/
+
+# Opzionale: apri la versione mobile tester invece del desktop pieno
+# URL=http://91.99.15.48:8765/mobile/

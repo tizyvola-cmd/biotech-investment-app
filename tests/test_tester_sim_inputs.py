@@ -39,7 +39,8 @@ def test_tester_sim_inputs_isolated_per_id(isolated_stores: Path) -> None:
     assert b["TKR|2026-01-01"]["capital"] == 500
 
 
-def test_pending_tester_cannot_save_sim(isolated_stores: Path) -> None:
-    tf.register_tester("", email="pending@test.com", source="mobile")
-    with pytest.raises(ValueError, match="approvazione"):
-        tsi.save_sim_inputs("pending_at_test.com", {})
+def test_revoked_tester_cannot_save_sim(isolated_stores: Path) -> None:
+    meta = tf.register_tester("", email="pending@test.com", source="mobile")
+    tf.set_tester_status(meta["tester_id"], "revoked")
+    with pytest.raises(ValueError, match="revocato"):
+        tsi.save_sim_inputs(meta["tester_id"], {})

@@ -1,14 +1,18 @@
 import type { ModelCalibrationStateDoc } from "../data/modelLearningsData";
 import type { SignCurveDailyDoc } from "../data/signCurveDailyData";
 import type { CurveImpactCumulative } from "../data/signalCalibrationData";
+import type { MonitorEntry } from "./accuracyMetrics";
 import { buildSignAccuracyCurveView } from "./signAccuracyCurve";
 
 export type ModelStretchVerdict = "improved" | "worse" | "neutral" | "unknown";
+
+export type ModelStretchHistorySource = "recalibration" | "monitor" | "history";
 
 export type ModelStretchHistoryPoint = {
   label: string;
   calFactor: number;
   ts: string | null;
+  source: ModelStretchHistorySource;
 };
 
 export type RecalibScheduleKind = "completed" | "current" | "next" | "planned";
@@ -50,6 +54,7 @@ export type ModelStretchView = {
   calibRefreshDays: number;
   outcomePoints: ModelStretchOutcomePoint[];
   hasOutcomeChart: boolean;
+  lastStretchIso: string | null;
 };
 
 function parseCalFactorV4(cf: Record<string, number | null> | undefined): number | null {
@@ -138,32 +143,100 @@ export function buildRecalibSchedule(
   return items;
 }
 
+/**
+ * Threshold (in pp) beyond which a regression on price accuracy or sign hit
+ * is considered "material". A stretch that regresses sign hit by ≥ this much
+ * can never be classified as "improved" — sign hit is the harder-to-move,
+ * decision-relevant metric (a well-fit curve on the wrong side of zero still
+ * loses money).
+ */
+export const STRETCH_SIGN_REGRESSION_TOLERANCE_PP = 2;
+export const STRETCH_PRICE_REGRESSION_TOLERANCE_PP = 2;
+
+/**
+ * Extra weight applied to `signDelta` in the borderline aggregate score.
+ * Sign hit is roughly 1.5× as important as price accuracy for downstream
+ * P&L outcomes on directional bets.
+ */
+const SIGN_HIT_WEIGHT = 1.5;
+
 function resolveVerdict(priceDelta: number | null, signDelta: number | null): ModelStretchVerdict {
   if (priceDelta == null && signDelta == null) return "unknown";
-  const sum = (priceDelta ?? 0) + (signDelta ?? 0);
-  if (sum >= 1) return "improved";
-  if (sum <= -1) return "worse";
+
+  const pd = priceDelta ?? 0;
+  const sd = signDelta ?? 0;
+
+  const signRegressed = sd <= -STRETCH_SIGN_REGRESSION_TOLERANCE_PP;
+  const priceRegressed = pd <= -STRETCH_PRICE_REGRESSION_TOLERANCE_PP;
+  const signImproved = sd >= 1;
+  const priceImproved = pd >= 1;
+
+  if (signRegressed && priceRegressed) return "worse";
+  if (signRegressed) return priceImproved || signImproved ? "neutral" : "worse";
+  if (priceRegressed) return signImproved ? "neutral" : "worse";
+  if (signImproved && priceImproved) return "improved";
+
+  const weighted = pd + SIGN_HIT_WEIGHT * sd;
+  if (weighted >= 2) return "improved";
+  if (weighted <= -2) return "worse";
   return "neutral";
 }
 
-function buildHistory(calibState: ModelCalibrationStateDoc | null | undefined): ModelStretchHistoryPoint[] {
-  if (!calibState) return [];
-  const out: ModelStretchHistoryPoint[] = [];
-  for (const h of calibState.history ?? []) {
-    const cf = parseCalFactorV4(h.cal_factor);
-    if (cf == null) continue;
-    out.push({ label: dayLabel(h.timestamp), calFactor: cf, ts: h.timestamp ?? null });
-  }
-  const curCf = parseCalFactorV4(calibState.current?.cal_factor);
-  if (curCf != null) {
-    const curTs = calibState.current?.timestamp ?? null;
-    const curLabel = dayLabel(curTs ?? undefined);
-    const last = out[out.length - 1];
-    if (!last || last.calFactor !== curCf) {
-      out.push({ label: curLabel, calFactor: curCf, ts: curTs });
+function buildHistory(
+  calibState: ModelCalibrationStateDoc | null | undefined,
+  monitorEntries: MonitorEntry[] = [],
+): ModelStretchHistoryPoint[] {
+  const byLabel = new Map<string, ModelStretchHistoryPoint>();
+  const sourceRank: Record<ModelStretchHistorySource, number> = {
+    monitor: 1,
+    history: 2,
+    recalibration: 3,
+  };
+
+  const upsert = (pt: ModelStretchHistoryPoint) => {
+    const existing = byLabel.get(pt.label);
+    if (!existing || sourceRank[pt.source] >= sourceRank[existing.source]) {
+      byLabel.set(pt.label, pt);
+    }
+  };
+
+  if (calibState) {
+    for (const h of calibState.history ?? []) {
+      const cf = parseCalFactorV4(h.cal_factor);
+      if (cf == null) continue;
+      upsert({
+        label: dayLabel(h.timestamp),
+        calFactor: cf,
+        ts: h.timestamp ?? null,
+        source: "history",
+      });
+    }
+    const curCf = parseCalFactorV4(calibState.current?.cal_factor);
+    if (curCf != null) {
+      const curTs = calibState.current?.timestamp ?? null;
+      upsert({
+        label: dayLabel(curTs ?? undefined),
+        calFactor: curCf,
+        ts: curTs,
+        source: "recalibration",
+      });
     }
   }
-  return out;
+
+  for (const ent of monitorEntries) {
+    const cf = ent.calFactorV4;
+    if (cf == null || !Number.isFinite(cf)) continue;
+    const label = dayLabel(ent.runIso);
+    if (!label || label === "—") continue;
+    upsert({
+      label,
+      calFactor: cf,
+      ts: ent.runIso,
+      source: ent.recalibrated ? "recalibration" : "monitor",
+    });
+  }
+
+  return [...byLabel.values()].sort((a, b) => a.label.localeCompare(b.label));
 }
 
 function fromSignCurve(
@@ -263,8 +336,9 @@ export function buildModelStretchView(
   signCurveDaily: SignCurveDailyDoc | null | undefined,
   summaryDoc: Parameters<typeof buildSignAccuracyCurveView>[0],
   curveImpact?: CurveImpactCumulative | null | undefined,
+  monitorEntries: MonitorEntry[] = [],
 ): ModelStretchView {
-  const history = buildHistory(calibState);
+  const history = buildHistory(calibState, monitorEntries);
   const recalibSchedule = buildRecalibSchedule(calibState, history);
   const currentCf =
     parseCalFactorV4(calibState?.current?.cal_factor) ??
@@ -307,6 +381,7 @@ export function buildModelStretchView(
     calibRefreshDays: DEFAULT_CALIB_REFRESH_DAYS,
     outcomePoints: fromSign.outcomePoints,
     hasOutcomeChart: fromSign.hasOutcomeChart,
+    lastStretchIso: history.length ? history[history.length - 1]?.ts ?? null : null,
   };
 }
 

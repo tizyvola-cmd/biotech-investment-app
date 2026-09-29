@@ -50,7 +50,6 @@ describe("watchZoneEntryPolicy", () => {
       watchPrecatProbOverride({
         daysToCd: 110,
         probPct: 63,
-        matchPct: 78,
         precatKind: "too_early",
         targetProvisional: true,
       }),
@@ -59,13 +58,12 @@ describe("watchZoneEntryPolicy", () => {
       watchPrecatProbOverride({
         daysToCd: 110,
         probPct: 63,
-        matchPct: 78,
         precatKind: "too_early",
       }),
     ).toBe(false);
   });
 
-  it("CCCC-like qualifies via timing bypass (strong match + provisional + daily)", () => {
+  it("CCCC-like qualifies via timing bypass (provisional + daily momentum)", () => {
     const simRow = { "R²": 0.7, "Affidabilità %": 72 };
     const q = qualifiesWatchZoneEnter({
       daysToCd: 110,

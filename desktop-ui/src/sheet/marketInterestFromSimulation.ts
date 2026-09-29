@@ -17,6 +17,11 @@ function parseNum(v: unknown): number | null {
   return Number.isFinite(n) ? n : null;
 }
 
+/**
+ * Returns the first row value whose key matches ANY of the keywords.
+ * Kept for backward compat with legacy alt-name lookups like
+ * `findCol(row, "slope≈5", "slope5")` where the caller passes variants.
+ */
 function findCol(row: Record<string, unknown>, ...keywords: string[]): unknown {
   for (const kw of keywords) {
     const lo = kw.toLowerCase();
@@ -26,25 +31,75 @@ function findCol(row: Record<string, unknown>, ...keywords: string[]): unknown {
   return undefined;
 }
 
-function readDeltaPricePct5d(row: Record<string, unknown>): { pct: number; source: string } {
+/**
+ * Returns the first row value whose key contains ALL of the keywords.
+ * Use for narrow lookups like "Var. 1M" where matching "var." alone would
+ * grab the wrong column (e.g. "Var. Giorn. %").
+ */
+function findColAll(row: Record<string, unknown>, ...keywords: string[]): unknown {
+  const los = keywords.map((k) => k.toLowerCase());
+  const key = Object.keys(row).find((k) => {
+    const lk = k.toLowerCase();
+    return los.every((kw) => lk.includes(kw));
+  });
+  return key ? row[key] : undefined;
+}
+
+/**
+ * ΔP % on ~5-day horizon used as MII input.
+ *
+ * Preferred: 50/50 blend of the short-term (weekly) and multi-week
+ * (monthly-scaled) signals. Rationale:
+ *
+ *  • Pure monthly (previous behavior) is too slow for biotech catalysts —
+ *    e.g. ERNA closed +11% on a positive preclinical readout, but Var.1M
+ *    was still −11% (dragged by the 4-week drawdown before the catalyst),
+ *    so MII showed −28° when the market clearly turned positive.
+ *
+ *  • Pure weekly (5-day slope × 5) is too noisy for a multi-week thesis —
+ *    e.g. MSLE +60% over 1M with RSI 75; a −2.3 slope on the 5-day
+ *    ipercomprato retrace would flip MII to −38° and hide a genuine
+ *    uptrend still worth watching.
+ *
+ * The 50/50 blend keeps ~half the memory of the monthly trend while
+ * letting the weekly slope pull the signal within 5-7 trading days when a
+ * regime change happens. On the current 50-ticker universe this reduces
+ * mean |Δ°| vs pure-monthly from 16° (weekly) to ~8°, and drops sign
+ * flips from 17 to ~7.
+ *
+ * Fallback chain (when a source is missing):
+ *   1. slope5 + Var.1M  → blend
+ *   2. Var.1M only      → monthly-scaled (legacy)
+ *   3. slope5 only      → weekly-scaled
+ *   4. Var. Giorn only  → daily × 5 (very noisy — kept as last resort)
+ */
+export function readDeltaPricePct5d(row: Record<string, unknown>): { pct: number; source: string } {
   const daily =
     parseNum(row["Var. Giorn. %"]) ??
     parseNum(row["Var. Giorn.%"]) ??
-    parseNum(findCol(row, "var.", "giorn"));
-  const var1m = parseNum(row["Var. 1M %"]) ?? parseNum(findCol(row, "var.", "1m"));
+    parseNum(findColAll(row, "var.", "giorn"));
+  const var1m =
+    parseNum(row["Var. 1M %"]) ?? parseNum(findColAll(row, "var.", "1m"));
+  const slope5 = parseNum(findCol(row, "slope≈5", "slope5"));
 
-  if (var1m != null) {
-    return { pct: round2((var1m * 5) / 22), source: "Var.1M→5d" };
+  const weeklyPct = slope5 != null ? slope5 * 5 : null;
+  const monthlyPct = var1m != null ? (var1m * 5) / 22 : null;
+
+  if (weeklyPct != null && monthlyPct != null) {
+    return {
+      pct: round2((weeklyPct + monthlyPct) / 2),
+      source: "50%·slope5d + 50%·Var.1M→5d",
+    };
+  }
+  if (monthlyPct != null) {
+    return { pct: round2(monthlyPct), source: "Var.1M→5d (slope5d n/a)" };
+  }
+  if (weeklyPct != null) {
+    return { pct: round2(weeklyPct), source: "slope5d×5 (Var.1M n/a)" };
   }
   if (daily != null) {
-    return { pct: round2(daily * 5), source: "Var.giorn×5" };
+    return { pct: round2(daily * 5), source: "Var.giorn×5 (fallback)" };
   }
-
-  const slope5 = parseNum(findCol(row, "slope≈5", "slope5"));
-  if (slope5 != null) {
-    return { pct: round2(slope5 * 5), source: "slope5d×5" };
-  }
-
   return { pct: 0, source: "missing" };
 }
 

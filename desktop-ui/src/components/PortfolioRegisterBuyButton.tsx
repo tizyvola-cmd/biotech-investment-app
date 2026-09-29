@@ -1,7 +1,10 @@
 import { useState } from "react";
 import { useT } from "../shared/i18n";
 
-export type PortfolioRegisterBuyHandler = (key: string) => void;
+export type PortfolioRegisterBuyHandler = (
+  key: string,
+  capitalEur?: number,
+) => boolean | void;
 
 /** Register an off-portfolio opportunity as an open Simulation position (capital + buy price). */
 export function PortfolioRegisterBuyButton({
@@ -33,7 +36,8 @@ export function PortfolioRegisterBuyButton({
     if (!ok) return;
     setBusy(true);
     try {
-      onRegisterBuy(simKey);
+      // Handler shows its own alerts on failure (already open / no price / persist).
+      onRegisterBuy(simKey, eur);
     } finally {
       setBusy(false);
     }

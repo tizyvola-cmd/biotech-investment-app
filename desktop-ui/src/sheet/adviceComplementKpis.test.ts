@@ -1,7 +1,9 @@
 import { describe, expect, it } from "vitest";
 import {
   buildAdviceComplementKpis,
+  computeCapturePct,
   computePaperRecCapture,
+  sanitizeStoredCapturePct,
   summarizeClosedPnlAdvice,
 } from "./adviceComplementKpis";
 import { buildUnifiedAdviceSuccess } from "./unifiedAdviceSuccess";
@@ -9,6 +11,7 @@ import type { AdviceCalibrationSummary } from "./investDecisionSimAdviceCalibrat
 
 const liveAdvice: AdviceCalibrationSummary = {
   lowProb: { count: 0, good: 0, bad: 0, successRatePct: null },
+  midProb: { count: 0, good: 0, bad: 0, successRatePct: null },
   highProb: { count: 4, good: 4, bad: 0, successRatePct: 100 },
   scoredCount: 13,
   pendingCount: 3,
@@ -30,6 +33,15 @@ describe("adviceComplementKpis", () => {
     });
     expect(cap.potentialEur).toBe(350);
     expect(cap.capturePct).toBe(100);
+  });
+
+  it("returns null capture when potential is negative or ratio is extreme", () => {
+    expect(computeCapturePct(-55, -1)).toBeNull();
+    expect(computeCapturePct(500, 200)).toBeNull();
+    expect(computeCapturePct(100, 30)).toBeNull();
+    expect(sanitizeStoredCapturePct(-5523.9)).toBeNull();
+    expect(sanitizeStoredCapturePct(235.5)).toBeNull();
+    expect(sanitizeStoredCapturePct(64.3)).toBe(64.3);
   });
 
   it("summarizes closed paper deals win rate", () => {

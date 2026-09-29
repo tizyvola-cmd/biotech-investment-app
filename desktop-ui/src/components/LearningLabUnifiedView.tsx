@@ -33,6 +33,7 @@ import {
   type FamilyHealthCounts,
   type LearningFamily,
   type LearningHealthOverview,
+  type LearningMonitorTier,
   type LearningVerdict,
   type LearningWeeklyMetric,
   type LoopActionResult,
@@ -41,6 +42,10 @@ import {
 import { AppModal } from "./AppModal";
 import { LoopWeeklyMetricSparkline } from "./LearningLabAuditLogPanel";
 import { useLang } from "../shared/i18n";
+
+function loopTier(lp: LoopWithStatus): LearningMonitorTier {
+  return lp.monitor_tier ?? "core";
+}
 
 const FAMILY_ORDER: LearningFamily[] = [
   "A_magnitude",
@@ -147,6 +152,10 @@ export function LearningLabUnifiedView({
   const [error, setError] = useState<string | null>(null);
   const [selectedLoopId, setSelectedLoopId] = useState<string | null>(null);
   const [familyFilter, setFamilyFilter] = useState<LearningFamily | "all">("all");
+  /** Diagnostic (D-family reporting) collapsed by default — no auto-tune. */
+  const [showDiagnostic, setShowDiagnostic] = useState(false);
+  /** Retired orphans hidden by default. */
+  const [showRetired, setShowRetired] = useState(false);
 
   useEffect(() => {
     let cancelled = false;
@@ -170,6 +179,24 @@ export function LearningLabUnifiedView({
     };
   }, [reloadToken]);
 
+  const visibleLoops = useMemo(() => {
+    return loops.filter((lp) => {
+      const tier = loopTier(lp);
+      if (tier === "retired") return showRetired;
+      if (tier === "diagnostic") return showDiagnostic;
+      return true;
+    });
+  }, [loops, showDiagnostic, showRetired]);
+
+  const retiredCount = useMemo(
+    () => loops.filter((lp) => loopTier(lp) === "retired").length,
+    [loops],
+  );
+  const diagnosticCount = useMemo(
+    () => loops.filter((lp) => loopTier(lp) === "diagnostic").length,
+    [loops],
+  );
+
   const grouped = useMemo(() => {
     const out: Record<LearningFamily, LoopWithStatus[]> = {
       A_magnitude: [],
@@ -177,9 +204,22 @@ export function LearningLabUnifiedView({
       C_portfolio: [],
       D_monitoring: [],
     };
-    for (const lp of loops) out[lp.family].push(lp);
+    for (const lp of visibleLoops) out[lp.family].push(lp);
     return out;
-  }, [loops]);
+  }, [visibleLoops]);
+
+  const stalledLoops = useMemo(() => {
+    const alertIds = new Set(health?.alert_stalled_ids ?? []);
+    return visibleLoops.filter((lp) => {
+      const tier = loopTier(lp);
+      if (tier === "diagnostic" || tier === "retired") return false;
+      if (alertIds.size > 0) return alertIds.has(lp.id);
+      return (
+        lp.status.verdict === "stalled" ||
+        (typeof lp.status.stale_days === "number" && lp.status.stale_days > 30)
+      );
+    });
+  }, [visibleLoops, health?.alert_stalled_ids]);
 
   const selectedLoop = useMemo(
     () => loops.find((l) => l.id === selectedLoopId) ?? null,
@@ -202,8 +242,8 @@ export function LearningLabUnifiedView({
             </h2>
             <p className="text-[11px] text-ink-muted">
               {it
-                ? `Tutti i ${loops.length || "—"} loop di learning del sistema in un colpo solo`
-                : `All ${loops.length || "—"} learning loops in one place`}
+                ? `${visibleLoops.length} loop in vista · ${loops.length} nel registro`
+                : `${visibleLoops.length} loops shown · ${loops.length} in registry`}
               {health?.newest_run_at
                 ? ` · ${it ? "ultimo run" : "newest run"} ${timeAgo(health.newest_run_at, it)}`
                 : ""}
@@ -220,26 +260,68 @@ export function LearningLabUnifiedView({
             {it ? "Errore caricamento" : "Load error"}: {error}
           </div>
         )}
+        {stalledLoops.length > 0 && (
+          <div className="mt-2 rounded border border-rose-300/60 bg-rose-50/50 dark:bg-rose-900/20 px-2 py-1 text-[11px] text-rose-700 dark:text-rose-200">
+            <strong>
+              ⏱ {stalledLoops.length} {it ? "loop core fermi" : "core loops stalled"}
+            </strong>{" "}
+            {it
+              ? "— i file di stato locali/VPS non si aggiornano entro la tolleranza. Sul VPS: cron WeeklyFull + post_refresh_steps. Su desktop locale: sync data/ dal server se il ciclo VPS è ok."
+              : "— local/VPS state files are past cadence. On VPS: WeeklyFull cron + post_refresh_steps. On local desktop: sync data/ from the server if the VPS cycle is healthy."}
+            <span className="block mt-0.5 text-[10px] font-mono opacity-80">
+              {stalledLoops
+                .slice(0, 6)
+                .map(
+                  (lp) =>
+                    `${lp.id}(${lp.status.stale_days ?? "?"}d)`,
+                )
+                .join(" · ")}
+              {stalledLoops.length > 6 ? " …" : ""}
+            </span>
+          </div>
+        )}
         {health && (
           <div className="mt-3 flex flex-wrap items-center gap-2 text-[10.5px]">
             <FilterChip
               active={familyFilter === "all"}
               onClick={() => setFamilyFilter("all")}
-              label={it ? `Tutti · ${loops.length}` : `All · ${loops.length}`}
+              label={it ? `Vista · ${visibleLoops.length}` : `Shown · ${visibleLoops.length}`}
             />
-            {health.by_family.map((fc) => (
+            {health.by_family
+              .filter((fc) => fc.family !== "D_monitoring" || showDiagnostic)
+              .map((fc) => (
               <FilterChip
                 key={fc.family}
                 active={familyFilter === fc.family}
                 onClick={() =>
                   setFamilyFilter(familyFilter === fc.family ? "all" : fc.family)
                 }
-                label={`${familyShort(fc.family)} · ${fc.total}`}
+                label={`${familyShort(fc.family, it)} · ${fc.total}`}
                 detail={
                   <FamilyHealthMini fc={fc} it={it} />
                 }
               />
             ))}
+            {diagnosticCount > 0 && (
+              <FilterChip
+                active={showDiagnostic}
+                onClick={() => setShowDiagnostic((v) => !v)}
+                label={
+                  it
+                    ? `Diagnostica · ${diagnosticCount}`
+                    : `Diagnostic · ${diagnosticCount}`
+                }
+              />
+            )}
+            {retiredCount > 0 && (
+              <FilterChip
+                active={showRetired}
+                onClick={() => setShowRetired((v) => !v)}
+                label={
+                  it ? `Ritirati · ${retiredCount}` : `Retired · ${retiredCount}`
+                }
+              />
+            )}
           </div>
         )}
       </header>
@@ -263,8 +345,10 @@ export function LearningLabUnifiedView({
             ))}
           </div>
 
-          {/* Monitoring family — usually less critical, in its own row */}
-          {(familyFilter === "all" || familyFilter === "D_monitoring") && (
+          {/* Monitoring family — diagnostic tier; opt-in via chip */}
+          {showDiagnostic &&
+            (familyFilter === "all" || familyFilter === "D_monitoring") &&
+            grouped.D_monitoring.length > 0 && (
             <FamilyColumn
               family="D_monitoring"
               loops={grouped.D_monitoring}
@@ -280,7 +364,7 @@ export function LearningLabUnifiedView({
       <AppModal
         open={selectedLoop !== null}
         onClose={() => setSelectedLoopId(null)}
-        aria-label="Loop detail"
+        aria-label={it ? "Dettaglio loop" : "Loop detail"}
         panelClassName="max-w-2xl w-full"
       >
         {selectedLoop && (
@@ -349,16 +433,16 @@ function FamilyHealthMini({
   );
 }
 
-function familyShort(f: LearningFamily): string {
+function familyShort(f: LearningFamily, it = false): string {
   switch (f) {
     case "A_magnitude":
-      return "A · Magnitudo";
+      return it ? "A · Magnitudo" : "A · Magnitude";
     case "B_pre_cd":
       return "B · Pre-CD";
     case "C_portfolio":
-      return "C · Portafoglio";
+      return it ? "C · Portafoglio" : "C · Portfolio";
     case "D_monitoring":
-      return "D · Monitor";
+      return it ? "D · Monitor" : "D · Monitor";
   }
 }
 
@@ -429,6 +513,24 @@ function LoopCard({
   const isPlanned = loop.planned;
   const isFrontend = loop.schedule === "frontend_localstorage";
   const isOrphan = !!loop.inactive_reason;
+  const tier = loopTier(loop);
+  // Show a "stale" chip when a scheduled loop hasn't refreshed within its
+  // expected cadence. Threshold mirrors the backend `_annotate_staleness`
+  // tolerance so the chip appears exactly when the verdict flips to
+  // "stalled" (weekly → 10d, daily → 3d, every-refresh → 2d, every-30d → 45d).
+  const staleDays = loop.status.stale_days ?? null;
+  const staleThreshold =
+    loop.schedule === "weekly_sunday"
+      ? 10
+      : loop.schedule === "post_refresh_daily"
+        ? 3
+        : loop.schedule === "every_refresh" || loop.schedule === "every_pred_live"
+          ? 2
+          : loop.schedule === "every_30_days"
+            ? 45
+            : null;
+  const isStale =
+    staleDays !== null && staleThreshold !== null && staleDays > staleThreshold;
 
   return (
     <button
@@ -479,6 +581,24 @@ function LoopCard({
           </span>
         </div>
         <div className="flex flex-col items-end gap-0.5">
+          {tier !== "core" && (
+            <span
+              className="text-[9px] bg-slate-100 text-slate-600 dark:bg-slate-900/40 dark:text-slate-300 px-1.5 rounded"
+              title={tier}
+            >
+              {tier === "retired"
+                ? it
+                  ? "ritirato"
+                  : "retired"
+                : tier === "diagnostic"
+                  ? it
+                    ? "diagn."
+                    : "diag."
+                  : it
+                    ? "sec."
+                    : "sec."}
+            </span>
+          )}
           {isPlanned && (
             <span className="text-[9px] bg-violet-100 text-violet-700 dark:bg-violet-900/40 dark:text-violet-200 px-1.5 rounded">
               ★ {it ? "in arrivo" : "planned"}
@@ -498,6 +618,18 @@ function LoopCard({
               title={loop.inactive_reason ?? ""}
             >
               ⚠ {it ? "orfano" : "orphan"}
+            </span>
+          )}
+          {isStale && (
+            <span
+              className="text-[9px] bg-rose-100 text-rose-800 dark:bg-rose-900/40 dark:text-rose-200 px-1.5 rounded"
+              title={
+                it
+                  ? `Loop fermo da ${staleDays} giorni (atteso entro ${staleThreshold} per cadenza "${schedule.it}"). Il ciclo settimanale non gira o fallisce silenziosamente.`
+                  : `Loop stalled for ${staleDays} days (expected within ${staleThreshold} for cadence "${schedule.en}"). The scheduled cycle isn't running or is failing silently.`
+              }
+            >
+              ⏱ {staleDays}d
             </span>
           )}
         </div>
@@ -573,7 +705,7 @@ function LoopDetail({
         <div className="min-w-0">
           <div className="flex items-center gap-2 mb-1">
             <span className="text-[9.5px] uppercase tracking-wider text-ink-muted font-semibold">
-              {familyShort(loop.family)}
+              {familyShort(loop.family, it)}
             </span>
             <span
               className={`inline-flex items-center rounded px-1.5 py-0.5 text-[9.5px] font-medium ${VERDICT_TONE[verdict]}`}
@@ -588,7 +720,7 @@ function LoopDetail({
           type="button"
           onClick={onClose}
           className="text-ink-muted hover:text-ink text-lg leading-none p-1"
-          aria-label="Close"
+          aria-label={it ? "Chiudi" : "Close"}
         >
           ×
         </button>
@@ -606,6 +738,12 @@ function LoopDetail({
           {loop.status.last_run_at && (
             <span className="text-[9.5px] text-ink-muted/70 ml-1">
               ({loop.status.last_run_at.replace("T", " ").replace("+00:00", " UTC")})
+            </span>
+          )}
+          {typeof loop.status.stale_days === "number" && loop.status.stale_days > 0 && (
+            <span className="text-[9.5px] text-ink-muted/70 ml-1">
+              · {loop.status.stale_days}
+              {it ? " gg fa" : "d ago"}
             </span>
           )}
         </DetailField>
@@ -634,7 +772,7 @@ function LoopDetail({
           <div className="flex flex-wrap gap-1.5">
             {loop.has_preview ? (
               <button type="button" className="btn-ghost text-xs" disabled={actionBusy} onClick={() => void runAction("preview")}>
-                Preview
+                {it ? "Anteprima" : "Preview"}
               </button>
             ) : null}
             {loop.has_apply ? (
@@ -644,7 +782,7 @@ function LoopDetail({
             ) : null}
             {loop.has_reset ? (
               <button type="button" className="btn-ghost text-xs text-negative" disabled={actionBusy} onClick={() => void runAction("reset")}>
-                Reset
+                {it ? "Ripristina" : "Reset"}
               </button>
             ) : null}
           </div>

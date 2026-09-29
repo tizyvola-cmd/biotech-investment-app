@@ -1,0 +1,173 @@
+{
+  "id": "patent/JP7826319B2/en",
+  "rank": 0,
+  "patent": {
+    "title": " Antibody compositions and methods of use thereof",
+    "snippet": " (i) (a) about 120 mg/mL nivolumab; (b) about 20 mM histidine; (c) about 250 mM sucrose; (d) about 0.05% w/v polysorbate 80; (e) about 50 μM pentetic acid; (f) about 5 mM methionine, and (g) about 2000 U/mL rHuPH20; or (ii) (a) about 150 mg/mL nivolumab; (b) about 20 mM histidine; (c) about 250 mM &hellip;",
+    "priority_date": "2020-12-28",
+    "filing_date": "2021-12-27",
+    "grant_date": "2026-03-09",
+    "publication_date": "2026-03-09",
+    "inventor": "フアン，マサノ",
+    "assignee": "ブリストル－マイヤーズ スクイブ カンパニー",
+    "publication_number": "JP7826319B2",
+    "language": "en",
+    "thumbnail": "",
+    "pdf": "",
+    "family_metadata": {
+      "aggregated": {
+        "country_status": [
+          {
+            "country_code": "WO",
+            "best_patent_stage": {
+              "state": "NOT_ACTIVE"
+            }
+          },
+          {
+            "country_code": "EP",
+            "best_patent_stage": {
+              "state": "ACTIVE"
+            }
+          },
+          {
+            "country_code": "US",
+            "best_patent_stage": {
+              "state": "ACTIVE"
+            }
+          },
+          {
+            "country_code": "JP",
+            "best_patent_stage": {
+              "state": "ACTIVE"
+            }
+          },
+          {
+            "country_code": "KR",
+            "best_patent_stage": {
+              "state": "ACTIVE"
+            }
+          },
+          {
+            "country_code": "AU",
+            "best_patent_stage": {
+              "state": "ACTIVE"
+            }
+          },
+          {
+            "country_code": "CA",
+            "best_patent_stage": {
+              "state": "ACTIVE"
+            }
+          },
+          {
+            "country_code": "CL",
+            "best_patent_stage": {
+              "state": "UNKNOWN"
+            }
+          },
+          {
+            "country_code": "CO",
+            "best_patent_stage": {
+              "state": "UNKNOWN"
+            }
+          },
+          {
+            "country_code": "DK",
+            "best_patent_stage": {
+              "state": "ACTIVE"
+            }
+          },
+          {
+            "country_code": "ES",
+            "best_patent_stage": {
+              "state": "ACTIVE"
+            }
+          },
+          {
+            "country_code": "FI",
+            "best_patent_stage": {
+              "state": "ACTIVE"
+            }
+          },
+          {
+            "country_code": "HR",
+            "best_patent_stage": {
+              "state": "UNKNOWN"
+            }
+          },
+          {
+            "country_code": "HU",
+            "best_patent_stage": {
+              "state": "UNKNOWN"
+            }
+          },
+          {
+            "country_code": "IL",
+            "best_patent_stage": {
+              "state": "UNKNOWN"
+            }
+          },
+          {
+            "country_code": "LT",
+            "best_patent_stage": {
+              "state": "UNKNOWN"
+            }
+          },
+          {
+            "country_code": "MX",
+            "best_patent_stage": {
+              "state": "UNKNOWN"
+            }
+          },
+          {
+            "country_code": "PE",
+            "best_patent_stage": {
+              "state": "UNKNOWN"
+            }
+          },
+          {
+            "country_code": "PL",
+            "best_patent_stage": {
+              "state": "UNKNOWN"
+            }
+          },
+          {
+            "country_code": "PT",
+            "best_patent_stage": {
+              "state": "UNKNOWN"
+            }
+          },
+          {
+            "country_code": "RS",
+            "best_patent_stage": {
+              "state": "UNKNOWN"
+            }
+          },
+          {
+            "country_code": "SI",
+            "best_patent_stage": {
+              "state": "UNKNOWN"
+            }
+          },
+          {
+            "country_code": "SM",
+            "best_patent_stage": {
+              "state": "UNKNOWN"
+            }
+          },
+          {
+            "country_code": "TW",
+            "best_patent_stage": {
+              "state": "UNKNOWN"
+            }
+          }
+        ]
+      }
+    }
+  },
+  "is_similar_document": false,
+  "entity_matches": {
+    "additional": 0
+  },
+  "measure_matches": {}
+}

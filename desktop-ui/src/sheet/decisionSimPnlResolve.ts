@@ -135,13 +135,19 @@ export function looksLikeOpenMtmCatchUpCliff(
   return false;
 }
 
+function stabilizedOpenMtmForRamp(openMtmLive: number): number {
+  const abs = Math.abs(openMtmLive);
+  const step = Math.max(300, abs * 0.08);
+  return roundSimPnlEur(Math.round(openMtmLive / step) * step);
+}
+
 function rampHistTotalsToLive<T extends DecisionSimPnlSeriesPoint>(
   points: T[],
   histIndices: number[],
   liveTotal: number,
   liveClosed: number,
 ): T[] {
-  const openMtmLive = roundSimPnlEur(liveTotal - liveClosed);
+  const openMtmLive = stabilizedOpenMtmForRamp(roundSimPnlEur(liveTotal - liveClosed));
   const span = histIndices.length - 1;
 
   return points.map((p, i) => {
@@ -244,6 +250,53 @@ export type DecisionSimPnlSeriesPoint = {
   isLive?: boolean;
 };
 
+function updateLiveTailOnly<T extends DecisionSimPnlSeriesPoint>(
+  points: T[],
+  liveTotal: number,
+  liveClosed: number,
+): T[] {
+  return points.map((p) => {
+    if (!p.isLive) return p;
+    const closed =
+      p.closedPnlEur != null && Number.isFinite(p.closedPnlEur)
+        ? p.closedPnlEur
+        : liveClosed;
+    return {
+      ...p,
+      totalPnlEur: roundSimPnlEur(liveTotal),
+      openMtmEur: roundSimPnlEur(liveTotal - closed),
+    };
+  });
+}
+
+/** After an open-MTM ramp, only refresh the live tail unless the gap re-opens. */
+function shouldSkipReRamp<T extends DecisionSimPnlSeriesPoint>(
+  lastHist: T,
+  liveTotal: number,
+): boolean {
+  if (!historyAlreadyOpenMtmDistributed(lastHist)) return false;
+  const gap = Math.abs(liveTotal - (lastHist.totalPnlEur ?? 0));
+  return gap <= Math.max(400, Math.abs(liveTotal) * 0.12 + 200);
+}
+
+function historyAlreadyOpenMtmDistributed<T extends DecisionSimPnlSeriesPoint>(
+  lastHist: T,
+): boolean {
+  const closed =
+    lastHist.closedPnlEur != null && Number.isFinite(lastHist.closedPnlEur)
+      ? lastHist.closedPnlEur
+      : (lastHist.cumulativeRealizedEur ?? lastHist.totalPnlEur ?? 0);
+  const total = lastHist.totalPnlEur ?? 0;
+  const open =
+    lastHist.openMtmEur != null && Number.isFinite(lastHist.openMtmEur)
+      ? lastHist.openMtmEur
+      : roundSimPnlEur(total - closed);
+  return (
+    Math.abs(open) > Math.max(150, Math.abs(total) * 0.06) &&
+    Math.abs(roundSimPnlEur(total - closed)) > 50
+  );
+}
+
 /** Spread stale→live catch-up across tick history (Decision Sim + maturation charts). */
 export function sanitizeDecisionSimTimeSeries<T extends DecisionSimPnlSeriesPoint>(
   points: T[],
@@ -260,7 +313,9 @@ export function sanitizeDecisionSimTimeSeries<T extends DecisionSimPnlSeriesPoin
   for (let i = 0; i < points.length; i++) {
     if (!points[i]?.isLive) histIndices.push(i);
   }
-  if (histIndices.length < 2) return points;
+  if (histIndices.length < 2) {
+    return livePoint ? updateLiveTailOnly(points, liveTotal, livePoint.closedPnlEur ?? 0) : points;
+  }
 
   const lastHistIdx = histIndices[histIndices.length - 1]!;
   const lastHist = points[lastHistIdx]!;
@@ -278,6 +333,10 @@ export function sanitizeDecisionSimTimeSeries<T extends DecisionSimPnlSeriesPoin
           : lastHist.cumulativeRealizedEur) ??
         0);
 
+  if (shouldSkipReRamp(lastHist, liveTotal)) {
+    return updateLiveTailOnly(points, liveTotal, liveClosed);
+  }
+
   if (
     !looksLikeOpenMtmCatchUpCliff(
       lastHist.totalPnlEur,
@@ -286,7 +345,7 @@ export function sanitizeDecisionSimTimeSeries<T extends DecisionSimPnlSeriesPoin
       liveClosed,
     )
   ) {
-    return points;
+    return livePoint ? updateLiveTailOnly(points, liveTotal, liveClosed) : points;
   }
 
   return rampHistTotalsToLive(points, histIndices, liveTotal, liveClosed);

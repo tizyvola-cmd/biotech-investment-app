@@ -16,6 +16,7 @@ from __future__ import annotations
 import argparse
 import datetime as dt
 import logging
+import os
 import sys
 from pathlib import Path
 
@@ -63,18 +64,27 @@ def main() -> int:
     py = find_python()
     failures: list[str] = []
     try:
-        rc = run_step(
-            logger,
-            name="fetch_yfinance_quotes",
-            cmd=[py, "-u", "fetch_yfinance.py"],
-            timeout_min=25,
-            extra_env={
-                "YF_QUOTE_REFRESH_HOURS": "0.5",
-                "YF_CACHE_STICKY": "1",
-            },
-        )
-        if rc != 0:
-            failures.append(f"fetch_yfinance (exit {rc})")
+        from orch_refresh_gates import ran_within_minutes
+
+        yf_skip_min = float(os.environ.get("HOURLY_YF_SKIP_IF_WITHIN_MIN", "50"))
+        if ran_within_minutes("yfinance", yf_skip_min):
+            logger.info(
+                "SKIP fetch_yfinance — quote refresh recente (<%s min)",
+                yf_skip_min,
+            )
+        else:
+            rc = run_step(
+                logger,
+                name="fetch_yfinance_quotes",
+                cmd=[py, "-u", "fetch_yfinance.py"],
+                timeout_min=25,
+                extra_env={
+                    "YF_QUOTE_REFRESH_HOURS": os.environ.get("YF_QUOTE_REFRESH_HOURS", "1"),
+                    "YF_CACHE_STICKY": "1",
+                },
+            )
+            if rc != 0:
+                failures.append(f"fetch_yfinance (exit {rc})")
 
         try:
             from excel_sheet_reader import sync_yf_quotes_into_financial_snapshot
@@ -119,6 +129,21 @@ def main() -> int:
             logger.info("Manifest bump OK")
         except Exception as exc:
             failures.append(f"manifest ({exc})")
+
+        # Content-addressed CDN objects (+ optional R2 upload when env set).
+        try:
+            from cdn_snapshots import publish_local_objects, upload_objects_to_s3
+
+            doc = publish_local_objects()
+            s3 = upload_objects_to_s3(doc)
+            logger.info(
+                "CDN publish: %s files (new=%s) s3=%s",
+                len(doc.get("files") or {}),
+                doc.get("published_new"),
+                s3.get("skipped") and "skipped" or s3,
+            )
+        except Exception as exc:
+            logger.warning("CDN publish skipped: %s", exc)
     finally:
         release_lock(logger)
 

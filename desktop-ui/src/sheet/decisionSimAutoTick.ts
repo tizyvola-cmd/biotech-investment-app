@@ -1,4 +1,7 @@
 import type { ChartPoint, SheetTable } from "../types";
+import type { RegulatoryRiskSnapshot } from "../api/supernova";
+import type { LossRiskEntry } from "../components/LossRiskPoopCell";
+import type { LossRiskCatalog } from "../hooks/useLossRiskCatalog";
 import type { LossAnalysisProbOptions } from "./portfolioLossAnalysis";
 import type { InvestSimInputs } from "./investSimStorage";
 import { runDecisionSimTick, runDecisionSimMarkTick } from "./investDecisionSimLoop";
@@ -13,6 +16,7 @@ import {
 } from "./investDecisionSimStorage";
 import { buildDailySimLoopExecution } from "./simLoopDailyEvaluation";
 import { loadAdviceFeedback } from "./adviceFeedback";
+import { loadInvestSimHistory } from "./investSimStorage";
 import { publishSimLoopTradeAlerts } from "./simLoopTradeAlerts";
 import { scheduleGapInvestigationAfterTick } from "./gapInvestigationGate";
 import {
@@ -29,6 +33,10 @@ export type DecisionSimAutoTickContext = {
   pointsBySeriesKey: Map<string, ChartPoint[]>;
   lang: "it" | "en";
   probOptions: LossAnalysisProbOptions | null;
+  /** Same Soft SELL enhance inputs as Home Pulse / Cutoff. */
+  lossRiskCatalog?: LossRiskCatalog | null;
+  catalogByRowKey?: Map<string, LossRiskEntry> | null;
+  autoRegSnap?: RegulatoryRiskSnapshot | null;
 };
 
 let tickInFlight = false;
@@ -58,6 +66,10 @@ function buildAutoTickContext(
     badBuyScoredKeys: new Set(fresh.badBuyScoredKeys),
     adviceFeedback: loadAdviceFeedback(),
     simLoopExecution,
+    history: loadInvestSimHistory(),
+    lossRiskCatalog: ctx.lossRiskCatalog ?? null,
+    catalogByRowKey: ctx.catalogByRowKey ?? null,
+    autoRegSnap: ctx.autoRegSnap ?? null,
   };
 }
 
@@ -88,7 +100,12 @@ export async function tryRunDecisionSimAutoTick(ctx: DecisionSimAutoTickContext)
     };
 
     const pending = loadPendingSimTradeBatch();
-    if (pending && isPendingSimTradeDue(pending)) {
+    if (pending) {
+      if (!isPendingSimTradeDue(pending)) {
+        // Response window still open — do not re-mark / re-publish the same
+        // pending SELL/BUY alert (Close would appear broken if we re-queue it).
+        return false;
+      }
       const tick = runDecisionSimTick(tickCtx);
       appendDecisionSimTick(fresh, tick);
       scheduleGapInvestigationAfterTick(tick);
@@ -103,9 +120,10 @@ export async function tryRunDecisionSimAutoTick(ctx: DecisionSimAutoTickContext)
     appendDecisionSimMarkTick(fresh, markTick);
     scheduleGapInvestigationAfterTick(markTick);
 
+    // Preview against marked book so pending SELL P&L uses stamped MTM, not 0.
     const proposed = previewDecisionSimTrades(
       markTick.evaluations,
-      fresh.paperPortfolio,
+      markTick.portfolioAfter,
       markTick.at,
       fresh.config.capitalPerTrade,
       fresh.config.maxOpenPositions,
@@ -113,13 +131,22 @@ export async function tryRunDecisionSimAutoTick(ctx: DecisionSimAutoTickContext)
     );
 
     if (proposed.length) {
+      const before = loadPendingSimTradeBatch();
       const batch = stagePendingSimTrades(proposed, markTick.at);
-      publishSimLoopTradeAlerts(markTick, {
-        ...alertOpts,
-        pending: true,
-        executeAfter: batch?.executeAfter ?? null,
-        previewTrades: proposed,
-      });
+      // Only alert when a new pending batch is staged (not on signature dedupe).
+      const isNewBatch =
+        batch != null &&
+        (before == null ||
+          before.tradeSig !== batch.tradeSig ||
+          before.detectedAt !== batch.detectedAt);
+      if (batch && isNewBatch) {
+        publishSimLoopTradeAlerts(markTick, {
+          ...alertOpts,
+          pending: true,
+          executeAfter: batch.executeAfter ?? null,
+          previewTrades: proposed,
+        });
+      }
     }
 
     return true;

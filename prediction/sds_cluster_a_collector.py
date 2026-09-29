@@ -382,7 +382,7 @@ Question: Is this drug first-in-class for this specific mechanism of action in t
 Answer in JSON only, no other text:
 {{"first_in_class": true/false, "confidence": "high/medium/low", "reasoning": "one sentence max"}}"""
 
-    model = os.environ.get("SDS_FIC_CLAUDE_MODEL", "claude-sonnet-4-20250514")
+    model = os.environ.get("SDS_FIC_CLAUDE_MODEL", "claude-haiku-4-5-20251001")
     raw = ai_provider.call_ai(
         prompt,
         system="Reply with valid JSON only. No markdown.",

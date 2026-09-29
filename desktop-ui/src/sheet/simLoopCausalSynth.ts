@@ -35,13 +35,42 @@ function sellEventKey(at: string, rowKey: string): string {
   return `${at}\0${rowKey}`;
 }
 
-function equalSlotShare(opts: SimLoopCausalSynthOpts, openCount: number): number {
-  if (opts.totalCapitalEur <= 0) return 0;
+export function equalSlotSynthShare(
+  totalCapitalEur: number,
+  capitalPerTrade: number,
+  openCount: number,
+): number {
+  if (totalCapitalEur <= 0) return 0;
   if (openCount > 0) {
-    const perSlot = opts.capitalPerTrade / opts.totalCapitalEur;
+    const perSlot = capitalPerTrade / totalCapitalEur;
     if (Number.isFinite(perSlot) && perSlot > 0) return perSlot;
   }
   return 1;
+}
+
+function equalSlotShare(opts: SimLoopCausalSynthOpts, openCount: number): number {
+  return equalSlotSynthShare(opts.totalCapitalEur, opts.capitalPerTrade, openCount);
+}
+
+/** Synth pulse must list every open paper row — floor zero/missing Weight Sim Exp slots. */
+export function floorPaperBookSynthShares(
+  shares: Record<string, number>,
+  paperPortfolio: PaperPosition[],
+  opts: { totalCapitalEur: number; capitalPerTrade: number },
+): Record<string, number> {
+  const baseline = equalSlotSynthShare(
+    opts.totalCapitalEur,
+    opts.capitalPerTrade,
+    paperPortfolio.length,
+  );
+  const out = { ...shares };
+  for (const pos of paperPortfolio) {
+    const sh = out[pos.key];
+    if (sh == null || !Number.isFinite(sh) || sh <= 0) {
+      out[pos.key] = baseline;
+    }
+  }
+  return out;
 }
 
 export function movePctForPaperPosition(
@@ -95,6 +124,33 @@ export function rebalanceCausalSimLoopShares(
   const out: Record<string, number> = {};
   for (let i = 0; i < portfolio.length; i += 1) {
     out[portfolio[i]!.key] = result.shares[i] ?? baseline;
+  }
+  return out;
+}
+
+/** Open-book shares for live KPIs — respects static_approved vs causal_rebalance. */
+export function resolveLiveOpenShares(
+  portfolio: PaperPosition[],
+  evaluations: TickerSimEvaluation[],
+  opts: SimLoopCausalSynthOpts,
+  walk?: CausalSimLoopShareWalk | null,
+): Record<string, number> {
+  const mode = opts.sizingMode ?? "causal_rebalance";
+  if (mode === "causal_rebalance") {
+    return rebalanceCausalSimLoopShares(portfolio, evaluations, opts);
+  }
+
+  const out: Record<string, number> = {};
+  const frozen = walk?.frozenEntryShares ?? {};
+  for (const pos of portfolio) {
+    const fromFrozen = frozen[pos.key];
+    const fromStatic = opts.staticSharesByKey?.[pos.key];
+    out[pos.key] =
+      typeof fromFrozen === "number" && Number.isFinite(fromFrozen)
+        ? fromFrozen
+        : typeof fromStatic === "number" && Number.isFinite(fromStatic) && fromStatic >= 0
+          ? fromStatic
+          : equalSlotShare(opts, portfolio.length);
   }
   return out;
 }
@@ -218,7 +274,7 @@ export function causalOptsFromSizing(sizing: {
     totalCapitalEur: sizing.totalCapitalEur,
     capitalPerTrade: sizing.capitalPerTrade,
     targetGainEur: sizing.targetGainEur,
-    sizingMode: sizing.sizingMode ?? "causal_rebalance",
+    sizingMode: sizing.sizingMode ?? "static_approved",
     staticSharesByKey: sizing.shareByRowKey,
   };
 }

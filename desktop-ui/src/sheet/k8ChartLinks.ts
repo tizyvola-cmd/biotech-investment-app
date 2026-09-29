@@ -195,10 +195,52 @@ export function extractAiFeedMarkers(
   return out.sort((a, b) => a.offset - b.offset || a.session - b.session);
 }
 
-export function openExternalUrl(href: string, e?: { preventDefault?: () => void; stopPropagation?: () => void }) {
-  e?.preventDefault?.();
+/** Make a user/feed URL safe for Electron shell.openExternal (requires http/https). */
+export function normalizeExternalHref(raw: string | null | undefined): string | null {
+  const s = String(raw ?? "").trim();
+  if (!s || s === "#" || /^javascript:/i.test(s) || /^data:/i.test(s)) return null;
+  if (/^https?:\/\//i.test(s)) return s;
+  if (/^\/\//.test(s)) return `https:${s}`;
+  // Bare domain / www path from feeds (Electron IPC rejects these).
+  if (/^(www\.)?[a-z0-9][a-z0-9.-]*\.[a-z]{2,}([/:?#].*)?$/i.test(s)) {
+    return `https://${s}`;
+  }
+  return null;
+}
+
+function openInBrowserTab(url: string) {
+  const w = window.open(url, "_blank", "noopener,noreferrer");
+  if (w) return;
+  // Popup blocked — last-resort synthetic anchor (still same user gesture in most cases).
+  const a = document.createElement("a");
+  a.href = url;
+  a.target = "_blank";
+  a.rel = "noopener noreferrer";
+  a.style.display = "none";
+  document.body.appendChild(a);
+  a.click();
+  a.remove();
+}
+
+export function openExternalUrl(
+  href: string,
+  e?: { preventDefault?: () => void; stopPropagation?: () => void },
+) {
   e?.stopPropagation?.();
+  const url = normalizeExternalHref(href);
+  if (!url) {
+    e?.preventDefault?.();
+    return;
+  }
   const open = window.supernova?.shell?.openExternal;
-  if (open) void open(href);
-  else window.open(href, "_blank", "noopener,noreferrer");
+  if (open) {
+    e?.preventDefault?.();
+    void Promise.resolve(open(url)).catch(() => {
+      openInBrowserTab(url);
+    });
+    return;
+  }
+  // Browser / Vite: prefer native <a target=_blank> when possible.
+  e?.preventDefault?.();
+  openInBrowserTab(url);
 }

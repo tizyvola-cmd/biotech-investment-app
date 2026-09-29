@@ -52,6 +52,46 @@ import {
 
 const LOSS_THRESHOLD_PCT = -2;
 
+/** P(plan) bucket order — low to high entry P(plan). Used for monotonic enforcement. */
+const PPLAN_BUCKET_ORDER = [
+  "P(plan) <30%",
+  "P(plan) 30-50%",
+  "P(plan) 50-70%",
+  "P(plan) ≥70%",
+] as const;
+
+/**
+ * Enforce non-decreasing shrinkageApplied across P(plan) buckets so approved
+ * weights cannot show a mid band below a lower band (stale/mixed-win artifacts).
+ * Only cells with n > 0 are adjusted; empty cells are untouched.
+ */
+export function enforceMonotonicPplanShrinkage(
+  dim: DimensionEstimate,
+): DimensionEstimate {
+  const byCell = new Map(dim.cells.map((c) => [c.cell, c]));
+  const active = PPLAN_BUCKET_ORDER.map((cell) => byCell.get(cell)).filter(
+    (c): c is CellEstimate => c != null && c.n > 0,
+  );
+  if (active.length < 2) return dim;
+
+  let runningMax = active[0]!.shrinkageApplied;
+  const adjusted = new Map<string, CellEstimate>();
+  for (const cell of active) {
+    const nextShrink =
+      cell.shrinkageApplied < runningMax ? runningMax : cell.shrinkageApplied;
+    runningMax = nextShrink;
+    if (nextShrink !== cell.shrinkageApplied) {
+      adjusted.set(cell.cell, { ...cell, shrinkageApplied: nextShrink });
+    }
+  }
+  if (adjusted.size === 0) return dim;
+
+  return {
+    ...dim,
+    cells: dim.cells.map((c) => adjusted.get(c.cell) ?? c),
+  };
+}
+
 /** A trade contributes to a cell only if pnl_pct is realized. Flat band is ignored. */
 function isResolved(r: SimOutcomeRow): boolean {
   return r.pnl_pct != null && Number.isFinite(r.pnl_pct);
@@ -311,11 +351,8 @@ export function computeCalibrationSnapshot(
       globalPrior,
       config,
     ),
-    pplanBucket: buildDimensionEstimate(
-      "pplanBucket",
-      enriched,
-      globalPrior,
-      config,
+    pplanBucket: enforceMonotonicPplanShrinkage(
+      buildDimensionEstimate("pplanBucket", enriched, globalPrior, config),
     ),
   };
 

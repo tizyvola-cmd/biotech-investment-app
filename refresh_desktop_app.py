@@ -96,6 +96,7 @@ def daily_refresh_env_patch() -> dict[str, str]:
         "DAILY_ACCURACY_ENRICH_ACTIVE_ONLY": "1",
         "DAILY_SKIP_ACCURACY_SHEET": "1",
         "SIM_PRESERVE_OUTCOMES": "1",
+        "ORCH_PERF": "1",
     }
 
 
@@ -128,7 +129,7 @@ def strip_daily_fast_env(env: dict[str, str]) -> dict[str, str]:
 
 
 def weekly_full_env_patch() -> dict[str, str]:
-    """Env orchestrator settimanale — SEC K-8 + enrich completi."""
+    """Env orchestrator settimanale — SEC K-8 + Accuracy completi, API ridondanti gated."""
     return {
         "PYTHONUNBUFFERED": "1",
         "ORCH_SKIP_SEC_K8": "0",
@@ -136,8 +137,29 @@ def weekly_full_env_patch() -> dict[str, str]:
         "HISTLIB_INCREMENTAL_ONLY": "1",
         "HISTLIB_MIN_LAG_DAYS": "3",
         "YF_CACHE_STICKY": "1",
-        "YF_QUOTE_REFRESH_HOURS": "4",
-        "LIQUIDITY_YF_FORCE": "1",
+        "YF_QUOTE_REFRESH_HOURS": "24",
+        # Step4 fetch_retrospective.py (diverso da RetroBacktest in build_excel)
+        "ORCH_SKIP_RETROSPECTIVE": "1",
+        "ORCH_SKIP_VARIATIONS_RETRY": "1",
+        # SignCurveDaily: always rebuild on Saturday WeeklyFull (Model quality charts).
+        # Daily/partial runs may still use SIGN_CURVE_DAILY_SKIP_IF_FRESH_DAYS=6.
+        "FORCE_SIGN_CURVE_DAILY": "1",
+        "SIGN_CURVE_DAILY_SKIP_IF_FRESH_DAYS": "0",
+        # Model Quality tab: append monitor snapshot on every WeeklyFull export.
+        "ACCURACY_MONITOR_EVERY_RUN": "1",
+        "ACCURACY_MONITOR_TRIGGER": "weekly_full",
+        # Safety net in post_refresh if orchestrator skipped save_final_outputs monitor.
+        "POST_REFRESH_ACCURACY_SNAPSHOT": "1",
+        # ── Velocità (merge yf+finnhub già aggiorna prezzi; SEC K-8 gated sotto) ──
+        "WEEKLY_YF_SKIP_IF_WITHIN_HOURS": "20",
+        "SEC_K8_SKIP_IF_FRESH_DAYS": "6",
+        "ORCH_SKIP_FINANCIAL_ENRICH": "1",
+        "ORCH_SKIP_LIQUIDITY_YF": "1",
+        "ORCH_SKIP_OPTIONS_PRED": "1",
+        "PRED_CURVE_SEQ_CALIB": "1",
+        "ACC_SIM_BULK_PAST_WRITE": "1",
+        "DAILY_ACCURACY_ENRICH_ACTIVE_ONLY": "1",
+        "ACC_SIM_SKIP_V5_ON_WRITE": "1",
     }
 
 

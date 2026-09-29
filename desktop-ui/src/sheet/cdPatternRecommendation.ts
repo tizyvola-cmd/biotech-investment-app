@@ -14,7 +14,6 @@ import {
 } from "./cdPatternHorizons";
 import { buildMigSolidityByKey, type MigSoliditySnapshot } from "./entrySolidityMig";
 import { buildSdsByTicker } from "./sdsTopOppGate";
-import { computeRaScoreAsOfAnchor } from "./rascoreAnchorSolidity";
 import { daysFromToday } from "./simulationPlanGain";
 import { simulationRowSeriesKey } from "../data/simulationCharts";
 import { normalizedRowKey } from "./investSimKeys";
@@ -110,8 +109,34 @@ export function buildCdPatternNearestEis(
   lang: "it" | "en",
   superScoreState?: EisSuperScoreState | null,
   sheetClinicalKpi?: number | null,
+  clinicalPreCdRecords?: import("../api/supernova").ClinicalPreCdRecord[],
 ): CdPatternNearestEis | null {
-  return pickNearestEis(ticker, cdIso, lang, superScoreState, sheetClinicalKpi);
+  return pickNearestEis(ticker, cdIso, lang, superScoreState, sheetClinicalKpi, clinicalPreCdRecords);
+}
+
+/** Shared EIS resolution for Decision Chart, 24h cards, and plan-prob inputs. */
+export function resolveNearestEisForTicker(opts: {
+  patternRec?: CdPatternTickerRecommendation | null;
+  ticker: string;
+  completionDate?: string | null;
+  lang?: "it" | "en";
+  eisSuperScoreState?: EisSuperScoreState | null;
+  clinicalKpi?: number | null;
+  clinicalPreCdRecords?: import("../api/supernova").ClinicalPreCdRecord[];
+}): CdPatternNearestEis | null {
+  if (opts.patternRec?.nearestEis) return opts.patternRec.nearestEis;
+  const cd =
+    opts.completionDate?.trim() ||
+    opts.patternRec?.completionDate?.trim() ||
+    null;
+  return buildCdPatternNearestEis(
+    opts.ticker,
+    cd,
+    opts.lang ?? "it",
+    opts.eisSuperScoreState,
+    opts.clinicalKpi,
+    opts.clinicalPreCdRecords,
+  );
 }
 
 function nearestEisFromScoreFallback(
@@ -160,8 +185,9 @@ function pickNearestEis(
   lang: "it" | "en",
   superScoreState?: EisSuperScoreState | null,
   sheetClinicalKpi?: number | null,
+  clinicalPreCdRecords?: import("../api/supernova").ClinicalPreCdRecord[],
 ): CdPatternNearestEis | null {
-  const detail = buildTickerEisDetail(ticker, lang, sheetClinicalKpi);
+  const detail = buildTickerEisDetail(ticker, lang, sheetClinicalKpi, clinicalPreCdRecords);
 
   if (detail.events.length) {
     const today = Date.now();
@@ -213,7 +239,6 @@ function pickNearestEis(
 
 function buildAxes(
   window: CdPatternWindow,
-  ra: number | null,
   sds: number | null,
   mig: MigSoliditySnapshot | null,
   slope20: number | null,
@@ -221,11 +246,10 @@ function buildAxes(
 ): CdPatternAxisPoint[] {
   const labels: Record<CdPatternRadarAxisId, string> =
     lang === "it"
-      ? { ra: "RA score", sds: "SDS", mii: "MII °", calib: "Calib pre", slope: "Slope 20g" }
-      : { ra: "RA score", sds: "SDS", mii: "MII °", calib: "Calib pre", slope: "Slope 20g" };
+      ? { sds: "SDS", mii: "MII °", calib: "Calib pre", slope: "Slope 20g" }
+      : { sds: "SDS", mii: "MII °", calib: "Calib pre", slope: "Slope 20g" };
 
   const raw: Record<CdPatternRadarAxisId, { v: number | null; min: number; unit: string }> = {
-    ra: { v: ra, min: window.raMin, unit: "/100" },
     sds: { v: sds, min: window.sdsMin, unit: "/100" },
     mii: { v: mig?.slopeAngleDeg ?? null, min: window.miiAngleMin, unit: "°" },
     calib: { v: mig?.calibPreScore ?? null, min: window.calibMin, unit: "/100" },
@@ -265,6 +289,7 @@ export function buildCdPatternTickerRecommendation(args: {
   lang?: "it" | "en";
   includeEis?: boolean;
   eisSuperScoreState?: EisSuperScoreState | null;
+  clinicalPreCdRecords?: import("../api/supernova").ClinicalPreCdRecord[];
 }): CdPatternTickerRecommendation | null {
   const lang = args.lang ?? "it";
   const ticker = String(args.row.Ticker ?? args.row.ticker ?? "")
@@ -278,16 +303,6 @@ export function buildCdPatternTickerRecommendation(args: {
   const window = resolveCdPatternWindow(nowOff, daysToCd);
   if (!window) return null;
 
-  const anchor = window.startOffset;
-  const ra = computeRaScoreAsOfAnchor({
-    simRow: args.row,
-    mergedInputs: args.investInputs,
-    chartPts: args.chartPoints,
-    history: null,
-    anchor,
-    lang,
-  });
-
   const sdsMap = buildSdsByTicker(args.sdsRows);
   const sds = sdsMap.get(ticker)?.sds ?? null;
 
@@ -296,7 +311,7 @@ export function buildCdPatternTickerRecommendation(args: {
 
   const { slope20d: slope20 } = extractCurveInputs(args.row);
 
-  const axes = buildAxes(window, ra, sds, mig, slope20, lang);
+  const axes = buildAxes(window, sds, mig, slope20, lang);
   const radarCurrent = axes.map((a) => a.current);
   const matchPct = Math.round(radarCurrent.reduce((s, v) => s + v, 0) / radarCurrent.length);
 
@@ -331,6 +346,7 @@ export function buildCdPatternTickerRecommendation(args: {
           lang,
           args.eisSuperScoreState,
           clinicalKpiFromSimRow(args.row),
+          args.clinicalPreCdRecords,
         )
       : null,
   };

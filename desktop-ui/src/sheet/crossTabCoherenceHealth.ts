@@ -215,29 +215,15 @@ export function assessCrossTabCoherenceHealth(
     });
   }
 
+  // relaxedDrift is purely diagnostic — relaxed mode is never used in the active
+  // investment pipeline (Decision Lab and all publish paths use strict exclusively).
+  // Show divergent count in the metric grid but never raise warn/error alerts.
   const divergentInStore = divergent.filter((t) =>
     storeHotKeys.some((k) => tickerFromOppKey(k) === t),
   );
-  if (divergentInStore.length > 0) {
-    metricLevels.relaxedDrift = "error";
-    metricLevels.relaxedHot = "error";
-    criticalIssues.push({
-      id: "relaxedDrift",
-      titleKey: "coherenceAlert.issue.relaxedInStore.title",
-      detailKey: "coherenceAlert.issue.relaxedInStore.detail",
-      actionKey: "coherenceAlert.action.refreshTopOpps",
-      tickers: divergentInStore,
-    });
-  } else if (divergent.length > 0) {
-    metricLevels.relaxedDrift = "warn";
-    metricLevels.relaxedHot = "warn";
-    warningIssues.push({
-      id: "relaxedDrift",
-      titleKey: "coherenceAlert.issue.relaxedOnly.title",
-      detailKey: "coherenceAlert.issue.relaxedOnly.detail",
-      actionKey: "coherenceAlert.action.viewCoherence",
-      tickers: divergent,
-    });
+  if (divergent.length > 0 || divergentInStore.length > 0) {
+    metricLevels.relaxedDrift = "ok";
+    metricLevels.relaxedHot = "ok";
   }
 
   const overall: CoherenceHealthLevel = criticalIssues.length
@@ -257,13 +243,21 @@ export function assessCrossTabCoherenceHealth(
   };
 }
 
+/**
+ * Stable dismiss key for the coherence modal.
+ * Must NOT include ticking fields like ageMin/ageHours — otherwise "Close for now"
+ * reopens on the next check as the store ages by one more minute.
+ */
 export function buildCoherenceAlertSignature(issues: CoherenceCriticalIssue[]): string {
   if (!issues.length) return "";
   return issues
-    .map(
-      (i) =>
-        `${i.id}:${(i.tickers ?? []).join(",")}:${JSON.stringify(i.detailVars ?? {})}`,
-    )
+    .map((i) => {
+      const vars: Record<string, string | number> = { ...(i.detailVars ?? {}) };
+      delete vars.ageMin;
+      delete vars.ageHours;
+      // titleKey distinguishes storeStale (6h+) vs storeAging (2h+) without the clock.
+      return `${i.id}:${i.titleKey}:${(i.tickers ?? []).join(",")}:${JSON.stringify(vars)}`;
+    })
     .sort()
     .join("|");
 }

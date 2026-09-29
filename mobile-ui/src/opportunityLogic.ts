@@ -1,3 +1,4 @@
+import { isMedtechTicker } from "./medtechSymbols";
 import {
   normalizedRowKey,
   parseNum,
@@ -92,9 +93,12 @@ function passesFilter(
   pred5: number | null,
   planReturn: number | null,
   affid: number | null,
+  ticker: string,
 ): boolean {
   if (rowHasActivePortfolio(r, inputs)) return false;
   if (zoneForDays(days) == null) return false;
+  // MedTech/device deals: CD window only (matches desktop hot-zone scope).
+  if (isMedtechTicker(ticker)) return true;
   const predOk = pred5 != null && pred5 >= MIN_PRED5;
   const planOk = planReturn != null && planReturn > 0;
   if (!predOk && !planOk) return false;
@@ -129,7 +133,7 @@ export function buildMobileOpportunities(
     const pred5 = pred5FromRow(r);
     const planReturn = planReturnFromRow(r);
     const affid = affidFromRow(r);
-    if (!passesFilter(r, inputs, days, pred5, planReturn, affid)) continue;
+    if (!passesFilter(r, inputs, days, pred5, planReturn, affid, ticker)) continue;
 
     const zone = zoneForDays(days);
     if (!zone) continue;

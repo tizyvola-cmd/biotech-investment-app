@@ -1,7 +1,13 @@
 """Tests for Event Impact Score (EIS) and Copilot research helpers."""
 from __future__ import annotations
 
-from prediction.event_impact_score import compute_eis, kpi_intrinsic_score
+from prediction.event_impact_score import (
+    K_INTRINSIC,
+    compute_eis,
+    eis_intrinsic_from_kpi,
+    kpi_intrinsic_score,
+    virtual_regulatory_indicator,
+)
 
 
 def test_easi_endpoint_met_positive_without_price():
@@ -67,3 +73,66 @@ def test_orr_endpoint_met_scores_higher_than_dcr_direction_only():
         ]
     )
     assert orr > dcr
+
+
+def test_eis_intrinsic_is_kpi_times_k_and_not_folded_into_market_score():
+    e_none = compute_eis(delta_p_1d=5.0, delta_p_3d=5.0, vol_ratio=1.0, sentiment=0.0)
+    assert e_none["eis_intrinsic"] is None
+    e = compute_eis(
+        delta_p_1d=5.0,
+        delta_p_3d=5.0,
+        vol_ratio=1.0,
+        sentiment=0.0,
+        kpi_score=0.5,
+    )
+    assert e["eis_intrinsic"] == round(0.5 * K_INTRINSIC, 2)
+    assert e["kpi_score"] == 0.5
+    # Market score still uses w4 × kpi×10, not eis_intrinsic as an extra addend.
+    assert e["score"] == e_none["score"] + 0.15 * (0.5 * 10.0)
+    assert eis_intrinsic_from_kpi(3.0) == round(2.0 * K_INTRINSIC, 2)
+    assert eis_intrinsic_from_kpi(-3.0) == round(-2.0 * K_INTRINSIC, 2)
+    assert eis_intrinsic_from_kpi(None) is None
+
+
+def test_virtual_regulatory_approval_and_crl():
+    appr = virtual_regulatory_indicator({"event_title": "FDA approves NDA for asset X"})
+    assert appr is not None
+    assert appr["kpi_type"] == "regulatory"
+    assert appr["endpoint_met"] is True
+    kpi = kpi_intrinsic_score([appr])
+    assert kpi > 0.4
+    e = compute_eis(delta_p_1d=4.0, delta_p_3d=3.0, vol_ratio=1.0, sentiment=0.0, kpi_score=kpi)
+    assert e["eis_intrinsic"] is not None and e["eis_intrinsic"] > 4
+
+    crl = virtual_regulatory_indicator({"event_title": "FDA issues a complete response letter"})
+    assert crl is not None and crl["endpoint_met"] is False
+
+    hold = virtual_regulatory_indicator({"event_title": "FDA places the program on clinical hold"})
+    assert hold is not None and hold["endpoint_met"] is False
+
+
+def test_virtual_regulatory_skips_oncology_crr_pending_and_earnings():
+    assert (
+        virtual_regulatory_indicator(
+            {"event_title": "Phase 2: complete response rate 40% in TNBC"}
+        )
+        is None
+    )
+    assert virtual_regulatory_indicator({"event_title": "Company seeking FDA approval"}) is None
+    assert (
+        virtual_regulatory_indicator(
+            {
+                "event_title": "Results of operations",
+                "source_type": "sec_8k",
+                "items_raw": "2.02",
+            }
+        )
+        is None
+    )
+    assert (
+        virtual_regulatory_indicator(
+            {"event_title": "FDA approves NDA"},
+            [{"label": "ORR", "value": "38%", "kpi_type": "efficacy", "endpoint_met": True}],
+        )
+        is None
+    )

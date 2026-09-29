@@ -1,0 +1,85 @@
+Affidabilità
+%
+Affidabilità
+calib %
+Beta (5Y vs mercato)
+Capitale Investito ($)
+Completion Date
+Curva
+(fit)
+Date K-8
+(+1/+2/+3)
+Exact·Partial vs Unmatch
+Inferenza
+modello
+Input
+mancanti
+(n)
+Lead sponsor
+Link studio
+Liquidità (FY)
+Market Cap
+NCT
+N° Azioni Implicite
+N° K-8
+[CD−finestra SEC]
+P&L ($)
+P&L (%)
+Pred empirica
++5gg (%)
+Prezzo Acquisto ($)
+Prezzo Apertura ($)
+Prezzo Corrente ($)
+Prezzo T−60 ($)
+Qualità
+segnale
+(stelle)
+Relazione sponsor
+R² fit
+Società
+Società (full name)
+Sponsor (da NCT)
+Studio Phase
+Ticker
+Valore Attuale ($)
+Var. 1M %
+Var. 3M %
+Var. 6M %
+Var. Giorn. %
+affid_live
+direction_live
+live_updated_at
+nasdaq_open_usd
+pred5_live
+rsi_14
+run_up_30d
+slope≈20g
+slope≈45g
+slope≈5g
+vol_ratio
+Δ mod vs emp
++5 (pp)
+Δ% vs Pred−60
+Pred
++4
+Δ% vs Pred−60
+Pred
++7
+Δ% vs Pred−60
+Pred
+−10
+Δ% vs Pred−60
+Pred
+−3
+Δ% vs Pred−60
+Pred
+−30
+Δ% vs Pred−60
+Pred
+−5
+Δ% vs Pred−60
+Pred
+−60
+Δ% vs Pred−60
+Pred
+−7

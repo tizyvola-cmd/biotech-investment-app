@@ -11,6 +11,9 @@ export const SIM_MONITOR_HORIZON_DAYS = 120;
 /** Zona hot: timing operativo e Top Opportunità primarie (≈2 mesi). */
 export const SIM_HOT_ZONE_DAYS = 60;
 
+/** Zona picco: fase critica pre-CD (≤10 giorni). */
+export const SIM_PEAK_ZONE_DAYS = 10;
+
 /** R² minimo per candidati watch (curva ancora leggibile lontano dal CD). */
 export const WATCH_ZONE_MIN_R2 = 0.2;
 

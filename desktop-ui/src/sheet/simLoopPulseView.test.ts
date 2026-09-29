@@ -165,7 +165,7 @@ describe("buildSimLoopPulseData", () => {
     expect(data.rows[0]?.pnlEur).not.toBeCloseTo(8875, 0);
   });
 
-  it("trend follows Δ visit (flat) when P&L unchanged since visit despite positive 24h", () => {
+  it("trend follows 24h (up) even when Δ visit is flat", () => {
     const positions = [paperPos("AAA|2026-09-01", "AAA")];
     const state: DecisionSimState = {
       ticks: [tick("2026-06-18T12:00:00.000Z", positions, { pnlPct24h: 1.2, markPct: 2 })],
@@ -188,7 +188,8 @@ describe("buildSimLoopPulseData", () => {
 
     expect(data.rows[0]?.deltaPnlEurSinceVisit).toBe(0);
     expect(data.rows[0]?.pnlPct24h).toBe(1.2);
-    expect(data.rows[0]?.direction).toBe("flat");
+    // Arrow = session 24h, not Δ visit (see resolvePulseTableTrendDirection).
+    expect(data.rows[0]?.direction).toBe("up");
   });
 
   it("uses tick history for Δ visit when ticker missing from snapshot", () => {
@@ -742,13 +743,51 @@ describe("buildSimLoopPulseData", () => {
         shareByRowKey: { "AAA|2026-09-01": 0.2 },
         totalCapitalEur: 10_000,
         capitalPerTrade: 5000,
-        sizingMode: "causal_rebalance",
+        sizingMode: "static_approved",
       },
     });
 
     expect(synth.equalReferenceTotals?.pnlEur).toBeCloseTo(500, 0);
-    // Single open name after causal rebalance gets full book weight on observed +10% mark.
-    expect(synth.totals.pnlEur).toBeCloseTo(1000, 0);
+    // Entry-frozen 20% share → 2k cap × 10% = 200 (aligned with Cap Div / 3-experiment synth).
+    expect(synth.totals.pnlEur).toBeCloseTo(200, 0);
+  });
+
+  it("keeps every open paper row on synth when Weight Sim Exp assigns zero share", () => {
+    const positions = [
+      paperPos("AAA|2026-09-01", "AAA"),
+      paperPos("BBB|2026-10-01", "BBB"),
+    ];
+    const state: DecisionSimState = {
+      ticks: [tick("2026-06-18T12:00:00.000Z", positions, { markPct: 10 })],
+      paperPortfolio: positions,
+      config: { capitalPerTrade: 5000, maxOpenPositions: 12 },
+      cumulativePaperPnlEur: 0,
+      closedTradeCount: 0,
+    };
+
+    const synth = buildSimLoopPulseData({
+      state,
+      simTable: {
+        columns: ["Ticker", "Completion Date"],
+        rows: [
+          { Ticker: "AAA", "Completion Date": "2026-09-01" },
+          { Ticker: "BBB", "Completion Date": "2026-10-01" },
+        ],
+      },
+      chartPointsByKey: new Map(),
+      sizing: {
+        shareByRowKey: { "AAA|2026-09-01": 0.25, "BBB|2026-10-01": 0 },
+        totalCapitalEur: 10_000,
+        capitalPerTrade: 5000,
+        sizingMode: "static_approved",
+      },
+    });
+
+    expect(synth.rows).toHaveLength(2);
+    expect(synth.rows.map((r) => r.ticker).sort()).toEqual(["AAA", "BBB"]);
+    const bbb = synth.rows.find((r) => r.ticker === "BBB");
+    expect(bbb?.gainPlanRow.capital).toBeCloseTo(5000, 0);
+    expect(bbb?.pnlEur).toBeCloseTo(500, 0);
   });
 
   it("uses piggy open MTM on compact ticks when evaluations were stripped", () => {
@@ -842,6 +881,58 @@ describe("buildSimLoopPulseData", () => {
       .slice(1)
       .reduce((m, v, i) => Math.max(m, Math.abs(v - (actuals[i] ?? v))), 0);
     expect(maxStep).toBeLessThan(2500);
+  });
+
+  it("synth pulse totals count every paper SELL tick, not only off-book sim outcomes", () => {
+    const closedKey = "OLD|2026-08-01";
+    const openKey = "AAA|2026-09-01";
+    const positions = [paperPos(openKey, "AAA")];
+    const sellTrade = {
+      at: "2026-06-17T10:00:00.000Z",
+      ticker: "OLD",
+      key: closedKey,
+      side: "sell" as const,
+      reason: "exit",
+      capital: 5000,
+      pnlPctSimulated: 8,
+      pnlEurSimulated: 400,
+    };
+    const state: DecisionSimState = {
+      ticks: [
+        {
+          ...tick("2026-06-17T10:00:00.000Z", positions, { markPct: 5 }),
+          portfolioBefore: [paperPos(closedKey, "OLD", 5000), ...positions],
+          trades: [sellTrade],
+        },
+        tick("2026-06-18T12:00:00.000Z", positions, { markPct: 10 }),
+      ],
+      paperPortfolio: positions,
+      config: { capitalPerTrade: 5000, maxOpenPositions: 12 },
+      cumulativePaperPnlEur: 400,
+      closedTradeCount: 1,
+    };
+
+    const equal = buildSimLoopPulseData({
+      state,
+      simTable,
+      chartPointsByKey: new Map(),
+    });
+    const synth = buildSimLoopPulseData({
+      state,
+      simTable,
+      chartPointsByKey: new Map(),
+      sizing: {
+        shareByRowKey: { [openKey]: 0.2, [closedKey]: 0.1 },
+        totalCapitalEur: 10_000,
+        capitalPerTrade: 5000,
+        sizingMode: "static_approved",
+      },
+    });
+
+    expect(equal.totals.closedDealCount).toBe(1);
+    expect(synth.totals.closedDealCount).toBe(1);
+    expect(synth.totals.closedPnlEur).toBeLessThan(equal.totals.closedPnlEur);
+    expect(synth.totals.closedPnlEur).toBeGreaterThan(0);
   });
 });
 

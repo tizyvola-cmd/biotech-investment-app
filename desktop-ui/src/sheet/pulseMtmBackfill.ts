@@ -74,11 +74,6 @@ function resolveEntryBuyUsd(row: PortfolioGainChartRow): number | null {
   return px != null && px > 0 ? px : null;
 }
 
-function pnlFromMarkToMarket(capital: number, buyUsd: number, priceUsd: number): number {
-  if (capital <= 0 || buyUsd <= 0 || priceUsd <= 0) return 0;
-  return roundEur((capital / buyUsd) * priceUsd - capital);
-}
-
 /** Merge chart-derived cumulative P&L anchors at integer hold days. */
 export function backfillActualAnchorsFromChart(
   row: PortfolioGainChartRow,
@@ -89,11 +84,50 @@ export function backfillActualAnchorsFromChart(
   const capital = row.capital;
   if (!investedAtIso || capital <= 0 || !row.simRow || !row.chartPoints?.length) return;
 
-  const buy = resolveEntryBuyUsd(row);
-  if (buy == null) return;
+  /*
+   * We still require the ticker to have a resolvable entry price
+   * somewhere (user's fill OR chart at hold-day 0), otherwise the whole
+   * chart-derived backfill is speculation. ``resolveEntryBuyUsd`` already
+   * folds those two fallbacks, so we reuse it as a gate but do NOT rely
+   * on the returned value for pnl math — see below.
+   */
+  if (resolveEntryBuyUsd(row) == null) return;
+
+  /*
+   * Anchor chart-derived P&L to the chart's OWN price at hold-day 0, not
+   * to the user's fill (``buyPriceUsd``). Rationale:
+   *
+   * When the chart's interpolation at the entry offset legitimately
+   * diverges from the user's fill (e.g. sparse historical data clamps to
+   * a distant point, or the ticker gapped intraday), the naive formula
+   *   pnl[d] = (capital / userBuy) * chartPrice[d] − capital
+   * produces a chart-relative return that is offset by the divergence
+   * ``chartPrice[0] − userBuy`` — amplified by ``capital / userBuy`` this
+   * becomes a several-thousand-euro artifact starting at d=1 (a
+   * near-vertical phantom spike right after entry on the Gain-vs-Plan
+   * chart, see CHRS Jul-2026 regression). The user's actual fill matters
+   * only for the live-terminal anchor at ``todayDay`` (added later by
+   * ``buildMtmBackfillActualAnchors`` from ``livePnl``); intermediate
+   * anchors should reflect the chart's OWN price trajectory, and are
+   * therefore normalized to the chart's entry price.
+   *
+   * If the chart doesn't reach hold-day 0 (chartEntry is null) we skip
+   * the whole backfill — using a distant historical clamp as a fake entry
+   * price would reintroduce the artifact.
+   *
+   * The caller ``buildMtmBackfillActualAnchors`` already seeds
+   * ``anchors[0] = 0`` for real positions, so we start at d=1 by design.
+   */
+  const chartEntry = chartPriceAtHoldDay(
+    row.chartPoints,
+    row.simRow["Completion Date"],
+    investedAtIso,
+    0,
+  );
+  if (chartEntry == null || chartEntry <= 0) return;
 
   const maxInt = Math.max(0, Math.min(Math.ceil(todayDay), Math.floor(todayDay) + 1));
-  for (let d = 0; d <= maxInt; d += 1) {
+  for (let d = 1; d <= maxInt; d += 1) {
     if (d > todayDay + 0.001) break;
     const price = chartPriceAtHoldDay(
       row.chartPoints,
@@ -102,7 +136,16 @@ export function backfillActualAnchorsFromChart(
       d,
     );
     if (price == null) continue;
-    out.set(roundDayKey(d), pnlFromMarkToMarket(capital, buy, price));
+    /*
+     * Chart-relative pnl: (chartPrice[d] / chartEntry − 1) × capital.
+     * By construction pnl == 0 when chartPrice[d] == chartEntry, so
+     * d = 0 → 0 automatically and no phantom spike leaks into d = 1.
+     * ``userBuy`` is intentionally NOT used here — the chart's own
+     * entry price is the reference for chart-derived intermediate
+     * anchors.
+     */
+    const relReturn = price / chartEntry - 1;
+    out.set(roundDayKey(d), roundEur(relReturn * capital));
   }
 }
 
@@ -206,6 +249,18 @@ export function buildMtmBackfillActualAnchors(
 
   if (livePnl != null) {
     anchors.set(roundDayKey(todayDay), livePnl);
+  }
+
+  /*
+   * Defensive final guard: for a real position (has investedAtIso) the
+   * P&L at hold-day 0 is mathematically €0. If any upstream step (history
+   * loop, daily-close loop, ramp) accidentally seeded a non-zero anchor at
+   * d=0 — typically because a history snapshot exists at ts ~= investedAt
+   * with a stale value/pnl — we normalize it here. This keeps the chart's
+   * leftmost point pinned to €0 and prevents phantom entry spikes.
+   */
+  if (investedAtIso) {
+    anchors.set(0, 0);
   }
 
   return anchors;

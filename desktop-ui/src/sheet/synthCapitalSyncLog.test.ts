@@ -17,8 +17,15 @@ function alloc(shareByKey: Record<string, number>): SimLoopSynthAllocation {
     portfolioShareByRowKey: shareByKey,
     portfolioDisplayShareByRowKey: shareByKey,
     simLoopDisplayShareByRowKey: shareByKey,
+    simTableApprovedWeightMaps: {
+      portfolioApprovedShareByRowKey: shareByKey,
+      opportunityApprovedShareByRowKey: shareByKey,
+      multiplierByRowKey: {},
+      patternPenaltyByRowKey: {},
+    },
     totalCapitalEur: 50_000,
     targetGainEur: 0,
+    capDivTotals: null,
   };
 }
 

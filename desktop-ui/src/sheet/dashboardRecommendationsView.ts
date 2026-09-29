@@ -32,6 +32,8 @@ import {
   formatExpectedAdviceAccuracyHint,
 } from "./accuracyPeakCdOffset";
 import type { SimLoopSynthAllocation } from "../hooks/useSimLoopSynthAllocation";
+import type { AdviceFeedback } from "./adviceFeedback";
+import type { PaperPosition } from "./investDecisionSimLoop";
 
 export type DashboardRecProfileFilter = "all" | "portfolio" | "opportunity";
 export type DashboardRecCdFilter = "all" | "near" | "far";
@@ -232,6 +234,10 @@ export function buildDashboardRecommendationRows(opts: {
   cdFilter: DashboardRecCdFilter;
   sortMode: DashboardRecSortMode;
   synthAlloc?: SimLoopSynthAllocation | null;
+  /** Same learning demotion as Pulse / sharedMonitorRows. */
+  adviceFeedback?: AdviceFeedback | null;
+  /** Same paper book as Pulse — keeps Rec parity Dashboard ↔ Actions. */
+  paperPortfolio?: PaperPosition[];
   adviceOutcomeBins?: AdviceOutcomeBinnedSummary | null;
   langForHints?: "it" | "en";
 }): DashboardRecommendationRow[] {
@@ -243,8 +249,9 @@ export function buildDashboardRecommendationRows(opts: {
     pointsBySeriesKey: opts.pointsBySeriesKey,
     lang: opts.lang,
     probOptions: opts.probOptions,
-    paperPortfolio: [],
+    paperPortfolio: opts.paperPortfolio ?? [],
     synthAlloc: opts.synthAlloc,
+    adviceFeedback: opts.adviceFeedback,
   });
 
   const simRowByKey = buildSimRowByKeyMap(opts.simTable.rows);

@@ -1,6 +1,12 @@
 import { describe, expect, it } from "vitest";
-import type { ChartPoint } from "../types";
-import { resolveLossExitForAlert, isUrgentPortfolioLossExit } from "./portfolioLossAnalysis";
+import type { ChartPoint, SheetTable } from "../types";
+import {
+  buildCatalystAnalysisItems,
+  buildForcedLossAnalysisItem,
+  buildOpportunityAnalysisItems,
+  resolveLossExitForAlert,
+  isUrgentPortfolioLossExit,
+} from "./portfolioLossAnalysis";
 import type { PortfolioLossAlert } from "./portfolioLossUrgent";
 
 function chartPtsRising(): ChartPoint[] {
@@ -67,5 +73,88 @@ describe("resolveLossExitForAlert", () => {
     expect(withCharts.exitDecision).toBe("hold");
     expect(isUrgentPortfolioLossExit(withCharts)).toBe(false);
     expect(isUrgentPortfolioLossExit(withoutCharts)).toBe(true);
+  });
+});
+
+describe("buildForcedLossAnalysisItem", () => {
+  it("opens a Deep Dive card for a ticker with no Simulation row", () => {
+    const item = buildForcedLossAnalysisItem(
+      "VCEL|2026-09-16",
+      { sheet: "Simulation", columns: ["Ticker"], rows: [] },
+      {},
+      new Map(),
+      "en",
+      [],
+      null,
+    );
+    expect(item?.ticker).toBe("VCEL");
+    expect(item?.key).toBe("VCEL|2026-09-16");
+  });
+
+  it("builds an off-book company-tab item from a Simulation row", () => {
+    const simTable: SheetTable = {
+      sheet: "Simulation",
+      columns: ["Ticker", "Completion Date"],
+      rows: [{ Ticker: "INBX", "Completion Date": "2026-12-01" }],
+    };
+    const item = buildForcedLossAnalysisItem(
+      "INBX|2026-12-01",
+      simTable,
+      {},
+      new Map(),
+      "en",
+      [],
+      null,
+    );
+    expect(item?.ticker).toBe("INBX");
+    expect(item?.key).toBe("INBX|2026-12-01");
+  });
+});
+
+describe("upcoming calendar catalysts in Top KPI", () => {
+  const fmt = (offsetDays: number) => {
+    const d = new Date();
+    d.setHours(0, 0, 0, 0);
+    d.setDate(d.getDate() + offsetDays);
+    return `${d.getDate()}/${d.getMonth() + 1}/${d.getFullYear()}`;
+  };
+  const simTable: SheetTable = {
+    sheet: "Simulation",
+    columns: ["Ticker", "Completion Date"],
+    rows: [
+      { Ticker: "HOT1", "Completion Date": fmt(10) },
+      {
+        Ticker: "AMGN",
+        "Completion Date": fmt(10),
+        guidance_calendar_catalyst: true,
+        Società: "Amgen Inc.",
+      },
+      {
+        Ticker: "GILD",
+        "Completion Date": fmt(86),
+        guidance_calendar_catalyst: true,
+        Società: "Gilead Sciences, Inc.",
+      },
+    ],
+  };
+
+  it("puts every upcoming catalyst row on the opportunities Top KPI list", () => {
+    const items = buildOpportunityAnalysisItems(
+      simTable,
+      {},
+      new Map(),
+      "en",
+      null,
+      "hot",
+    );
+    const tickers = items.map((i) => i.ticker);
+    expect(tickers).toContain("AMGN");
+    expect(tickers).toContain("GILD");
+    expect(tickers).toContain("HOT1");
+  });
+
+  it("lists the same names on the catalysts profile", () => {
+    const items = buildCatalystAnalysisItems(simTable, {}, new Map(), "en");
+    expect(items.map((i) => i.ticker).sort()).toEqual(["AMGN", "GILD"]);
   });
 });

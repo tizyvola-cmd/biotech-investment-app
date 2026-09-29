@@ -16,6 +16,7 @@ from orchestrator_io_paths import (
     FEEDBACK_HISTORY_JSON,
     FEEDBACK_SUMMARY_JSON,
     LEARNING_HISTORY_JSON,
+    LEARNING_LAB_OVERVIEW_SNAPSHOT_JSON,
     LEARNING_LOG_JSON,
     REGIME_MULTIPLIERS_JSON,
     TICKER_PERFORMANCE_JSON,
@@ -38,16 +39,34 @@ logger = logging.getLogger(__name__)
 LEARNING_WEEK_MIN_N = 15
 VERDICT_MAE_NOISE_PP = 0.5  # |MAE lift| below this (pp) is treated as noise -> neutral
 VERDICT_DIR_NOISE_PP = 2.0  # |dir/corr/hit change| below this (pp) is treated as noise -> neutral
+
+# ── Overview payload cache ────────────────────────────────────────────────
+# There are two layers:
+#
+# 1. ``_OVERVIEW_CACHE`` — in-process memo of the last full build. Populated
+#    only by ``build_overview_payload`` (the slow path). Kept for legacy call
+#    sites that hit ``build_overview_payload`` directly. TTL retained purely
+#    as a safety net so a very long-lived process does not serve arbitrarily
+#    stale data through the slow path; the fast API path does not use TTL.
+#
+# 2. ``_SNAPSHOT_MTIME_CACHE`` — mtime-keyed cache of the on-disk snapshot
+#    at ``LEARNING_LAB_OVERVIEW_SNAPSHOT_JSON``. This is what the API path
+#    (``get_overview_for_api``) uses. Invalidation is driven by the file's
+#    mtime, not by a wall-clock TTL: when the orchestrator regenerates the
+#    snapshot the mtime bumps and we reparse; otherwise we return the
+#    already-parsed payload without touching disk beyond a stat().
 _OVERVIEW_CACHE: dict[str, Any] | None = None
 _OVERVIEW_CACHE_MONO = 0.0
 _OVERVIEW_CACHE_TTL_S = 300.0
+_SNAPSHOT_MTIME_CACHE: tuple[float, dict[str, Any]] | None = None
 
 
 def invalidate_overview_cache() -> None:
-    """Drop in-process overview cache after apply/reset or manual refresh."""
-    global _OVERVIEW_CACHE, _OVERVIEW_CACHE_MONO
+    """Drop in-process overview caches after apply/reset or manual refresh."""
+    global _OVERVIEW_CACHE, _OVERVIEW_CACHE_MONO, _SNAPSHOT_MTIME_CACHE
     _OVERVIEW_CACHE = None
     _OVERVIEW_CACHE_MONO = 0.0
+    _SNAPSHOT_MTIME_CACHE = None
 
 
 def _now_iso() -> str:
@@ -320,6 +339,44 @@ def _reliable_learning_weeks(weeks: list[dict[str, Any]] | None) -> list[dict[st
     if not weeks:
         return []
     return [w for w in weeks if int(w.get("n_outcomes") or 0) >= LEARNING_WEEK_MIN_N]
+
+
+def weeks_with_live_snapshot_for_ui(weeks: list[dict[str, Any]] | None) -> list[dict[str, Any]]:
+    """Append an ephemeral live point for today when disk history has not been snapshotted yet.
+
+    Persisted history is written only on Learning Lab *apply* (cluster/regime/cycle).
+    Charts would otherwise freeze at the last apply date even though outcomes keep growing.
+    """
+    base = [w for w in (weeks or []) if isinstance(w, dict)]
+    reliable = _reliable_learning_weeks(base)
+    today = date.today().isoformat()
+    last_day = str(reliable[-1].get("week") or "")[:10] if reliable else ""
+    if last_day >= today:
+        return base
+
+    outcomes = collect_resolved_outcomes_from_sources()
+    regime_outcomes = resolve_regime_outcomes_for_learning(outcomes)
+    metrics = compute_counterfactual_layer_metrics(outcomes, regime_outcomes)
+    if int(metrics.get("n_outcomes") or 0) < LEARNING_WEEK_MIN_N:
+        return base
+
+    cluster_doc = _load_json(Path(CLUSTER_CAL_FACTORS_JSON), {})
+    entry = _sanitize_week_metrics(
+        {
+            "week": today,
+            **metrics,
+            "global_cal_factor": get_global_cal_factor(),
+            "live_snapshot": True,
+            "active_clusters": sum(
+                1
+                for c in (cluster_doc.get("clusters") or {}).values()
+                if isinstance(c, dict) and c.get("status") == "active"
+            ),
+        }
+    )
+    out = [w for w in base if str(w.get("week") or "")[:10] != today]
+    out.append(entry)
+    return out[-52:]
 
 
 def _looks_like_demo_history(weeks: list[dict[str, Any]]) -> bool:
@@ -823,6 +880,8 @@ def build_overview_payload(*, use_mock: bool = False, force_refresh: bool = Fals
     cluster_doc = _load_json(Path(CLUSTER_CAL_FACTORS_JSON), {})
     regime_doc = _load_json(Path(REGIME_MULTIPLIERS_JSON), {})
     history = _load_json(Path(LEARNING_HISTORY_JSON), {"weeks": []})
+    if isinstance(history, dict):
+        history = {**history, "weeks": weeks_with_live_snapshot_for_ui(history.get("weeks"))}
     log_doc = _load_json(Path(LEARNING_LOG_JSON), {"entries": []})
     outcomes = collect_resolved_outcomes_from_sources()
     regime_outcomes = resolve_regime_outcomes_for_learning(outcomes)
@@ -953,6 +1012,102 @@ def build_overview_payload(*, use_mock: bool = False, force_refresh: bool = Fals
         _OVERVIEW_CACHE = payload
         _OVERVIEW_CACHE_MONO = time.monotonic()
     return payload
+
+
+# ── Snapshot: precomputed overview on disk (Phase 1 perf work) ────────────
+#
+# ``build_overview_payload`` above is the slow path (5–15 s on cold cache,
+# dominated by parsing the 13 MB ``clinical_pre_cd_enrichment_snapshot.json``
+# in ``_load_clinical_records``). To keep this off the request path, the
+# orchestrator writes ``learning_lab_overview_snapshot.json`` whenever any
+# input changes; the ``/api/models/learning-lab/overview`` handler then
+# just parses that file (see ``get_overview_for_api`` below).
+#
+# Reference implementation: ``write_investment_sim_outcomes`` /
+# ``read_investment_sim_outcomes`` in ``prediction/investment_sim_outcomes.py``.
+
+
+def write_learning_lab_overview_snapshot(
+    path: str | Path | None = None,
+) -> dict[str, Any]:
+    """Build the overview payload and persist it atomically to disk.
+
+    Called by the orchestrator at every terminal (partial=False) rewrite of
+    ``clinical_pre_cd_enrichment_snapshot.json`` and by the desktop-snapshots
+    pipeline in ``excel_sheet_reader.py``. Uses temp-file + rename so a
+    concurrent reader never sees a half-written file.
+    """
+    global _SNAPSHOT_MTIME_CACHE
+    payload = build_overview_payload(use_mock=False, force_refresh=True)
+    out = Path(path or LEARNING_LAB_OVERVIEW_SNAPSHOT_JSON)
+    out.parent.mkdir(parents=True, exist_ok=True)
+    tmp = out.with_suffix(".json.tmp")
+    tmp.write_text(
+        json.dumps(payload, ensure_ascii=False, indent=2, default=str),
+        encoding="utf-8",
+    )
+    tmp.replace(out)
+    # Prime the mtime cache so the next request path is instant.
+    try:
+        _SNAPSHOT_MTIME_CACHE = (out.stat().st_mtime, payload)
+    except OSError:
+        _SNAPSHOT_MTIME_CACHE = None
+    return payload
+
+
+def read_learning_lab_overview_snapshot(
+    path: str | Path | None = None,
+) -> dict[str, Any] | None:
+    """Return the parsed snapshot, or ``None`` if missing / unreadable.
+
+    Uses an mtime-keyed in-process cache: we only reparse when the file
+    on disk has actually changed. The ``stat()`` call is sub-millisecond.
+    """
+    global _SNAPSHOT_MTIME_CACHE
+    p = Path(path or LEARNING_LAB_OVERVIEW_SNAPSHOT_JSON)
+    try:
+        mtime = p.stat().st_mtime
+    except OSError:
+        return None
+    cached = _SNAPSHOT_MTIME_CACHE
+    if cached is not None and cached[0] == mtime:
+        return cached[1]
+    try:
+        doc = json.loads(p.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError) as exc:
+        logger.warning("learning-lab overview snapshot unreadable: %s", exc)
+        return None
+    if not isinstance(doc, dict):
+        return None
+    _SNAPSHOT_MTIME_CACHE = (mtime, doc)
+    return doc
+
+
+def get_overview_for_api(*, force_refresh: bool = False) -> dict[str, Any]:
+    """Fast path used by the API handler.
+
+    Order of operations:
+    - If ``force_refresh`` is set, rebuild in-process and persist a fresh
+      snapshot so subsequent calls stay on the fast path.
+    - Otherwise: read the snapshot from disk (mtime-cached, ~sub-ms once
+      warm).
+    - If the snapshot is missing (first run after this change, before the
+      orchestrator has produced one), fall back to ``build_overview_payload``
+      and log a clear warning — the request pays the slow path once, but
+      the next orchestrator run will make it fast.
+    """
+    if force_refresh:
+        return write_learning_lab_overview_snapshot()
+    snap = read_learning_lab_overview_snapshot()
+    if snap is not None:
+        return snap
+    logger.warning(
+        "learning-lab overview snapshot missing at %s — falling back to "
+        "in-process build. Run the orchestrator (or desktop snapshots) to "
+        "make subsequent calls fast.",
+        LEARNING_LAB_OVERVIEW_SNAPSHOT_JSON,
+    )
+    return build_overview_payload(use_mock=False, force_refresh=False)
 
 
 def ensure_mock_data(*, force: bool = False) -> None:

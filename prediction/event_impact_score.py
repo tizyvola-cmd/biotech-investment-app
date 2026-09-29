@@ -10,6 +10,10 @@ Where:
 
 Default weights (biotech-tuned, overridable via env EIS_W1..EIS_W4):
   0.35, 0.35, 0.15, 0.15
+
+EIS_intrinsic is a sibling of market ``score``, not part of the weighted sum:
+  clamp(kpi_score, -2, +2) × K_INTRINSIC
+  K_INTRINSIC default 10 (same multiplier as Sent_term = sentiment × 10).
 """
 
 from __future__ import annotations
@@ -33,6 +37,148 @@ def default_weights() -> tuple[float, float, float, float]:
         _float_env("EIS_W3", 0.15),
         _float_env("EIS_W4", 0.15),
     )
+
+
+# Scale kpi_score [-2, +2] onto a term comparable to Sent_term. Not a market weight.
+K_INTRINSIC = _float_env("EIS_K_INTRINSIC", 10.0)
+
+
+def eis_intrinsic_from_kpi(kpi_score: float | None) -> float | None:
+    """clamp(kpi_score, -2, +2) × K_INTRINSIC. None when KPI is missing."""
+    if kpi_score is None:
+        return None
+    try:
+        k = float(kpi_score)
+    except (TypeError, ValueError):
+        return None
+    if k != k:  # NaN
+        return None
+    clamped = max(-2.0, min(2.0, k))
+    return round(clamped * K_INTRINSIC, 2)
+
+
+_PENDING_RE = re.compile(
+    r"\b(seeking|pending|plans? to (?:file|submit|seek)|will (?:file|submit)|awaiting|"
+    r"application (?:for|to) (?:fda|ema)|submitted an? (?:n[db]a|bla))\b",
+    re.I,
+)
+_HOLD_LIFTED_RE = re.compile(
+    r"\b(clinical hold (?:lifted|removed|released)|lifted (?:the )?clinical hold)\b",
+    re.I,
+)
+_HOLD_RE = re.compile(r"\bclinical hold\b", re.I)
+_CRL_RE = re.compile(
+    r"\b(complete response letter|\bcrl\b|(?:fda|ema) (?:complete response|reject(?:ed|s|ion)|refused to file))\b",
+    re.I,
+)
+_DENIED_RE = re.compile(
+    r"\b((?:fda|ema) (?:did not|does not|declined to) approv|approval denied|"
+    r"not approved by (?:the )?(?:fda|ema))\b",
+    re.I,
+)
+_APPROVAL_RE = re.compile(
+    r"\b((?:fda|ema|mhra|pmda)\s+approv(?:ed|es|al)|approval granted|accelerated approval|"
+    r"full approval|granted (?:an? )?(?:nda |bla |snda )?approval|"
+    r"approved (?:the )?(?:nda|bla|snda|indication|drug))\b",
+    re.I,
+)
+_EARNINGS_RE = re.compile(
+    r"\b(earnings|results of operations|financial results|quarterly)\b",
+    re.I,
+)
+
+
+def _event_text_blob(ev: dict[str, Any]) -> str:
+    parts = [ev.get("event_title"), ev.get("title"), ev.get("summary")]
+    return "\n".join(str(p) for p in parts if p)
+
+
+def _has_real_outcome_kpi(indicators: list[dict[str, Any]]) -> bool:
+    for ind in indicators:
+        kt = str(ind.get("kpi_type") or "").lower()
+        if kt in ("efficacy", "regulatory"):
+            return True
+        if ind.get("endpoint_met") is not None and kt != "enrollment":
+            return True
+    return False
+
+
+def _is_earnings_only(ev: dict[str, Any], blob: str) -> bool:
+    items = str(ev.get("items_raw") or ev.get("itemsRaw") or "")
+    st = str(ev.get("source_type") or ev.get("event_type") or ev.get("sourceType") or "").lower()
+    if not re.search(r"\b2\.02\b", items) and st != "sec_8k":
+        return False
+    if (
+        _HOLD_LIFTED_RE.search(blob)
+        or _HOLD_RE.search(blob)
+        or _CRL_RE.search(blob)
+        or _DENIED_RE.search(blob)
+        or _APPROVAL_RE.search(blob)
+    ):
+        return False
+    return bool(_EARNINGS_RE.search(blob) or re.search(r"\b2\.02\b", items))
+
+
+def virtual_regulatory_indicator(
+    ev: dict[str, Any],
+    existing: list[dict[str, Any]] | None = None,
+) -> dict[str, Any] | None:
+    """Synthetic approval / CRL / hold KPI when the event has no quantitative KPIs."""
+    base = [i for i in (existing or []) if isinstance(i, dict)]
+    if _has_real_outcome_kpi(base):
+        return None
+    blob = _event_text_blob(ev)
+    if not blob.strip() or _PENDING_RE.search(blob):
+        return None
+    if _is_earnings_only(ev, blob):
+        return None
+
+    if _HOLD_LIFTED_RE.search(blob):
+        return {
+            "label": "Clinical hold lifted",
+            "value": "lifted",
+            "kpi_type": "regulatory",
+            "endpoint_met": True,
+            "direction": "up",
+            "source": "virtual",
+        }
+    if _HOLD_RE.search(blob):
+        return {
+            "label": "Clinical hold",
+            "value": "issued",
+            "kpi_type": "regulatory",
+            "endpoint_met": False,
+            "direction": "down",
+            "source": "virtual",
+        }
+    if _CRL_RE.search(blob):
+        return {
+            "label": "Complete response letter",
+            "value": "issued",
+            "kpi_type": "regulatory",
+            "endpoint_met": False,
+            "direction": "down",
+            "source": "virtual",
+        }
+    if _DENIED_RE.search(blob):
+        return {
+            "label": "Approval denied",
+            "value": "denied",
+            "kpi_type": "regulatory",
+            "endpoint_met": False,
+            "direction": "down",
+            "source": "virtual",
+        }
+    if _APPROVAL_RE.search(blob):
+        return {
+            "label": "Regulatory approval",
+            "value": "granted",
+            "kpi_type": "regulatory",
+            "endpoint_met": True,
+            "direction": "up",
+            "source": "virtual",
+        }
+    return None
 
 
 _RATE_LABEL_RE = re.compile(
@@ -159,6 +305,8 @@ def compute_eis(
 
     kpi_score [-2, +2]: when provided (clinical events), replaces sentiment for
     the w4 term so the formula uses objective KPI quality instead of heuristic text.
+    ``eis_intrinsic`` is computed from the same kpi_score but is NOT added into
+    ``score`` (clamp × K_INTRINSIC).
     """
     w1, w2, w3, w4 = weights or default_weights()
     d1 = float(delta_p_1d) if delta_p_1d is not None else 0.0
@@ -188,6 +336,7 @@ def compute_eis(
         "vol_reaction_weight": round(vol_w, 3),
         "sentiment": round(sent, 2),
         "kpi_score": round(kpi_score, 3) if kpi_score is not None else None,
+        "eis_intrinsic": eis_intrinsic_from_kpi(kpi_score),
         "sent_term": round(sent_term, 2),
         "weights": {"w1": w1, "w2": w2, "w3": w3, "w4": w4},
     }

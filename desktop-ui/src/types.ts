@@ -35,6 +35,13 @@ export type ApiStatus = {
   api_token_required?: boolean;
   /** True when server still uses the repo placeholder — refresh will fail until rotated. */
   api_token_is_placeholder?: boolean;
+  /** VPS scheduler: WeeklyFull sabato mattina (cron / supernova_web_scheduler). */
+  saturday_weekly_full_enabled?: boolean;
+  weekly_full_running?: boolean;
+  precat_calendar_enabled?: boolean;
+  volume_delta_enabled?: boolean;
+  trends_enabled?: boolean;
+  trends_pilot_tickers?: string;
 };
 
 export type SheetTable = {
@@ -112,6 +119,12 @@ export type AppScreen =
   | "financial"
   | "models"
   | "decisionLab"
+  | "catalystDesk"
+  | "wind"
+  | "piggyBank"
   | "catalystFeed"
+  | "eisDeepDive"
+  | "calendar"
+  | "discovery"
   | "testerMonitor"
   | "system";

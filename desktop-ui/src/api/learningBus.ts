@@ -38,6 +38,9 @@ export type LearningSchedule =
   | "on_demand"
   | "frontend_localstorage";
 
+/** Loop-monitor priority from `prediction/learning_bus.py`. */
+export type LearningMonitorTier = "core" | "secondary" | "diagnostic" | "retired";
+
 export type LoopMetadata = {
   id: string;
   family: LearningFamily;
@@ -55,6 +58,8 @@ export type LoopMetadata = {
   api_endpoint: string | null;
   inactive_reason: string | null;
   planned: boolean;
+  /** Defaults to core when older API builds omit the field. */
+  monitor_tier?: LearningMonitorTier;
 };
 
 export type LoopMetric = {
@@ -72,6 +77,11 @@ export type LoopStatus = {
   n_samples: number | null;
   message: string | null;
   raw_excerpt: Record<string, unknown> | null;
+  /** Days since `last_run_at`. Null when the loop has no timestamp yet.
+   * The backend also flips `verdict` to "stalled" when this exceeds the
+   * expected cadence, but the raw count is exposed so the UI can surface
+   * a warning chip on the card. */
+  stale_days?: number | null;
 };
 
 export type LoopWithStatus = LoopMetadata & { status: LoopStatus };
@@ -91,6 +101,10 @@ export type LearningHealthOverview = {
   newest_run_at: string | null;
   total_loops: number;
   by_family: FamilyHealthCounts[];
+  /** Present on newer backends — counts by monitor_tier. */
+  tier_counts?: Partial<Record<LearningMonitorTier, number>>;
+  /** Core/secondary loop ids that should raise the stall banner. */
+  alert_stalled_ids?: string[];
 };
 
 export function fetchLearningHealth() {

@@ -6,6 +6,8 @@
 
 import type { CSSProperties, ReactNode } from "react";
 
+import { StudyTypeTickerIcon, STUDY_DRUG_ICON_PX } from "../components/StudyTypeTickerIcon";
+import { betaDisplay } from "./simRowBetaLiquidity";
 import { toSheetNum } from "./sharedTableCellStyle";
 import { columnWidthStyle, type TableViewPrefs } from "./tableViewPrefs";
 
@@ -239,7 +241,7 @@ export const FIN_LEGEND = [
 
   { label: "CR · QR · Cash FY", hint: "CR · QR · Cash FY" },
 
-  { label: "Liq score · Beta", hint: "0–1 bar: green high · amber mid · navy low · beta ⚡ if >2" },
+  { label: "Liq score · Beta", hint: "0–1 bar: green high · amber mid · navy low · beta green <0.85 · amber >1.35 · ⚡ >2" },
 
   { label: "Ticker", hint: "P portfolio · W watchlist" },
 
@@ -351,7 +353,64 @@ export type FinancialStyleContext = {
 
   watchTickers?: Set<string>;
 
+  simRowByTicker?: Map<string, Record<string, unknown>>;
+
 };
+
+function financialIndustryStudyText(row: Record<string, unknown>): string {
+  const industry = String(row.industry ?? "").trim();
+  if (!industry) return "";
+  const low = industry.toLowerCase();
+  if (low.includes("biotech") || low.includes("pharma")) return `${industry} biologic`;
+  return industry;
+}
+
+function financialSymbolCellContent(
+  tk: string,
+  row: Record<string, unknown>,
+  ctx: FinancialStyleContext | undefined,
+  tickerClassName: string,
+  tickerStyle?: CSSProperties,
+  badge?: { label: string; borderColor: string; bgColor: string; textColor: string },
+): ReactNode {
+  const simRow = ctx?.simRowByTicker?.get(tk) ?? null;
+  const studyText = financialIndustryStudyText(row);
+  const badgeEl = badge ? (
+    <span
+      className="text-[9px] px-1 py-0.5 rounded font-bold uppercase tracking-wider border"
+      style={{
+        borderColor: badge.borderColor,
+        background: badge.bgColor,
+        color: badge.textColor,
+      }}
+    >
+      {badge.label}
+    </span>
+  ) : null;
+
+  return (
+    <span
+      className={`inline-grid items-center gap-x-1.5 ${
+        badgeEl
+          ? "grid-cols-[20px_auto_minmax(0,max-content)]"
+          : "grid-cols-[20px_minmax(0,max-content)]"
+      }`}
+    >
+      <span className="inline-flex justify-center shrink-0">
+        <StudyTypeTickerIcon
+          ticker={tk}
+          simRow={simRow}
+          studyText={studyText || undefined}
+          size={STUDY_DRUG_ICON_PX}
+        />
+      </span>
+      {badgeEl}
+      <span className={tickerClassName} style={tickerStyle}>
+        {tk}
+      </span>
+    </span>
+  );
+}
 
 
 
@@ -898,31 +957,12 @@ export function financialMetricCell(
 
         text: tk,
 
-        content: (
-
-          <span className="flex items-center gap-1.5">
-
-            <span
-
-              className="text-[9px] px-1 py-0.5 rounded font-bold uppercase tracking-wider border border-[rgb(var(--positive)/0.35)]"
-
-              style={{ background: "rgb(var(--positive) / 0.12)", color: POS }}
-
-            >
-
-              P
-
-            </span>
-
-            <span className="font-bold" style={{ color: INK }}>
-
-              {tk}
-
-            </span>
-
-          </span>
-
-        ) as ReactNode,
+        content: financialSymbolCellContent(tk, row, ctx, "font-bold", { color: INK }, {
+          label: "P",
+          borderColor: "rgb(var(--positive) / 0.35)",
+          bgColor: "rgb(var(--positive) / 0.12)",
+          textColor: POS,
+        }),
 
       };
 
@@ -934,37 +974,21 @@ export function financialMetricCell(
 
         text: tk,
 
-        content: (
-
-          <span className="flex items-center gap-1.5">
-
-            <span
-
-              className="text-[9px] px-1 py-0.5 rounded font-bold uppercase tracking-wider border border-[rgb(var(--accent)/0.35)]"
-
-              style={{ background: "rgb(var(--accent) / 0.12)", color: ACCENT }}
-
-            >
-
-              W
-
-            </span>
-
-            <span className="font-semibold" style={{ color: INK }}>
-
-              {tk}
-
-            </span>
-
-          </span>
-
-        ) as ReactNode,
+        content: financialSymbolCellContent(tk, row, ctx, "font-semibold", { color: INK }, {
+          label: "W",
+          borderColor: "rgb(var(--accent) / 0.35)",
+          bgColor: "rgb(var(--accent) / 0.12)",
+          textColor: ACCENT,
+        }),
 
       };
 
     }
 
-    return { text: tk, style: { color: MUTED, fontWeight: "500" } };
+    return {
+      text: tk,
+      content: financialSymbolCellContent(tk, row, ctx, "font-medium", { color: MUTED }),
+    };
 
   }
 
@@ -1110,49 +1134,26 @@ export function financialMetricCell(
 
     if (n === null) return { text: "—", style: { color: MUTED } };
 
-    let color = INK;
-
-    let weight: CSSProperties["fontWeight"] = "500";
-
-    let icon: string | undefined;
-
-    let iconColor: string | undefined;
-
-    if (n > 2) {
-
-      color = "rgb(var(--warn))";
-
-      weight = "700";
-
-      icon = "⚡";
-
-      iconColor = "rgb(var(--warn))";
-
-    } else if (n > 1.35) {
-
-      color = POS;
-
-      weight = "600";
-
-    } else if (n < 0.85) {
-
-      color = ACCENT;
-
-      weight = "600";
-
-    }
+    const ui = betaDisplay(n);
 
     return {
 
-      text: n.toFixed(2),
+      text: ui.text,
 
-      style: { color, fontWeight: weight, fontVariantNumeric: "tabular-nums" },
+      style: ui.style,
 
-      icon,
+      icon: ui.icon,
 
-      iconColor,
+      iconColor: ui.icon ? ui.style.color : undefined,
 
-      title: n > 2 ? "High volatility (β > 2)" : undefined,
+      title:
+        ui.bucket === "high"
+          ? "Strong market link (β > 2)"
+          : ui.bucket === "elevated"
+            ? "More market-driven variance (β > 1.35)"
+            : ui.bucket === "idiosyncratic"
+              ? "Cleaner company-specific signal (β < 0.85)"
+              : undefined,
 
     };
 

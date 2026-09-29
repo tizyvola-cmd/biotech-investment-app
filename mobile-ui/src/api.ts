@@ -6,11 +6,12 @@ import type {
   ChartBundle,
   SheetTable,
 } from "./types";
-import type { MobileDashboardSnapshot } from "./dashboardTypes";
+import type { MobileCurveChartsPayload, MobileDashboardSnapshot } from "./dashboardTypes";
+import type { MarketContextSnapshotDoc } from "./mobileMarketContext";
 import { t } from "./i18n";
 import { getMobileLang } from "./langStorage";
 import { getDefaultApiBase } from "./remoteHost";
-import { testerIdFromEmail } from "./testerSession";
+import { normalizeTesterEmail, testerIdFromEmail } from "./testerSession";
 
 const LS_API = "sn_api_base";
 const LS_TOKEN = "sn_api_token";
@@ -36,7 +37,7 @@ function isPrivateLanHost(hostname: string): boolean {
   return false;
 }
 
-/** Vite dev (:5174) con proxy /api → :8765 — localhost o telefono sulla stessa Wi‑Fi. */
+/** Vite dev (:5174) con proxy /api → VPS — localhost o telefono sulla stessa Wi‑Fi. */
 function isDevProxyHost(): boolean {
   if (typeof window === "undefined" || !import.meta.env.DEV) return false;
   const h = window.location.hostname;
@@ -178,6 +179,13 @@ export async function api<T>(path: string, init?: RequestInit, opts?: ApiOptions
     ...(init?.headers as Record<string, string>),
   };
   if (token) headers["X-SuperNova-Token"] = token;
+  try {
+    const { getTesterSessionToken, TESTER_SESSION_HEADER } = await import("./testerSession");
+    const sess = getTesterSessionToken();
+    if (sess) headers[TESTER_SESSION_HEADER] = sess;
+  } catch {
+    /* ignore */
+  }
 
   const timeoutMs = opts?.timeoutMs ?? 90_000;
   const ac = new AbortController();
@@ -359,6 +367,36 @@ export async function fetchSimInputs(testerId?: string | null): Promise<InvestSi
   }
 }
 
+/**
+ * Companion book = desktop shared `/api/investment/sim-inputs`.
+ * Tester sandbox is used only when the shared book has no open capital.
+ */
+function openCapForCompanion(inputs: InvestSimInputs | null | undefined): number {
+  let s = 0;
+  for (const e of Object.values(inputs ?? {})) {
+    if (e && !e.ignoreSheet && (e.capital ?? 0) > 0) s += e.capital ?? 0;
+  }
+  return s;
+}
+
+export async function fetchCompanionSimInputs(
+  testerId?: string | null,
+): Promise<InvestSimPersistedPayload & { source: "shared" | "tester" | "empty" }> {
+  // Same email as desktop remote → always the per-tester book (starts empty).
+  if (testerId) {
+    const tester = await fetchSimInputs(testerId);
+    const testerCap = openCapForCompanion(tester.inputs);
+    return {
+      ...tester,
+      source: testerCap > 0 ? "tester" : "empty",
+    };
+  }
+  const shared = await fetchSimInputs(null);
+  const sharedCap = openCapForCompanion(shared.inputs);
+  if (sharedCap > 0) return { ...shared, source: "shared" };
+  return { ...shared, source: "empty" };
+}
+
 export async function saveSimInputs(inputs: InvestSimInputs, testerId?: string | null): Promise<void> {
   if (testerId) {
     await api(`/api/tester-feedback/testers/${encodeURIComponent(testerId)}/sim-inputs`, {
@@ -398,11 +436,148 @@ export async function fetchSimHistory(): Promise<InvestSimHistoryPoint[]> {
   return simHistoryInflight;
 }
 
+export type RegulatoryRiskSource = {
+  headline: string;
+  filing_date?: string;
+  source?: string;
+  type?: string;
+};
+
+export type RegulatoryRiskSignalBucket = {
+  detected: boolean;
+  hits: string[];
+  sources: RegulatoryRiskSource[];
+};
+
+export type RegulatoryRiskSignal = {
+  ticker?: string;
+  score: number;
+  crl?: RegulatoryRiskSignalBucket;
+  pdufa?: RegulatoryRiskSignalBucket;
+  cmc?: RegulatoryRiskSignalBucket;
+  approved?: RegulatoryRiskSignalBucket;
+  positive?: RegulatoryRiskSignalBucket;
+  /** Legacy mobile shape */
+  positive_legacy?: { detected: boolean };
+  no_signals?: boolean;
+  clinical_phase?: string | null;
+};
+
+export type RegulatoryRiskSnapshot = {
+  updated_at: string | null;
+  ticker_count?: number;
+  tickers: Record<string, RegulatoryRiskSignal>;
+};
+
+export async function fetchRegulatoryRiskSnapshot(): Promise<RegulatoryRiskSnapshot | null> {
+  try {
+    return await api<RegulatoryRiskSnapshot>("/api/regulatory-risk/snapshot", undefined, {
+      timeoutMs: 30_000,
+    });
+  } catch {
+    return null;
+  }
+}
+
+export async function fetchMarketContextMcsSnapshot(): Promise<MarketContextSnapshotDoc | null> {
+  try {
+    return await api<MarketContextSnapshotDoc>("/api/market/context/mcs", undefined, {
+      timeoutMs: 30_000,
+    });
+  } catch {
+    return null;
+  }
+}
+
 export async function fetchMobileDashboardSnapshot(): Promise<MobileDashboardSnapshot> {
   try {
-    return await api<MobileDashboardSnapshot>("/api/mobile/dashboard-snapshot");
+    const result = await fetchMobileDashboardSnapshotWithEtag();
+    return result.body ?? { version: 1, updated_at: null, source: "error" };
   } catch {
     return { version: 1, updated_at: null, source: "error" };
+  }
+}
+
+const LS_SNAP_ETAG = "sn_mobile_dash_etag";
+const LS_SNAP_BODY = "sn_mobile_dash_body";
+
+/** GET snapshot with If-None-Match — 304 reuses last body (saves multi-MB transfers). */
+export async function fetchMobileDashboardSnapshotWithEtag(): Promise<{
+  body: MobileDashboardSnapshot | null;
+  notModified: boolean;
+  etag: string | null;
+}> {
+  const base = getApiBase();
+  const url = base ? `${base}/api/mobile/dashboard-snapshot` : "/api/mobile/dashboard-snapshot";
+  const token = getApiToken();
+  const headers: Record<string, string> = {};
+  if (token) headers["X-SuperNova-Token"] = token;
+  try {
+    const { getTesterSessionToken, TESTER_SESSION_HEADER } = await import("./testerSession");
+    const sess = getTesterSessionToken();
+    if (sess) headers[TESTER_SESSION_HEADER] = sess;
+  } catch {
+    /* ignore */
+  }
+  const prevEtag = localStorage.getItem(LS_SNAP_ETAG)?.trim() || "";
+  if (prevEtag) headers["If-None-Match"] = prevEtag;
+
+  const ac = new AbortController();
+  const timer = window.setTimeout(() => ac.abort(), 90_000);
+  let res: Response;
+  try {
+    res = await fetch(url, { headers, signal: ac.signal });
+  } finally {
+    window.clearTimeout(timer);
+  }
+
+  const etag = res.headers.get("ETag");
+  if (res.status === 304) {
+    const raw = localStorage.getItem(LS_SNAP_BODY);
+    if (raw) {
+      try {
+        const body = JSON.parse(raw) as MobileDashboardSnapshot;
+        return { body, notModified: true, etag: etag || prevEtag || null };
+      } catch {
+        /* fall through to empty */
+      }
+    }
+    return { body: null, notModified: true, etag: etag || prevEtag || null };
+  }
+  if (!res.ok) {
+    const text = await res.text();
+    throw new Error(formatApiError(res.status, text));
+  }
+  const body = (await res.json()) as MobileDashboardSnapshot;
+  if (etag) localStorage.setItem(LS_SNAP_ETAG, etag);
+  try {
+    localStorage.setItem(LS_SNAP_BODY, JSON.stringify(body));
+  } catch {
+    /* quota — ignore */
+  }
+  return { body, notModified: false, etag };
+}
+
+/** Rebuild snapshot on VPS using same TS builder as desktop (decision chart + recs). */
+export async function refreshMobileDashboardSnapshot(): Promise<void> {
+  await api("/api/mobile/dashboard-snapshot/refresh", { method: "POST" });
+}
+
+/** Lazy curve charts for one opportunity row (kept out of the poll snapshot). */
+export async function fetchMobileCurveChartsForKey(
+  key: string,
+): Promise<MobileCurveChartsPayload | null> {
+  const k = key.trim();
+  if (!k) return null;
+  try {
+    const q = encodeURIComponent(k);
+    const res = await api<{
+      ok?: boolean;
+      curveCharts?: MobileCurveChartsPayload | null;
+    }>(`/api/mobile/curve-charts?key=${q}`, undefined, { timeoutMs: 45_000 });
+    return res.curveCharts ?? null;
+  } catch {
+    return null;
   }
 }
 
@@ -460,6 +635,7 @@ export type ClinicalPublicationEvent = {
     vol_term?: number;
     sentiment?: number;
     kpi_score?: number | null;
+    eis_intrinsic?: number | null;
     sent_term?: number;
     weights?: { w1?: number; w2?: number; w3?: number; w4?: number };
   } | null;
@@ -550,7 +726,7 @@ export async function registerMobileTester(body: {
   display_name?: string;
   invite_code?: string;
 }) {
-  const email = body.email.trim();
+  const email = normalizeTesterEmail(body.email);
   const res = await api<{ ok: boolean; tester: Record<string, unknown> }>(
     "/api/tester-feedback/testers/register",
     {
@@ -572,6 +748,17 @@ export async function fetchTesterAccess(testerId: string): Promise<TesterAccess>
   return api<TesterAccess>(
     `/api/tester-feedback/testers/${encodeURIComponent(testerId)}/access`,
     undefined,
+    { timeoutMs: 15_000 },
+  );
+}
+
+export async function createTesterSession(testerId: string, email: string) {
+  return api<{ ok: boolean; tester: Record<string, unknown> }>(
+    `/api/tester-feedback/testers/${encodeURIComponent(testerId)}/session`,
+    {
+      method: "POST",
+      body: JSON.stringify({ email }),
+    },
     { timeoutMs: 15_000 },
   );
 }

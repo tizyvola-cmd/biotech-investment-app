@@ -6,6 +6,11 @@ import { conditionLabel } from "../riskPattern/lossRiskPattern";
 import { loadTradeLeadTimes } from "../riskPattern/patternMatchTracker";
 import { dimensionLabel } from "../riskPattern/lossRiskScreening";
 import { applyManualAllocationPattern } from "../riskPattern/manualAllocationPatternApply";
+import {
+  loadApprovedPattern,
+  patternSignature,
+  SHOW_APPROVED_PATTERN_EVENT,
+} from "../riskPattern/patternProposalStore";
 import { PatternValidationChart } from "./PatternValidationChart";
 import type {
   ManualAllocationPatternResult,
@@ -49,6 +54,8 @@ function UniverseSynthesizerBlock({
   closedRows,
   simTable,
   sdsRows,
+  approvedSignature,
+  approvedName,
 }: {
   input: ManualAllocationSynthesizerInput;
   result: ManualAllocationPatternResult | null;
@@ -57,6 +64,10 @@ function UniverseSynthesizerBlock({
   closedRows?: SimOutcomeRow[];
   simTable?: SheetTable | null;
   sdsRows?: SdsRow[] | null;
+  /** Signature of the currently approved pattern (to flag "already approved"). */
+  approvedSignature: string;
+  /** Name of the currently approved pattern, for the deep-link label. */
+  approvedName: string | null;
 }) {
   const universeLabel =
     input.universe === "portfolio"
@@ -85,6 +96,9 @@ function UniverseSynthesizerBlock({
   const condLabel = result.pattern.conditions
     .map((c) => conditionLabel(c, it ? "it" : "en"))
     .join(" AND ");
+
+  const isApproved =
+    approvedSignature !== "" && patternSignature(result.pattern) === approvedSignature;
 
   return (
     <div className="rounded-lg border border-teal-300/60 bg-white/60 dark:bg-surface/50 px-3 py-2.5 space-y-2.5">
@@ -128,13 +142,40 @@ function UniverseSynthesizerBlock({
             {result.penalizedTickers.join(", ") || "—"}
           </p>
         </div>
-        <button
-          type="button"
-          className="btn-primary text-[11px] shrink-0"
-          onClick={() => onApply(result)}
-        >
-          {it ? "Approva pattern" : "Approve pattern"}
-        </button>
+        <div className="flex flex-col items-end gap-1 shrink-0">
+          {isApproved ? (
+            <span className="text-[9px] font-semibold px-1.5 py-0.5 rounded bg-emerald-100 text-emerald-800 dark:bg-emerald-900/40 dark:text-emerald-200">
+              {it ? "✓ è il pattern approvato" : "✓ this is the approved pattern"}
+            </span>
+          ) : (
+            <span className="text-[9px] font-semibold px-1.5 py-0.5 rounded bg-amber-100 text-amber-800 dark:bg-amber-900/40 dark:text-amber-200">
+              {it ? "candidato — non approvato" : "candidate — not approved"}
+            </span>
+          )}
+          <button
+            type="button"
+            className="btn-primary text-[11px]"
+            onClick={() => onApply(result)}
+          >
+            {it ? "Approva pattern" : "Approve pattern"}
+          </button>
+          <button
+            type="button"
+            className="text-[9px] text-indigo-600 dark:text-indigo-400 hover:underline"
+            onClick={() => window.dispatchEvent(new CustomEvent(SHOW_APPROVED_PATTERN_EVENT))}
+            title={
+              approvedName
+                ? it
+                  ? `Pattern approvato attuale: ${approvedName}`
+                  : `Current approved pattern: ${approvedName}`
+                : it
+                  ? "Nessun pattern approvato"
+                  : "No approved pattern"
+            }
+          >
+            {it ? "→ vai a Pesi approvati" : "→ go to Approved weights"}
+          </button>
+        </div>
       </div>
 
       <div className="flex flex-wrap gap-x-4 gap-y-1 text-[10px] tabular-nums text-ink-muted">
@@ -319,6 +360,10 @@ export function ManualAllocationSynthesizerPanel({
   const leadTimeCount = loadTradeLeadTimes().length;
   const leadTimeReady = leadTimeCount >= MIN_LEAD_TIME_SAMPLES;
 
+  const approved = loadApprovedPattern().current;
+  const approvedSignature = patternSignature(approved);
+  const approvedName = approved?.name ?? null;
+
   function handleApply(result: ManualAllocationPatternResult) {
     const ok = applyManualAllocationPattern(
       result.pattern,
@@ -376,6 +421,8 @@ export function ManualAllocationSynthesizerPanel({
             closedRows={closedRows}
             simTable={simTable}
             sdsRows={sdsRows}
+            approvedSignature={approvedSignature}
+            approvedName={approvedName}
           />
         ) : null}
         {simLoopInput ? (
@@ -387,6 +434,8 @@ export function ManualAllocationSynthesizerPanel({
             closedRows={closedRows}
             simTable={simTable}
             sdsRows={sdsRows}
+            approvedSignature={approvedSignature}
+            approvedName={approvedName}
           />
         ) : null}
       </div>

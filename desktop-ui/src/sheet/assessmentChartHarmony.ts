@@ -15,6 +15,18 @@ import type { SlopeTrajectoryPoint } from "./slopeRecalibCurve";
 /** Max |Δ| pp overlay vs slope before flagging misalignment (median live gap ~1.7 pp). */
 export const ALIGN_TOL_PP = 0.5;
 
+/** Shared calendar X-axis for loss-analysis 2×2 tiles (pred / gain / slope — not MII). */
+export const LOSS_ANALYSIS_X_AXIS_MIN = -90;
+export const LOSS_ANALYSIS_X_AXIS_MAX = 90;
+
+/** Force CD=0, today, and a symmetric pre/post window so curves share the same frame. */
+export function lossAnalysisAlignedXDomain(
+  _todayOffset?: number | null | undefined,
+  _dataOffsets: readonly number[] = [],
+): [number, number] {
+  return [LOSS_ANALYSIS_X_AXIS_MIN, LOSS_ANALYSIS_X_AXIS_MAX];
+}
+
 /** Calendar offset «oggi» — prefer Completion Date on the sim row. */
 export function canonicalTodayOffset(
   simRow: Record<string, unknown> | null | undefined,

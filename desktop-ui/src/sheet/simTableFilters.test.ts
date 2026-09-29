@@ -82,4 +82,43 @@ describe("simTableFilters portfolio scope", () => {
     expect(filtered.map((p) => p.ticker).sort()).toEqual(["BIIB", "OLMA"]);
     expect(filterActivePortfolioPositions(watchPool, rowByKey, inputs)).toHaveLength(0);
   });
+
+  it("sellNow includes Soft Soft SELL keys even without curve decline", () => {
+    const open = pos("BIIB", "15/09/2026", 5000);
+    const pool = [open];
+    const rowByKey = new Map<string, Record<string, unknown>>([
+      [open.key, { Ticker: "BIIB", "Completion Date": "15/09/2026" }],
+    ]);
+    const inputs: InvestSimInputs = {
+      [open.key]: { buyPrice: 10, capital: 5000, ignoreSheet: false },
+    };
+    const softSellKeys = new Set([open.key]);
+
+    const counts = buildSimTableFilterCounts(
+      pool,
+      rowByKey,
+      inputs,
+      emptyTopOpps(),
+      [],
+      new Map(),
+      [],
+      undefined,
+      softSellKeys,
+    );
+    expect(counts.sellNow).toBe(1);
+
+    const filtered = filterSimTablePositions(
+      pool,
+      "sellNow",
+      rowByKey,
+      inputs,
+      emptyTopOpps(),
+      [],
+      new Map(),
+      [],
+      undefined,
+      softSellKeys,
+    );
+    expect(filtered.map((p) => p.ticker)).toEqual(["BIIB"]);
+  });
 });

@@ -28,6 +28,25 @@ def _path_for(tester_id: str) -> str:
 
 def load_sim_inputs(tester_id: str) -> dict[str, Any]:
     tid = _clean_tester_id(tester_id)
+    try:
+        import supernova_pg as _pg
+
+        if _pg.enabled():
+            import tester_pg_io as _tpg
+
+            data = _tpg.load_sim_inputs(tid)
+            if data is None:
+                return {"version": 1, "tester_id": tid, "updated_at": None, "inputs": {}}
+            if not isinstance(data, dict):
+                return {"version": 1, "tester_id": tid, "updated_at": None, "inputs": {}}
+            if not isinstance(data.get("inputs"), dict):
+                data["inputs"] = {}
+            data.setdefault("version", 1)
+            data.setdefault("tester_id", tid)
+            return data
+    except Exception:
+        pass
+
     p = _path_for(tid)
     if not os.path.isfile(p):
         return {"version": 1, "tester_id": tid, "updated_at": None, "inputs": {}}
@@ -57,6 +76,17 @@ def save_sim_inputs(tester_id: str, inputs: dict[str, Any], *, source: str = "mo
         "updated_at": _now_iso(),
         "inputs": inputs,
     }
+    try:
+        import supernova_pg as _pg
+
+        if _pg.enabled():
+            import tester_pg_io as _tpg
+
+            _tpg.save_sim_inputs(tid, payload)
+            return payload
+    except Exception:
+        pass
+
     p = _path_for(tid)
     tmp = p + ".tmp"
     with open(tmp, "w", encoding="utf-8") as fh:
@@ -67,6 +97,16 @@ def save_sim_inputs(tester_id: str, inputs: dict[str, Any], *, source: str = "mo
 
 def delete_sim_inputs(tester_id: str) -> bool:
     tid = _clean_tester_id(tester_id)
+    try:
+        import supernova_pg as _pg
+
+        if _pg.enabled():
+            import tester_pg_io as _tpg
+
+            return _tpg.delete_sim_inputs(tid)
+    except Exception:
+        pass
+
     p = _path_for(tid)
     if os.path.isfile(p):
         os.remove(p)

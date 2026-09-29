@@ -2,12 +2,10 @@ import { useCallback, useEffect, useMemo, useState } from "react";
 import {
   fetchClinicalPreCdSnapshot,
   type ClinicalPreCdRecord,
-  type ClinicalPublicationEvent,
 } from "../api/supernova";
 import { useLang } from "../shared/i18n";
-import { eisColor, resolveEventEis } from "../sheet/eventImpactScore";
+import { eisColor } from "../sheet/eventImpactScore";
 import { openExternalUrl } from "../sheet/k8ChartLinks";
-import { isClinicalPreCdRecordTrusted, isEventReferenceVerified, trustedRecordEvents } from "../sheet/referenceVerification";
 import {
   hydrateClinicalPreCdRecords,
   readClinicalPreCdSnapshotCache,
@@ -15,45 +13,19 @@ import {
   writeClinicalPreCdSnapshotCache,
 } from "../sheet/clinicalPreCdSnapshotCache";
 import { isDashboardPanelStale } from "../sheet/dashboardPanelDailyRefresh";
-import { timelineKind } from "../sheet/clinicalTimeline";
-import { EisDetailDrawer } from "./EisDetailDrawer";
+import {
+  countRecentPastEvents,
+  flattenAiFeed,
+  rankAndSliceFeed,
+  type DashboardAiFeedItem,
+  type DashboardAiFeedTickerMeta,
+} from "../sheet/dashboardAiFeedBuild";
+import { SIM_HOT_ZONE_DAYS, SIM_PEAK_ZONE_DAYS } from "../sheet/cdHorizons";
+import { openEisDeepDive } from "../sheet/eisDeepDiveFocusStore";
 import { DashboardPanelUpdatedLabel } from "./DashboardPanelUpdatedLabel";
+import { PortfolioTickerMark } from "./PortfolioScopeToggle";
 
-export type DashboardAiFeedItem = {
-  id: string;
-  ticker: string;
-  company: string;
-  eventDate: string;
-  eventDateMs: number;
-  title: string;
-  drug: string;
-  delta1d: number | null;
-  eis: number | null;
-  impactAbs: number;
-  sourceType: string;
-  link: string | null;
-  linkLabel: string;
-  verified: boolean;
-};
-
-function recordEvents(rec: ClinicalPreCdRecord): ClinicalPublicationEvent[] {
-  return trustedRecordEvents(rec);
-}
-
-function isSecK8Event(ev: ClinicalPublicationEvent): boolean {
-  return String(ev.source_type ?? "").toLowerCase() === "sec_8k";
-}
-
-function eventDateMs(iso: string | null | undefined): number {
-  if (!iso) return 0;
-  const d = new Date(`${iso}T12:00:00`);
-  return Number.isNaN(d.getTime()) ? 0 : d.getTime();
-}
-
-function eventDrug(ev: ClinicalPublicationEvent): string {
-  const raw = ev.drug ?? ev.asset ?? "—";
-  return String(raw ?? "—").trim() || "—";
-}
+export type { DashboardAiFeedItem, DashboardAiFeedTickerMeta };
 
 function fmtFeedDate(iso: string | null | undefined, it: boolean): string {
   if (!iso) return "—";
@@ -78,90 +50,18 @@ function dirIcon(v: number | null): string {
   return v > 0.05 ? "▲ " : v < -0.05 ? "▼ " : "● ";
 }
 
-/** Skip synthetic future CD milestones with no price/KPI signal — they are not feed news. */
-function includeInDashboardFeed(item: DashboardAiFeedItem, now: number): boolean {
-  if (item.sourceType !== "cd_milestone") return true;
-  if (item.eventDateMs <= now) return true;
-  return item.impactAbs >= 0.5 || item.delta1d != null;
+function daysToCdClass(days: number | null): string {
+  if (days == null || !Number.isFinite(days)) return "text-ink-muted";
+  if (days < 0) return "text-[rgb(var(--warn))]";
+  if (days <= SIM_PEAK_ZONE_DAYS) return "font-bold text-[rgb(var(--signal-up))]";
+  if (days <= SIM_HOT_ZONE_DAYS) return "font-semibold text-ink";
+  return "text-ink-muted";
 }
 
-function feedRank(item: DashboardAiFeedItem, now: number, past30: number): number {
-  const isPast = item.eventDateMs <= now;
-  const isRecentPast = isPast && item.eventDateMs >= past30;
-  let rank = 0;
-  if (isRecentPast) rank += 10_000;
-  else if (isPast) rank += 5_000;
-  rank += item.impactAbs * 100;
-  if (item.delta1d != null) rank += Math.abs(item.delta1d) * 10;
-  rank += isPast ? item.eventDateMs / 1e10 : -item.eventDateMs / 1e10;
-  return rank;
-}
-
-function flattenAiFeed(
-  records: ClinicalPreCdRecord[],
+export function useDashboardAiFeed(
   scopeTickers: Set<string>,
-): DashboardAiFeedItem[] {
-  const out: DashboardAiFeedItem[] = [];
-  for (const rec of records) {
-    const ticker = String(rec.ticker ?? "")
-      .trim()
-      .toUpperCase();
-    if (!ticker || !scopeTickers.has(ticker)) continue;
-    if (!isClinicalPreCdRecordTrusted(rec)) continue;
-
-    for (const ev of recordEvents(rec)) {
-      if (isSecK8Event(ev)) continue;
-      const ms = eventDateMs(ev.event_date);
-      if (!ms) continue;
-      const indicators = ev.indicators?.length ? ev.indicators : rec.clinical_indicators;
-      const resolved = resolveEventEis(ev, indicators);
-      const delta1dRaw = ev.price?.delta_p_1d ?? resolved?.delta_p_1d ?? null;
-      const delta1d =
-        delta1dRaw != null && Number.isFinite(delta1dRaw) ? delta1dRaw : null;
-      const eis =
-        resolved?.score != null && Number.isFinite(resolved.score)
-          ? resolved.score
-          : null;
-      const impactAbs = Math.abs(eis ?? 0);
-      out.push({
-        id: `${ticker}_${ev.event_date}_${ev.event_title ?? ""}`,
-        ticker,
-        company: String(rec.company ?? ticker),
-        eventDate: String(ev.event_date ?? ""),
-        eventDateMs: ms,
-        title: String(ev.event_title ?? "—"),
-        drug: eventDrug(ev),
-        delta1d,
-        eis,
-        impactAbs,
-        sourceType: timelineKind(ev),
-        link: ev.link ? String(ev.link) : null,
-        linkLabel: String(ev.link_label ?? "Link"),
-        verified: isEventReferenceVerified(ev, rec),
-      });
-    }
-  }
-  return out;
-}
-
-function rankAndSliceFeed(items: DashboardAiFeedItem[], limit: number): DashboardAiFeedItem[] {
-  const now = Date.now();
-  const past30 = now - 30 * 86400000;
-  const eligible = items.filter((item) => includeInDashboardFeed(item, now));
-  return [...eligible]
-    .sort((a, b) => feedRank(b, now, past30) - feedRank(a, now, past30))
-    .slice(0, limit);
-}
-
-function countRecentPastEvents(items: DashboardAiFeedItem[]): number {
-  const now = Date.now();
-  const cutoff = now - 30 * 86400000;
-  return items.filter(
-    (r) => r.eventDateMs >= cutoff && r.eventDateMs <= now && includeInDashboardFeed(r, now),
-  ).length;
-}
-
-export function useDashboardAiFeed(scopeTickers: Set<string>) {
+  tickerMeta?: Map<string, DashboardAiFeedTickerMeta>,
+) {
   const [records, setRecords] = useState<ClinicalPreCdRecord[]>(() =>
     hydrateClinicalPreCdRecords(),
   );
@@ -215,8 +115,8 @@ export function useDashboardAiFeed(scopeTickers: Set<string>) {
   }, [load]);
 
   const allFeedItems = useMemo(
-    () => flattenAiFeed(records, scopeTickers),
-    [records, scopeTickers],
+    () => flattenAiFeed(records, scopeTickers, tickerMeta),
+    [records, scopeTickers, tickerMeta],
   );
 
   const feed = useMemo(() => rankAndSliceFeed(allFeedItems, 10), [allFeedItems]);
@@ -275,10 +175,6 @@ export function DashboardAiFeedCard({
 }) {
   const { lang } = useLang();
   const it = lang === "it";
-  const [eisDrawer, setEisDrawer] = useState<{
-    ticker: string;
-    clinicalKpi: number | null;
-  } | null>(null);
 
   // Persisted collapsed/expanded state — keeps the user's choice across
   // reloads so the dashboard layout doesn't reset every refresh.
@@ -292,7 +188,7 @@ export function DashboardAiFeedCard({
   }, []);
 
   const openEisDetail = useCallback((ticker: string) => {
-    setEisDrawer({ ticker, clinicalKpi: null });
+    openEisDeepDive({ ticker });
   }, []);
 
   return (
@@ -395,10 +291,30 @@ export function DashboardAiFeedCard({
               >
                 <div className="flex flex-col min-w-0 flex-1">
                   <div className="flex items-center gap-2 flex-wrap">
-                    <span className="font-bold text-sm tracking-wide text-slate-900">{row.ticker}</span>
+                    <PortfolioTickerMark
+                      ticker={row.ticker}
+                      inPortfolio={row.inPortfolio}
+                      layout="inline"
+                      className="text-sm font-bold tracking-wide"
+                      portfolioMarkTitle={
+                        it ? "Posizione in portafoglio" : "Portfolio position"
+                      }
+                    />
                     <span className="text-xs font-medium text-slate-600">
                       {fmtFeedDate(row.eventDate, it)}
                     </span>
+                    {row.daysToCd != null && Number.isFinite(row.daysToCd) ? (
+                      <span
+                        className={`text-[10px] tabular-nums whitespace-nowrap ${daysToCdClass(row.daysToCd)}`}
+                        title={
+                          it
+                            ? "Giorni al Completion Date"
+                            : "Days to Completion Date"
+                        }
+                      >
+                        T−{row.daysToCd}d
+                      </span>
+                    ) : null}
                     {row.sourceType === "cd_milestone" && (
                       <span className="text-[9px] font-semibold text-violet-800 bg-violet-100/90 px-1.5 py-0.5 rounded-full">
                         CD
@@ -475,14 +391,6 @@ export function DashboardAiFeedCard({
           </div>
         </>
       )}
-
-      <EisDetailDrawer
-        open={eisDrawer != null}
-        onClose={() => setEisDrawer(null)}
-        ticker={eisDrawer?.ticker ?? null}
-        clinicalKpi={eisDrawer?.clinicalKpi}
-        it={it}
-      />
     </div>
   );
 }

@@ -1,4 +1,5 @@
 import type { ClinicalPreCdRecord, ClinicalPreCdSnapshot } from "../api/supernova";
+import { mergeManualEventsIntoRecords } from "./manualFeedEvents";
 
 const STORAGE_KEY = "biotech.clinical_pre_cd_snapshot.v1";
 
@@ -22,8 +23,10 @@ export function readClinicalPreCdSnapshotCache(): ClinicalPreCdSnapshot | null {
 
 export function writeClinicalPreCdSnapshotCache(snapshot: ClinicalPreCdSnapshot): void {
   try {
+    const serverUpdatedAt = snapshot.updated_at?.trim();
     const payload: CachedPayload = {
-      savedAt: new Date().toISOString(),
+      // Prefer server snapshot time so a VPS enrichment invalidates stale browser cache.
+      savedAt: serverUpdatedAt || new Date().toISOString(),
       snapshot,
     };
     localStorage.setItem(STORAGE_KEY, JSON.stringify(payload));
@@ -32,9 +35,15 @@ export function writeClinicalPreCdSnapshotCache(snapshot: ClinicalPreCdSnapshot)
   }
 }
 
-export function hydrateClinicalPreCdRecords(): ClinicalPreCdRecord[] {
+/** Snapshot rows only — no user manual feed overlay. */
+export function readBaseClinicalPreCdRecords(): ClinicalPreCdRecord[] {
   const snap = readClinicalPreCdSnapshotCache();
   return Array.isArray(snap?.records) ? snap.records : [];
+}
+
+/** Cached snapshot + user manual news merged for EIS / 24h / decision chart. */
+export function hydrateClinicalPreCdRecords(): ClinicalPreCdRecord[] {
+  return mergeManualEventsIntoRecords(readBaseClinicalPreCdRecords());
 }
 
 export function readClinicalPreCdSnapshotSavedAt(): string | null {

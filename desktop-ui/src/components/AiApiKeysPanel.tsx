@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import {
   fetchAiProviderInfo,
   fetchAiSecretsStatus,
@@ -11,31 +11,40 @@ import {
 } from "../api/supernova";
 import { useLang, useT } from "../shared/i18n";
 
+function readInputValue(ref: { current: HTMLInputElement | null }): string {
+  // Uncontrolled inputs: read DOM so browser autofill is included even without onChange.
+  return ref.current?.value?.trim() ?? "";
+}
+
 export function AiApiKeysPanel({
   onProviderUpdate,
   openProviderHint,
   onClearProviderHint,
+  defaultOpen = false,
 }: {
   onProviderUpdate?: (info: AiProviderInfo) => void;
   /** Apre il pannello e mette a fuoco il campo del provider richiesto. */
   openProviderHint?: AiProviderId | null;
   onClearProviderHint?: () => void;
+  /** System tab: start expanded. */
+  defaultOpen?: boolean;
 }) {
   const t = useT();
   const { lang } = useLang();
   const it = lang === "it";
 
-  const [open, setOpen] = useState(false);
-  const [moreOpen, setMoreOpen] = useState(false);
+  const [open, setOpen] = useState(defaultOpen);
   const [status, setStatus] = useState<AiSecretsStatus | null>(null);
-  const [anthropicKey, setAnthropicKey] = useState("");
   const [prepaidEur, setPrepaidEur] = useState("");
   const [orgId, setOrgId] = useState("");
-  const [openaiKey, setOpenaiKey] = useState("");
-  const [githubToken, setGithubToken] = useState("");
+  /** Bump to remount password inputs after save/clear (uncontrolled + autofill-safe). */
+  const [keyFieldsEpoch, setKeyFieldsEpoch] = useState(0);
   const [busy, setBusy] = useState(false);
   const [msg, setMsg] = useState<string | null>(null);
   const [err, setErr] = useState<string | null>(null);
+
+  const anthropicRef = useRef<HTMLInputElement | null>(null);
+  const geminiRef = useRef<HTMLInputElement | null>(null);
 
   const loadStatus = useCallback(async () => {
     try {
@@ -57,49 +66,61 @@ export function AiApiKeysPanel({
   useEffect(() => {
     if (!openProviderHint) return;
     setOpen(true);
-    if (openProviderHint === "github" || openProviderHint === "openai") {
-      setMoreOpen(true);
-    }
     onClearProviderHint?.();
+    window.setTimeout(() => {
+      if (openProviderHint === "gemini") geminiRef.current?.focus();
+      else if (openProviderHint === "anthropic") anthropicRef.current?.focus();
+      else geminiRef.current?.focus();
+    }, 50);
   }, [openProviderHint, onClearProviderHint]);
 
   const anthropicSet = status?.providers?.anthropic?.set ?? false;
   const anthropicMasked = status?.providers?.anthropic?.masked ?? "";
-  const githubSet = status?.providers?.github?.set ?? false;
-  const githubMasked = status?.providers?.github?.masked ?? "";
+  const geminiSet = status?.providers?.gemini?.set ?? false;
+  const geminiMasked = status?.providers?.gemini?.masked ?? "";
 
   async function handleSave() {
     setBusy(true);
     setErr(null);
     setMsg(null);
     try {
+      const anthropicVal = readInputValue(anthropicRef);
+      const geminiVal = readInputValue(geminiRef);
       const body: Parameters<typeof saveAiSecrets>[0] = {};
-      if (anthropicKey.trim()) body.anthropic_api_key = anthropicKey.trim();
-      if (openaiKey.trim()) body.openai_api_key = openaiKey.trim();
-      if (githubToken.trim()) body.github_token = githubToken.trim();
+      if (anthropicVal) body.anthropic_api_key = anthropicVal;
+      if (geminiVal) body.gemini_api_key = geminiVal;
       const prepaidTrim = prepaidEur.trim().replace(",", ".");
       if (prepaidTrim) {
         const n = Number(prepaidTrim);
         if (Number.isFinite(n) && n >= 0) body.anthropic_prepaid_eur = n;
       }
       if (orgId.trim()) body.anthropic_org_id = orgId.trim();
-      if (
-        !anthropicKey.trim() &&
-        !openaiKey.trim() &&
-        !githubToken.trim() &&
-        !prepaidTrim &&
-        !orgId.trim()
-      ) {
-        setErr(it ? "Incolla almeno una chiave o i crediti € prima di salvare." : "Paste at least a key or € credits before saving.");
+      if (!anthropicVal && !geminiVal && !prepaidTrim && !orgId.trim()) {
+        setErr(
+          it
+            ? "Incolla almeno una chiave (Claude o Gemini) o i crediti € prima di salvare."
+            : "Paste at least one key (Claude or Gemini) or € credits before saving.",
+        );
         return;
       }
       const res = await saveAiSecrets(body);
       setStatus(res);
-      setAnthropicKey("");
-      setOpenaiKey("");
-      setGithubToken("");
+      const savedGemini = Boolean(geminiVal);
+      const savedAnthropic = Boolean(anthropicVal);
+      setKeyFieldsEpoch((n) => n + 1);
+
+      if (savedGemini && !res.providers?.gemini?.set) {
+        setErr(
+          it
+            ? "Il server non ha salvato Gemini — riavvia l’API con il codice aggiornato (google-genai + gemini_api_key), poi riprova."
+            : "Server did not persist Gemini — restart the API with the updated code (google-genai + gemini_api_key), then retry.",
+        );
+        onProviderUpdate?.(res.provider ?? (await fetchAiProviderInfo()));
+        return;
+      }
+
       setMsg(
-        prepaidTrim
+        prepaidTrim && !savedGemini && !savedAnthropic
           ? it
             ? "Salvato — saldo aggiornato dai crediti caricati."
             : "Saved — balance updated from loaded credits."
@@ -107,18 +128,18 @@ export function AiApiKeysPanel({
             ? "Chiavi salvate sul server API."
             : "Keys saved on the API server.",
       );
-      if (githubToken.trim()) {
+      if (savedGemini) {
         try {
-          await setAiProvider("github");
+          await setAiProvider("gemini");
           setMsg(
             it
-              ? "GitHub salvato e Copilot attivato — puoi «Arricchisci portfolio»."
-              : "GitHub saved and Copilot activated — you can run «Enrich portfolio».",
+              ? "Gemini salvato e attivato (free tier AI Studio)."
+              : "Gemini saved and activated (AI Studio free tier).",
           );
         } catch (e) {
           setErr(e instanceof Error ? e.message : String(e));
         }
-      } else if (anthropicKey.trim()) {
+      } else if (savedAnthropic) {
         try {
           await setAiProvider("anthropic");
         } catch {
@@ -141,7 +162,7 @@ export function AiApiKeysPanel({
     try {
       const res = await saveAiSecrets({ clear_anthropic: true });
       setStatus(res);
-      setAnthropicKey("");
+      setKeyFieldsEpoch((n) => n + 1);
       const info = res.provider ?? (await fetchAiProviderInfo());
       onProviderUpdate?.(info);
       setMsg(it ? "Chiave Claude rimossa." : "Claude key removed.");
@@ -157,19 +178,63 @@ export function AiApiKeysPanel({
     setErr(null);
     setMsg(null);
     try {
+      // If Gemini is typed but not saved yet, save+activate first (avoids testing dead Copilot).
+      const geminiVal = readInputValue(geminiRef);
+      if (geminiVal && !geminiSet) {
+        const res = await saveAiSecrets({ gemini_api_key: geminiVal });
+        setStatus(res);
+        setKeyFieldsEpoch((n) => n + 1);
+        if (!res.providers?.gemini?.set) {
+          setErr(
+            it
+              ? "Il server non ha salvato Gemini — riavvia l’API aggiornata, poi riprova."
+              : "Server did not persist Gemini — restart the updated API, then retry.",
+          );
+          return;
+        }
+        await setAiProvider("gemini");
+      }
       const res = await probeAiProvider();
       onProviderUpdate?.(res);
       if (res.probe_ok) {
-        setMsg(it ? "Test OK — Claude/API risponde." : "Test OK — API responded.");
+        setMsg(it ? "Test OK — Gemini/Claude risponde." : "Test OK — Gemini/Claude responded.");
+        setErr(null);
       } else {
-        setErr(
+        const geminiErr = String(res.errors?.gemini ?? "");
+        const raw =
           res.hint_it && it
             ? res.hint_it
-            : res.hint_en ?? (it ? "Test fallito — controlla crediti e chiave." : "Test failed — check credits and key."),
-        );
+            : res.hint_en ?? (it ? "Test fallito — controlla crediti e chiave." : "Test failed — check credits and key.");
+        // Prefer the active/Gemini error; don't blame Copilot if Gemini is already saved.
+        if (geminiSet || geminiVal) {
+          setErr(
+            geminiErr
+              ? it
+                ? `Gemini: ${geminiErr.slice(0, 220)}`
+                : `Gemini: ${geminiErr.slice(0, 220)}`
+              : raw,
+          );
+        } else if (/github.?models|retirement|410/i.test(raw) && !/gemini/i.test(raw)) {
+          setErr(
+            it
+              ? "Copilot non funziona più. Salva Gemini con «Salva e attiva Gemini», poi riprova Test."
+              : "Copilot no longer works. Save Gemini with «Save & activate Gemini», then Test again.",
+          );
+        } else {
+          setErr(raw);
+        }
       }
     } catch (e) {
-      setErr(e instanceof Error ? e.message : String(e));
+      const raw = e instanceof Error ? e.message : String(e);
+      if (/github.?models|retirement|410/i.test(raw)) {
+        setErr(
+          it
+            ? "Copilot non funziona più. Salva Gemini con «Salva chiavi», poi riprova Test."
+            : "Copilot no longer works. Save Gemini with «Save keys», then Test again.",
+        );
+      } else {
+        setErr(raw);
+      }
     } finally {
       setBusy(false);
     }
@@ -184,6 +249,15 @@ export function AiApiKeysPanel({
       >
         <span>{t("clinicalFeed.apiKeys.title")}</span>
         <span className="text-ink-muted font-normal shrink-0 flex flex-wrap items-center gap-x-2 gap-y-0.5 justify-end">
+          {geminiSet ? (
+            <span className="text-amber-400">
+              Gemini {geminiMasked ? `· ${geminiMasked}` : "✓"}
+            </span>
+          ) : (
+            <span className="text-ink-muted/70">
+              {it ? "Gemini non configurato" : "Gemini not set"}
+            </span>
+          )}
           {anthropicSet ? (
             <span className="text-violet-400">
               Claude {anthropicMasked ? `· ${anthropicMasked}` : "✓"}
@@ -191,32 +265,38 @@ export function AiApiKeysPanel({
           ) : (
             <span className="text-negative/90">{t("clinicalFeed.apiKeys.notSet")}</span>
           )}
-          {githubSet ? (
-            <span className="text-blue-400">
-              Copilot {githubMasked ? `· ${githubMasked}` : "✓"}
-            </span>
-          ) : (
-            <span className="text-ink-muted/70">{t("clinicalFeed.apiKeys.copilotNotSet")}</span>
-          )}
           <span className="ml-2">{open ? "▾" : "▸"}</span>
         </span>
       </button>
 
       {open ? (
         <div className="px-3 pb-3 pt-0 space-y-2 border-t border-[rgb(var(--border))]/30">
-          <p className="text-[10px] text-ink-muted leading-snug">{t("clinicalFeed.apiKeys.hint")}</p>
+          <p className="text-[10px] text-ink-muted leading-snug">
+            {it
+              ? "Le chiavi si salvano sul server API (data/ai_secrets.json). Claude = qualità (a pagamento). Gemini = free tier, fallback per 8-K / briefing se Claude non c’è."
+              : "Keys are saved on the API server (data/ai_secrets.json). Claude = quality (paid). Gemini = free tier fallback for 8-K / briefings when Claude is off."}
+          </p>
 
-          <label className="block">
-            <span className="text-[10px] font-medium text-violet-300">
+          <label className="block rounded-lg border border-violet-500/35 bg-violet-500/5 px-2.5 py-2">
+            <span className="text-[10px] font-semibold text-violet-300">
               {t("clinicalFeed.apiKeys.anthropicLabel")}
             </span>
+            <p className="text-[9px] text-ink-muted/90 mt-0.5 leading-snug">
+              {it
+                ? "Incolla la chiave da console.anthropic.com, poi Salva."
+                : "Paste the key from console.anthropic.com, then Save."}
+            </p>
             <input
+              key={`anthropic-${keyFieldsEpoch}`}
+              ref={anthropicRef}
               type="password"
-              autoComplete="off"
-              className="feed-panel-input w-full mt-1 rounded-lg px-2.5 py-1.5 text-[11px] font-mono"
+              autoComplete="new-password"
+              name="sn_anthropic_api_key"
+              data-1p-ignore
+              data-lpignore="true"
+              className="feed-panel-input w-full mt-1.5 rounded-lg px-2.5 py-1.5 text-[11px] font-mono"
               placeholder={anthropicSet ? anthropicMasked || "sk-ant-…" : "sk-ant-api03-…"}
-              value={anthropicKey}
-              onChange={(e) => setAnthropicKey(e.target.value)}
+              defaultValue=""
             />
           </label>
 
@@ -252,44 +332,43 @@ export function AiApiKeysPanel({
             />
           </label>
 
-          <button
-            type="button"
-            className="text-[10px] text-ink-muted hover:text-ink"
-            onClick={() => setMoreOpen((v) => !v)}
-          >
-            {moreOpen ? "▾" : "▸"} {t("clinicalFeed.apiKeys.moreProviders")}
-          </button>
-          {moreOpen ? (
-            <div className="space-y-2">
-              <label className="block">
-                <span className="text-ink-muted">OpenAI</span>
-                <input
-                  type="password"
-                  autoComplete="off"
-                  className="feed-panel-input w-full mt-1 rounded-lg px-2.5 py-1.5 text-[11px] font-mono"
-                  placeholder="sk-…"
-                  value={openaiKey}
-                  onChange={(e) => setOpenaiKey(e.target.value)}
-                />
-              </label>
-              <label className="block">
-                <span className="text-blue-300 font-medium">
-                  {t("clinicalFeed.apiKeys.githubLabel")}
-                </span>
-                <p className="text-[9px] text-ink-muted/85 mt-0.5 leading-snug">
-                  {t("clinicalFeed.apiKeys.githubHint")}
-                </p>
-                <input
-                  type="password"
-                  autoComplete="off"
-                  className="feed-panel-input w-full mt-1 rounded-lg px-2.5 py-1.5 text-[11px] font-mono"
-                  placeholder={githubSet ? githubMasked || "github_pat_…" : "github_pat_…"}
-                  value={githubToken}
-                  onChange={(e) => setGithubToken(e.target.value)}
-                />
-              </label>
-            </div>
-          ) : null}
+          <label className="block rounded-lg border border-amber-500/35 bg-amber-500/5 px-2.5 py-2">
+            <span className="text-[10px] font-semibold text-amber-300">
+              Gemini (Flash · free) — {it ? "opzionale" : "optional"}
+            </span>
+            <p className="text-[9px] text-ink-muted/90 mt-0.5 leading-snug">
+              {it
+                ? "Non obbligatoria se usi Claude. Utile come fallback gratis (aistudio.google.com/apikey)."
+                : "Not required if you use Claude. Useful free fallback (aistudio.google.com/apikey)."}
+            </p>
+            <input
+              key={`gemini-${keyFieldsEpoch}`}
+              ref={geminiRef}
+              type="text"
+              spellCheck={false}
+              autoComplete="off"
+              autoCorrect="off"
+              autoCapitalize="off"
+              name="sn_gemini_api_key"
+              data-1p-ignore
+              data-lpignore="true"
+              data-form-type="other"
+              className="feed-panel-input w-full mt-1.5 rounded-lg px-2.5 py-1.5 text-[11px] font-mono"
+              placeholder={geminiSet ? geminiMasked || "AIza…" : "AIza…"}
+              defaultValue=""
+            />
+            {geminiSet ? (
+              <p className="text-[9px] text-positive mt-1">
+                {it
+                  ? `Salvata sul server · ${geminiMasked || "✓"}`
+                  : `Saved on server · ${geminiMasked || "✓"}`}
+              </p>
+            ) : (
+              <p className="text-[9px] text-ink-muted/80 mt-1">
+                {it ? "Non configurata (ok se Claude è attivo)." : "Not set (ok if Claude is active)."}
+              </p>
+            )}
+          </label>
 
           <div className="flex flex-wrap gap-1.5 items-center">
             <button
@@ -303,7 +382,7 @@ export function AiApiKeysPanel({
             <button
               type="button"
               className="btn-ghost text-[10px] px-2.5 py-1"
-              disabled={busy || !anthropicSet}
+              disabled={busy || !(anthropicSet || geminiSet)}
               onClick={() => void handleTest()}
             >
               {t("clinicalFeed.apiKeys.test")}
@@ -334,5 +413,4 @@ export function AiApiKeysPanel({
       ) : null}
     </div>
   );
-
 }

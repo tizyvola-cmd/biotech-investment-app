@@ -13,6 +13,7 @@ import { computeFrozenWeightMultiplier } from "../calibration/sizingRules";
 import type { ComparisonDeal } from "./threePortfolioCompare";
 import { DEFAULT_SIZING_RULES_CONFIG } from "../calibration/sizingRules";
 import { blendAndCapSharesForDisplay } from "./weightSimExpOptimizer";
+import type { SimTableApprovedWeightMaps } from "./simTableApprovedWeightHints";
 
 export const SIM_TABLE_SYNTH_MAX_SHARE = DEFAULT_SIZING_RULES_CONFIG.capPctSingle;
 
@@ -42,6 +43,8 @@ export type SynthCurveAllocationPayload = {
   /** Capped mix for Simulation table (max 25% per deal). */
   portfolioDisplaySharesByRowKey: Record<string, number>;
   simLoopDisplaySharesByRowKey: Record<string, number>;
+  /** Approved-weight hints for Simulation table Rec $ column (not Weight Sim Exp). */
+  simTableApprovedWeightMaps?: SimTableApprovedWeightMaps;
 };
 
 export function computeApprovedWeightShares(

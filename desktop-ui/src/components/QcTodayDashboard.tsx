@@ -6,9 +6,12 @@ import type { SheetTable } from "../types";
 import { buildModelLearningsView, type ModelLearningsView } from "../sheet/modelLearningsTimeline";
 import { useLang, useT } from "../shared/i18n";
 import { ViewErrorBoundary } from "./ViewErrorBoundary";
-import { MissedOpportunityPanel } from "./MissedOpportunityPanel";
 import { AdviceLearningTimelinePanel } from "./AdviceLearningTimelinePanel";
+import { AdviceLearningsRecalculationBridge } from "./AdviceLearningsRecalculationBridge";
 import { ModelSizeErrorPanel } from "./ModelSizeErrorPanel";
+import { useInvestSimInputs } from "../hooks/useInvestSimInputs";
+import { useInvestSimPortfolioHistory } from "../hooks/useInvestSimPortfolioHistory";
+import { HomePortfolioPnlHistoryChart } from "./HomePortfolioPnlHistoryChart";
 
 export type QcTodayDashboardProps = {
   reloadToken?: number;
@@ -20,9 +23,12 @@ export type QcTodayDashboardProps = {
   curveErrors?: string[];
   sources?: Parameters<typeof buildModelLearningsView>[0] | null;
   view?: ModelLearningsView | null;
-  onOpenLearningLab?: () => void;
-  onOpenSdsAccuracy?: () => void;
-  onOpenEisAnalysis?: () => void;
+  onOpenModelsEval?: () => void;
+  /** Opens the dedicated "Missed" sub-view (Calibration plan, top blockers,
+   *  error trend, missed gainers scatter). The MissedOpportunityPanel was
+   *  previously mounted inline at the bottom of this dashboard; it now
+   *  lives in its own tab reachable through this callback. */
+  onOpenMissed?: () => void;
 };
 
 export function QcTodayDashboard({
@@ -34,12 +40,13 @@ export function QcTodayDashboard({
   curveErrors = [],
   sources = null,
   view: viewProp = null,
-  onOpenLearningLab,
-  onOpenSdsAccuracy,
-  onOpenEisAnalysis,
+  onOpenModelsEval,
+  onOpenMissed,
 }: QcTodayDashboardProps) {
   const t = useT();
   const { lang } = useLang();
+  const inputs = useInvestSimInputs(simTable, reloadToken);
+  const { history: portfolioHistory } = useInvestSimPortfolioHistory(reloadToken);
 
   const view = useMemo(() => {
     if (viewProp) return viewProp;
@@ -49,39 +56,40 @@ export function QcTodayDashboard({
 
   return (
     <div className="flex flex-col flex-1 gap-4 pr-1">
+      <div className="shrink-0 min-w-0">
+        <ViewErrorBoundary label="Open portfolio P&L">
+          <HomePortfolioPnlHistoryChart
+            history={portfolioHistory}
+            inputs={inputs}
+            simTable={simTable}
+          />
+        </ViewErrorBoundary>
+      </div>
+
       <div className="rounded-xl border border-[rgb(var(--border))]/50 bg-gradient-to-br from-white via-sky-50/50 to-amber-50/40 p-4 space-y-3 shrink-0">
         <div className="flex flex-wrap items-start justify-between gap-3">
           <div className="min-w-0 flex-1">
             <h3 className="text-base font-semibold text-ink">{t("modelLab.qc.performance.title")}</h3>
             <p className="text-[11px] text-ink-muted mt-0.5">{t("modelLab.qc.performance.lead")}</p>
           </div>
-          {onOpenLearningLab || onOpenSdsAccuracy || onOpenEisAnalysis ? (
-            <div className="shrink-0 flex flex-wrap items-center gap-2">
-              {onOpenSdsAccuracy ? (
-                <button
-                  type="button"
-                  className="rounded-lg border border-[rgb(var(--border))]/60 bg-white/90 px-3 py-2 text-xs font-medium text-ink hover:bg-surface/40 transition"
-                  onClick={onOpenSdsAccuracy}
-                >
-                  {t("modelLab.performance.openSdsAccuracy")}
-                </button>
-              ) : null}
-              {onOpenEisAnalysis ? (
-                <button
-                  type="button"
-                  className="rounded-lg border border-[rgb(var(--border))]/60 bg-white/90 px-3 py-2 text-xs font-medium text-ink hover:bg-surface/40 transition"
-                  onClick={onOpenEisAnalysis}
-                >
-                  {t("modelLab.performance.openEisAnalysis")}
-                </button>
-              ) : null}
-              {onOpenLearningLab ? (
+          {onOpenModelsEval || onOpenMissed ? (
+            <div className="shrink-0 flex items-center gap-2">
+              {onOpenModelsEval ? (
                 <button
                   type="button"
                   className="rounded-lg border border-[rgb(var(--accent))]/35 bg-white/90 px-3 py-2 text-xs font-medium text-[rgb(var(--accent))] hover:bg-[rgb(var(--accent))]/8 transition"
-                  onClick={onOpenLearningLab}
+                  onClick={onOpenModelsEval}
                 >
-                  {t("modelLab.performance.openLearningLab")}
+                  {t("modelLab.performance.modelsEvalGroup")}
+                </button>
+              ) : null}
+              {onOpenMissed ? (
+                <button
+                  type="button"
+                  className="rounded-lg border border-[rgb(var(--accent))]/35 bg-white/90 px-3 py-2 text-xs font-medium text-[rgb(var(--accent))] hover:bg-[rgb(var(--accent))]/8 transition"
+                  onClick={onOpenMissed}
+                >
+                  {t("modelLab.performance.openMissed")}
                 </button>
               ) : null}
             </div>
@@ -125,14 +133,9 @@ export function QcTodayDashboard({
       ) : null}
 
       <ViewErrorBoundary label="Advice learning timeline">
+        <AdviceLearningsRecalculationBridge simTable={simTable} lang={lang} />
         <AdviceLearningTimelinePanel lang={lang} />
       </ViewErrorBoundary>
-
-      <div className="rounded-xl border border-[rgb(var(--border))]/50 bg-white/95 p-4 shrink-0">
-        <ViewErrorBoundary label="Missed opportunities">
-          <MissedOpportunityPanel simTable={simTable} reloadToken={reloadToken} />
-        </ViewErrorBoundary>
-      </div>
     </div>
   );
 }

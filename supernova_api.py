@@ -17,8 +17,11 @@ Sicurezza (variabili d'ambiente)
 +=============================+==========+===============================================+
 | SUPERNOVA_CORS_PERMISSIVE   | (off)    | ``1`` → CORS ``allow_origins=["*"]`` (WARNING)|
 | SUPERNOVA_BIND_ALL          | (off)    | ``1`` → uvicorn su ``0.0.0.0`` (WARNING)      |
-| SUPERNOVA_API_TOKEN         | (unset)  | Se impostato, richiede header                 |
-|                             |          | ``X-SuperNova-Token`` su POST/PUT/PATCH/DELETE|
+| SUPERNOVA_API_TOKEN         | (unset)  | Se impostato: header ``X-SuperNova-Token``   |
+|                             |          | su POST/PUT/PATCH/DELETE (salvo esenzioni     |
+|                             |          | tester) + GET admin (summary/events/export/   |
+|                             |          | sim-inputs/secrets). Obbligatorio su host     |
+|                             |          | pubblico salvo ``SUPERNOVA_ALLOW_INSECURE=1``.|
 | SUPERNOVA_PORT              | 8765     | Porta per ``python -m supernova_api``         |
 | SUPERNOVA_SERVE_DESKTOP     | (off)    | ``1`` → UI web da ``desktop-ui/dist`` +       |
 |                             |          | ``/project-data/`` da ``data/``               |
@@ -30,22 +33,31 @@ Sicurezza (variabili d'ambiente)
 | SUPERNOVA_SCHEDULE_TIMEZONE | Europe/  | Fuso orario scheduler (CET/CEST)              |
 |                             | Rome     |                                               |
 | SUPERNOVA_HOURLY_FINANCIAL  | (off)    | ``1`` → Lun–Ven 15:30–22:00 quote + Financial |
-| SUPERNOVA_MORNING_REFRESH   | (off)    | ``1`` → Lun–Ven 07:00 CD + IPO                |
+| SUPERNOVA_MORNING_REFRESH   | (off)    | ``1`` → Lun–Ven 07:00 CD + IPO + hype volume   |
+| SUPERNOVA_API_PERF          | (off)    | ``1`` → log ``[API-PERF]`` per ogni request   |
+|                             |          | HTTP + header ``X-Response-Time-Ms``          |
+| SUPERNOVA_VAPID_PUBLIC      | (unset)  | Web Push public key (mobile Soft BUY/SELL)    |
+| SUPERNOVA_VAPID_PRIVATE     | (unset)  | Web Push private key                          |
+| SUPERNOVA_VAPID_SUBJECT     | mailto:… | VAPID ``sub`` claim (mailto: or https:)       |
 +-----------------------------+----------+-----------------------------------------------+
 
-CORS di default: ``http://127.0.0.1:*``, ``http://localhost:*`` (regex) e ``Origin: null``
-(Electron ``file://``). Non include origini web arbitrarie.
+CORS di default: ``http://127.0.0.1:*``, ``http://localhost:*`` (regex),
+``Origin: null`` (Electron ``file://``) e ``SUPERNOVA_PUBLIC_HOST`` (VPS web).
+Non include origini web arbitrarie.
 Senza token configurato viene loggato un avviso una tantum; le richieste mutanti restano
 aperte (comodo in sviluppo). Impostare ``SUPERNOVA_API_TOKEN`` in produzione locale se
 l'API può essere raggiunta da altri processi sulla macchina.
 """
 from __future__ import annotations
 
+import asyncio
 import json
 import logging
 import os
 import subprocess
+import sys
 import threading
+import time
 from datetime import date, datetime
 from pathlib import Path
 from typing import Any
@@ -57,9 +69,9 @@ try:
 except ImportError:
     pass
 
-from fastapi import FastAPI, HTTPException, Query, Request
+from fastapi import FastAPI, HTTPException, Query, Request, WebSocket, WebSocketDisconnect
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import FileResponse, JSONResponse
+from fastapi.responses import FileResponse, JSONResponse, Response
 from starlette.types import ASGIApp, Message, Receive, Scope, Send
 
 import orchestrator_io_paths as _paths
@@ -72,9 +84,9 @@ from orchestrator_io_paths import (
     PYTHON_VENV_EXE,
 )
 from supernova_config import (
-    LOCALHOST_ORIGIN_REGEX,
     TOKEN_HEADER,
     SupernovaConfig,
+    cors_allow_origin_regex,
     get_supernova_config,
 )
 
@@ -85,21 +97,135 @@ PYTHON = Path(PYTHON_VENV_EXE)
 ORCHESTRATOR = Path(ORCHESTRATOR_SCRIPT)
 
 _MUTATING_METHODS = frozenset({"POST", "PUT", "PATCH", "DELETE"})
-# Mobile tester flows — no admin token (external testers must not need SUPERNOVA_API_TOKEN).
-_TOKEN_EXEMPT_PATHS = frozenset({
+# Paths that may mutate WITHOUT the admin token (testers / companion).
+# Everything else mutating requires SUPERNOVA_API_TOKEN when configured.
+# Admin-readable tester PII (summary/events/export) is NEVER exempt — see
+# ``_TOKEN_PROTECTED_GET_PATHS``.
+_TOKEN_EXEMPT_MUTATING_PATHS = frozenset({
     "/api/tester-feedback/testers/register",
+    # Testers report session_ping / ui_error without the owner token.
     "/api/tester-feedback/events",
+    # Calendar free-text insert (desktop Calendar tab for approved testers).
+    "/api/simulation/manual-entries",
+    # Catalyst interest watchlist enroll.
+    "/api/catalyst-interest",
+    # Precomputed market quotes (financial snapshot) — cheap read, no Yahoo fan-out.
+    "/api/quotes/batch",
+    # Daily News desk — read/refresh helpers used by Catalyst Days (no LLM brief/analyze here).
+    "/api/market/daily-news/refresh",
+    "/api/market/daily-news/top",
+    "/api/market/daily-news/dismiss",
+    "/api/market/catalyst-outcomes/resolved",
+})
+
+# Expensive rebuild — admin token OR approved tester session (not anonymous).
+_MOBILE_SNAPSHOT_REFRESH_PATH = "/api/mobile/dashboard-snapshot/refresh"
+
+# GET routes that expose tester PII / portfolio / secrets — always need admin token.
+_TOKEN_PROTECTED_GET_PATHS = frozenset({
+    "/api/tester-feedback/summary",
+    "/api/tester-feedback/events",
+    "/api/tester-feedback/export",
+    "/api/tester-feedback/sim-monitor",
+    "/api/ai/secrets",
     "/api/investment/sim-inputs",
+    "/api/premium-waitlist",
+    "/api/hitech-notify",
+})
+
+# Expensive / AI / orchestrator mutations — NEVER exempt (admin token only).
+_TOKEN_NEVER_EXEMPT_PREFIXES = (
+    "/api/ai/",
+    "/api/orchestrator/",
+    "/api/refresh/",
+    "/api/market/daily-news/analyze",
+    "/api/market/daily-news/brief",
+    "/api/market/daily-news/migrate",
+    "/api/market/catalyst-outcomes/scan",
+    "/api/hype-volume-funnel/scan",
+)
+
+# Deep Dive product sheet + Daily News digests — admin token OR approved tester session.
+# (Gemini runs on the server; testers must not wait for the owner to open a modal first.)
+_DESK_TESTER_SESSION_OK_PREFIXES = (
+    "/api/desk/",
+)
+_TESTER_SESSION_OK_EXACT_PATHS = frozenset({
+    "/api/market/daily-news/brief",
+    "/api/market/daily-news/analyze",
+    "/api/mobile/dashboard-snapshot/refresh",
 })
 
 
-def _token_exempt_path(path: str) -> bool:
-    if path in _TOKEN_EXEMPT_PATHS:
+def _token_exempt_path(path: str, method: str = "GET") -> bool:
+    method_u = method.upper()
+    for prefix in _TOKEN_NEVER_EXEMPT_PREFIXES:
+        if path == prefix or path.startswith(prefix):
+            return False
+    # Snapshot rebuild is expensive — never anonymous (session or admin token).
+    if path == _MOBILE_SNAPSHOT_REFRESH_PATH:
+        return False
+    # Premium waitlist join is public; listing is owner-token only.
+    if path == "/api/premium-waitlist":
+        return method_u == "POST"
+    # Hi-Tech notify signup is public; listing is owner-token only.
+    if path == "/api/hitech-notify":
+        return method_u == "POST"
+    if method_u in _MUTATING_METHODS:
+        if path in _TOKEN_EXEMPT_MUTATING_PATHS:
+            return True
+        # DELETE /api/catalyst-interest/{ticker}
+        if path.startswith("/api/catalyst-interest/"):
+            return True
+        # Per-tester portfolio — auth checked in-route (admin token OR tester session).
+        # Still listed here so the global admin-token middleware does not 401 first.
+        if path.startswith("/api/tester-feedback/testers/") and path.endswith("/sim-inputs"):
+            return True
+        # Issue device session after sign-in / register.
+        if path.startswith("/api/tester-feedback/testers/") and path.endswith("/session"):
+            return True
+        return False
+    return False
+
+
+def _token_required_for_get(path: str) -> bool:
+    if path in _TOKEN_PROTECTED_GET_PATHS:
         return True
-    # Per-tester portfolio (mobile) — GET/PUT without admin token.
-    if path.startswith("/api/tester-feedback/testers/") and path.endswith("/sim-inputs"):
+    if path.startswith("/api/tester-feedback/testers/") and path.endswith("/access"):
+        return False
+    return False
+
+
+def _request_has_admin_token(request: Request) -> bool:
+    cfg = get_supernova_config()
+    if not cfg.api_token:
+        return False
+    header = request.headers.get(TOKEN_HEADER) or ""
+    if header and header == cfg.api_token:
+        return True
+    auth = request.headers.get("authorization") or ""
+    if auth.lower().startswith("bearer ") and auth[7:].strip() == cfg.api_token:
         return True
     return False
+
+
+def _require_tester_book_auth(request: Request, tester_id: str) -> None:
+    """Admin API token OR matching tester device session."""
+    if _request_has_admin_token(request):
+        return
+    import tester_feedback_io as tf
+
+    sess = request.headers.get(tf.TESTER_SESSION_HEADER) or request.headers.get(
+        "x-supernova-tester-session"
+    )
+    if tf.verify_tester_session(tester_id, sess):
+        return
+    raise HTTPException(
+        status_code=401,
+        detail="Tester session or admin API token required for this portfolio",
+    )
+
+
 _startup_logged = False
 
 _run_lock = threading.Lock()
@@ -117,14 +243,133 @@ LAST_SIMULATION_CD_SCAN_LOG = Path(DATA_DIR) / "last_simulation_cd_scan.log"
 INVEST_SIM_INPUTS_PATH = Path(DATA_DIR) / "invest_sim_inputs.json"
 INVEST_SIM_HISTORY_PATH = Path(DATA_DIR) / "invest_sim_history.json"
 MOBILE_DASHBOARD_SNAPSHOT_PATH = Path(DATA_DIR) / "mobile_dashboard_snapshot.json"
+MOBILE_CURVE_CHARTS_PATH = Path(DATA_DIR) / "mobile_curve_charts.json"
+WHATIF_READOUT_DAILY_SNAPSHOT_PATH = Path(DATA_DIR) / "whatif_readout_daily_snapshot.json"
+
+
+def _subprocess_alive(proc: subprocess.Popen | None) -> bool:
+    """True while the child PID is still running (handles Windows zombie handles)."""
+    if proc is None:
+        return False
+    code = proc.poll()
+    if code is not None:
+        return False
+    pid = proc.pid
+    if pid is None or pid <= 0:
+        return False
+    if sys.platform == "win32":
+        try:
+            import ctypes
+
+            PROCESS_QUERY_LIMITED_INFORMATION = 0x1000
+            STILL_ACTIVE = 259
+            kernel32 = ctypes.windll.kernel32
+            handle = kernel32.OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, False, pid)
+            if not handle:
+                return False
+            try:
+                exit_code = ctypes.c_ulong()
+                if kernel32.GetExitCodeProcess(handle, ctypes.byref(exit_code)):
+                    return exit_code.value == STILL_ACTIVE
+                return False
+            finally:
+                kernel32.CloseHandle(handle)
+        except Exception:
+            return proc.poll() is None
+    try:
+        os.kill(pid, 0)
+    except ProcessLookupError:
+        return False
+    except PermissionError:
+        return True
+    except OSError:
+        return proc.poll() is None
+    return True
+
+
+def _reconcile_refresh_subprocess() -> bool:
+    """Drop stale refresh handles; return True iff refresh child is still alive."""
+    global _refresh_proc, _refresh_exit_code
+    with _run_lock:
+        if _refresh_proc is None:
+            return False
+        if _subprocess_alive(_refresh_proc):
+            return True
+        code = _refresh_proc.poll()
+        _refresh_exit_code = code if code is not None else (_refresh_exit_code if _refresh_exit_code is not None else 0)
+        _refresh_proc = None
+        return False
 
 
 def _background_job_running() -> bool:
+    try:
+        import process_runtime as _pr
+
+        cross = (
+            _pr.orchestrator_running()
+            or _pr.refresh_running()
+            or _pr.read_job(_pr.CD_SCAN_PATH) is not None
+        )
+    except Exception:
+        cross = False
     return bool(
-        (_proc is not None and _proc.poll() is None)
-        or (_refresh_proc is not None and _refresh_proc.poll() is None)
-        or (_cd_scan_proc is not None and _cd_scan_proc.poll() is None)
+        (_proc is not None and _subprocess_alive(_proc))
+        or _reconcile_refresh_subprocess()
+        or (_cd_scan_proc is not None and _subprocess_alive(_cd_scan_proc))
+        or cross
     )
+
+
+def _weekly_full_pipeline_running() -> bool:
+    """True se cron/scheduler sta eseguendo WeeklyFull (lock o processo orchestrator)."""
+    # Prefer last_run: if WeeklyFull already completed, never report running
+    # just because a lock file or a stray pgrep match is left behind.
+    last = _load_weekly_full_last_run()
+    finished_at = str(last.get("finished_at") or "").strip() if last else ""
+    if last.get("ok") is True and finished_at:
+        try:
+            fin = datetime.fromisoformat(finished_at.replace("Z", "+00:00"))
+            fin_ts = fin.timestamp() if fin.tzinfo is not None else time.mktime(fin.timetuple())
+            age_min = (time.time() - fin_ts) / 60.0
+            # Completed more than 10 minutes ago → idle (stale lock / orphan pgrep).
+            if age_min >= 10:
+                return False
+        except (ValueError, OverflowError, OSError):
+            pass
+
+    lock = Path(DATA_DIR) / ".refresh_running.lock"
+    if lock.is_file():
+        try:
+            age_min = (time.time() - lock.stat().st_mtime) / 60.0
+            if age_min < 150:
+                return True
+        except OSError:
+            pass
+    if sys.platform != "win32":
+        for pattern in ("data_orchestrator.py", "saturday_weekly_full_refresh.py"):
+            try:
+                r = subprocess.run(
+                    ["pgrep", "-f", pattern],
+                    capture_output=True,
+                    timeout=5,
+                    check=False,
+                )
+                if r.returncode == 0:
+                    return True
+            except (OSError, subprocess.TimeoutExpired):
+                pass
+    return False
+
+
+def _load_weekly_full_last_run() -> dict[str, Any]:
+    p = Path(DATA_DIR) / "saturday_weekly_full_last_run.json"
+    if not p.is_file():
+        return {}
+    try:
+        doc = json.loads(p.read_text(encoding="utf-8"))
+        return doc if isinstance(doc, dict) else {}
+    except (OSError, json.JSONDecodeError):
+        return {}
 
 
 def _refresh_proc_watcher(proc: subprocess.Popen, profile: str) -> None:
@@ -279,16 +524,76 @@ def _log_startup_security(cfg: SupernovaConfig) -> None:
             "SUPERNOVA_BIND_ALL=1: API in ascolto su 0.0.0.0 — "
             "esposta sulla rete locale."
         )
+    public_host = bool(cfg.serve_desktop or cfg.serve_mobile or cfg.bind_all)
+    allow_insecure = os.environ.get("SUPERNOVA_ALLOW_INSECURE", "").strip() in (
+        "1",
+        "true",
+        "yes",
+    )
+    if public_host and not cfg.api_token and not allow_insecure:
+        raise RuntimeError(
+            "SUPERNOVA_API_TOKEN obbligatorio su host pubblico "
+            "(SERVE_DESKTOP / SERVE_MOBILE / BIND_ALL). "
+            "Imposta il token oppure SUPERNOVA_ALLOW_INSECURE=1 solo in dev."
+        )
     if cfg.api_token:
-        logger.info("SUPERNOVA_API_TOKEN configurato: richiesto su route mutanti.")
+        logger.info(
+            "SUPERNOVA_API_TOKEN configurato: mutazioni + GET admin (tester PII / portfolio)."
+        )
     else:
         logger.warning(
             "SUPERNOVA_API_TOKEN non configurato: route mutanti senza autenticazione."
         )
 
 
+def _extract_request_token(scope: Scope) -> str | None:
+    for key, value in scope.get("headers", ()):
+        kl = key.lower()
+        if kl == TOKEN_HEADER.lower().encode():
+            return value.decode("latin-1")
+        if kl == b"authorization":
+            raw = value.decode("latin-1")
+            if raw.lower().startswith("bearer "):
+                return raw[7:].strip()
+    return None
+
+
+def _extract_tester_session_from_scope(scope: Scope) -> str | None:
+    for key, value in scope.get("headers", ()):
+        kl = key.lower()
+        if kl in (b"x-supernova-tester-session", b"x-supernova-tester_session"):
+            raw = value.decode("latin-1").strip()
+            return raw or None
+    return None
+
+
+def _path_allows_tester_session(path: str) -> bool:
+    if path in _TESTER_SESSION_OK_EXACT_PATHS:
+        return True
+    for prefix in _DESK_TESTER_SESSION_OK_PREFIXES:
+        if path == prefix.rstrip("/") or path.startswith(prefix):
+            return True
+    return False
+
+
+def _scope_has_approved_tester_session(scope: Scope) -> bool:
+    sess = _extract_tester_session_from_scope(scope)
+    if not sess:
+        return False
+    try:
+        import tester_feedback_io as tf
+
+        return tf.find_tester_id_by_session(sess) is not None
+    except Exception:
+        return False
+
+
 class _LocalTokenMiddleware:
-    """Require X-SuperNova-Token on mutating requests when SUPERNOVA_API_TOKEN is set."""
+    """Require X-SuperNova-Token on mutating + sensitive GET routes when token is set.
+
+    Deep Dive ``/api/desk/*`` and Daily News brief/analyze also accept an approved
+    tester device session (testers do not have the owner API token).
+    """
 
     def __init__(self, app: ASGIApp) -> None:
         self.app = app
@@ -298,25 +603,31 @@ class _LocalTokenMiddleware:
             await self.app(scope, receive, send)
             return
         method = scope.get("method", "GET")
+        path = scope.get("path", "")
+        cfg = get_supernova_config()
+        need_token = False
         if method in _MUTATING_METHODS:
-            cfg = get_supernova_config()
-            if cfg.api_token:
-                path = scope.get("path", "")
-                if _token_exempt_path(path):
-                    await self.app(scope, receive, send)
-                    return
-                token: str | None = None
-                for key, value in scope.get("headers", ()):
-                    if key.lower() == TOKEN_HEADER.lower().encode():
-                        token = value.decode("latin-1")
-                        break
-                if token != cfg.api_token:
-                    response = JSONResponse(
-                        {"detail": "Missing or invalid API token"},
-                        status_code=401,
-                    )
-                    await response(scope, receive, send)
-                    return
+            if cfg.api_token and not _token_exempt_path(path, method):
+                need_token = True
+        elif method == "GET" and cfg.api_token and _token_required_for_get(path):
+            need_token = True
+        if need_token:
+            token = _extract_request_token(scope)
+            ok = bool(token and token == cfg.api_token)
+            if (
+                not ok
+                and method in _MUTATING_METHODS
+                and _path_allows_tester_session(path)
+                and _scope_has_approved_tester_session(scope)
+            ):
+                ok = True
+            if not ok:
+                response = JSONResponse(
+                    {"detail": "Missing or invalid API token"},
+                    status_code=401,
+                )
+                await response(scope, receive, send)
+                return
         await self.app(scope, receive, send)
 
 
@@ -338,6 +649,242 @@ class _MobileSlashRedirectMiddleware:
         await self.app(scope, receive, send)
 
 
+class _RateLimitMiddleware:
+    """In-process sliding window per client IP for anonymous / busy paths."""
+
+    def __init__(self, app: ASGIApp) -> None:
+        self.app = app
+        self._hits: dict[str, list[float]] = {}
+        self._lock = threading.Lock()
+
+    def _client_ip(self, scope: Scope) -> str:
+        for key, value in scope.get("headers", ()):
+            if key.lower() == b"x-forwarded-for":
+                raw = value.decode("latin-1").split(",")[0].strip()
+                if raw:
+                    return raw[:64]
+        client = scope.get("client")
+        if client and client[0]:
+            return str(client[0])[:64]
+        return "unknown"
+
+    def _limit_for(self, path: str, method: str) -> tuple[int, float] | None:
+        if path == "/api/tester-feedback/testers/register":
+            return (20, 60.0)
+        if path == "/api/tester-feedback/events":
+            return (120, 60.0)
+        if path.startswith("/api/tester-feedback/testers/") and path.endswith("/session"):
+            return (30, 60.0)
+        if path.startswith("/api/tester-feedback/testers/") and path.endswith("/sim-inputs"):
+            return (90, 60.0)
+        if path.startswith("/api/market/daily-news/"):
+            return (60, 60.0)
+        if path == "/api/mobile/dashboard-snapshot/refresh":
+            return (3, 60.0)
+        if path.startswith("/api/desk/"):
+            return (30, 60.0)
+        if path.startswith("/api/catalyst-interest"):
+            return (40, 60.0)
+        if path.startswith("/api/hype-volume-funnel"):
+            return (10, 60.0)
+        if path == "/api/premium-waitlist" and method.upper() == "POST":
+            return (10, 60.0)
+        if path == "/api/hitech-notify" and method.upper() == "POST":
+            return (10, 60.0)
+        return None
+
+    def _allow(self, key: str, max_hits: int, window: float) -> bool:
+        now = time.time()
+        with self._lock:
+            bucket = [t for t in (self._hits.get(key) or []) if now - t < window]
+            if len(bucket) >= max_hits:
+                self._hits[key] = bucket
+                return False
+            bucket.append(now)
+            self._hits[key] = bucket
+            if len(self._hits) > 5000:
+                stale = [k for k, v in self._hits.items() if not v or now - v[-1] > 300]
+                for k in stale[:500]:
+                    self._hits.pop(k, None)
+            return True
+
+    async def __call__(self, scope: Scope, receive: Receive, send: Send) -> None:
+        if scope["type"] != "http":
+            await self.app(scope, receive, send)
+            return
+        path = scope.get("path", "")
+        method = scope.get("method", "GET")
+        rule = self._limit_for(path, method)
+        if rule is None:
+            await self.app(scope, receive, send)
+            return
+        max_hits, window = rule
+        ip = self._client_ip(scope)
+        key = f"{ip}|{method}|{path}"
+        if not self._allow(key, max_hits, window):
+            response = JSONResponse(
+                {"detail": "Rate limit exceeded — retry shortly"},
+                status_code=429,
+                headers={"Retry-After": "30"},
+            )
+            await response(scope, receive, send)
+            return
+        await self.app(scope, receive, send)
+
+
+class _AiUserBudgetMiddleware:
+    """Daily shared-Gemini budget per tester (or IP) on expensive AI routes.
+
+    Admin API token bypasses the budget so owner prefetch / ops are not capped.
+    """
+
+    _PATHS = frozenset({
+        "/api/market/daily-news/brief",
+        "/api/market/daily-news/analyze",
+        "/api/hype-volume-funnel/scan",
+    })
+
+    def __init__(self, app: ASGIApp) -> None:
+        self.app = app
+
+    def _client_ip(self, scope: Scope) -> str:
+        for key, value in scope.get("headers", ()):
+            if key.lower() == b"x-forwarded-for":
+                raw = value.decode("latin-1").split(",")[0].strip()
+                if raw:
+                    return raw[:64]
+        client = scope.get("client")
+        if client and client[0]:
+            return str(client[0])[:64]
+        return "unknown"
+
+    def _applies(self, path: str, method: str) -> bool:
+        if method.upper() != "POST":
+            return False
+        if path in self._PATHS:
+            return True
+        if path.startswith("/api/desk/"):
+            return True
+        return False
+
+    async def __call__(self, scope: Scope, receive: Receive, send: Send) -> None:
+        if scope["type"] != "http":
+            await self.app(scope, receive, send)
+            return
+        path = scope.get("path", "")
+        method = scope.get("method", "GET")
+        if not self._applies(path, method):
+            await self.app(scope, receive, send)
+            return
+        cfg = get_supernova_config()
+        token = _extract_request_token(scope)
+        if cfg.api_token and token and token == cfg.api_token:
+            await self.app(scope, receive, send)
+            return
+        import ai_user_budget as _aub
+
+        sess = _extract_tester_session_from_scope(scope)
+        tester_id = None
+        if sess:
+            try:
+                import tester_feedback_io as tf
+
+                tester_id = tf.find_tester_id_by_session(sess)
+            except Exception:
+                tester_id = None
+        key = _aub.budget_key(tester_id=tester_id, client_ip=self._client_ip(scope))
+        ok, meta = _aub.allow(key)
+        if not ok:
+            response = JSONResponse(
+                {
+                    "detail": "AI daily budget exceeded — retry tomorrow or use cached briefs",
+                    "budget": meta,
+                },
+                status_code=429,
+                headers={"Retry-After": str(meta.get("retry_after_s") or 3600)},
+            )
+            await response(scope, receive, send)
+            return
+        await self.app(scope, receive, send)
+
+
+def _api_perf_enabled() -> bool:
+    return os.environ.get("SUPERNOVA_API_PERF", "").strip().lower() in (
+        "1",
+        "true",
+        "yes",
+    )
+
+
+#: Endpoints that always get a log line in addition to the response-time
+#: header, regardless of ``SUPERNOVA_API_PERF``. Used for the perf remeasure
+#: after the learning-lab snapshot landed — comparing this ``handler_ms`` to
+#: the client-observed latency shows whether the gap is queueing or compute.
+_ALWAYS_LOG_PERF_PATHS = frozenset(
+    {
+        "/api/health",
+        "/api/investment/sim-outcomes",
+        "/api/models/learning-lab/overview",
+    }
+)
+
+
+class _ApiPerfMiddleware:
+    """Measure request duration.
+
+    - Always attaches ``X-Response-Time-ms`` to every response so the
+      renderer's Network panel can compare handler duration against
+      client-observed latency (the gap is transport-layer queueing).
+    - Emits a log line for the three watched endpoints unconditionally, and
+      for every other endpoint only when ``SUPERNOVA_API_PERF=1``.
+    """
+
+    def __init__(self, app: ASGIApp) -> None:
+        self.app = app
+
+    async def __call__(self, scope: Scope, receive: Receive, send: Send) -> None:
+        if scope["type"] != "http":
+            await self.app(scope, receive, send)
+            return
+
+        method = scope.get("method", "GET")
+        path = scope.get("path", "")
+        query = scope.get("query_string", b"").decode("latin-1")
+        route = f"{path}?{query}" if query else path
+        t0 = time.perf_counter()
+        status_code = 500
+
+        async def send_wrapper(message: Message) -> None:
+            nonlocal status_code
+            if message["type"] == "http.response.start":
+                status_code = message["status"]
+                headers: list[tuple[bytes, bytes]] = list(message.get("headers", ()))
+                elapsed_ms = (time.perf_counter() - t0) * 1000.0
+                headers.append(
+                    (b"x-response-time-ms", f"{elapsed_ms:.1f}".encode("ascii"))
+                )
+                message = {**message, "headers": headers}
+            await send(message)
+
+        try:
+            await self.app(scope, receive, send_wrapper)
+        finally:
+            elapsed_ms = (time.perf_counter() - t0) * 1000.0
+            if _api_perf_enabled() or path in _ALWAYS_LOG_PERF_PATHS:
+                logger.info(
+                    "[API-PERF] %s %s handler_ms=%.1f status=%s",
+                    method,
+                    route,
+                    elapsed_ms,
+                    status_code,
+                )
+#: Custom response headers the browser is allowed to read via
+#: ``response.headers.get(...)``. Without this the renderer's Network panel
+#: can still show ``X-Response-Time-ms`` (it always sees raw response
+#: headers), but any programmatic reader would be blocked by CORS.
+_CORS_EXPOSED_HEADERS = ["X-Response-Time-ms", "ETag"]
+
+
 def _configure_cors(app: FastAPI, cfg: SupernovaConfig) -> None:
     if cfg.cors_permissive:
         app.add_middleware(
@@ -345,6 +892,7 @@ def _configure_cors(app: FastAPI, cfg: SupernovaConfig) -> None:
             allow_origins=["*"],
             allow_methods=["*"],
             allow_headers=["*"],
+            expose_headers=_CORS_EXPOSED_HEADERS,
         )
     elif cfg.cors_origins:
         app.add_middleware(
@@ -352,15 +900,18 @@ def _configure_cors(app: FastAPI, cfg: SupernovaConfig) -> None:
             allow_origins=list(cfg.cors_origins),
             allow_methods=["*"],
             allow_headers=["*"],
+            expose_headers=_CORS_EXPOSED_HEADERS,
         )
     else:
         # "null" = renderer Electron (file://) verso API su 127.0.0.1
+        # Public host (SUPERNOVA_PUBLIC_HOST) so VPS web Origin is allowed on preflight.
         app.add_middleware(
             CORSMiddleware,
             allow_origins=["null"],
-            allow_origin_regex=LOCALHOST_ORIGIN_REGEX,
+            allow_origin_regex=cors_allow_origin_regex(),
             allow_methods=["*"],
             allow_headers=["*"],
+            expose_headers=_CORS_EXPOSED_HEADERS,
         )
 
 
@@ -410,14 +961,25 @@ def _mount_mobile_short_pwa(application: FastAPI, cfg: SupernovaConfig) -> None:
 
 
 def _register_project_data_routes(application: FastAPI) -> None:
-    """Serve ``data/*.json`` su ``/project-data/`` (web host, stesso origin UI)."""
+    """Serve solo snapshot pubblici da ``data/`` su ``/project-data/`` (allowlist)."""
     data_root = Path(DATA_DIR).resolve()
 
     @application.get("/project-data/{rel_path:path}")
     def serve_project_data(rel_path: str) -> FileResponse:
+        from cdn_snapshots import (
+            cache_control_for_project_path,
+            is_public_project_data_path,
+        )
+
         rel = rel_path.split("?")[0].replace("\\", "/").lstrip("/")
-        if not rel or ".." in rel.split("/"):
-            raise HTTPException(status_code=400, detail="bad path")
+        if not is_public_project_data_path(rel):
+            # Do not confirm whether a private file exists on disk.
+            # no-store so edge caches cannot keep a prior 200 for secrets.
+            return JSONResponse(
+                status_code=404,
+                content={"detail": "not found"},
+                headers={"Cache-Control": "no-store, max-age=0, must-revalidate"},
+            )
         file_path = (data_root / rel).resolve()
         try:
             file_path.relative_to(data_root)
@@ -425,12 +987,52 @@ def _register_project_data_routes(application: FastAPI) -> None:
             raise HTTPException(status_code=400, detail="bad path") from exc
         if not file_path.is_file():
             raise HTTPException(status_code=404, detail="not found")
-        media = (
-            "application/json; charset=utf-8"
-            if file_path.suffix.lower() == ".json"
-            else "application/octet-stream"
+        media = "application/json; charset=utf-8"
+        resp = FileResponse(file_path, media_type=media)
+        resp.headers["Cache-Control"] = cache_control_for_project_path(rel)
+        # Edge caches (Cloudflare) need Vary only on Accept-Encoding (GZip).
+        resp.headers.setdefault("Vary", "Accept-Encoding")
+        return resp
+
+
+def _register_cdn_routes(application: FastAPI) -> None:
+    """Content-addressed snapshot objects + manifest (CDN / edge ready)."""
+
+    @application.get("/cdn/o/{sha_name}")
+    def serve_cdn_object(sha_name: str) -> FileResponse:
+        from cdn_snapshots import cache_control_for_cdn_object, resolve_cdn_object
+
+        raw = (sha_name or "").split("?")[0]
+        digest = raw[:-5] if raw.lower().endswith(".json") else raw
+        path = resolve_cdn_object(digest)
+        if path is None:
+            raise HTTPException(status_code=404, detail="not found")
+        resp = FileResponse(path, media_type="application/json; charset=utf-8")
+        resp.headers["Cache-Control"] = cache_control_for_cdn_object()
+        resp.headers.setdefault("Vary", "Accept-Encoding")
+        return resp
+
+    @application.get("/api/cdn/manifest")
+    def cdn_manifest() -> JSONResponse:
+        from cdn_snapshots import load_manifest
+
+        return JSONResponse(
+            content=load_manifest(),
+            headers={
+                "Cache-Control": "public, max-age=30, stale-while-revalidate=60",
+            },
         )
-        return FileResponse(file_path, media_type=media)
+
+    @application.post("/api/cdn/publish")
+    def cdn_publish(upload: bool = Query(False)) -> dict[str, Any]:
+        """Rebuild hashed objects (+ optional R2/S3 upload). Admin token required."""
+        from cdn_snapshots import publish_local_objects, upload_objects_to_s3
+
+        doc = publish_local_objects()
+        out: dict[str, Any] = {"ok": True, "manifest": doc}
+        if upload:
+            out["s3"] = upload_objects_to_s3(doc)
+        return out
 
 
 class _DesktopWebStaticFiles:
@@ -445,10 +1047,19 @@ class _DesktopWebStaticFiles:
                 response = await super().get_response(path, scope)
                 if response.status_code != 200:
                     return response
-                rel = (path or "index.html").lstrip("/")
-                if rel in ("", "index.html"):
-                    response.headers["Cache-Control"] = "no-cache, must-revalidate"
+                rel = (path or "").lstrip("/")
+                media = (response.headers.get("content-type") or "").lower()
+                # `/` resolves via directory→index.html with path=="" — always
+                # no-store HTML shells so deploys are visible without hard-refresh wars.
+                if "text/html" in media or rel in ("", "index.html"):
+                    response.headers["Cache-Control"] = "no-store, no-cache, must-revalidate, max-age=0"
                     response.headers["Pragma"] = "no-cache"
+                    response.headers["Expires"] = "0"
+                    for key in ("etag", "ETag", "last-modified", "Last-Modified"):
+                        try:
+                            del response.headers[key]
+                        except KeyError:
+                            pass
                 elif rel.startswith("assets/"):
                     response.headers["Cache-Control"] = "public, max-age=31536000, immutable"
                 return response
@@ -494,6 +1105,14 @@ def build_app(cfg: SupernovaConfig | None = None) -> FastAPI:
     @asynccontextmanager
     async def _lifespan(_app: FastAPI):
         _log_startup_security(c)
+        try:
+            import tester_feedback_io as _tf
+
+            purged = _tf.purge_non_owner_testers()
+            if purged.get("count"):
+                logger.info("Purged non-owner tester accounts: %s", purged.get("removed"))
+        except Exception as exc:
+            logger.warning("tester purge skipped: %s", exc)
         sched_stop: threading.Event | None = None
         try:
             import ai_secrets_store as _ai_sec
@@ -501,6 +1120,22 @@ def build_app(cfg: SupernovaConfig | None = None) -> FastAPI:
             _ai_sec.load_and_apply()
         except Exception as exc:
             logger.warning("ai_secrets_store load skipped: %s", exc)
+        try:
+            import supernova_pg as _pg
+
+            if _pg.enabled():
+                # Never block API boot on a slow/locked Postgres migration.
+                def _pg_boot() -> None:
+                    try:
+                        _pg.ensure_schema()
+                        logger.info("Postgres backend enabled for tester store")
+                    except Exception as exc2:
+                        logger.warning("Postgres ensure_schema failed: %s", exc2)
+
+                threading.Thread(target=_pg_boot, name="pg-ensure-schema", daemon=True).start()
+        except Exception as exc:
+            logger.warning("Postgres init skipped: %s", exc)
+
         sched_enabled = (
             c.hourly_financial_enabled
             or c.morning_refresh_enabled
@@ -508,21 +1143,46 @@ def build_app(cfg: SupernovaConfig | None = None) -> FastAPI:
             or c.eis_refresh_enabled
             or c.scheduled_refresh_minutes > 0
             or c.daily_refresh_hour >= 0
+            or c.trends_enabled
         )
-        if sched_enabled:
+        if sched_enabled and not os.environ.get("PYTEST_CURRENT_TEST"):
             try:
-                from supernova_web_scheduler import start_web_scheduler
+                import process_runtime as _pr
 
-                sched_stop = start_web_scheduler(c)
+                if _pr.try_acquire_scheduler_lock():
+                    from supernova_web_scheduler import start_web_scheduler
+
+                    sched_stop = start_web_scheduler(c)
+                    logger.info("web scheduler started (worker pid=%s)", os.getpid())
+                else:
+                    logger.info(
+                        "web scheduler skipped — another worker holds the lock (pid=%s)",
+                        os.getpid(),
+                    )
             except Exception as exc:
                 logger.warning("web scheduler skipped: %s", exc)
 
         def _warm_learning_lab_cache() -> None:
+            # If the on-disk snapshot exists (normal case after the first
+            # orchestrator run or after this warm-up has ever completed)
+            # this is a ~20 ms JSON parse that primes the mtime cache. If it
+            # is missing (first boot after this change lands) we build AND
+            # persist it, so every subsequent boot goes on the fast path
+            # without needing a one-off migration.
             try:
-                from prediction.learning_lab import build_overview_payload
+                from prediction.learning_lab import (
+                    read_learning_lab_overview_snapshot,
+                    write_learning_lab_overview_snapshot,
+                )
 
-                build_overview_payload(use_mock=False)
-                logger.info("learning-lab overview cache warmed")
+                if read_learning_lab_overview_snapshot() is not None:
+                    logger.info("learning-lab overview snapshot found — mtime cache primed")
+                    return
+                write_learning_lab_overview_snapshot()
+                logger.info(
+                    "learning-lab overview snapshot missing — built and persisted "
+                    "at boot (subsequent boots will be ~20 ms)"
+                )
             except Exception as exc:
                 logger.warning("learning-lab cache warm skipped: %s", exc)
 
@@ -532,21 +1192,43 @@ def build_app(cfg: SupernovaConfig | None = None) -> FastAPI:
         yield
         if sched_stop is not None:
             sched_stop.set()
+        try:
+            import process_runtime as _pr
+
+            _pr.release_scheduler_lock()
+        except Exception:
+            pass
 
     application = FastAPI(title="SuperNova API", version="0.1.0", lifespan=_lifespan)
 
     _configure_cors(application, c)
+    from starlette.middleware.gzip import GZipMiddleware
+
+    application.add_middleware(GZipMiddleware, minimum_size=500)
+    application.add_middleware(_RateLimitMiddleware)
+    application.add_middleware(_AiUserBudgetMiddleware)
     application.add_middleware(_LocalTokenMiddleware)
     application.add_middleware(_MobileSlashRedirectMiddleware)
+    application.add_middleware(_ApiPerfMiddleware)
 
     @application.get("/api/health")
-    def health() -> dict[str, str]:
+    async def health() -> dict[str, Any]:
+        # Liveness only. Must stay on the event loop and must not open Postgres:
+        # every signed-in desk polls this, and a sync connect here stalls the
+        # whole worker (Cloudflare 524 + «API offline» for everyone else).
         return {"status": "ok", "root": str(ROOT)}
 
     @application.get("/api/status")
     def status() -> dict[str, Any]:
         xlsx = Path(FINAL_XLSX)
         token = c.api_token
+        weekly_running = _weekly_full_pipeline_running()
+        try:
+            import process_runtime as _pr
+
+            orch_cross = _pr.orchestrator_running()
+        except Exception:
+            orch_cross = False
         return {
             "workbook": xlsx.name if xlsx.is_file() else None,
             "workbook_path": str(xlsx) if xlsx.is_file() else None,
@@ -555,17 +1237,61 @@ def build_app(cfg: SupernovaConfig | None = None) -> FastAPI:
                 if xlsx.is_file()
                 else None
             ),
-            "orchestrator_running": _proc is not None and _proc.poll() is None,
-            "refresh_running": _refresh_proc is not None and _refresh_proc.poll() is None,
+            "orchestrator_running": (
+                (_proc is not None and _subprocess_alive(_proc)) or orch_cross
+            ),
+            "refresh_running": _reconcile_refresh_subprocess(),
             "refresh_status": _read_refresh_fast_status_file(),
             "api_token_required": bool(token),
             "api_token_is_placeholder": token == "CAMBIA_QUESTA_CHIAVE",
+            "saturday_weekly_full_enabled": c.saturday_weekly_full_enabled,
+            "weekly_full_running": weekly_running,
+            "precat_calendar_enabled": c.precat_calendar_enabled,
+            "volume_delta_enabled": c.volume_delta_enabled,
+            "trends_enabled": c.trends_enabled,
+            "trends_pilot_tickers": c.trends_pilot_tickers,
+            "workers": int(os.environ.get("SUPERNOVA_WORKERS", "1") or "1"),
         }
 
     @application.post("/api/auth/verify-token")
     def verify_api_token() -> dict[str, bool]:
         """Verifica header X-SuperNova-Token (passa dal middleware mutating)."""
         return {"ok": True}
+
+    # ── WebSocket for real-time quotes ───────────────────────────────────────
+    class ConnectionManager:
+        def __init__(self):
+            self.active_connections: list[WebSocket] = []
+
+        async def connect(self, websocket: WebSocket):
+            await websocket.accept()
+            self.active_connections.append(websocket)
+
+        def disconnect(self, websocket: WebSocket):
+            if websocket in self.active_connections:
+                self.active_connections.remove(websocket)
+
+        async def broadcast(self, message: dict[str, Any]):
+            for connection in self.active_connections:
+                try:
+                    await connection.send_json(message)
+                except Exception:
+                    self.disconnect(connection)
+
+    manager = ConnectionManager()
+
+    @application.websocket("/ws/quotes")
+    async def websocket_quotes(websocket: WebSocket):
+        """WebSocket endpoint for real-time quote updates."""
+        await manager.connect(websocket)
+        try:
+            while True:
+                # Client can send subscription messages
+                data = await websocket.receive_json()
+                # For now, just echo back (implement real quote fetching later)
+                await websocket.send_json({"type": "echo", "data": data})
+        except WebSocketDisconnect:
+            manager.disconnect(websocket)
 
     @application.post("/api/orchestrator/run")
     def run_orchestrator(profile: str = Query("quick")) -> dict[str, str]:
@@ -592,6 +1318,12 @@ def build_app(cfg: SupernovaConfig | None = None) -> FastAPI:
                 stdout=subprocess.DEVNULL,
                 stderr=subprocess.DEVNULL,
             )
+            try:
+                import process_runtime as _pr
+
+                _pr.write_job(_pr.ORCH_PATH, pid=_proc.pid, extra={"profile": profile})
+            except Exception:
+                pass
         return {"started": "true", "profile": profile}
 
     @application.get("/api/refresh/profiles")
@@ -651,6 +1383,19 @@ def build_app(cfg: SupernovaConfig | None = None) -> FastAPI:
 
         def _target() -> None:
             _ce.run_catalyst_feed_refresh()
+            # 10-Q MD&A feed — independent; never fail the 8-K refresh.
+            try:
+                import sec_10q_extractor as _q10
+
+                _q10.run_sec_10q_feed_refresh()
+            except Exception as exc:
+                print(f"[catalyst-feed] 10-Q refresh skipped: {exc}", flush=True)
+            try:
+                import catalyst_calendar as _cc
+
+                _cc.run_catalyst_calendar_refresh()
+            except Exception as exc:
+                print(f"[catalyst-feed] calendar refresh skipped: {exc}", flush=True)
 
         t = threading.Thread(target=_target, name="catalyst-feed", daemon=True)
         _catalyst_feed_thread[0] = t
@@ -668,6 +1413,388 @@ def build_app(cfg: SupernovaConfig | None = None) -> FastAPI:
         import catalyst_extractor as _ce
 
         return _json_safe(_ce.load_snapshot())
+
+    @application.post("/api/sec-10q-feed/refresh")
+    def sec_10q_feed_refresh() -> dict[str, Any]:
+        """Background: download 10-Q MD&A / Recent Developments for EIS (independent of 8-K)."""
+        import sec_10q_extractor as _q10
+
+        status = _q10.get_status()
+        if status.get("running"):
+            return {"started": False, "message": "Already running"}
+
+        def _target() -> None:
+            _q10.run_sec_10q_feed_refresh()
+
+        t = threading.Thread(target=_target, name="sec-10q-feed", daemon=True)
+        t.start()
+        return {"started": True}
+
+    @application.get("/api/sec-10q-feed/status")
+    def sec_10q_feed_status() -> dict[str, Any]:
+        import sec_10q_extractor as _q10
+
+        return _json_safe(_q10.get_status())
+
+    @application.get("/api/sec-10q-feed/snapshot")
+    def sec_10q_feed_snapshot() -> dict[str, Any]:
+        import sec_10q_extractor as _q10
+
+        return _json_safe(_q10.load_snapshot())
+
+    @application.post("/api/catalyst-calendar/refresh")
+    async def catalyst_calendar_refresh(request: Request) -> dict[str, Any]:
+        """Discovery queue → SEC catalyst-date scan → Calendar snapshot.
+
+        Body / query flags:
+          - ``include_biotech``: also fill from ``biotech_symbols.json``
+          - ``biotech_gap_only``: scan only biotech names not yet on the calendar roster
+        """
+        import catalyst_calendar as _cc
+
+        status = _cc.get_status()
+        if status.get("running"):
+            return {"started": False, "message": "Already running"}
+
+        def _flag(raw: Any) -> bool:
+            if isinstance(raw, bool):
+                return raw
+            return str(raw or "").strip().lower() in {"1", "true", "yes", "on"}
+
+        include_biotech = _flag(request.query_params.get("include_biotech"))
+        biotech_gap_only = _flag(request.query_params.get("biotech_gap_only"))
+        try:
+            body = await request.json()
+        except Exception:
+            body = {}
+        if isinstance(body, dict):
+            if "include_biotech" in body:
+                include_biotech = _flag(body.get("include_biotech"))
+            if "biotech_gap_only" in body:
+                biotech_gap_only = _flag(body.get("biotech_gap_only"))
+        if biotech_gap_only:
+            include_biotech = True
+
+        def _target() -> None:
+            _cc.run_catalyst_calendar_refresh(
+                include_biotech=include_biotech,
+                biotech_gap_only=biotech_gap_only,
+            )
+
+        t = threading.Thread(target=_target, name="catalyst-calendar", daemon=True)
+        t.start()
+        if biotech_gap_only:
+            msg = "Biotech gap → SEC catalyst scan started"
+        elif include_biotech:
+            msg = "Discovery + biotech universe → SEC catalyst scan started"
+        else:
+            msg = "Discovery → SEC catalyst scan started"
+        return {
+            "started": True,
+            "message": msg,
+            "include_biotech": include_biotech,
+            "biotech_gap_only": biotech_gap_only,
+        }
+
+    @application.get("/api/catalyst-calendar/status")
+    def catalyst_calendar_status() -> dict[str, Any]:
+        import catalyst_calendar as _cc
+
+        return _json_safe(_cc.get_status())
+
+    @application.get("/api/catalyst-calendar/snapshot")
+    def catalyst_calendar_snapshot() -> dict[str, Any]:
+        import catalyst_calendar as _cc
+
+        return _json_safe(_cc.load_snapshot())
+
+    @application.get("/api/calendar/identity-index")
+    def calendar_identity_index() -> dict[str, Any]:
+        """Ticker → Discovery / ClinicalTrials.gov / FDA sources + designations (cached)."""
+        import calendar_identity as _ci
+
+        return _json_safe(_ci.load_identity_index())
+
+    @application.post("/api/calendar/identity-index/refresh")
+    def calendar_identity_index_refresh() -> dict[str, Any]:
+        import calendar_identity as _ci
+
+        doc = _ci.build_identity_index(persist=True)
+        return {
+            "ok": True,
+            "ticker_count": doc.get("ticker_count"),
+            "updated_at": doc.get("updated_at"),
+        }
+
+    @application.post("/api/market/fda-designations")
+    async def market_fda_designations(request: Request) -> dict[str, Any]:
+        """Top KPI Designation: Discovery identity + FDA-site search by product name."""
+        import fda_product_designations as _fpd
+
+        try:
+            body = await request.json()
+        except Exception:
+            body = {}
+        if not isinstance(body, dict):
+            body = {}
+        items = body.get("items") or []
+        force = bool(body.get("force"))
+        if not isinstance(items, list):
+            items = []
+        return _json_safe(_fpd.lookup_batch(items, force=force))
+
+    @application.post("/api/universe-discovery/refresh")
+    def universe_discovery_refresh() -> dict[str, Any]:
+        """EDGAR full-text screener for biotech filers outside the watchlist (manual review only)."""
+        import universe_discovery as _ud
+
+        status = _ud.get_status()
+        if status.get("running"):
+            return {"started": False, "message": "Already running"}
+
+        def _target() -> None:
+            _ud.run_universe_discovery_refresh()
+
+        t = threading.Thread(target=_target, name="universe-discovery", daemon=True)
+        t.start()
+        return {"started": True}
+
+    @application.get("/api/universe-discovery/status")
+    def universe_discovery_status() -> dict[str, Any]:
+        import universe_discovery as _ud
+
+        return _json_safe(_ud.get_status())
+
+    @application.get("/api/universe-discovery/snapshot")
+    def universe_discovery_snapshot() -> dict[str, Any]:
+        import universe_discovery as _ud
+
+        return _json_safe(_ud.load_snapshot())
+
+    @application.post("/api/universe-discovery/review")
+    async def universe_discovery_review(request: Request) -> dict[str, Any]:
+        """Mark a discovery candidate reviewed_added | reviewed_rejected | new.
+
+        ``reviewed_added`` enqueues the ticker for Calendar (SEC forward work list).
+        Never silently mutates the Simulation Excel workbook.
+        """
+        import universe_discovery as _ud
+
+        body = await _request_json_dict(request)
+        cik = str(body.get("cik") or "").strip()
+        status = str(body.get("status") or "").strip()
+        start_calendar = bool(body.get("start_calendar", True))
+        result = _ud.set_candidate_status(cik, status)  # type: ignore[arg-type]
+        if (
+            result.get("ok")
+            and status == "reviewed_added"
+            and result.get("queued_for_calendar")
+            and start_calendar
+        ):
+            import catalyst_calendar as _cc
+
+            st = _cc.get_status()
+            if not st.get("running"):
+
+                def _target() -> None:
+                    _cc.run_catalyst_calendar_refresh()
+
+                threading.Thread(
+                    target=_target, name="universe-discovery-calendar", daemon=True
+                ).start()
+                result["calendar_refresh_started"] = True
+            else:
+                result["calendar_refresh_started"] = False
+                result["calendar_refresh_message"] = "Calendar already running"
+        return _json_safe(result)
+
+    @application.get("/api/catalyst-interest")
+    def catalyst_interest_get() -> dict[str, Any]:
+        """User-curated interest tickers (Catalyst Days → pipeline + deep dive)."""
+        from catalyst_interest import get_interest_snapshot
+
+        return _json_safe(get_interest_snapshot())
+
+    @application.post("/api/catalyst-interest")
+    async def catalyst_interest_post(request: Request) -> dict[str, Any]:
+        """
+        Enroll a ticker of interest: watchlist + calendar roster (if CIK known) +
+        optional manual CD sidecar + clinical/Daily News kicks.
+        Body: {ticker, company?, cd_iso|cd_date?, nct_id?, note?, open_pipeline?}
+        Requires admin API token OR approved premium tester session.
+        """
+        from catalyst_interest import enroll_interest_ticker
+        import tester_feedback_io as tf
+
+        if not _request_has_admin_token(request):
+            sess = request.headers.get(tf.TESTER_SESSION_HEADER) or request.headers.get(
+                "x-supernova-tester-session"
+            )
+            tid = tf.find_tester_id_by_session(sess)
+            if not tid:
+                raise HTTPException(
+                    status_code=401,
+                    detail="Premium membership required to enroll companies of interest",
+                )
+            access = tf.get_tester_access(tid)
+            if not access.get("premium"):
+                raise HTTPException(
+                    status_code=403,
+                    detail="Premium membership required to enroll companies of interest",
+                )
+
+        body = await _request_json_dict(request)
+        return _json_safe(enroll_interest_ticker(body if isinstance(body, dict) else {}))
+
+    @application.get("/api/catalyst-interest/discover")
+    def catalyst_interest_discover(ticker: str = "", company: str = "") -> dict[str, Any]:
+        """Search Calendar snapshots + CT.gov for the next catalyst day (read-only)."""
+        from catalyst_interest import discover_catalyst_days
+
+        return _json_safe(discover_catalyst_days(ticker, company or None))
+
+    @application.delete("/api/catalyst-interest/{ticker}")
+    def catalyst_interest_delete(ticker: str) -> dict[str, Any]:
+        from catalyst_interest import remove_interest_ticker
+
+        return _json_safe(remove_interest_ticker(ticker))
+
+    # ── Guidance Calendar ────────────────────────────────────────────────────
+
+    _guidance_cal_thread: list[threading.Thread | None] = [None]
+
+    @application.post("/api/guidance-calendar/refresh")
+    async def guidance_calendar_refresh(request: Request) -> dict[str, Any]:
+        """Start background guidance extraction from existing press + 8-K data."""
+        import guidance_calendar as _gc
+
+        status = _gc.get_status()
+        if status.get("running"):
+            return {"started": False, "message": "Already running"}
+
+        body = await _request_json_dict(request)
+        force = bool(body.get("force"))
+
+        def _target() -> None:
+            _gc.run_guidance_calendar_refresh(force=force)
+
+        t = threading.Thread(target=_target, name="guidance-calendar", daemon=True)
+        _guidance_cal_thread[0] = t
+        t.start()
+        return {"started": True}
+
+    @application.get("/api/guidance-calendar/status")
+    def guidance_calendar_status() -> dict[str, Any]:
+        import guidance_calendar as _gc
+
+        return _json_safe(_gc.get_status())
+
+    @application.get("/api/guidance-calendar/snapshot")
+    def guidance_calendar_snapshot() -> dict[str, Any]:
+        import guidance_calendar as _gc
+
+        return _json_safe(_gc.load_snapshot())
+
+    @application.get("/api/fda-adcom-calendar/status")
+    def fda_adcom_calendar_status() -> dict[str, Any]:
+        import fda_adcom_calendar as _fac
+
+        return _json_safe(_fac.get_status())
+
+    @application.get("/api/fda-adcom-calendar/snapshot")
+    def fda_adcom_calendar_snapshot() -> dict[str, Any]:
+        import fda_adcom_calendar as _fac
+
+        return _json_safe(_fac.load_snapshot())
+
+    @application.post("/api/fda-adcom-calendar/refresh")
+    async def fda_adcom_calendar_refresh(request: Request) -> dict[str, Any]:
+        import fda_adcom_calendar as _fac
+
+        status = _fac.get_status()
+        if status.get("running"):
+            return {"started": False, "message": "Already running"}
+        body = await _request_json_dict(request)
+        force = bool(body.get("force"))
+
+        def _target() -> None:
+            _fac.run_fda_adcom_calendar_refresh(force=force)
+
+        t = threading.Thread(target=_target, name="fda-adcom-calendar", daemon=True)
+        t.start()
+        return {"started": True}
+
+    @application.post("/api/fda-adcom-calendar/briefings/refresh")
+    async def fda_adcom_briefings_refresh(request: Request) -> dict[str, Any]:
+        import fda_adcom_briefing as _fab
+        import fda_adcom_calendar as _fac
+
+        status = _fac.get_status()
+        if status.get("running"):
+            return {"started": False, "message": "Already running"}
+        body = await _request_json_dict(request)
+        force = bool(body.get("force"))
+
+        def _target() -> None:
+            _fab.run_fda_adcom_briefing_refresh(force=force)
+
+        t = threading.Thread(target=_target, name="fda-adcom-briefing", daemon=True)
+        t.start()
+        return {"started": True}
+
+    @application.post("/api/quotes/batch")
+    def quotes_batch(request: Request, body: dict[str, Any] | None = None) -> dict[str, Any]:
+        """Batch quotes from financial_sheet_snapshot (hourly). Live Yahoo only for admin."""
+        from quotes_batch_cache import batch_quotes
+
+        payload = body if isinstance(body, dict) else {}
+        tickers = payload.get("tickers", [])
+        if not isinstance(tickers, list) or not tickers:
+            return {
+                "quotes": {},
+                "meta": {
+                    "requested": 0,
+                    "from_snapshot": 0,
+                    "live_fetches": 0,
+                    "missing": [],
+                },
+            }
+        want_live = bool(payload.get("live") or payload.get("live_fallback"))
+        live = want_live and _request_has_admin_token(request)
+        return _json_safe(
+            batch_quotes([str(t) for t in tickers], live_fallback=live)
+        )
+
+    # ── Regulatory Risk ───────────────────────────────────────────────────────
+
+    @application.get("/api/regulatory-risk/snapshot")
+    def regulatory_risk_snapshot_get() -> dict[str, Any]:
+        """Serve the latest regulatory risk snapshot (auto-built by morning scheduler).
+        If the file doesn't exist yet, build it on first request (lazy init)."""
+        from orchestrator_io_paths import REGULATORY_RISK_SNAPSHOT_JSON
+
+        p = Path(REGULATORY_RISK_SNAPSHOT_JSON)
+        if not p.is_file():
+            try:
+                from scripts.regulatory_risk_refresh import build_regulatory_risk_snapshot, save_snapshot
+                snap = build_regulatory_risk_snapshot()
+                save_snapshot(snap)
+                return _json_safe(snap)
+            except Exception as exc:
+                return {"updated_at": None, "tickers": {}, "error": str(exc)}
+        try:
+            return _json_safe(json.loads(p.read_text(encoding="utf-8")))
+        except (json.JSONDecodeError, OSError):
+            return {"updated_at": None, "tickers": {}, "error": "failed to read snapshot"}
+
+    @application.post("/api/regulatory-risk/refresh")
+    def regulatory_risk_refresh() -> dict[str, Any]:
+        """Rebuild the regulatory risk snapshot on demand."""
+        from scripts.regulatory_risk_refresh import build_regulatory_risk_snapshot, save_snapshot
+
+        snap = build_regulatory_risk_snapshot()
+        save_snapshot(snap)
+        return _json_safe(snap)
 
     @application.get("/api/ai/provider")
     def ai_provider_status() -> dict[str, Any]:
@@ -690,12 +1817,20 @@ def build_app(cfg: SupernovaConfig | None = None) -> FastAPI:
 
     @application.post("/api/ai/provider/probe")
     def ai_provider_probe() -> dict[str, Any]:
-        """Quick test of configured providers (populates error hints for the UI)."""
+        """Quick test of configured providers + force-refresh balance for real-time info."""
         import ai_provider as _ap
 
         info = _ap.provider_info()
         ok = bool(_ap.call_ai("Reply with exactly: OK", max_tokens=8, task="catalyst"))
+        # Force-refresh Anthropic balance after the probe call
+        try:
+            from ai_billing import get_anthropic_balance
+            fresh_balance = get_anthropic_balance(force_refresh=True)
+        except Exception:
+            fresh_balance = None
         info = _ap.provider_info()
+        if fresh_balance:
+            info["anthropic_balance"] = fresh_balance
         return _json_safe({**info, "probe_ok": ok})
 
     @application.post("/api/ai/provider/select")
@@ -721,11 +1856,13 @@ def build_app(cfg: SupernovaConfig | None = None) -> FastAPI:
             anthropic_api_key=payload.get("anthropic_api_key"),
             openai_api_key=payload.get("openai_api_key"),
             github_token=payload.get("github_token"),
+            gemini_api_key=payload.get("gemini_api_key"),
             anthropic_prepaid_eur=payload.get("anthropic_prepaid_eur"),
             anthropic_org_id=payload.get("anthropic_org_id"),
             clear_anthropic=bool(payload.get("clear_anthropic")),
             clear_openai=bool(payload.get("clear_openai")),
             clear_github=bool(payload.get("clear_github")),
+            clear_gemini=bool(payload.get("clear_gemini")),
             clear_anthropic_prepaid=bool(payload.get("clear_anthropic_prepaid")),
         )
         return _json_safe({"ok": True, **status, "provider": _ap.provider_info()})
@@ -736,11 +1873,18 @@ def build_app(cfg: SupernovaConfig | None = None) -> FastAPI:
 
     @application.post("/api/clinical-pre-cd/refresh")
     def clinical_pre_cd_refresh(
-        portfolio_only: bool = Query(True),
+        portfolio_only: bool = Query(
+            True,
+            description="When true, scope = Simulation sheet ∪ portfolio positions. False = entire work list.",
+        ),
         force: bool = Query(False, description="Ignore TTL cache — reprocess all rows"),
         deep: bool = Query(
             False,
             description="Copilot-grade deep pass (also auto weekly for portfolio tickers)",
+        ),
+        tickers: str = Query(
+            "",
+            description="Optional comma-separated tickers — scopes the EIS search (High Vol)",
         ),
     ) -> dict[str, Any]:
         import clinical_pre_cd_enrichment as _cp
@@ -748,11 +1892,18 @@ def build_app(cfg: SupernovaConfig | None = None) -> FastAPI:
         if _cp.get_status().get("running"):
             return {"started": False, "message": "Already running"}
 
+        ticker_list = [
+            p.strip().upper()
+            for p in tickers.replace(";", ",").split(",")
+            if p.strip()
+        ]
+
         def _target() -> None:
             _cp.run_clinical_pre_cd_refresh(
-                portfolio_only=portfolio_only,
-                force=force,
-                deep=deep,
+                portfolio_only=portfolio_only if not ticker_list else False,
+                force=force or bool(ticker_list),
+                deep=deep or bool(ticker_list),
+                tickers=ticker_list or None,
             )
 
         t = threading.Thread(target=_target, name="clinical-pre-cd", daemon=True)
@@ -760,9 +1911,10 @@ def build_app(cfg: SupernovaConfig | None = None) -> FastAPI:
         t.start()
         return {
             "started": True,
-            "portfolio_only": portfolio_only,
-            "force": force,
-            "deep": deep,
+            "portfolio_only": portfolio_only if not ticker_list else False,
+            "force": force or bool(ticker_list),
+            "deep": deep or bool(ticker_list),
+            "tickers": ticker_list,
         }
 
     @application.get("/api/clinical-pre-cd/status")
@@ -776,6 +1928,79 @@ def build_app(cfg: SupernovaConfig | None = None) -> FastAPI:
         import clinical_pre_cd_enrichment as _cp
 
         return _json_safe(_cp.load_snapshot())
+
+    @application.get("/api/clinical-pre-cd/history")
+    def clinical_pre_cd_history(
+        ticker: str = Query("", description="Optional ticker filter"),
+    ) -> dict[str, Any]:
+        """Historical Deep Dive / EIS library (past-catalyst cards, not deleted)."""
+        from clinical_deep_dive_history import library_summary
+
+        return _json_safe(library_summary(ticker=ticker or None))
+
+    @application.get("/api/clinical-pre-cd/history/{ticker}")
+    def clinical_pre_cd_history_ticker(ticker: str) -> dict[str, Any]:
+        from clinical_deep_dive_history import historical_records_for_tickers, library_summary
+
+        tk = (ticker or "").strip().upper()
+        return _json_safe(
+            {
+                **library_summary(ticker=tk),
+                "records": historical_records_for_tickers({tk}),
+            }
+        )
+
+    # ── Anticipated events: pending-verification registry ────────────────────
+
+    _hypothesis_verify_thread: list[threading.Thread | None] = [None]
+
+    @application.get("/api/clinical-pre-cd/pending-hypotheses")
+    def clinical_pending_hypotheses(
+        status: str = Query("", description="Filter by status (pending|confirmed|expired|dismissed)"),
+        ticker: str = Query("", description="Filter by ticker"),
+    ) -> dict[str, Any]:
+        from prediction.eis_pending_verification import load_registry, registry_summary
+
+        items = [it for it in (load_registry().get("items") or []) if isinstance(it, dict)]
+        if status:
+            items = [it for it in items if str(it.get("status") or "") == status.strip().lower()]
+        if ticker:
+            tk = ticker.strip().upper()
+            items = [it for it in items if str(it.get("ticker") or "").upper() == tk]
+        items.sort(key=lambda it: str(it.get("expected_window_start") or ""))
+        return _json_safe({"items": items, "summary": registry_summary()})
+
+    @application.post("/api/clinical-pre-cd/verify-hypotheses")
+    def clinical_verify_hypotheses(
+        ticker: str = Query("", description="Limit the round to one ticker"),
+        limit: int = Query(0, description="Max hypotheses to check (0 = no cap)"),
+        force: bool = Query(False, description="Ignore the per-hypothesis cooldown"),
+        allow_ai: bool = Query(True, description="Allow the targeted AI fact-check pass"),
+    ) -> dict[str, Any]:
+        from prediction.eis_hypothesis_verifier import verify_pending_hypotheses
+
+        thread = _hypothesis_verify_thread[0]
+        if thread is not None and thread.is_alive():
+            return {"started": False, "message": "Already running"}
+
+        tickers = {ticker.strip().upper()} if ticker.strip() else None
+
+        def _target() -> None:
+            try:
+                res = verify_pending_hypotheses(
+                    tickers=tickers,
+                    limit=limit or None,
+                    force=force,
+                    allow_ai=allow_ai,
+                )
+                print(f"[EISVerify] round completato: {res}", flush=True)
+            except Exception as exc:  # noqa: BLE001
+                print(f"[EISVerify][ERROR] {exc}", flush=True)
+
+        t = threading.Thread(target=_target, name="eis-hypothesis-verify", daemon=True)
+        _hypothesis_verify_thread[0] = t
+        t.start()
+        return {"started": True, "ticker": ticker or None, "limit": limit or None}
 
     @application.get("/api/clinical-pre-cd/feed-refresh-report")
     def clinical_feed_refresh_report() -> dict[str, Any]:
@@ -861,6 +2086,170 @@ def build_app(cfg: SupernovaConfig | None = None) -> FastAPI:
         if cached:
             return _json_safe(cached)
         return {"cached": False, "nct_id": nct_id.upper()}
+
+    @application.post("/api/desk/product-briefing/lookup")
+    async def desk_product_briefing_lookup(request: Request) -> dict[str, Any]:
+        """Gemini lookup for modality / MoA / target when clinical profile is sparse."""
+        from product_briefing_lookup import lookup_product_briefing
+
+        payload = await request.json() if request.headers.get("content-type", "").startswith("application/json") else {}
+        if not isinstance(payload, dict):
+            payload = {}
+        force_raw = payload.get("force", False)
+        force = force_raw is True or str(force_raw).strip().lower() in ("1", "true", "yes")
+        # Sync Gemini/HTTP must not block the uvicorn event loop (freezes /api/health).
+        result = await asyncio.to_thread(
+            lookup_product_briefing,
+            ticker=str(payload.get("ticker") or ""),
+            product_name=str(payload.get("product_name") or payload.get("productName") or ""),
+            company=str(payload.get("company") or "").strip() or None,
+            nct_id=str(payload.get("nct_id") or payload.get("nctId") or "").strip() or None,
+            interventions=str(payload.get("interventions") or "").strip() or None,
+            conditions=str(payload.get("conditions") or "").strip() or None,
+            force=force,
+        )
+        return _json_safe(result)
+
+    @application.post("/api/desk/pipeline-overview/lookup")
+    async def desk_pipeline_overview_lookup(request: Request) -> dict[str, Any]:
+        """Gemini: company pipeline summary (modality, MoA, indication, US prevalence, phase)."""
+        from product_briefing_lookup import lookup_pipeline_overview
+
+        payload = await request.json() if request.headers.get("content-type", "").startswith("application/json") else {}
+        if not isinstance(payload, dict):
+            payload = {}
+        force_raw = payload.get("force", False)
+        force = force_raw is True or str(force_raw).strip().lower() in ("1", "true", "yes")
+        raw_products = payload.get("products") or payload.get("product_names") or []
+        if isinstance(raw_products, str):
+            products = [raw_products]
+        elif isinstance(raw_products, list):
+            products = [str(x) for x in raw_products if str(x).strip()]
+        else:
+            products = []
+        result = await asyncio.to_thread(
+            lookup_pipeline_overview,
+            ticker=str(payload.get("ticker") or ""),
+            company=str(payload.get("company") or "").strip() or None,
+            products=products,
+            nct_id=str(payload.get("nct_id") or payload.get("nctId") or "").strip() or None,
+            conditions=str(payload.get("conditions") or payload.get("indication") or "").strip() or None,
+            force=force,
+        )
+        return _json_safe(result)
+
+    @application.post("/api/desk/us-product-revenue/lookup")
+    async def desk_us_product_revenue_lookup(request: Request) -> dict[str, Any]:
+        """Gemini: latest US product revenues (quarter/half), ranked by US $."""
+        from us_product_revenue_lookup import lookup_us_product_revenue
+
+        payload = await request.json() if request.headers.get("content-type", "").startswith("application/json") else {}
+        if not isinstance(payload, dict):
+            payload = {}
+        force_raw = payload.get("force", False)
+        force = force_raw is True or str(force_raw).strip().lower() in ("1", "true", "yes")
+        result = await asyncio.to_thread(
+            lookup_us_product_revenue,
+            ticker=str(payload.get("ticker") or ""),
+            company=str(payload.get("company") or "").strip() or None,
+            force=force,
+        )
+        return _json_safe(result)
+
+    @application.post("/api/desk/competition-landscape/lookup")
+    async def desk_competition_landscape_lookup(request: Request) -> dict[str, Any]:
+        """Gemini + web search: clinical-stage peers targeting the same disease."""
+        from competition_landscape_lookup import lookup_competition_landscape
+
+        payload = await request.json() if request.headers.get("content-type", "").startswith("application/json") else {}
+        if not isinstance(payload, dict):
+            payload = {}
+        force_raw = payload.get("force", False)
+        force = force_raw is True or str(force_raw).strip().lower() in ("1", "true", "yes")
+        cache_only_raw = payload.get("cache_only", False)
+        cache_only = cache_only_raw is True or str(cache_only_raw).strip().lower() in (
+            "1",
+            "true",
+            "yes",
+        )
+        result = await asyncio.to_thread(
+            lookup_competition_landscape,
+            ticker=str(payload.get("ticker") or ""),
+            product_name=str(payload.get("product_name") or payload.get("productName") or "").strip() or None,
+            company=str(payload.get("company") or "").strip() or None,
+            indication=str(payload.get("indication") or payload.get("disease") or "").strip() or None,
+            nct_id=str(payload.get("nct_id") or payload.get("nctId") or "").strip() or None,
+            force=force,
+            cache_only=cache_only,
+        )
+        return _json_safe(result)
+
+    @application.post("/api/desk/product-patent/lookup")
+    async def desk_product_patent_lookup(request: Request) -> dict[str, Any]:
+        """Gemini + web search: patent filing / LOE estimate for the CD product."""
+        from product_briefing_lookup import lookup_product_patent
+
+        payload = await request.json() if request.headers.get("content-type", "").startswith("application/json") else {}
+        if not isinstance(payload, dict):
+            payload = {}
+        force_raw = payload.get("force", False)
+        force = force_raw is True or str(force_raw).strip().lower() in ("1", "true", "yes")
+        kind_raw = (
+            payload.get("product_kind")
+            or payload.get("productKind")
+            or payload.get("kind")
+        )
+        product_kind = str(kind_raw).strip().lower() if kind_raw else None
+        result = await asyncio.to_thread(
+            lookup_product_patent,
+            ticker=str(payload.get("ticker") or ""),
+            product_name=str(payload.get("product_name") or payload.get("productName") or ""),
+            company=str(payload.get("company") or "").strip() or None,
+            nct_id=str(payload.get("nct_id") or payload.get("nctId") or "").strip() or None,
+            force=force,
+            product_kind=product_kind or None,
+        )
+        return _json_safe(result)
+
+    @application.post("/api/desk/ticker-8k-dossier")
+    async def desk_ticker_8k_dossier(request: Request) -> dict[str, Any]:
+        """EDGAR 8-K last 2 months: per-Item 50-word summaries + file score."""
+        from ticker_8k_dossier import lookup_ticker_8k_dossier
+
+        payload = await request.json() if request.headers.get("content-type", "").startswith("application/json") else {}
+        if not isinstance(payload, dict):
+            payload = {}
+        force_raw = payload.get("force", False)
+        force = force_raw is True or str(force_raw).strip().lower() in ("1", "true", "yes")
+        result = await asyncio.to_thread(
+            lookup_ticker_8k_dossier,
+            ticker=str(payload.get("ticker") or ""),
+            force=force,
+        )
+        return _json_safe(result)
+
+    @application.post("/api/desk/product-study-dossier")
+    async def desk_product_study_dossier(request: Request) -> dict[str, Any]:
+        """CT.gov studies for one drug + PubMed papers (drug in title/abstract; affiliation optional)."""
+        from product_study_dossier import lookup_product_study_dossier
+
+        payload = await request.json() if request.headers.get("content-type", "").startswith("application/json") else {}
+        if not isinstance(payload, dict):
+            payload = {}
+        force_raw = payload.get("force", False)
+        force = force_raw is True or str(force_raw).strip().lower() in ("1", "true", "yes")
+        aliases_raw = payload.get("aliases") or []
+        aliases = [str(a).strip() for a in aliases_raw if str(a).strip()] if isinstance(aliases_raw, list) else []
+        result = await asyncio.to_thread(
+            lookup_product_study_dossier,
+            ticker=str(payload.get("ticker") or ""),
+            product_name=str(payload.get("product_name") or payload.get("productName") or ""),
+            company=str(payload.get("company") or "").strip() or None,
+            nct_id=str(payload.get("nct_id") or payload.get("nctId") or "").strip() or None,
+            aliases=aliases,
+            force=force,
+        )
+        return _json_safe(result)
 
     @application.get("/api/clinical/study-meta/{nct_id}")
     def clinical_study_meta(
@@ -960,7 +2349,7 @@ def build_app(cfg: SupernovaConfig | None = None) -> FastAPI:
     @application.get("/api/refresh/status")
     def refresh_status() -> dict[str, Any]:
         st = _read_refresh_fast_status_file()
-        running = _refresh_proc is not None and _refresh_proc.poll() is None
+        running = _reconcile_refresh_subprocess()
         out: dict[str, Any] = {
             "running": running,
             "profile": _refresh_profile,
@@ -1016,6 +2405,25 @@ def build_app(cfg: SupernovaConfig | None = None) -> FastAPI:
 
             doc = load_last_summary()
             return doc if doc else {}
+        except Exception as exc:  # noqa: BLE001
+            return {"error": str(exc)}
+
+    @application.get("/api/refresh/weekly-full-status")
+    def weekly_full_status() -> dict[str, Any]:
+        """Stato WeeklyFull server-side (cron sabato) per popup desktop."""
+        try:
+            from orchestrator_run_summary import format_summary_message, load_last_summary
+
+            summary = load_last_summary() or {}
+            if summary and not summary.get("message"):
+                summary = dict(summary)
+                summary["message"] = format_summary_message(summary, lang="it")
+            return {
+                "enabled": c.saturday_weekly_full_enabled,
+                "running": _weekly_full_pipeline_running(),
+                "last_run": _load_weekly_full_last_run(),
+                "summary": summary if summary else None,
+            }
         except Exception as exc:  # noqa: BLE001
             return {"error": str(exc)}
 
@@ -1190,11 +2598,20 @@ def build_app(cfg: SupernovaConfig | None = None) -> FastAPI:
     _live_signals_proc: list = []   # [subprocess.Popen] — lista mutabile per closure
 
     @application.post("/api/refresh/live-signals")
-    def refresh_live_signals(cd_horizon: int = Query(90, ge=7, le=180)) -> dict[str, Any]:
+    def refresh_live_signals(
+        cd_horizon: int = Query(90, ge=7, le=180),
+        force_prices: bool = Query(
+            False,
+            description="Overwrite Prezzo Corrente / Var. Giorn. % even outside NYSE RTH",
+        ),
+    ) -> dict[str, Any]:
         """
         Aggiorna slope/affid/pred5 nel simulation_sheet_snapshot.json
         scaricando solo 3 mesi di prezzi per le società con CD imminente.
         Tipicamente < 30 secondi. Non tocca Excel né data_orchestrator.
+
+        Fuori RTH scrive la chiusura ufficiale (settled); ``force_prices``
+        forza quote live anche pre/post market.
         """
         if not PYTHON.is_file():
             return {"error": f"Python non trovato: {PYTHON}"}
@@ -1207,8 +2624,11 @@ def build_app(cfg: SupernovaConfig | None = None) -> FastAPI:
         import subprocess as _sp
         env = os.environ.copy()
         env["PYTHONUNBUFFERED"] = "1"
+        cmd = [str(PYTHON), "-u", str(script), "--cd-horizon", str(cd_horizon)]
+        if force_prices:
+            cmd.append("--force-prices")
         proc = _sp.Popen(
-            [str(PYTHON), "-u", str(script), "--cd-horizon", str(cd_horizon)],
+            cmd,
             cwd=str(ROOT), env=env,
             stdout=_sp.PIPE, stderr=_sp.STDOUT,
         )
@@ -1216,8 +2636,12 @@ def build_app(cfg: SupernovaConfig | None = None) -> FastAPI:
             _live_signals_proc[0] = proc
         else:
             _live_signals_proc.append(proc)
-        return {"started": True, "cd_horizon": cd_horizon,
-                "message": "Live signals refresh avviato (~20s)."}
+        return {
+            "started": True,
+            "cd_horizon": cd_horizon,
+            "force_prices": force_prices,
+            "message": "Live signals refresh avviato (~20s).",
+        }
 
     @application.get("/api/refresh/live-signals/status")
     def live_signals_status() -> dict[str, Any]:
@@ -1315,6 +2739,15 @@ def build_app(cfg: SupernovaConfig | None = None) -> FastAPI:
                     )
                     return
         _write_post_pipeline_status("ok", f"Pipeline completata ({len(steps)} step).")
+        try:
+            from orch_refresh_gates import mark_post_pipeline_ok
+
+            mark_post_pipeline_ok(
+                f"API post-pipeline OK ({len(steps)} step)",
+                kind="full",
+            )
+        except Exception:
+            pass
 
     @application.post("/api/investment/post-refresh-pipeline")
     def run_post_refresh_pipeline() -> dict[str, Any]:
@@ -1330,6 +2763,28 @@ def build_app(cfg: SupernovaConfig | None = None) -> FastAPI:
             return {"error": f"Python non trovato: {PYTHON}"}
         if _post_pipeline_proc and _post_pipeline_proc[0].is_alive():
             return {"running": True, "message": "Post-pipeline già in corso."}
+
+        try:
+            from orch_refresh_gates import post_pipeline_ok_within
+
+            skip_min = float(os.environ.get("POST_PIPELINE_SKIP_IF_WITHIN_MIN", "45"))
+            if post_pipeline_ok_within(skip_min):
+                st: dict[str, Any] = {}
+                if POST_PIPELINE_STATUS.is_file():
+                    try:
+                        st = json.loads(POST_PIPELINE_STATUS.read_text(encoding="utf-8"))
+                    except (OSError, json.JSONDecodeError):
+                        st = {}
+                return {
+                    "skipped": True,
+                    "message": (
+                        f"Post-pipeline già completata negli ultimi {skip_min:.0f} min "
+                        "(scheduler o run precedente)."
+                    ),
+                    **st,
+                }
+        except Exception:
+            pass
 
         scripts: list[tuple[str, list[str]]] = []
         dir_calib = ROOT / "scripts" / "_build_directional_calibration.py"
@@ -1403,6 +2858,506 @@ def build_app(cfg: SupernovaConfig | None = None) -> FastAPI:
         if tail and len(text) > tail:
             text = text[-tail:]
         return {"log": text}
+
+    @application.get("/api/market/intraday-1h")
+    def market_intraday_1h(
+        tickers: str = Query("", description="Comma-separated tickers (max ~80)"),
+        force: bool = Query(False, description="Bypass short cache — refresh live session"),
+    ) -> dict[str, Any]:
+        """Today's prices bucketed to 1 point/hour — Home what-if multi-curve chart."""
+        from market_intraday_1h import fetch_intraday_1h
+
+        return _json_safe(fetch_intraday_1h(tickers, force=force))
+
+    @application.get("/api/market/volume-history")
+    def market_volume_history(
+        ticker: str = Query("", description="Single ticker symbol"),
+        days: int = Query(35, ge=1, le=400, description="Calendar days of history"),
+    ) -> dict[str, Any]:
+        """Daily share volume bars — loss-analysis EIS overlay chart."""
+        from market_volume_history import fetch_volume_history
+
+        return _json_safe(fetch_volume_history(ticker, days=days))
+
+    @application.get("/api/market/volume-character")
+    def market_volume_character(
+        ticker: str = Query("", description="Single ticker symbol"),
+        days: int = Query(60, ge=40, le=400, description="Calendar days of OHLCV history"),
+        eis_dates: str = Query(
+            "",
+            description="Comma-separated confirmed EIS dates (YYYY-MM-DD) for Reactive join",
+        ),
+    ) -> dict[str, Any]:
+        """Volume Character Classifier — Anticipatory / Reactive / Ambiguous tags (no BUY/SELL)."""
+        from volume_character import classify_ticker_from_history
+
+        dates = [p.strip() for p in str(eis_dates or "").replace(";", ",").split(",") if p.strip()]
+        return _json_safe(
+            classify_ticker_from_history(ticker, days=days, eis_dates=dates)
+        )
+
+    @application.get("/api/market/volume-vs-prev-session")
+    def market_volume_vs_prev_session(
+        tickers: str = Query("", description="Comma-separated tickers (max ~80)"),
+        force: bool = Query(False, description="Bypass the short cache"),
+    ) -> dict[str, Any]:
+        """Session volume as % of the previous Nasdaq session — KPI snapshot Vol column."""
+        from market_volume_history import fetch_volume_vs_prev_session
+
+        payload = fetch_volume_vs_prev_session(tickers, force=force)
+        if not get_supernova_config().volume_delta_enabled:
+            for row in payload.get("rows", {}).values():
+                if isinstance(row, dict):
+                    row.pop("volume_delta_signed", None)
+                    row.pop("volume_delta_method", None)
+                    row.pop("obv_divergence_flag", None)
+        return _json_safe(payload)
+
+    @application.get("/api/market/volume-acceleration")
+    def market_volume_acceleration(
+        tickers: str = Query("", description="Comma-separated tickers (max 20, 5m RVOL log-slope)"),
+        force: bool = Query(False, description="Bypass the short cache"),
+    ) -> dict[str, Any]:
+        """Incremental-volume acceleration (T_double) — Soft BUY High Vol."""
+        from volume_acceleration import fetch_volume_acceleration
+
+        return _json_safe(fetch_volume_acceleration(tickers, force=force))
+
+    @application.get("/api/market/search-interest")
+    def market_search_interest(
+        tickers: str = Query("", description="Comma-separated tickers (max 16; ~4h cache)"),
+    ) -> dict[str, Any]:
+        """Google Trends search-interest — display only, not a BUY/SELL input.
+        Dual window: today 3-m (baseline) + now 1-d (~24h)."""
+        from search_interest import fetch_search_interest
+
+        return _json_safe(fetch_search_interest(tickers))
+
+    @application.get("/api/market/search-interest-leaders")
+    def market_search_interest_leaders(
+        limit: int = Query(10, ge=1, le=20, description="Top Simulation names by Trends z-score"),
+    ) -> dict[str, Any]:
+        """Highest Google Trends scores in the Simulation universe (cache only)."""
+        from search_interest import fetch_search_interest_leaders
+
+        return _json_safe(fetch_search_interest_leaders(limit))
+
+    @application.get("/api/market/smart-money")
+    def market_smart_money(
+        tickers: str = Query("", description="Comma-separated tickers (Form 4 + cached 13F/short)"),
+    ) -> dict[str, Any]:
+        """Silent-money traces — display only, not a BUY/SELL input."""
+        from smart_money import fetch_smart_money
+
+        return _json_safe(fetch_smart_money(tickers))
+
+    @application.get("/api/market/catalyst-short-interest")
+    def market_catalyst_short_interest(
+        tickers: str = Query("", description="Comma-separated tickers (bi-monthly SI; display only)"),
+        force: bool = Query(False),
+    ) -> dict[str, Any]:
+        """Catalyst Short Interest / DTC. Not Soft BUY/SELL. Not an intra-day feed."""
+        from catalyst_short_interest import fetch_catalyst_short_interest
+
+        return _json_safe(fetch_catalyst_short_interest(tickers or None, force=force))
+
+    @application.post("/api/market/catalyst-short-interest/refresh")
+    def market_catalyst_short_interest_refresh() -> dict[str, Any]:
+        """Once-daily warm of SI prints for the 10-day catalyst universe."""
+        from catalyst_short_interest import refresh_catalyst_short_interest_universe
+
+        return _json_safe(refresh_catalyst_short_interest_universe(force=False))
+
+    @application.get("/api/market/catalyst-accumulation")
+    def market_catalyst_accumulation(
+        tickers: str = Query("", description="Comma-separated tickers (Form 4 net buy + gov flag)"),
+        force: bool = Query(False),
+    ) -> dict[str, Any]:
+        """Accumulation + Governance Flag (Framework v2 signal 2). Not Soft BUY/SELL."""
+        from catalyst_accumulation import fetch_catalyst_accumulation
+
+        return _json_safe(fetch_catalyst_accumulation(tickers or None, force=force))
+
+    @application.get("/api/market/catalyst-desk-cache")
+    def market_catalyst_desk_cache() -> dict[str, Any]:
+        """
+        Catalyst Decision table cache split:
+        - morning: Ticker/Event/Days + Insider + Exec Exit + FDA Brief (weekday mornings)
+        - hourly: Vol/Sentiment/Skew/Short/vs XBI/Pre-Mkt/Trends (Nasdaq open hours)
+        Display only — not Soft BUY/SELL.
+        """
+        from catalyst_desk_cache import load_desk_cache
+
+        return _json_safe(load_desk_cache())
+
+    @application.post("/api/market/catalyst-desk-cache/refresh")
+    async def market_catalyst_desk_cache_refresh(
+        force: bool = Query(False, description="Force full Yahoo refresh even off-hours"),
+    ) -> dict[str, Any]:
+        """
+        Server-owned Catalyst hourly pack refresh (RTH full / off-hours hole-fill).
+        Clients should only GET the pack — Yahoo lives here.
+        """
+        from catalyst_desk_cache import load_desk_cache, run_hourly_desk_cache_refresh
+
+        result = run_hourly_desk_cache_refresh(force=force)
+        pack = load_desk_cache()
+        return _json_safe({**pack, "refresh": result})
+
+    @application.get("/api/market/daily-news")
+    def market_daily_news() -> dict[str, Any]:
+        """
+        Catalyst Daily News box — staged headlines (09:00 + hourly) + Top News
+        (★ + positive momentum: press + digested 8-K). Display only — not Soft BUY/SELL.
+        """
+        from daily_news_desk import load_daily_news
+
+        return _json_safe(load_daily_news())
+
+    @application.post("/api/market/daily-news/refresh")
+    async def market_daily_news_refresh(
+        request: Request,
+        force: bool = Query(False, description="Ignore hour cache and re-search"),
+    ) -> dict[str, Any]:
+        """Manual / scheduler trigger for Daily News search + hour migration."""
+        from daily_news_desk import run_daily_news_search
+
+        body = await _request_json_dict(request)
+        prio = body.get("priority_tickers") if isinstance(body.get("priority_tickers"), list) else None
+        force_body = bool(body.get("force")) if "force" in body else force
+        return _json_safe(
+            run_daily_news_search(force=force_body, priority_tickers=prio)
+        )
+
+    @application.post("/api/market/daily-news/top")
+    async def market_daily_news_top(request: Request) -> dict[str, Any]:
+        """
+        Top News block: client sends ★ ∩ positive-momentum tickers.
+        Returns press + digested SEC 8-K findings (each scored, each with link).
+        """
+        from daily_news_desk import build_top_news
+
+        body = await _request_json_dict(request)
+        tickers = body.get("tickers") or body.get("priority_tickers") or []
+        if not isinstance(tickers, list):
+            tickers = []
+        force = bool(body.get("force"))
+        return _json_safe(build_top_news(tickers, force=force))
+
+    @application.post("/api/market/daily-news/analyze")
+    async def market_daily_news_analyze(request: Request) -> dict[str, Any]:
+        """
+        Digest pasted text / URL / PDF → ~10-word summary + clinical, financial,
+        EIS, market-access scores. Display only — not Soft BUY/SELL.
+        Accepts multipart (field ``pdf``) or JSON with ``pdf_base64`` + ``pdf_name``.
+        """
+        from daily_news_desk import analyze_user_source
+
+        ctype = (request.headers.get("content-type") or "").lower()
+        if "multipart/form-data" in ctype:
+            try:
+                form = await request.form()
+            except Exception as exc:
+                return _json_safe(
+                    {
+                        "ok": False,
+                        "error": (
+                            "multipart_parse_failed: install python-multipart "
+                            f"({type(exc).__name__}: {exc})"
+                        )[:240],
+                    }
+                )
+            text = str(form.get("text") or "") or None
+            url = str(form.get("url") or "") or None
+            pdf_bytes: bytes | None = None
+            pdf_name: str | None = None
+            upload = form.get("pdf") or form.get("file")
+            if upload is not None and hasattr(upload, "read"):
+                pdf_bytes = await upload.read()  # type: ignore[misc]
+                pdf_name = getattr(upload, "filename", None) or "upload.pdf"
+                if not pdf_bytes:
+                    pdf_bytes = None
+            return _json_safe(
+                analyze_user_source(
+                    text=text,
+                    url=url,
+                    pdf_bytes=pdf_bytes,
+                    pdf_name=pdf_name,
+                )
+            )
+        body = await _request_json_dict(request)
+        pdf_bytes = None
+        pdf_name = str(body.get("pdf_name") or "") or None
+        b64 = str(body.get("pdf_base64") or "").strip()
+        if b64:
+            try:
+                import base64
+
+                # Allow data-URL prefix
+                if "," in b64 and b64.lower().startswith("data:"):
+                    b64 = b64.split(",", 1)[1]
+                pdf_bytes = base64.b64decode(b64, validate=False)
+            except Exception as exc:
+                return _json_safe(
+                    {"ok": False, "error": f"pdf_base64_invalid: {exc}"[:200]}
+                )
+            if not pdf_bytes:
+                pdf_bytes = None
+        return _json_safe(
+            analyze_user_source(
+                text=str(body.get("text") or "") or None,
+                url=str(body.get("url") or "") or None,
+                pdf_bytes=pdf_bytes,
+                pdf_name=pdf_name or ("upload.pdf" if pdf_bytes else None),
+            )
+        )
+
+    @application.post("/api/market/daily-news/migrate")
+    async def market_daily_news_migrate(request: Request) -> dict[str, Any]:
+        """
+        Manual: push staged Daily News (+ Top + analyses with ticker) into
+        company clinical EIS (Deep Dive). Optional body ``id`` / ``ids`` for
+        single-row migrate. Not Soft BUY/SELL. Not auto/hourly.
+        """
+        from daily_news_desk import migrate_daily_news_to_eis
+
+        body = await _request_json_dict(request)
+        ids = body.get("ids")
+        if not isinstance(ids, list):
+            ids = None
+        return _json_safe(
+            migrate_daily_news_to_eis(
+                item_id=str(body.get("id") or "") or None,
+                ids=[str(x) for x in ids] if ids else None,
+            )
+        )
+
+    @application.get("/api/market/catalyst-outcomes/resolved")
+    def market_catalyst_outcomes_resolved() -> dict[str, Any]:
+        """Keys of Catalyst Days whose outcome was migrated to Deep Dive."""
+        from catalyst_outcome_feed import _load_resolved
+
+        doc = _load_resolved()
+        entries = doc.get("entries") if isinstance(doc.get("entries"), dict) else {}
+        return _json_safe(
+            {
+                "ok": True,
+                "keys": sorted(entries.keys()),
+                "count": len(entries),
+            }
+        )
+
+    @application.post("/api/market/catalyst-outcomes/scan")
+    def market_catalyst_outcomes_scan() -> dict[str, Any]:
+        """Scan post-CD week for outcome press/8-K and stage into Daily News."""
+        from catalyst_outcome_feed import stage_catalyst_outcomes_into_daily_news
+
+        return _json_safe(stage_catalyst_outcomes_into_daily_news(force=True))
+
+    @application.post("/api/market/daily-news/brief")
+    async def market_daily_news_brief(request: Request) -> dict[str, Any]:
+        """
+        Click-through detail for a Daily News headline OR an EIS Deep Dive /
+        clinical-feed event with a source URL. Same investor digest engine
+        (`_build_investor_digest`). Display only — not Soft BUY/SELL.
+        """
+        from daily_news_desk import brief_daily_news_item
+
+        body = await _request_json_dict(request)
+        return _json_safe(
+            brief_daily_news_item(
+                title=str(body.get("title") or "") or None,
+                url=str(body.get("url") or body.get("link") or "") or None,
+                summary=str(body.get("summary") or "") or None,
+                ticker=str(body.get("ticker") or "") or None,
+                item_id=str(body.get("id") or body.get("item_id") or "") or None,
+            )
+        )
+
+    @application.post("/api/market/daily-news/dismiss")
+    async def market_daily_news_dismiss(request: Request) -> dict[str, Any]:
+        """Close a Daily News row without Migrate → EIS."""
+        from daily_news_desk import dismiss_daily_news_item
+
+        body = await _request_json_dict(request)
+        ids = body.get("ids")
+        if not isinstance(ids, list):
+            ids = None
+        return _json_safe(
+            dismiss_daily_news_item(
+                item_id=str(body.get("id") or "") or None,
+                ids=[str(x) for x in ids] if ids else None,
+            )
+        )
+
+    @application.get("/api/market/catalyst-vs-xbi")
+    def market_catalyst_vs_xbi(
+        tickers: str = Query("", description="Comma-separated tickers (relative move vs XBI)"),
+        force: bool = Query(False),
+    ) -> dict[str, Any]:
+        """Stock vs XBI relative move (β=1 simple). Not Soft BUY/SELL."""
+        from catalyst_vs_xbi import fetch_catalyst_vs_xbi
+
+        return _json_safe(fetch_catalyst_vs_xbi(tickers or None, force=force))
+
+    @application.get("/api/market/catalyst-pre-open-imbalance")
+    def market_catalyst_pre_open_imbalance(
+        tickers: str = Query("", description="Comma-separated tickers (pre-open NOII / Pillar)"),
+        listings: str = Query(
+            "",
+            description="Optional ticker:VENUE pairs (e.g. ETON:NASDAQ,PFE:NYSE). Never assume Nasdaq.",
+        ),
+        force_live: bool = Query(
+            False,
+            description="One-shot Databento live pull when in-window. Not continuous desk poll.",
+        ),
+    ) -> dict[str, Any]:
+        """
+        Pre-Open Imbalance (Databento XNAS.ITCH / XNYS.PILLAR). Context only —
+        not Soft BUY/SELL. Outside transmission window returns blank rows (never stale).
+        Continuous refresh stays off unless PRE_OPEN_IMBALANCE_CONTINUOUS=1 after
+        confirming Databento plan + venue licenses.
+        """
+        from pre_open_imbalance import fetch_pre_open_imbalance
+
+        listing_by_ticker: dict[str, str] = {}
+        for part in (listings or "").split(","):
+            part = part.strip()
+            if not part or ":" not in part:
+                continue
+            tk, venue = part.split(":", 1)
+            tk = tk.strip().upper()
+            venue = venue.strip()
+            if tk and venue:
+                listing_by_ticker[tk] = venue
+
+        return _json_safe(
+            fetch_pre_open_imbalance(
+                tickers or None,
+                listing_by_ticker=listing_by_ticker or None,
+                force_live=force_live,
+            )
+        )
+
+    @application.get("/api/market/catalyst-pre-mkt-conviction")
+    def market_catalyst_pre_mkt_conviction(
+        tickers: str = Query(
+            "",
+            description="Comma-separated tickers (pre-market conviction PROXY — not NOII)",
+        ),
+        search_buzz: str = Query(
+            "",
+            description="Optional ticker:delta_pct pairs (e.g. ETON:12.5) for ConvictionConfirmed",
+        ),
+    ) -> dict[str, Any]:
+        """
+        Pre-Mkt Conviction — FREE proxy from executed Yahoo pre-market trades.
+        NOT official Pre-Open Imbalance / Databento NOII. Context only, not Soft BUY/SELL.
+        """
+        from pre_mkt_conviction import fetch_pre_mkt_conviction
+
+        buzz: dict[str, float] = {}
+        for part in (search_buzz or "").split(","):
+            part = part.strip()
+            if not part or ":" not in part:
+                continue
+            tk, raw = part.split(":", 1)
+            tk = tk.strip().upper()
+            try:
+                buzz[tk] = float(raw.strip())
+            except ValueError:
+                continue
+
+        return _json_safe(
+            fetch_pre_mkt_conviction(
+                tickers or None,
+                search_buzz_by_ticker=buzz or None,
+            )
+        )
+
+    @application.get("/api/market/catalyst-uoa")
+    def market_catalyst_uoa(
+        tickers: str = Query("", description="Comma-separated tickers (unusual options activity)"),
+        force: bool = Query(False),
+    ) -> dict[str, Any]:
+        """Unusual Options Activity. Not Soft BUY/SELL. — without 20d avg-vol feed."""
+        from catalyst_uoa import fetch_catalyst_uoa
+
+        return _json_safe(fetch_catalyst_uoa(tickers or None, force=force))
+
+    @application.get("/api/market/event-vol-index")
+    def market_event_vol_index(
+        pairs: str = Query(
+            "",
+            description="ticker:YYYY-MM-DD pairs (IV run-up + skew; display only)",
+        ),
+        force: bool = Query(False),
+    ) -> dict[str, Any]:
+        """IVR / event-vol and call-put skew for approaching catalysts. Not Soft BUY/SELL."""
+        from event_vol_index import fetch_event_vol_index
+
+        return _json_safe(fetch_event_vol_index(pairs or None, force=force))
+
+    @application.post("/api/market/event-vol-index/refresh")
+    def market_event_vol_index_refresh() -> dict[str, Any]:
+        """Warm IV/skew prints for catalysts in the next 10 days."""
+        from event_vol_index import refresh_event_vol_universe
+
+        return _json_safe(refresh_event_vol_universe(force=False))
+
+    @application.get("/api/hype-volume-funnel")
+    def hype_volume_funnel_get() -> dict[str, Any]:
+        """Accepted volume-hype rows (trusted next CD) + scan status."""
+        from hype_volume_funnel import get_status, load_hype_entries
+
+        return _json_safe(
+            {
+                "status": get_status(),
+                "entries": load_hype_entries(),
+            }
+        )
+
+    @application.get("/api/simulation/manual-entries")
+    def simulation_manual_entries_get() -> dict[str, Any]:
+        """Manual Simulation sidecar rows (Calendar insert / ops overrides)."""
+        from manual_catalyst_insert import load_manual_sim_doc
+
+        return _json_safe(load_manual_sim_doc())
+
+    @application.post("/api/simulation/manual-entries")
+    async def simulation_manual_entries_post(request: Request) -> dict[str, Any]:
+        """
+        Append / upsert a free-text Calendar catalyst into
+        ``manual_sim_entries.json`` (+ CD day on guidance Calendar).
+        Body: {ticker, company?, nct_id?, cd_iso|cd_date, drug?, phase?, note?}
+        """
+        from manual_catalyst_insert import append_manual_sim_entry
+
+        try:
+            body = await request.json()
+        except Exception:
+            body = {}
+        if not isinstance(body, dict):
+            body = {}
+        result = append_manual_sim_entry(body)
+        return _json_safe(result)
+
+    @application.post("/api/hype-volume-funnel/scan")
+    def hype_volume_funnel_scan(
+        tickers: str = Query(
+            "",
+            description="Optional comma-separated tickers. Empty = daily rotated off-sheet universe.",
+        ),
+    ) -> dict[str, Any]:
+        """Volume ≥400% (24h first, 7d tail) → CT.gov Exact/Partial → sidecar rows."""
+        from hype_volume_funnel import start_hype_volume_funnel_scan
+
+        ticker_list = [
+            p.strip().upper()
+            for p in tickers.replace(";", ",").split(",")
+            if p.strip()
+        ]
+        return _json_safe(start_hype_volume_funnel_scan(ticker_list or None))
 
     @application.get("/api/charts/simulation")
     def charts_simulation() -> dict[str, Any]:
@@ -1549,10 +3504,54 @@ def build_app(cfg: SupernovaConfig | None = None) -> FastAPI:
         return _sheet_json_safe(list_workbook_sheets)
 
     @application.get("/api/sheets/simulation")
-    def sheet_simulation() -> dict[str, Any]:
+    def sheet_simulation(
+        source: str = Query(
+            "",
+            description="Source: 'workbook' (default) or 'simulation_grafici' (legacy)."
+        ),
+        page: int = Query(1, ge=1),
+        page_size: int = Query(50, ge=1, le=200),
+    ) -> dict[str, Any]:
         from excel_sheet_reader import read_simulation_table_cached
 
-        return _sheet_json_safe(read_simulation_table_cached)
+        table = read_simulation_table_cached()
+        if not isinstance(table, dict) or "rows" not in table:
+            return _sheet_json_safe(lambda: table)
+
+        all_rows = table["rows"]
+        total = len(all_rows)
+        start_idx = (page - 1) * page_size
+        end_idx = min(start_idx + page_size, total)
+
+        paginated_table = {
+            **table,
+            "rows": all_rows[start_idx:end_idx],
+            "_pagination": {
+                "page": page,
+                "page_size": page_size,
+                "total": total,
+                "total_pages": (total + page_size - 1) // page_size,
+                "has_next": end_idx < total,
+                "has_prev": page > 1,
+            },
+        }
+
+        return _sheet_json_safe(lambda: paginated_table)
+
+    @application.post("/api/market/continuation/refresh")
+    def market_continuation_refresh(
+        dry_run: bool = Query(False, description="Compute without writing snapshot"),
+    ) -> dict[str, Any]:
+        """
+        Recompute P(continuation) on simulation_sheet_snapshot rows
+        (g5/g10/g20 + z_own + pct_pop vs HistLib universe). No EIS inputs.
+        """
+        try:
+            from prediction.continuation_score import enrich_simulation_snapshot_file
+
+            return _json_safe(enrich_simulation_snapshot_file(dry_run=dry_run))
+        except Exception as exc:
+            return {"ok": False, "error": str(exc)}
 
     @application.get("/api/sheets/accuracy")
     def sheet_accuracy() -> dict[str, Any]:
@@ -1643,24 +3642,11 @@ def build_app(cfg: SupernovaConfig | None = None) -> FastAPI:
         return _json_safe(build_eis_magnitude_analysis())
 
     @application.get("/api/models/eis-cohort-comparison")
-    def eis_cohort_comparison_get() -> dict[str, Any]:
-        """Live EIS cohort split (EIS ≠ 0 vs EIS = 0/null) for Performance tab chart."""
-        from prediction.eis_cohort_weekly_history import load_weekly_history
-        from prediction.pre_cd_curve_impact import build_curve_impact_cumulative
+    def eis_cohort_comparison_get(force: bool = Query(False)) -> dict[str, Any]:
+        """EIS cohort split for Performance tab — cached from signal_calibration when fresh."""
+        from prediction.pre_cd_curve_impact import load_eis_cohort_api_payload
 
-        doc = build_curve_impact_cumulative(persist_state=False, auto_enrich=True)
-        comparison = doc.get("eis_cohort_comparison") or {}
-        magnitude = doc.get("eis_magnitude_analysis") or {}
-        return _json_safe(
-            {
-                "eis_cohort_comparison": comparison,
-                "eis_magnitude_analysis": magnitude,
-                "n_simulation_events": doc.get("n_simulation_events"),
-                "n_with_eis_data": doc.get("n_with_eis_data"),
-                "built_at": doc.get("built_at"),
-                "weekly_history": load_weekly_history(),
-            }
-        )
+        return _json_safe(load_eis_cohort_api_payload(force_refresh=force))
 
     @application.get("/api/models/eis-cohort-weekly-history")
     def eis_cohort_weekly_history_get() -> dict[str, Any]:
@@ -1668,6 +3654,25 @@ def build_app(cfg: SupernovaConfig | None = None) -> FastAPI:
         from prediction.eis_cohort_weekly_history import load_weekly_history
 
         return _json_safe(load_weekly_history())
+
+    @application.get("/api/market/context/mcs")
+    def market_context_mcs_get() -> dict[str, Any]:
+        from prediction.market_context_score import load_market_context_snapshot
+
+        return _json_safe(load_market_context_snapshot())
+
+    @application.post("/api/market/context/mcs/refresh")
+    def market_context_mcs_refresh() -> dict[str, Any]:
+        from prediction.market_context_score import (
+            build_market_context_snapshot,
+            load_previous_snapshot,
+            save_market_context_snapshot,
+        )
+
+        prev = load_previous_snapshot()
+        doc = build_market_context_snapshot(previous=prev)
+        save_market_context_snapshot(doc)
+        return _json_safe(doc)
 
     @application.get("/api/market/context")
     def market_context_get() -> dict[str, Any]:
@@ -1735,10 +3740,43 @@ def build_app(cfg: SupernovaConfig | None = None) -> FastAPI:
         return _json_safe(run_now(dry_run=False))
 
     @application.get("/api/models/learning-lab/overview")
-    def learning_lab_overview() -> dict[str, Any]:
-        from prediction.learning_lab import build_overview_payload
+    def learning_lab_overview(force: bool = Query(False)) -> dict[str, Any]:
+        # Snapshot-first: the orchestrator (or the desktop-snapshots pipeline)
+        # writes ``learning_lab_overview_snapshot.json`` on every terminal
+        # rewrite of the clinical enrichment snapshot. The handler just
+        # parses it (~20 ms). See ``prediction.learning_lab.get_overview_for_api``
+        # for the mtime-based cache and the missing-snapshot fallback.
+        from prediction.learning_lab import get_overview_for_api
 
-        return _json_safe(build_overview_payload(use_mock=False))
+        return _json_safe(get_overview_for_api(force_refresh=force))
+
+    @application.get("/api/tickers/resilience-snapshot")
+    def resilience_scores_snapshot() -> dict[str, Any]:
+        """Pre-computed Resilience Score for every ticker in the sim table.
+
+        Served from ``data/resilience_scores_snapshot.json`` (built by the
+        desktop-snapshots pipeline in ``excel_sheet_reader.py``). Handler
+        is O(mtime stat), the full compute never runs on the request path.
+
+        Rescue / SDS / Regulatory scores are computed independently: the
+        resilience score is derived only from the ticker's own 5y price
+        history and XBI closes. See prediction/resilience_score.py.
+        """
+        from prediction.resilience_score import (
+            read_resilience_scores_snapshot,
+        )
+
+        payload = read_resilience_scores_snapshot()
+        if payload is None:
+            return _json_safe({
+                "generated_at": None,
+                "ticker_count": 0,
+                "skipped_count": 0,
+                "skipped": [],
+                "entries": {},
+                "status": "snapshot_missing",
+            })
+        return _json_safe(payload)
 
     @application.get("/api/models/learning-lab/preview")
     @application.post("/api/models/learning-lab/preview")
@@ -1908,6 +3946,59 @@ def build_app(cfg: SupernovaConfig | None = None) -> FastAPI:
 
         return _json_safe(read_investment_decision_cohort())
 
+    @application.get("/api/catalyst-patterns")
+    def catalyst_pattern_library_get() -> dict[str, Any]:
+        from orchestrator_io_paths import CATALYST_PATTERN_LIBRARY_JSON
+
+        p = Path(CATALYST_PATTERN_LIBRARY_JSON)
+        if not p.is_file():
+            return {"version": 1, "patterns": [], "cohort_summary": None, "updated_at": None}
+        try:
+            with p.open(encoding="utf-8") as fh:
+                return _json_safe(json.load(fh))
+        except (OSError, json.JSONDecodeError) as exc:
+            raise HTTPException(status_code=500, detail=str(exc)) from exc
+
+    @application.post("/api/catalyst-patterns/refresh")
+    def catalyst_pattern_library_refresh() -> dict[str, Any]:
+        import subprocess
+        import sys
+
+        script = Path(__file__).resolve().parent / "scripts" / "refresh_catalyst_pattern_library.py"
+        if not script.is_file():
+            raise HTTPException(status_code=404, detail="refresh script missing")
+        cp = subprocess.run(
+            [sys.executable, "-u", str(script), "-q"],
+            cwd=str(Path(__file__).resolve().parent),
+            capture_output=True,
+            text=True,
+            encoding="utf-8",
+            errors="replace",
+            timeout=180,
+        )
+        if cp.returncode != 0:
+            raise HTTPException(
+                status_code=500,
+                detail=cp.stderr[-2000:] if cp.stderr else f"exit {cp.returncode}",
+            )
+        from orchestrator_io_paths import CATALYST_PATTERN_LIBRARY_JSON
+
+        p = Path(CATALYST_PATTERN_LIBRARY_JSON)
+        with p.open(encoding="utf-8") as fh:
+            return _json_safe(json.load(fh))
+
+    @application.get("/api/catalyst-patterns/alerts")
+    def catalyst_pattern_alerts_get(tickers: str = "") -> dict[str, Any]:
+        import sys
+
+        eis_root = Path(__file__).resolve().parent / "eis_pattern_research"
+        if str(eis_root) not in sys.path:
+            sys.path.insert(0, str(eis_root))
+        from src.catalyst_alerts import build_alerts_from_sim_snapshot
+
+        tk_list = [t.strip().upper() for t in tickers.split(",") if t.strip()] or None
+        return _json_safe(build_alerts_from_sim_snapshot(tickers=tk_list))
+
     @application.get("/api/investment/sim-outcomes")
     def investment_sim_outcomes() -> dict[str, Any]:
         from prediction.investment_sim_outcomes import read_investment_sim_outcomes
@@ -1948,13 +4039,31 @@ def build_app(cfg: SupernovaConfig | None = None) -> FastAPI:
         raw = body.get("inputs")
         if raw is not None and not isinstance(raw, dict):
             raise HTTPException(status_code=400, detail="inputs deve essere un oggetto")
-        inputs = raw if isinstance(raw, dict) else {}
+        incoming = raw if isinstance(raw, dict) else {}
+        # Merge with on-disk book so a stale desktop republish cannot wipe a
+        # mobile buy (or vice versa). Opt out with ``{"replace": true}``.
+        force_replace = bool(body.get("replace"))
+        existing: dict[str, Any] = {}
+        p = INVEST_SIM_INPUTS_PATH
+        if p.is_file() and not force_replace:
+            try:
+                with p.open(encoding="utf-8") as fh:
+                    prev = json.load(fh)
+                if isinstance(prev, dict) and isinstance(prev.get("inputs"), dict):
+                    existing = prev["inputs"]
+            except (OSError, json.JSONDecodeError):
+                existing = {}
+        if force_replace:
+            inputs = incoming
+        else:
+            from invest_sim_inputs_merge import merge_invest_sim_inputs
+
+            inputs = merge_invest_sim_inputs(existing, incoming)
         payload = {
             "version": 1,
             "updated_at": datetime.now().astimezone().isoformat(),
             "inputs": inputs,
         }
-        p = INVEST_SIM_INPUTS_PATH
         p.parent.mkdir(parents=True, exist_ok=True)
         tmp = p.with_suffix(".json.tmp")
         try:
@@ -2015,10 +4124,35 @@ def build_app(cfg: SupernovaConfig | None = None) -> FastAPI:
         return _json_safe({"ok": True, "path": str(p), "updated_at": payload["updated_at"]})
 
     @application.get("/api/sheets/financial")
-    def sheet_financial() -> dict[str, Any]:
+    def sheet_financial(
+        page: int = Query(1, ge=1),
+        page_size: int = Query(50, ge=1, le=500),
+    ) -> dict[str, Any]:
         from excel_sheet_reader import read_financial_table_cached
 
-        return _sheet_json_safe(read_financial_table_cached)
+        table = read_financial_table_cached()
+        if not isinstance(table, dict) or "rows" not in table:
+            return _sheet_json_safe(lambda: table)
+
+        all_rows = table["rows"]
+        total = len(all_rows)
+        start_idx = (page - 1) * page_size
+        end_idx = min(start_idx + page_size, total)
+
+        paginated_table = {
+            **table,
+            "rows": all_rows[start_idx:end_idx],
+            "_pagination": {
+                "page": page,
+                "page_size": page_size,
+                "total": total,
+                "total_pages": (total + page_size - 1) // page_size,
+                "has_next": end_idx < total,
+                "has_prev": page > 1,
+            },
+        }
+
+        return _sheet_json_safe(lambda: paginated_table)
 
     @application.get("/api/sheets/clinical-simulation")
     def sheet_clinical_simulation() -> dict[str, Any]:
@@ -2057,7 +4191,7 @@ def build_app(cfg: SupernovaConfig | None = None) -> FastAPI:
             "defaults": {
                 "predictions": "shared_snapshot",
                 "tracking": "per_tester",
-                "auth": "email_pending_approval",
+                "auth": "email_auto_approved",
             },
         })
 
@@ -2101,10 +4235,120 @@ def build_app(cfg: SupernovaConfig | None = None) -> FastAPI:
                 invite_code=body.get("invite_code") if isinstance(body.get("invite_code"), str) else None,
                 email=email if isinstance(email, str) else None,
                 source=body.get("source") if isinstance(body.get("source"), str) else "mobile",
+                interest_edition=body.get("interest_edition") if isinstance(body.get("interest_edition"), str) else None,
+                interest_other=body.get("interest_other") if isinstance(body.get("interest_other"), str) else None,
+                first_name=body.get("first_name") if isinstance(body.get("first_name"), str) else None,
+                last_name=body.get("last_name") if isinstance(body.get("last_name"), str) else None,
+                birth_year=body.get("birth_year"),
             )
         except ValueError as exc:
             raise HTTPException(status_code=400, detail=str(exc)) from exc
         return _json_safe({"ok": True, "tester": meta})
+
+    @application.post("/api/premium-waitlist")
+    async def premium_waitlist_join(body: dict[str, Any]) -> dict[str, Any]:
+        import premium_waitlist as _pw
+
+        email = body.get("email") if isinstance(body.get("email"), str) else ""
+        try:
+            return _json_safe(_pw.join_premium_waitlist(email))
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+    @application.get("/api/premium-waitlist")
+    def premium_waitlist_list() -> dict[str, Any]:
+        import premium_waitlist as _pw
+
+        return _json_safe(_pw.list_premium_waitlist())
+
+    @application.post("/api/hitech-notify")
+    async def hitech_notify_join(body: dict[str, Any]) -> dict[str, Any]:
+        """Public — email interest for Hi-Tech desk (not Premium access)."""
+        import hitech_notify as _hn
+
+        email = body.get("email") if isinstance(body.get("email"), str) else ""
+        try:
+            return _json_safe(_hn.join_hitech_notify(email))
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+    @application.get("/api/hitech-notify")
+    def hitech_notify_list() -> dict[str, Any]:
+        import hitech_notify as _hn
+
+        return _json_safe(_hn.list_hitech_notify())
+
+    @application.post("/api/hitech-notify/dismiss")
+    async def hitech_notify_dismiss(body: dict[str, Any]) -> dict[str, Any]:
+        """Access tab — remove Technology/AI notify row."""
+        import hitech_notify as _hn
+
+        email = body.get("email") if isinstance(body.get("email"), str) else ""
+        try:
+            return _json_safe(_hn.remove_hitech_notify(email))
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+    @application.post("/api/contact")
+    async def contact_submit(body: dict[str, Any]) -> dict[str, Any]:
+        """Public Contact form — email, name, message → Access tab."""
+        import contact_messages as _cm
+
+        try:
+            return _json_safe(
+                _cm.submit_contact_message(
+                    email=body.get("email") if isinstance(body.get("email"), str) else "",
+                    first_name=body.get("first_name")
+                    if isinstance(body.get("first_name"), str)
+                    else "",
+                    last_name=body.get("last_name")
+                    if isinstance(body.get("last_name"), str)
+                    else "",
+                    message=body.get("message") if isinstance(body.get("message"), str) else "",
+                )
+            )
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+    @application.get("/api/contact")
+    def contact_list() -> dict[str, Any]:
+        """Access tab — Contact messages inbox."""
+        import contact_messages as _cm
+
+        return _json_safe(_cm.list_contact_messages())
+
+    @application.post("/api/contact/dismiss")
+    async def contact_dismiss(body: dict[str, Any]) -> dict[str, Any]:
+        """Access tab — remove one Contact message."""
+        import contact_messages as _cm
+
+        mid = body.get("id") if isinstance(body.get("id"), str) else ""
+        try:
+            return _json_safe(_cm.dismiss_contact_message(mid))
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+    @application.post("/api/premium-waitlist/grant")
+    async def premium_waitlist_grant(body: dict[str, Any]) -> dict[str, Any]:
+        """Access tab — approve Premium request (Basic + Calendar/Discovery)."""
+        import tester_feedback_io as tf
+
+        email = body.get("email") if isinstance(body.get("email"), str) else ""
+        try:
+            return _json_safe(tf.grant_premium_from_waitlist(email))
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+    @application.post("/api/premium-waitlist/dismiss")
+    async def premium_waitlist_dismiss(body: dict[str, Any]) -> dict[str, Any]:
+        """Access tab — remove waitlist row without granting Premium."""
+        import premium_waitlist as _pw
+
+        email = body.get("email") if isinstance(body.get("email"), str) else ""
+        try:
+            return _json_safe(_pw.remove_premium_waitlist_email(email))
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
 
     @application.get("/api/tester-feedback/testers/{tester_id}/access")
     def tester_feedback_access(tester_id: str) -> dict[str, Any]:
@@ -2114,6 +4358,46 @@ def build_app(cfg: SupernovaConfig | None = None) -> FastAPI:
             return _json_safe(tf.get_tester_access(tester_id))
         except ValueError as exc:
             raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+    @application.post("/api/tester-feedback/testers/{tester_id}/session")
+    async def tester_feedback_create_session(tester_id: str, body: dict[str, Any]) -> dict[str, Any]:
+        """Issue device session token (email must match approved tester)."""
+        import tester_feedback_io as tf
+
+        email = body.get("email") if isinstance(body.get("email"), str) else ""
+        try:
+            meta = tf.create_session_for_email(tester_id, email)
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
+        return _json_safe({"ok": True, "tester": meta})
+
+    @application.get("/api/tester-feedback/testers/{tester_id}/sim-inputs")
+    def tester_sim_inputs_get(tester_id: str, request: Request) -> dict[str, Any]:
+        import tester_sim_inputs_io as tsi
+
+        _require_tester_book_auth(request, tester_id)
+        try:
+            return _json_safe(tsi.load_sim_inputs(tester_id))
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+    @application.put("/api/tester-feedback/testers/{tester_id}/sim-inputs")
+    async def tester_sim_inputs_put(
+        tester_id: str, request: Request, body: dict[str, Any]
+    ) -> dict[str, Any]:
+        import tester_sim_inputs_io as tsi
+
+        _require_tester_book_auth(request, tester_id)
+        raw = body.get("inputs")
+        if raw is not None and not isinstance(raw, dict):
+            raise HTTPException(status_code=400, detail="inputs deve essere un oggetto")
+        inputs = raw if isinstance(raw, dict) else {}
+        src = body.get("source") if isinstance(body.get("source"), str) else "mobile"
+        try:
+            saved = tsi.save_sim_inputs(tester_id, inputs, source=src)
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
+        return _json_safe({"ok": True, **saved})
 
     @application.post("/api/tester-feedback/testers/{tester_id}/status")
     async def tester_feedback_set_status(tester_id: str, body: dict[str, Any]) -> dict[str, Any]:
@@ -2129,12 +4413,38 @@ def build_app(cfg: SupernovaConfig | None = None) -> FastAPI:
             raise HTTPException(status_code=400, detail=str(exc)) from exc
         return _json_safe({"ok": True, "tester": meta})
 
+    @application.post("/api/tester-feedback/testers/{tester_id}/premium")
+    async def tester_feedback_set_premium(tester_id: str, body: dict[str, Any]) -> dict[str, Any]:
+        """Grant / revoke premium (Calendar, Discovery, interest enroll). Owner always premium."""
+        import tester_feedback_io as tf
+
+        premium = body.get("premium")
+        if not isinstance(premium, bool):
+            raise HTTPException(status_code=400, detail="premium bool richiesto")
+        try:
+            meta = tf.set_tester_premium(tester_id, premium)
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
+        return _json_safe({"ok": True, "tester": meta})
+
     @application.post("/api/tester-feedback/testers/{tester_id}/resend-approval-email")
     async def tester_feedback_resend_approval_email(tester_id: str) -> dict[str, Any]:
         import tester_feedback_io as tf
 
         try:
             meta = tf.resend_tester_approval_email(tester_id)
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
+        return _json_safe({"ok": True, "tester": meta})
+
+    @application.post("/api/tester-feedback/testers/{tester_id}/reply")
+    async def tester_feedback_owner_reply(tester_id: str, body: dict[str, Any]) -> dict[str, Any]:
+        import tester_feedback_io as tf
+
+        subject = body.get("subject") if isinstance(body.get("subject"), str) else ""
+        message = body.get("body") if isinstance(body.get("body"), str) else ""
+        try:
+            meta = tf.send_tester_owner_reply(tester_id, subject=subject, body=message)
         except ValueError as exc:
             raise HTTPException(status_code=400, detail=str(exc)) from exc
         return _json_safe({"ok": True, "tester": meta})
@@ -2148,30 +4458,6 @@ def build_app(cfg: SupernovaConfig | None = None) -> FastAPI:
         except ValueError as exc:
             raise HTTPException(status_code=400, detail=str(exc)) from exc
         return _json_safe({"ok": True, **out})
-
-    @application.get("/api/tester-feedback/testers/{tester_id}/sim-inputs")
-    def tester_sim_inputs_get(tester_id: str) -> dict[str, Any]:
-        import tester_sim_inputs_io as tsi
-
-        try:
-            return _json_safe(tsi.load_sim_inputs(tester_id))
-        except ValueError as exc:
-            raise HTTPException(status_code=400, detail=str(exc)) from exc
-
-    @application.put("/api/tester-feedback/testers/{tester_id}/sim-inputs")
-    async def tester_sim_inputs_put(tester_id: str, body: dict[str, Any]) -> dict[str, Any]:
-        import tester_sim_inputs_io as tsi
-
-        raw = body.get("inputs")
-        if raw is not None and not isinstance(raw, dict):
-            raise HTTPException(status_code=400, detail="inputs deve essere un oggetto")
-        inputs = raw if isinstance(raw, dict) else {}
-        src = body.get("source") if isinstance(body.get("source"), str) else "mobile"
-        try:
-            saved = tsi.save_sim_inputs(tester_id, inputs, source=src)
-        except ValueError as exc:
-            raise HTTPException(status_code=400, detail=str(exc)) from exc
-        return _json_safe({"ok": True, **saved})
 
     @application.post("/api/tester-feedback/events")
     async def tester_feedback_append(body: dict[str, Any]) -> dict[str, Any]:
@@ -2198,6 +4484,34 @@ def build_app(cfg: SupernovaConfig | None = None) -> FastAPI:
             raise HTTPException(status_code=403, detail=str(exc)) from exc
         return _json_safe({"ok": True, "event": event})
 
+    @application.post("/api/tester-feedback/events/{event_id}/resolve")
+    async def tester_feedback_resolve_ui_issue(
+        event_id: str, body: dict[str, Any] | None = None
+    ) -> dict[str, Any]:
+        """Owner Access: close a user UI error issue after the problem is handled."""
+        import tester_feedback_io as tf
+
+        payload = body if isinstance(body, dict) else {}
+        try:
+            out = tf.resolve_ui_issue(
+                event_id,
+                note=payload.get("note") if isinstance(payload.get("note"), str) else None,
+                resolved_by=(
+                    payload.get("resolved_by")
+                    if isinstance(payload.get("resolved_by"), str)
+                    else "owner"
+                ),
+            )
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
+        return _json_safe(out)
+
+    @application.get("/api/tester-feedback/sim-monitor")
+    def tester_feedback_sim_monitor() -> dict[str, Any]:
+        import tester_sim_monitor as tsm
+
+        return _json_safe(tsm.build_sim_monitor())
+
     @application.get("/api/tester-feedback/export")
     def tester_feedback_export() -> dict[str, Any]:
         import tester_feedback_io as tf
@@ -2211,40 +4525,222 @@ def build_app(cfg: SupernovaConfig | None = None) -> FastAPI:
         return _json_safe(tf.save_calibration_snapshot())
 
     @application.get("/api/mobile/dashboard-snapshot")
-    def mobile_dashboard_snapshot_get() -> dict[str, Any]:
+    def mobile_dashboard_snapshot_get(request: Request) -> Any:
+        """Slim companion snapshot (no curveCharts). Supports ETag / If-None-Match → 304."""
+        import mobile_snapshot_io as msi
+
+        msi.ensure_split_on_disk()
         p = MOBILE_DASHBOARD_SNAPSHOT_PATH
         if not p.is_file():
             return {"version": 1, "updated_at": None, "source": "missing"}
         try:
-            with p.open(encoding="utf-8") as fh:
-                data = json.load(fh)
-        except (OSError, json.JSONDecodeError) as exc:
+            st = p.stat()
+        except OSError as exc:
             raise HTTPException(status_code=500, detail=str(exc)) from exc
-        if not isinstance(data, dict):
-            return {"version": 1, "updated_at": None, "source": "invalid"}
-        return _json_safe(data)
+        etag = f'W/"{st.st_mtime_ns}-{st.st_size}-slim"'
+        inm = (request.headers.get("if-none-match") or "").strip()
+        headers = {
+            "ETag": etag,
+            "Cache-Control": "private, max-age=30, must-revalidate",
+        }
+        if inm and inm == etag:
+            return Response(status_code=304, headers=headers)
+        return FileResponse(
+            p,
+            media_type="application/json; charset=utf-8",
+            headers=headers,
+        )
+
+    @application.get("/api/mobile/curve-charts")
+    def mobile_curve_charts_get(
+        request: Request,
+        key: str | None = Query(None, description="Decision-chart row key"),
+    ) -> Any:
+        """Lazy curve charts for opportunity detail (split from poll snapshot)."""
+        import mobile_snapshot_io as msi
+
+        msi.ensure_split_on_disk()
+        if key and str(key).strip():
+            hit = msi.curve_chart_for_key(str(key))
+            return _json_safe(
+                {
+                    "ok": True,
+                    "key": str(key).strip(),
+                    "curveCharts": hit,
+                    "updated_at": (msi.load_curve_charts() or {}).get("updated_at"),
+                }
+            )
+        # Full charts doc is large — only with admin token.
+        if not _request_has_admin_token(request):
+            raise HTTPException(
+                status_code=400,
+                detail="Pass ?key=TICKER|YYYY-MM-DD for a single chart bundle",
+            )
+        return _json_safe(msi.load_curve_charts())
 
     @application.put("/api/mobile/dashboard-snapshot")
     async def mobile_dashboard_snapshot_put(body: dict[str, Any]) -> dict[str, Any]:
         if not isinstance(body, dict):
             raise HTTPException(status_code=400, detail="body deve essere un oggetto JSON")
+        import mobile_snapshot_io as msi
+
         payload = {
             "version": 1,
             "updated_at": datetime.now().astimezone().isoformat(),
             **{k: v for k, v in body.items() if k not in ("version", "updated_at")},
         }
-        p = MOBILE_DASHBOARD_SNAPSHOT_PATH
+        try:
+            split_info = msi.write_split_snapshot(payload)
+        except OSError as exc:
+            raise HTTPException(status_code=500, detail=str(exc)) from exc
+        push_info: dict[str, Any] = {}
+        try:
+            import mobile_push as mp
+
+            push_info = mp.maybe_notify_soft_rec_change(payload)
+        except Exception as exc:  # noqa: BLE001
+            logger.warning("mobile push after snapshot PUT failed: %s", exc)
+            push_info = {"ok": False, "error": str(exc)}
+        return _json_safe(
+            {
+                "ok": True,
+                "path": str(MOBILE_DASHBOARD_SNAPSHOT_PATH),
+                "updated_at": payload["updated_at"],
+                "push": push_info,
+                "split": split_info,
+            }
+        )
+
+    def _load_whatif_readout_daily_snapshot() -> dict[str, Any]:
+        p = WHATIF_READOUT_DAILY_SNAPSHOT_PATH
+        if not p.is_file():
+            return {"schemaVersion": 1, "updatedAt": None, "days": {}}
+        try:
+            with p.open(encoding="utf-8") as fh:
+                data = json.load(fh)
+        except (OSError, json.JSONDecodeError):
+            return {"schemaVersion": 1, "updatedAt": None, "days": {}}
+        return data if isinstance(data, dict) else {"schemaVersion": 1, "updatedAt": None, "days": {}}
+
+    def _merge_whatif_readout_daily_snapshot(existing: dict[str, Any], incoming: dict[str, Any]) -> dict[str, Any]:
+        out_days: dict[str, Any] = dict(existing.get("days") or {})
+        in_days = incoming.get("days") if isinstance(incoming.get("days"), dict) else {}
+        for session_date, bucket in in_days.items():
+            day_key = str(session_date).strip()
+            if not day_key or not isinstance(bucket, dict):
+                continue
+            day_out = dict(out_days.get(day_key) or {})
+            for ticker, entry in bucket.items():
+                tk = str(ticker).strip().upper()
+                if not tk or not isinstance(entry, dict):
+                    continue
+                if tk in day_out:
+                    prev = day_out[tk] if isinstance(day_out[tk], dict) else {}
+                    prev_at = prev.get("capturedAt")
+                    next_at = entry.get("capturedAt")
+                    if prev_at and next_at:
+                        try:
+                            if datetime.fromisoformat(str(next_at)) >= datetime.fromisoformat(str(prev_at)):
+                                continue
+                        except ValueError:
+                            continue
+                    else:
+                        continue
+                day_out[tk] = entry
+            out_days[day_key] = day_out
+        return {
+            "schemaVersion": 1,
+            "updatedAt": datetime.now().astimezone().isoformat(),
+            "days": out_days,
+        }
+
+    @application.get("/api/whatif/readout-daily-snapshot")
+    def whatif_readout_daily_snapshot_get() -> dict[str, Any]:
+        return _json_safe(_load_whatif_readout_daily_snapshot())
+
+    @application.put("/api/whatif/readout-daily-snapshot")
+    async def whatif_readout_daily_snapshot_put(body: dict[str, Any]) -> dict[str, Any]:
+        if not isinstance(body, dict):
+            raise HTTPException(status_code=400, detail="body deve essere un oggetto JSON")
+        existing = _load_whatif_readout_daily_snapshot()
+        merged = _merge_whatif_readout_daily_snapshot(existing, body)
+        p = WHATIF_READOUT_DAILY_SNAPSHOT_PATH
         p.parent.mkdir(parents=True, exist_ok=True)
         tmp = p.with_suffix(".json.tmp")
         try:
-            tmp.write_text(
-                json.dumps(payload, ensure_ascii=False, indent=2),
-                encoding="utf-8",
-            )
+            tmp.write_text(json.dumps(merged, ensure_ascii=False, indent=2), encoding="utf-8")
             tmp.replace(p)
         except OSError as exc:
             raise HTTPException(status_code=500, detail=str(exc)) from exc
-        return _json_safe({"ok": True, "path": str(p), "updated_at": payload["updated_at"]})
+        return _json_safe({"ok": True, "path": str(p), "updatedAt": merged.get("updatedAt")})
+
+    @application.post("/api/mobile/dashboard-snapshot/refresh")
+    def mobile_dashboard_snapshot_refresh_endpoint() -> dict[str, Any]:
+        """Rebuild mobile dashboard snapshot from data/ JSON (same logic as desktop Home)."""
+        from scripts.mobile_dashboard_snapshot_refresh import refresh_mobile_dashboard_snapshot
+        import mobile_snapshot_io as msi
+
+        summary = refresh_mobile_dashboard_snapshot()
+        split_info: dict[str, Any] = {}
+        try:
+            split_info = msi.ensure_split_on_disk()
+        except Exception as exc:  # noqa: BLE001
+            logger.warning("mobile snapshot split after refresh failed: %s", exc)
+            split_info = {"ok": False, "error": str(exc)}
+        push_info: dict[str, Any] = {}
+        try:
+            import mobile_push as mp
+
+            if MOBILE_DASHBOARD_SNAPSHOT_PATH.is_file():
+                with MOBILE_DASHBOARD_SNAPSHOT_PATH.open(encoding="utf-8") as fh:
+                    snap = json.load(fh)
+                if isinstance(snap, dict):
+                    push_info = mp.maybe_notify_soft_rec_change(snap)
+        except Exception as exc:  # noqa: BLE001
+            logger.warning("mobile push after snapshot refresh failed: %s", exc)
+            push_info = {"ok": False, "error": str(exc)}
+        if isinstance(summary, dict):
+            summary = {**summary, "push": push_info, "split": split_info}
+        return _json_safe(summary)
+
+    @application.get("/api/mobile/push/vapid-public-key")
+    def mobile_push_vapid_public_key() -> dict[str, Any]:
+        import mobile_push as mp
+
+        key = mp.vapid_public_key()
+        if not key:
+            raise HTTPException(
+                status_code=503,
+                detail="Web Push not configured (set SUPERNOVA_VAPID_PUBLIC/PRIVATE)",
+            )
+        return {"publicKey": key, "configured": True}
+
+    @application.post("/api/mobile/push/subscribe")
+    async def mobile_push_subscribe(body: dict[str, Any]) -> dict[str, Any]:
+        import mobile_push as mp
+
+        if not mp.vapid_configured():
+            raise HTTPException(
+                status_code=503,
+                detail="Web Push not configured (set SUPERNOVA_VAPID_PUBLIC/PRIVATE)",
+            )
+        if not isinstance(body, dict):
+            raise HTTPException(status_code=400, detail="body must be a JSON object")
+        try:
+            return _json_safe(mp.upsert_subscription(body))
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+    @application.post("/api/mobile/push/unsubscribe")
+    async def mobile_push_unsubscribe(body: dict[str, Any]) -> dict[str, Any]:
+        import mobile_push as mp
+
+        if not isinstance(body, dict):
+            raise HTTPException(status_code=400, detail="body must be a JSON object")
+        endpoint = body.get("endpoint")
+        if not isinstance(endpoint, str) or not endpoint.strip():
+            raise HTTPException(status_code=400, detail="endpoint required")
+        return _json_safe(mp.remove_subscription(endpoint))
 
     @application.get("/api/mobile-host/config")
     def mobile_host_config() -> dict[str, Any]:
@@ -2436,6 +4932,7 @@ def build_app(cfg: SupernovaConfig | None = None) -> FastAPI:
         )
         return _json_safe(score_stock(ticker, data).to_dict())
 
+    _register_cdn_routes(application)
     _mount_mobile_web_subpath(application, c)
     _mount_desktop_web(application, c)
     _mount_mobile_short_pwa(application, c)
@@ -2446,17 +4943,54 @@ app = build_app()
 
 
 def main() -> None:
-    """Run uvicorn with host/port from SUPERNOVA_* env."""
+    """Run API: single uvicorn, or gunicorn multi-worker when SUPERNOVA_WORKERS>1."""
     import uvicorn
 
     logging.basicConfig(level=logging.INFO)
     cfg = get_supernova_config()
     _log_startup_security(cfg)
+    try:
+        workers = int(os.environ.get("SUPERNOVA_WORKERS", "1").strip() or "1")
+    except ValueError:
+        workers = 1
+    workers = max(1, min(16, workers))
+
+    # Gunicorn + UvicornWorker is Linux/mac only (VPS). Windows stays on uvicorn.
+    if workers > 1 and os.name != "nt":
+        gunicorn = Path(sys.executable).with_name("gunicorn")
+        if not gunicorn.is_file():
+            # venv on Linux: bin/gunicorn next to python
+            alt = Path(sys.executable).resolve().parent / "gunicorn"
+            gunicorn = alt if alt.is_file() else Path("gunicorn")
+        cmd = [
+            str(gunicorn if gunicorn.is_file() else "gunicorn"),
+            "-b",
+            f"{cfg.uvicorn_host}:{cfg.uvicorn_port}",
+            "-w",
+            str(workers),
+            "-k",
+            "uvicorn.workers.UvicornWorker",
+            "--timeout",
+            str(int(os.environ.get("SUPERNOVA_GUNICORN_TIMEOUT", "120") or "120")),
+            "--graceful-timeout",
+            "30",
+            "--keep-alive",
+            "5",
+            "--access-logfile",
+            "-",
+            "--error-logfile",
+            "-",
+            "supernova_api:app",
+        ]
+        logger.info("Starting %s", " ".join(cmd))
+        os.execvp(cmd[0], cmd)
+
     uvicorn.run(
         "supernova_api:app",
         host=cfg.uvicorn_host,
         port=cfg.uvicorn_port,
         log_level="info",
+        workers=1,
     )
 
 

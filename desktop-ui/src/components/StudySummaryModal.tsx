@@ -4,24 +4,27 @@ import {
   generateClinicalStudySummary,
   type ClinicalStudySummary,
 } from "../api/supernova";
+import { useLang } from "../shared/i18n";
 
 // ── Outcome badge ──────────────────────────────────────────────────────────────
 
 const OUTCOME_META = {
-  positive: { label: "Positive",  bg: "#dcfce7", color: "#15803d", icon: "✓" },
-  negative: { label: "Negative",  bg: "#fee2e2", color: "#dc2626", icon: "✗" },
-  mixed:    { label: "Mixed",     bg: "#fef9c3", color: "#b45309", icon: "~" },
-  pending:  { label: "Pending",   bg: "#f1f5f9", color: "#475569", icon: "…" },
+  positive: { labelEn: "Positive", labelIt: "Positivo",  bg: "#dcfce7", color: "#15803d", icon: "✓" },
+  negative: { labelEn: "Negative", labelIt: "Negativo",  bg: "#fee2e2", color: "#dc2626", icon: "✗" },
+  mixed:    { labelEn: "Mixed",    labelIt: "Misto",     bg: "#fef9c3", color: "#b45309", icon: "~" },
+  pending:  { labelEn: "Pending",  labelIt: "In attesa", bg: "#f1f5f9", color: "#475569", icon: "…" },
 };
 
 function OutcomeBadge({ outcome }: { outcome?: string }) {
+  const { lang } = useLang();
+  const it = lang === "it";
   const meta = OUTCOME_META[(outcome ?? "pending") as keyof typeof OUTCOME_META] ?? OUTCOME_META.pending;
   return (
     <span
       className="inline-flex items-center gap-1 text-[11px] font-bold px-2.5 py-1 rounded-full"
       style={{ background: meta.bg, color: meta.color }}
     >
-      {meta.icon} {meta.label}
+      {meta.icon} {it ? meta.labelIt : meta.labelEn}
     </span>
   );
 }
@@ -29,17 +32,25 @@ function OutcomeBadge({ outcome }: { outcome?: string }) {
 // ── Quality badge ──────────────────────────────────────────────────────────────
 
 function QualityBadge({ quality }: { quality?: string }) {
+  const { lang } = useLang();
+  const it = lang === "it";
   if (!quality) return null;
   const colors: Record<string, { bg: string; color: string }> = {
     high:   { bg: "#dcfce7", color: "#15803d" },
     medium: { bg: "#fef9c3", color: "#b45309" },
     low:    { bg: "#f1f5f9", color: "#64748b" },
   };
+  const qualityLabels: Record<string, { en: string; it: string }> = {
+    high:   { en: "high",   it: "alta"  },
+    medium: { en: "medium", it: "media" },
+    low:    { en: "low",    it: "bassa" },
+  };
   const c = colors[quality] ?? colors.low;
+  const qLabel = qualityLabels[quality] ?? { en: quality, it: quality };
   return (
     <span className="text-[9px] font-semibold px-1.5 py-0.5 rounded"
       style={{ background: c.bg, color: c.color }}>
-      data {quality}
+      {it ? `dati ${qLabel.it}` : `data ${qLabel.en}`}
     </span>
   );
 }
@@ -72,6 +83,8 @@ export function StudySummaryModal({
   briefTitle?: string | null;
   onClose: () => void;
 }) {
+  const { lang } = useLang();
+  const it = lang === "it";
   const [data, setData]     = useState<ClinicalStudySummary | null>(null);
   const [loading, setLoading] = useState(false);
   const [error, setError]   = useState<string | null>(null);
@@ -144,7 +157,7 @@ export function StudySummaryModal({
             type="button"
             onClick={onClose}
             className="study-summary-modal-close shrink-0 text-lg leading-none"
-            aria-label="Close"
+            aria-label={it ? "Chiudi" : "Close"}
           >
             ✕
           </button>
@@ -157,9 +170,13 @@ export function StudySummaryModal({
             <div className="flex flex-col items-center justify-center gap-3 py-16">
               <span className="text-3xl animate-spin">⏳</span>
               <p className="text-sm text-slate-500">
-                Fetching CT.gov results + PubMed abstracts…
+                {it
+                  ? "Recupero risultati CT.gov + abstract PubMed…"
+                  : "Fetching CT.gov results + PubMed abstracts…"}
               </p>
-              <p className="text-[11px] text-slate-400">This may take 15–25 seconds</p>
+              <p className="text-[11px] text-slate-400">
+                {it ? "Può richiedere 15–25 secondi" : "This may take 15–25 seconds"}
+              </p>
             </div>
           )}
 
@@ -179,21 +196,23 @@ export function StudySummaryModal({
                 {!data.has_results && (
                   <span className="text-[10px] px-2 py-0.5 rounded-full text-amber-700"
                     style={{ background: "#fef9c3" }}>
-                    No results posted on CT.gov yet — summary based on metadata + publications
+                    {it
+                      ? "Nessun risultato pubblicato su CT.gov — riepilogo basato su metadati + pubblicazioni"
+                      : "No results posted on CT.gov yet — summary based on metadata + publications"}
                   </span>
                 )}
               </div>
 
               {/* Executive summary */}
               {ai.executive_summary && (
-                <Section title="Summary">
+                <Section title={it ? "Riepilogo" : "Summary"}>
                   {ai.executive_summary}
                 </Section>
               )}
 
               {/* Efficacy */}
               {(ai.primary_endpoint || ai.key_metrics) && (
-                <Section title="Efficacy">
+                <Section title={it ? "Efficacia" : "Efficacy"}>
                   {ai.primary_endpoint && (
                     <p className="mb-1">{ai.primary_endpoint}</p>
                   )}
@@ -207,7 +226,7 @@ export function StudySummaryModal({
 
               {/* Safety */}
               {ai.safety_profile && (
-                <Section title="Safety">
+                <Section title={it ? "Sicurezza" : "Safety"}>
                   {ai.safety_profile}
                   {data.ae_summary && data.ae_summary.length > 0 && (
                     <ul className="mt-2 space-y-0.5 text-[11px] text-slate-500">
@@ -221,11 +240,11 @@ export function StudySummaryModal({
 
               {/* Patient population */}
               {(ai.patient_population || meta.enrollment) && (
-                <Section title="Population">
-                  {ai.patient_population || `${meta.enrollment ?? "?"} patients`}
+                <Section title={it ? "Popolazione" : "Population"}>
+                  {ai.patient_population || `${meta.enrollment ?? "?"} ${it ? "pazienti" : "patients"}`}
                   {meta.interventions && (
                     <p className="text-[11px] text-slate-500 mt-1">
-                      Regimen: {meta.interventions}
+                      {it ? "Regime:" : "Regimen:"} {meta.interventions}
                     </p>
                   )}
                 </Section>
@@ -233,14 +252,14 @@ export function StudySummaryModal({
 
               {/* Investment note */}
               {ai.investment_note && (
-                <Section title="Investment Relevance">
+                <Section title={it ? "Rilevanza per l'investimento" : "Investment Relevance"}>
                   <p className="font-medium text-slate-900">{ai.investment_note}</p>
                 </Section>
               )}
 
               {/* Publications */}
               {((ai.key_publications?.length ?? 0) > 0 || (data.citations?.length ?? 0) > 0) && (
-                <Section title="Key Publications">
+                <Section title={it ? "Pubblicazioni chiave" : "Key Publications"}>
                   <ul className="space-y-1.5">
                     {(ai.key_publications ?? data.citations ?? []).slice(0, 3).map((pub, i) => (
                       <li key={i} className="text-[11px] text-slate-600 leading-snug">
@@ -264,7 +283,9 @@ export function StudySummaryModal({
               {data.outcome_measures && data.outcome_measures.length > 0 && (
                 <details className="group">
                   <summary className="cursor-pointer text-[11px] text-slate-400 hover:text-slate-600 select-none">
-                    Raw outcome measures ({data.outcome_measures.length}) ▸
+                    {it
+                      ? `Misure di outcome grezze (${data.outcome_measures.length}) ▸`
+                      : `Raw outcome measures (${data.outcome_measures.length}) ▸`}
                   </summary>
                   <div className="mt-2 space-y-1.5">
                     {data.outcome_measures.map((om, i) => (
@@ -273,6 +294,9 @@ export function StudySummaryModal({
                           {om.type}
                         </span>
                         <p className="text-slate-700 mt-0.5">{om.title}</p>
+                        {om.description ? (
+                          <p className="text-slate-500 text-[10px] mt-0.5 leading-snug">{om.description}</p>
+                        ) : null}
                         {om.time_frame && (
                           <p className="text-slate-400 text-[10px]">{om.time_frame}</p>
                         )}
@@ -296,7 +320,7 @@ export function StudySummaryModal({
           <div className="flex items-center gap-2">
             {data?.generated_at && !loading && (
               <span className="text-[10px] text-slate-400">
-                Generated {new Date(data.generated_at).toLocaleString()}
+                {it ? "Generato" : "Generated"} {new Date(data.generated_at).toLocaleString(it ? "it-IT" : "en-US")}
               </span>
             )}
           </div>
@@ -307,7 +331,7 @@ export function StudySummaryModal({
                 onClick={() => void load(true)}
                 className="text-[11px] text-slate-500 hover:text-slate-800 border border-slate-200 rounded-lg px-3 py-1.5 hover:bg-white transition"
               >
-                Regenerate
+                {it ? "Rigenera" : "Regenerate"}
               </button>
             )}
             <a
@@ -324,7 +348,7 @@ export function StudySummaryModal({
               className="text-[12px] font-semibold px-3 py-1.5 rounded-lg transition"
               style={{ background: "#1d4ed8", color: "#ffffff" }}
             >
-              Close
+              {it ? "Chiudi" : "Close"}
             </button>
           </div>
         </div>

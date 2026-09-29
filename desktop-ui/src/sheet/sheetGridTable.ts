@@ -58,10 +58,10 @@ const ALIGN_CLASS: Record<SheetGridAlign, string> = {
 
 
 
-/** Larghezze % (somma 100) — Performance / Price Δ% (12 colonne). */
+/** Larghezze % (somma 100) — Performance / Price Δ% (sel + wider ticker). */
 
 export const VARIATIONS_GRID_COL_PCT = [
-  3, 7, 9, 8, 7, 7, 6, 6, 6, 6, 10, 12, 13,
+  3, 9, 7, 8, 7, 7, 6, 6, 6, 6, 10, 12, 13,
 ] as const;
 
 
@@ -74,15 +74,16 @@ export const SIM_FULL_GRID_COL_PCT = [
 
 ] as const;
 
-/** Decision Lab Performance — 13 colonne (+ synth cap). */
+/** Decision Lab Performance — 13 cols (no Var. spark; + shares / G/L / −% G/L). */
 export const DECISION_LAB_GRID_COL_COUNT = 13;
-export const DECISION_LAB_GRID_COL_PCT: readonly number[] = equalGridColPct(
-  DECISION_LAB_GRID_COL_COUNT,
-);
+/** Equal column share (sum 100) — keeps even spacing across the Pick stocks table. */
+export const DECISION_LAB_GRID_COL_PCT: readonly number[] = [
+  3, 8, 7, 8, 8, 8, 8, 7, 9, 7, 8, 5, 14,
+];
 
-/** Simulation workspace full — senza curva; Δ lettura + Δ ingresso + synth cap (14 cols). */
+/** Simulation workspace full — senza curva; Target $ rimosso (13 cols). */
 export const SIM_WORKSPACE_FULL_GRID_COL_PCT = [
-  4, 7, 7, 10, 7, 6, 6, 10, 9, 9, 8, 8, 5, 4,
+  3, 9, 7, 10, 8, 8, 10, 9, 9, 8, 8, 6, 5,
 ] as const;
 
 /** SuperNova SDS score table (10 cols). */
@@ -157,11 +158,15 @@ export type SheetGridColKey =
 
   | "cap"
 
+  | "shares"
+
+  | "gain_loss"
+
+  | "stop5"
+
   | "synth_cap"
 
   | "score"
-
-  | "risk"
 
   | "var_spark"
 
@@ -189,7 +194,9 @@ export type SheetGridColKey =
 
   | "mig_calib_pre"
 
-  | "mig_calib_post";
+  | "mig_calib_post"
+
+  | "risk";
 
 
 

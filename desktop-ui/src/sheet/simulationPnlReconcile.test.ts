@@ -1,16 +1,18 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import {
   aggregateOpenPortfolioPnl,
   assessHistoryContamination,
   buildDashboardPortfolioChips,
   computeSimulationPosition,
+  pnlEurFromDailyPct,
   positionCapitalPnlPct,
   positionDailyPnlForPnlTab,
   resolvePositionPnlBreakdown,
 } from "./simulationPosition";
+import * as marketSession from "./marketSession";
 
 describe("P&L total vs trading day", () => {
-  it("infers buy from Valore Attuale when spot backfill is older than today", () => {
+  it("keeps stored buy when spot equals entry — total flat, 24h from Var. Giorn.", () => {
     const row = {
       Ticker: "OLMA",
       "Completion Date": "30/06/2026",
@@ -27,17 +29,63 @@ describe("P&L total vs trading day", () => {
       },
     };
     const pos = computeSimulationPosition(row, inputs)!;
-    expect(pos.buyPrice).toBeCloseTo(10.61, 1);
-    expect(Math.abs(pos.capital / pos.buyPrice - pos.shares)).toBeLessThan(0.02);
+    expect(pos.buyPrice).toBeCloseTo(13.68, 2);
+    expect(pos.pnlEur).toBeCloseTo(0, 0);
 
-    const daily = positionDailyPnlForPnlTab(pos, row, inputs["OLMA|2026-06-30"].investedAt, null);
-    expect(daily.hasToday).toBe(true);
-    if (daily.pnlEurToday != null) {
-      expect(Math.abs(daily.pnlEurToday)).toBeGreaterThan(50);
+    const sessionSpy = vi.spyOn(marketSession, "isUsEquitySessionDay").mockReturnValue(true);
+    try {
+      const daily = positionDailyPnlForPnlTab(
+        pos,
+        row,
+        inputs["OLMA|2026-06-30"].investedAt,
+        null,
+        [],
+        inputs,
+      );
+      // Flat vs entry (total ~0) but today's tape still counts.
+      expect(daily.pnlEurToday).toBeGreaterThan(100);
+      expect(daily.pnlPctToday).toBeCloseTo(28.93, 1);
+    } finally {
+      sessionSpy.mockRestore();
     }
   });
 
-  it("uses Valore Attuale coherently when spot backfill is stale", () => {
+  it("MLTX-like: buy=spot multi-day hold still shows Var. Giorn. on Pulse 24h", () => {
+    const row = {
+      Ticker: "MLTX",
+      "Completion Date": "28/09/2026",
+      "Prezzo Corrente ($)": 18.26,
+      "Var. Giorn. %": 1.28,
+      "Capitale Investito ($)": 2428,
+    };
+    const inputs = {
+      "MLTX|2026-09-28": {
+        buyPrice: 18.26,
+        capital: 2428,
+        ignoreSheet: false,
+        investedAt: "2026-06-12T19:48:18.883Z",
+      },
+    };
+    const pos = computeSimulationPosition(row, inputs)!;
+    const sessionSpy = vi.spyOn(marketSession, "isUsEquitySessionDay").mockReturnValue(true);
+    try {
+      const b = resolvePositionPnlBreakdown(
+        pos,
+        row,
+        inputs["MLTX|2026-09-28"].investedAt,
+        [],
+        inputs,
+      );
+      expect(Math.abs(b.totalEur)).toBeLessThan(1);
+      expect(b.pnlEurToday).not.toBeNull();
+      expect(b.pnlEurToday!).toBeGreaterThan(20);
+      expect(b.pnlPctToday).toBeCloseTo(1.28, 1);
+    } finally {
+      sessionSpy.mockRestore();
+    }
+  });
+
+  it("ignores stale Valore Attuale when stored buy equals spot", () => {
     const row = {
       Ticker: "OLMA",
       "Completion Date": "30/06/2026",
@@ -56,10 +104,9 @@ describe("P&L total vs trading day", () => {
       },
     };
     const pos = computeSimulationPosition(row, inputs)!;
-    const impliedBuy = (5000 * 13.68) / 3940;
-    expect(pos.buyPrice).toBeCloseTo(impliedBuy, 1);
-    expect(pos.valueNow).toBeCloseTo((5000 / impliedBuy) * 13.68, 0);
-    expect(pos.pnlEur).toBeCloseTo(pos.valueNow - 5000, 0);
+    expect(pos.buyPrice).toBeCloseTo(13.68, 2);
+    expect(pos.valueNow).toBeCloseTo(5000, 0);
+    expect(pos.pnlEur).toBeCloseTo(0, 0);
   });
 
   it("still ignores stale sheet P&L when local buy equals spot", () => {
@@ -110,12 +157,13 @@ describe("P&L total vs trading day", () => {
     );
     const chips = buildDashboardPortfolioChips(simTable, inputs, []);
     const totals = aggregateOpenPortfolioPnl(simTable, inputs, []);
+    const expected24h = pnlEurFromDailyPct(pos.valueNow, -1.2);
     expect(chips).toHaveLength(1);
     expect(chips[0].pnlEur).toBeCloseTo(pos.pnlEur, 2);
     expect(chips[0].pnlEur).toBeCloseTo(breakdown.totalEur, 0);
-    expect(chips[0].pnlEur24h).toBeCloseTo(breakdown.pnlEurToday ?? 0, 2);
+    expect(chips[0].pnlEur24h).toBeCloseTo(expected24h, 2);
     expect(totals.pnlEur).toBeCloseTo(pos.pnlEur, 2);
-    expect(totals.pnlEurToday).toBeCloseTo(breakdown.pnlEurToday ?? 0, 2);
+    expect(totals.pnlEurToday).toBeCloseTo(expected24h, 2);
     expect(totals.priorLegEur + totals.pnlEurToday).toBeCloseTo(totals.pnlEur, 2);
   });
 
@@ -289,7 +337,7 @@ describe("P&L total vs trading day", () => {
     expect(totals.pnlEur).toBeCloseTo(totals.priorLegEur + totals.pnlEurToday, 2);
   });
 
-  it("ignores stale Excel P&L when buy is spot backfill — infers entry from history", () => {
+  it("buy≈spot uses price MTM (0) — does not invent open gain from history / Var%", () => {
     const key = "NRIX|2026-08-15";
     const row = {
       Ticker: "NRIX",
@@ -320,8 +368,44 @@ describe("P&L total vs trading day", () => {
     ];
     const simTable = { sheet: "Simulation", rows: [row], columns: [] };
     const totals = aggregateOpenPortfolioPnl(simTable, inputs, history);
-    expect(totals.pnlEur).toBeLessThan(1_500);
+    expect(totals.pnlEur).toBeCloseTo(0, 0);
     expect(totals.pnlEur).not.toBeCloseTo(8_163, 0);
+  });
+
+  it("fresh register at spot: open gain ~0 despite inflated history + Var. Giorn.", () => {
+    const key = "COCP|2026-10-01";
+    const row = {
+      Ticker: "COCP",
+      "Completion Date": "01/10/2026",
+      "Prezzo Corrente ($)": 1.02,
+      "Var. Giorn. %": 8.51,
+    };
+    const inputs = {
+      [key]: {
+        buyPrice: 1.02,
+        capital: 5000,
+        ignoreSheet: false,
+        investedAt: "2026-08-04T06:54:14.490Z",
+      },
+    };
+    const history = [
+      {
+        ts: "2026-08-04T16:00:00.000Z",
+        capital: 5000,
+        value: 5455,
+        pnl: 455,
+        pnlPct: 9.1,
+        byTicker: { [key]: { value: 5455, pnl: 455, pnlPct: 9.1 } },
+      },
+    ];
+    const simTable = { sheet: "Simulation", rows: [row], columns: [] };
+    const chips = buildDashboardPortfolioChips(simTable, inputs, history);
+    const totals = aggregateOpenPortfolioPnl(simTable, inputs, history);
+    // Trusted buy = spot → open MTM total stays ~0 (ignore inflated history).
+    expect(chips[0]?.pnlEur).toBeCloseTo(0, 0);
+    expect(totals.pnlEur).toBeCloseTo(0, 0);
+    // 24h still follows Var. Giorn. % (not suppressed when flat vs entry).
+    expect(totals.pnlEurToday).toBeGreaterThan(100);
   });
 
   it("ignores contaminated leg chain when clean snapshot preceded bad save", () => {
@@ -446,13 +530,19 @@ describe("P&L total vs trading day", () => {
       },
     ];
     const pos = computeSimulationPosition(row, inputs, { history })!;
-    const breakdown = resolvePositionPnlBreakdown(
-      pos,
-      row,
-      inputs[key].investedAt,
-      history,
-      inputs,
-    );
+    const sessionSpy = vi.spyOn(marketSession, "isUsEquitySessionDay").mockReturnValue(true);
+    let breakdown: ReturnType<typeof resolvePositionPnlBreakdown>;
+    try {
+      breakdown = resolvePositionPnlBreakdown(
+        pos,
+        row,
+        inputs[key].investedAt,
+        history,
+        inputs,
+      );
+    } finally {
+      sessionSpy.mockRestore();
+    }
     const assessment = assessHistoryContamination(
       capital,
       [{ dayKey: "2026-06-16", value: capital * 1.18, ts: history[0].ts }],
@@ -613,11 +703,80 @@ describe("P&L six-ticker portfolio — moderate contamination guard", () => {
       history,
     );
 
-    expect(totals.anyHistoryContaminated || totals.anyHistoryUncertainContamination).toBe(
-      true,
-    );
+    expect(totals.anyHistoryContaminated).toBe(false);
+    expect(totals.anyHistoryUncertainContamination).toBe(false);
     expect(totals.priorLegIsImplicitEstimate).toBe(true);
     expect(totals.pnlEur).toBeCloseTo(expectedMtmSum, 0);
     expect(totals.pnlEur).toBeLessThan(5000);
+  });
+
+  it("Pulse / Piggy ignore Trend history when the book has capital + buy", () => {
+    const key = "CPIX|2099-06-01";
+    const row = {
+      Ticker: "CPIX",
+      "Completion Date": "2099-06-01",
+      "Prezzo Corrente ($)": 6.6,
+      "Var. Giorn. %": 10,
+      "Valore Attuale ($)": 40_000,
+      "P&L (%)": 500,
+    };
+    const inputs = {
+      [key]: {
+        buyPrice: 6,
+        capital: 6000,
+        ignoreSheet: false,
+        investedAt: "2026-05-01T10:00:00.000Z",
+      },
+    };
+    const history = [
+      {
+        ts: "2026-06-18T16:00:00.000Z",
+        capital: 6000,
+        value: 40_000,
+        pnl: 34_000,
+        pnlPct: 566,
+        byTicker: { [key]: { value: 40_000, pnl: 34_000, pnlPct: 566 } },
+      },
+    ];
+    const simTable = { sheet: "Simulation", rows: [row], columns: [] };
+    const chips = buildDashboardPortfolioChips(simTable, inputs, history);
+    const totals = aggregateOpenPortfolioPnl(simTable, inputs, history);
+    expect(chips[0]?.pnlEur).toBeCloseTo(600, 0);
+    expect(chips[0]?.pnlPct).toBeCloseTo(10, 1);
+    expect(chips[0]?.pnlEur24h).toBeCloseTo(600, 0);
+    expect(totals.pnlEur).toBeCloseTo(600, 0);
+    expect(totals.pnlEurToday).toBeCloseTo(600, 0);
+    expect(totals.capital).toBe(6000);
+  });
+
+  it("uses Var. Giorn. % for chips when US session is closed (flat MTM, daily gain)", () => {
+    const spy = vi.spyOn(marketSession, "isUsEquitySessionDay").mockReturnValue(false);
+    try {
+      const key = "CPIX|2026-08-01";
+      const capital = 5000;
+      const row = {
+        Ticker: "CPIX",
+        "Completion Date": "01/08/2026",
+        "Prezzo Corrente ($)": 10.89,
+        "Prezzo Acquisto ($)": 10.89,
+        "Var. Giorn. %": 8.9,
+        "Valore Attuale ($)": capital,
+        "P&L (%)": 0,
+        "Capitale Investito ($)": capital,
+      };
+      const inputs = {
+        [key]: { buyPrice: 10.89, capital, ignoreSheet: false },
+      };
+      const simTable = { sheet: "Simulation", rows: [row], columns: [] };
+      const chips = buildDashboardPortfolioChips(simTable, inputs, []);
+      expect(chips).toHaveLength(1);
+      expect(chips[0]!.pnlPct24h).toBeCloseTo(8.9, 1);
+      expect(chips[0]!.pnlEur24h).toBeGreaterThan(0);
+      const totals = aggregateOpenPortfolioPnl(simTable, inputs, []);
+      expect(totals.todayCovered).toBe(1);
+      expect(totals.pnlEurToday).toBeGreaterThan(0);
+    } finally {
+      spy.mockRestore();
+    }
   });
 });

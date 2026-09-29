@@ -1,9 +1,12 @@
+import { useMemo } from "react";
 import { useT } from "../shared/i18n";
 import type { PortfolioDailyPnlLedger } from "../sheet/simulationPosition";
 import { PortfolioDailyPnlLedgerTable } from "./PortfolioDailyPnlLedgerTable";
 import { ClosedPiggyBankBeerGlass } from "./ClosedPiggyBankBeerGlass";
 import { useClosedPiggyBank } from "../hooks/useClosedPiggyBank";
 import { AppModal, AppModalCloseButton } from "./AppModal";
+import { computePortfolioCashFlow } from "../sheet/experimentCashFlow";
+import { loadUiPrefsLocal } from "../sheet/uiPrefs";
 
 /** Icona griglia giornaliera (non refresh). */
 export function DailyLedgerIcon({ className = "h-3.5 w-3.5" }: { className?: string }) {
@@ -35,6 +38,19 @@ export function PortfolioDailyPnlDrawer({
 }) {
   const t = useT();
   const { display, reset } = useClosedPiggyBank(ledger);
+  const openCapitalEur = useMemo(() => {
+    if (!ledger?.rows) return 0;
+    return ledger.rows
+      .filter((r) => !r.archived)
+      .reduce((sum, r) => sum + (Number.isFinite(r.capital) ? r.capital : 0), 0);
+  }, [ledger]);
+  const cashFlow = useMemo(() => {
+    const pref = loadUiPrefsLocal();
+    const budget = pref.topCapitalPortfolio ?? pref.topCapital;
+    const starting =
+      budget != null && Number.isFinite(budget) && budget > 0 ? budget : 50_000;
+    return computePortfolioCashFlow(ledger, openCapitalEur, starting);
+  }, [ledger, openCapitalEur]);
 
   return (
     <AppModal
@@ -53,7 +69,17 @@ export function PortfolioDailyPnlDrawer({
       </div>
 
       <div className="min-h-0 flex-1 overflow-auto p-4 space-y-4">
-        <ClosedPiggyBankBeerGlass display={display} onReset={reset} />
+        <ClosedPiggyBankBeerGlass
+          display={display}
+          onReset={reset}
+          reinvestedEur={cashFlow.gainsRecycledInOpenEur}
+          openFromBudgetEur={cashFlow.capitalNotFromGainsEur}
+          gainsCashEur={
+            cashFlow.gainsRecycledInOpenEur <= 0.5
+              ? Math.max(0, display.pnlEur)
+              : Math.max(0, display.pnlEur - cashFlow.gainsRecycledInOpenEur)
+          }
+        />
         <PortfolioDailyPnlLedgerTable ledger={ledger} windowResetToken={open} />
       </div>
     </AppModal>

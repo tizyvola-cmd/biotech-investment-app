@@ -23,6 +23,7 @@ import {
   computeSimulationPosition,
   resolvePortfolioHistory,
 } from "./simulationPosition";
+import { portfolioHistoryMarkIso } from "./marketSession";
 
 const BEFORE_KEY = "supernova_portfolio_refresh_before_v1";
 
@@ -356,7 +357,15 @@ export function recordPortfolioHistoryAfterRefresh(simTable: SheetTable | null):
   const history = loadInvestSimHistory();
   const next = appendHistoryPoint(
     history,
-    { capital: cap, value: val, pnl, pnlPct: pct, byTicker },
+    {
+      // Pin weekend/holiday refreshes to last Nasdaq close (not wall-clock).
+      ts: portfolioHistoryMarkIso(),
+      capital: cap,
+      value: val,
+      pnl,
+      pnlPct: pct,
+      byTicker,
+    },
     { force: "hourly" },
   );
   persistInvestSimHistoryNow(next);

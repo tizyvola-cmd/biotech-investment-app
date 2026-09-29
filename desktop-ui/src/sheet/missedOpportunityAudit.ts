@@ -26,6 +26,7 @@ import {
   WATCH_P_ENTRY_MIN,
 } from "./watchZoneEntryPolicy";
 import { computeFairRecsDailyPnlFromMissedOppRows } from "./missedOpportunityFairRecs";
+import { computeCapturePct } from "./adviceComplementKpis";
 
 /** Min Var. Giorn. % to count as a 24h gainer. */
 export const MISSED_OPP_GAIN_24H_MIN_PCT = 0.5;
@@ -33,8 +34,8 @@ export const MISSED_OPP_GAIN_24H_MIN_PCT = 0.5;
 /** Hypothetical stake per ticker in P&L comparison chart (€). */
 export const MISSED_OPP_CAPITAL_EUR = 5000;
 
-/** Operational entry audit: T−90 → T−14 (days to CD 14–90). Excludes CD troppo vicino/lontano. */
-export const MISSED_OPP_OP_MIN_DAYS = 14;
+/** Operational entry audit: T−90 → T−0 (days to CD 0–90). */
+export const MISSED_OPP_OP_MIN_DAYS = 0;
 export const MISSED_OPP_OP_MAX_DAYS = 90;
 
 /** Watch-zone recall audit: T−120 → T−61 (days to CD 61–120). */
@@ -168,7 +169,7 @@ export type MissedOpportunitySummary = {
   missedN: number;
   heldGainerN: number;
   outsideWindowGainerN: number;
-  /** Gainers in monitor window but outside T−90→T−14 (CD <14d or >90d). */
+  /** Gainers in monitor window but outside T−90→T−0 (CD >90d). */
   cdDistantGainerN: number;
   /** Recall Enter — primary metric (operational window only). */
   recallPct: number | null;
@@ -1013,8 +1014,8 @@ export function buildMissedOppPnlDailySeries(
     prevActual = dayActual;
     const gapVsRecEur = dayRecommendations - dayActual;
     const capturePct =
-      dayRecommendations !== 0 && h.pnlRecommendationsEur != null
-        ? Math.round((dayActual / dayRecommendations) * 1000) / 10
+      h.pnlRecommendationsEur != null
+        ? computeCapturePct(dayActual, dayRecommendations)
         : null;
     return {
       date: h.date.slice(5),
@@ -1047,10 +1048,8 @@ export function summarizeMissedOppImprovement(
   const actToday = pnlActualToday ?? last?.dayActual ?? 0;
   return {
     deltaActual: last?.deltaActual ?? null,
-    capturePctToday:
-      recToday !== 0 ? Math.round((actToday / recToday) * 1000) / 10 : null,
-    capturePctFairToday:
-      fairRecToday !== 0 ? Math.round((actToday / fairRecToday) * 1000) / 10 : null,
+    capturePctToday: computeCapturePct(actToday, recToday),
+    capturePctFairToday: computeCapturePct(actToday, fairRecToday),
     gapVsRecToday: recToday - actToday,
     gapVsFairRecToday: fairRecToday - actToday,
     gapVsAllGainersToday: allToday - actToday,

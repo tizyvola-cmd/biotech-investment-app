@@ -12,7 +12,7 @@ import type { PortfolioPoint } from "../types/trades";
 import {
   buildCausalSimLoopShareWalk,
   causalShareForSell,
-  rebalanceCausalSimLoopShares,
+  resolveLiveOpenShares,
   shareToSynthCap,
   type SimLoopCausalSynthOpts,
 } from "./simLoopCausalSynth";
@@ -175,7 +175,7 @@ function causalOptsFromBuildOpts(opts: BuildSimLoopSynthMaturationOpts): SimLoop
     totalCapitalEur: opts.totalCapitalEur,
     capitalPerTrade: opts.capitalPerTrade,
     targetGainEur: opts.targetGainEur,
-    sizingMode: opts.sizingMode ?? "causal_rebalance",
+    sizingMode: opts.sizingMode ?? "static_approved",
     staticSharesByKey: opts.shareByRowKey,
   };
 }
@@ -236,27 +236,12 @@ export function buildSimLoopSynthMaturationSeries(
         );
       }
     }
-    const liveOpenShares =
-      causalOpts.sizingMode === "static_approved"
-        ? (() => {
-            const out: Record<string, number> = {};
-            for (const pos of opts.live!.paperPortfolio) {
-              const frozen = walk.frozenEntryShares[pos.key];
-              const staticShare = opts.shareByRowKey?.[pos.key];
-              out[pos.key] =
-                typeof frozen === "number" && Number.isFinite(frozen)
-                  ? frozen
-                  : typeof staticShare === "number" && Number.isFinite(staticShare)
-                    ? staticShare
-                    : opts.capitalPerTrade / opts.totalCapitalEur;
-            }
-            return out;
-          })()
-        : rebalanceCausalSimLoopShares(
-            opts.live.paperPortfolio,
-            opts.live.evaluations,
-            causalOpts,
-          );
+    const liveOpenShares = resolveLiveOpenShares(
+      opts.live.paperPortfolio,
+      opts.live.evaluations,
+      causalOpts,
+      walk,
+    );
     const liveOpen = openSynthMtmForTick(
       opts.live.paperPortfolio,
       opts.live.evaluations,
@@ -266,8 +251,11 @@ export function buildSimLoopSynthMaturationSeries(
     );
     const closedPnl = roundEur(liveClosed);
     const openMtm = roundEur(liveOpen);
+    // Anchor live tail to last tick day — avoids a new ISO timestamp every refresh
+    // (which reshuffles chart alignment and re-triggers open-MTM backfill).
+    const liveAt = sorted.length > 0 ? sorted[sorted.length - 1]!.at : new Date().toISOString();
     points.push({
-      at: new Date().toISOString(),
+      at: liveAt,
       simLoopSynthClosedPnlEur: closedPnl,
       simLoopSynthOpenMtmEur: openMtm,
       simLoopSynthTotalPnlEur: roundEur(closedPnl + openMtm),

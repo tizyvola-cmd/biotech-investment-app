@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import type { SheetTable } from "../types";
+import type { ChartBundle, SheetTable } from "../types";
 import {
   buildTemporalRowsFromSummary,
   parseMonitorEntries,
@@ -10,25 +10,28 @@ import { PredictionGuidePanel } from "./PredictionGuidePanel";
 import { useLang, useT } from "../shared/i18n";
 import { RefreshControls } from "./RefreshControls";
 import { ViewErrorBoundary } from "./ViewErrorBoundary";
-import { InvestmentSimOutcomesPanel } from "./InvestmentSimOutcomesPanel";
-import { LearningLabView } from "./LearningLabView";
 import { EisSignalImpactPanel } from "./EisSignalImpactPanel";
 import { QcTodayDashboard } from "./QcTodayDashboard";
+import { MissedOpportunityPanel } from "./MissedOpportunityPanel";
 import { SdsPredictionAccuracyPanel } from "./SdsPredictionAccuracyPanel";
-import { INVEST_SIM_INPUTS_CHANGED_EVENT } from "../sheet/investSimStorage";
+import { ModelComparisonPanel } from "./ModelComparisonPanel";
+import { TesterPredictionTab } from "./TesterPredictionTab";
 import { loadModelLearningsBundle } from "../data/modelLearningsData";
 import { buildModelLearningsView } from "../sheet/modelLearningsTimeline";
 import { fetchDesktopManifest, invalidateProjectJsonCache } from "../data/projectData";
 
-type ModelsTab = "performance" | "portfolio" | "distribution";
-type PerformanceSubview = "dashboard" | "learning" | "sds-accuracy" | "eis-analysis";
+type ModelsTab = "performance" | "distribution" | "prediction";
+type PerformanceSubview = "dashboard" | "models-eval" | "missed";
+type ModelsEvalSubNav = "comparison" | "sds-accuracy" | "eis-analysis";
 
 /** Legacy route aliases → top-level tab. */
 export type ModelsTabId =
   | ModelsTab
+  | "comparison"
   | "ra-score-calibration"
   | "ra-calibration"
   | "sds-prediction-accuracy"
+  | "cont-sell-accuracy"
   | "eis-signal-impact"
   | "eis-analysis"
   | "today"
@@ -40,12 +43,16 @@ export type ModelsTabId =
   | "curveEngine"
   | "learnings"
   | "validation"
-  | "preCdSignals";
+  | "preCdSignals"
+  | "calibration"
+  | "calibration-diversify"
+  | "calibration-prediction";
 
 const LEGACY_TAB: Record<string, ModelsTab> = {
   "ra-score-calibration": "performance",
   "ra-calibration": "performance",
   "sds-prediction-accuracy": "performance",
+  "cont-sell-accuracy": "performance",
   performance: "performance",
   today: "performance",
   qc: "performance",
@@ -57,8 +64,12 @@ const LEGACY_TAB: Record<string, ModelsTab> = {
   validation: "performance",
   preCdSignals: "performance",
   learning: "performance",
+  comparison: "performance",
   distribution: "distribution",
-  portfolio: "portfolio",
+  // Model Calibration shell removed — diversify → Performance; prediction kept as its own tab.
+  calibration: "performance",
+  "calibration-diversify": "performance",
+  "calibration-prediction": "prediction",
 };
 
 function resolveInitialTab(initialTab: ModelsTabId | undefined): ModelsTab {
@@ -66,8 +77,8 @@ function resolveInitialTab(initialTab: ModelsTabId | undefined): ModelsTab {
   if (initialTab in LEGACY_TAB) return LEGACY_TAB[initialTab];
   if (
     initialTab === "performance" ||
-    initialTab === "portfolio" ||
-    initialTab === "distribution"
+    initialTab === "distribution" ||
+    initialTab === "prediction"
   ) {
     return initialTab;
   }
@@ -75,10 +86,22 @@ function resolveInitialTab(initialTab: ModelsTabId | undefined): ModelsTab {
 }
 
 function resolveInitialPerformanceSubview(initialTab: ModelsTabId | undefined): PerformanceSubview {
-  if (initialTab === "learning") return "learning";
+  if (
+    initialTab === "sds-prediction-accuracy" ||
+    initialTab === "cont-sell-accuracy" ||
+    initialTab === "eis-signal-impact" ||
+    initialTab === "eis-analysis" ||
+    initialTab === "comparison"
+  ) {
+    return "models-eval";
+  }
+  return "dashboard";
+}
+
+function resolveInitialModelsEvalSubNav(initialTab: ModelsTabId | undefined): ModelsEvalSubNav {
   if (initialTab === "sds-prediction-accuracy") return "sds-accuracy";
   if (initialTab === "eis-signal-impact" || initialTab === "eis-analysis") return "eis-analysis";
-  return "dashboard";
+  return "comparison";
 }
 
 function tabBtn(active: boolean) {
@@ -87,22 +110,28 @@ function tabBtn(active: boolean) {
   }`;
 }
 
+function subNavPill(active: boolean) {
+  return `rounded-full border px-3 py-1 text-xs font-medium transition ${
+    active
+      ? "border-accent bg-accent/10 text-[rgb(var(--accent))]"
+      : "border-[rgb(var(--border))]/60 bg-surface/40 text-ink-muted hover:text-ink hover:bg-surface/70"
+  }`;
+}
+
 /** Model analysis — performance QC, portfolio outcomes, CD distribution curves. */
 export function ModelAccuracyLabView({
   accTable,
   simTable,
   loading: sheetLoading,
-  simLoading = false,
   error: sheetError,
   onReload,
-  onReloadSimulation,
-  onOpenPredictionCharts,
-  onOpenSimulationPnl,
-  onOpenDailyPnlLedger,
   accuracyDataStale,
   manifestUpdatedAt,
   initialTab,
   onInitialTabConsumed,
+  onNestedBackChange,
+  apiOk: _apiOk = null,
+  chartsBundle = null,
 }: {
   accTable: SheetTable | null;
   simTable?: SheetTable | null;
@@ -111,13 +140,16 @@ export function ModelAccuracyLabView({
   error: string | null;
   onReload: () => void;
   onReloadSimulation?: () => void;
-  onOpenPredictionCharts?: (focus: { seriesKey: string | null; ticker: string }) => void;
   onOpenSimulationPnl?: () => void;
   onOpenDailyPnlLedger?: () => void;
   accuracyDataStale?: boolean;
   manifestUpdatedAt?: string | null;
   initialTab?: ModelsTabId;
   onInitialTabConsumed?: () => void;
+  /** When a sub-view is open (Models eval, Missed, Distribution…), wire the top-bar ← here. */
+  onNestedBackChange?: (handler: (() => void) | null) => void;
+  apiOk?: boolean | null;
+  chartsBundle?: ChartBundle | null;
 }) {
   const [tab, setTab] = useState<ModelsTab>(() => resolveInitialTab(initialTab));
   const [performanceSubview, setPerformanceSubview] = useState<PerformanceSubview>(() =>
@@ -133,18 +165,20 @@ export function ModelAccuracyLabView({
   const [learningsSources, setLearningsSources] = useState<Awaited<
     ReturnType<typeof loadModelLearningsBundle>
   >["sources"] | null>(null);
-  const [learningReloadToken, setLearningReloadToken] = useState(0);
-  const [portfolioReloadToken, setPortfolioReloadToken] = useState(0);
-  const [signalsReloadToken, setSignalsReloadToken] = useState(0);
+  const [modelsEvalSubNav, setModelsEvalSubNav] = useState<ModelsEvalSubNav>(() =>
+    resolveInitialModelsEvalSubNav(initialTab),
+  );
   const [sdsAccUpdatedAt, setSdsAccUpdatedAt] = useState<string | null>(null);
   const [eisMagUpdatedAt, setEisMagUpdatedAt] = useState<string | null>(null);
   const [eisMagReloadToken, setEisMagReloadToken] = useState(0);
   const modelLabAccuracySigRef = useRef("");
+  const learningsManifestSigRef = useRef("");
 
   useEffect(() => {
     if (initialTab === undefined) return;
     setTab(resolveInitialTab(initialTab));
     setPerformanceSubview(resolveInitialPerformanceSubview(initialTab));
+    setModelsEvalSubNav(resolveInitialModelsEvalSubNav(initialTab));
     onInitialTabConsumed?.();
   }, [initialTab, onInitialTabConsumed]);
 
@@ -153,6 +187,22 @@ export function ModelAccuracyLabView({
       setPerformanceSubview("dashboard");
     }
   }, [tab]);
+
+  useEffect(() => {
+    if (!onNestedBackChange) return;
+    const onDashboard = tab === "performance" && performanceSubview === "dashboard";
+    if (onDashboard) {
+      onNestedBackChange(null);
+      return;
+    }
+    onNestedBackChange(() => {
+      if (tab !== "performance") {
+        setTab("performance");
+      }
+      setPerformanceSubview("dashboard");
+    });
+    return () => onNestedBackChange(null);
+  }, [tab, performanceSubview, onNestedBackChange]);
 
   const reloadLearningsBundle = useCallback(async () => {
     setLearningsLoading(true);
@@ -198,13 +248,6 @@ export function ModelAccuracyLabView({
     return buildModelLearningsView(learningsSources, { lang, monitorSource });
   }, [learningsSources, lang, monitorSource]);
 
-  useEffect(() => {
-    if (typeof window === "undefined") return;
-    const onPortfolioChanged = () => setSignalsReloadToken((n) => n + 1);
-    window.addEventListener(INVEST_SIM_INPUTS_CHANGED_EVENT, onPortfolioChanged);
-    return () =>
-      window.removeEventListener(INVEST_SIM_INPUTS_CHANGED_EVENT, onPortfolioChanged);
-  }, []);
 
   useEffect(() => {
     const unsub = window.supernova?.onAccuracyMonitorUpdated?.(() => {
@@ -215,10 +258,20 @@ export function ModelAccuracyLabView({
   }, [reloadLearningsBundle]);
 
   useEffect(() => {
+    if (!manifestUpdatedAt) return;
+    const sig = manifestUpdatedAt;
+    if (learningsManifestSigRef.current && learningsManifestSigRef.current !== sig) {
+      invalidateProjectJsonCache();
+      setLearningsReloadToken((n) => n + 1);
+    }
+    learningsManifestSigRef.current = sig;
+  }, [manifestUpdatedAt]);
+
+  useEffect(() => {
     if (
       tab !== "performance" ||
-      (performanceSubview !== "sds-accuracy" &&
-        performanceSubview !== "eis-analysis")
+      performanceSubview !== "models-eval" ||
+      (modelsEvalSubNav !== "sds-accuracy" && modelsEvalSubNav !== "eis-analysis")
     ) {
       return;
     }
@@ -234,7 +287,7 @@ export function ModelAccuracyLabView({
       if (modelLabAccuracySigRef.current && modelLabAccuracySigRef.current !== sig) {
         invalidateProjectJsonCache();
         setLearningsReloadToken((n) => n + 1);
-        if (performanceSubview === "eis-analysis") {
+        if (modelsEvalSubNav === "eis-analysis") {
           setEisMagReloadToken((n) => n + 1);
         }
       }
@@ -246,28 +299,18 @@ export function ModelAccuracyLabView({
       cancelled = true;
       window.clearInterval(id);
     };
-  }, [tab, performanceSubview]);
+  }, [tab, performanceSubview, modelsEvalSubNav]);
 
   const handleReload = useCallback(() => {
-    if (tab === "performance" && performanceSubview === "learning") {
-      setLearningReloadToken((n) => n + 1);
-      return;
-    }
     if (
       tab === "performance" &&
-      (performanceSubview === "sds-accuracy" ||
-        performanceSubview === "eis-analysis")
+      performanceSubview === "models-eval" &&
+      (modelsEvalSubNav === "sds-accuracy" || modelsEvalSubNav === "eis-analysis")
     ) {
       setLearningsReloadToken((n) => n + 1);
-      if (performanceSubview === "eis-analysis") {
+      if (modelsEvalSubNav === "eis-analysis") {
         setEisMagReloadToken((n) => n + 1);
       }
-      return;
-    }
-    if (tab === "portfolio") {
-      onReloadSimulation?.();
-      setPortfolioReloadToken((n) => n + 1);
-      setSignalsReloadToken((n) => n + 1);
       return;
     }
     if (tab === "distribution") {
@@ -276,22 +319,20 @@ export function ModelAccuracyLabView({
     }
     onReload();
     setLearningsReloadToken((n) => n + 1);
-  }, [tab, performanceSubview, onReload, onReloadSimulation]);
+  }, [tab, performanceSubview, modelsEvalSubNav, onReload]);
 
   const hasSummary = summaryRows.length > 0;
   const t = useT();
   const subtitle =
     tab === "performance"
-      ? performanceSubview === "learning"
-        ? t("modelLab.subtitle.learningLab")
-        : performanceSubview === "sds-accuracy"
-          ? t("modelLab.subtitle.sdsAccuracy")
-          : performanceSubview === "eis-analysis"
-            ? t("modelLab.subtitle.eisAnalysis")
-            : t("modelLab.subtitle.performance")
-      : tab === "portfolio"
-        ? t("modelLab.subtitle.portfolio")
-        : t("modelLab.subtitle.distribution");
+      ? performanceSubview === "models-eval"
+          ? modelsEvalSubNav === "sds-accuracy"
+            ? t("modelLab.subtitle.sdsAccuracy")
+            : modelsEvalSubNav === "eis-analysis"
+              ? t("modelLab.subtitle.eisAnalysis")
+              : t("modelLab.subtitle.comparison")
+          : t("modelLab.subtitle.performance")
+      : t("modelLab.subtitle.distribution");
 
   const curveErrors = useMemo(() => {
     const errs: string[] = [];
@@ -301,10 +342,10 @@ export function ModelAccuracyLabView({
   }, [monitorError, summaryError]);
 
   const reloadLoading =
-    tab === "portfolio"
-      ? simLoading
-      : tab === "distribution"
-        ? sheetLoading
+    tab === "distribution"
+      ? sheetLoading
+      : performanceSubview === "models-eval" && modelsEvalSubNav === "comparison"
+        ? false
         : learningsLoading || sheetLoading;
 
   return (
@@ -330,17 +371,17 @@ export function ModelAccuracyLabView({
           </button>
           <button
             type="button"
-            className={tabBtn(tab === "portfolio")}
-            onClick={() => setTab("portfolio")}
-          >
-            {t("modelLab.tab.portfolio")}
-          </button>
-          <button
-            type="button"
             className={tabBtn(tab === "distribution")}
             onClick={() => setTab("distribution")}
           >
             {t("modelLab.tab.distribution")}
+          </button>
+          <button
+            type="button"
+            className={tabBtn(tab === "prediction")}
+            onClick={() => setTab("prediction")}
+          >
+            {t("modelLab.calibration.subNav.prediction")}
           </button>
           <RefreshControls
             onLocalReload={handleReload}
@@ -363,14 +404,16 @@ export function ModelAccuracyLabView({
               curveErrors={curveErrors}
               sources={learningsSources}
               view={learningsView}
-              onOpenLearningLab={() => setPerformanceSubview("learning")}
-              onOpenSdsAccuracy={() => setPerformanceSubview("sds-accuracy")}
-              onOpenEisAnalysis={() => setPerformanceSubview("eis-analysis")}
+              onOpenModelsEval={() => {
+                setModelsEvalSubNav("comparison");
+                setPerformanceSubview("models-eval");
+              }}
+              onOpenMissed={() => setPerformanceSubview("missed")}
             />
           </ViewErrorBoundary>
         )}
 
-        {tab === "performance" && performanceSubview === "sds-accuracy" && (
+        {tab === "performance" && performanceSubview === "missed" && (
           <div className="flex flex-col flex-1 gap-3">
             <button
               type="button"
@@ -379,49 +422,85 @@ export function ModelAccuracyLabView({
             >
               ← {t("modelLab.performance.backToDashboard")}
             </button>
-            <ViewErrorBoundary label="SDS Prediction Accuracy">
-              <SdsPredictionAccuracyPanel
-                simTable={simTable ?? null}
-                reloadToken={learningsReloadToken}
-                dataUpdatedAt={sdsAccUpdatedAt}
-              />
-            </ViewErrorBoundary>
-          </div>
-        )}
-
-        {tab === "performance" && performanceSubview === "eis-analysis" && (
-          <div className="flex flex-col flex-1 gap-3">
-            <button
-              type="button"
-              className="self-start shrink-0 rounded-md border border-[rgb(var(--border))]/60 bg-surface/40 px-3 py-1.5 text-xs font-medium text-ink hover:bg-surface/70 transition"
-              onClick={() => setPerformanceSubview("dashboard")}
-            >
-              ← {t("modelLab.performance.backToDashboard")}
-            </button>
-            <div className="flex flex-col flex-1 pr-1">
-              <ViewErrorBoundary label="EIS signal impact">
-                <EisSignalImpactPanel
-                  curveImpact={learningsSources?.signalCalib?.curve_impact_cumulative}
-                  reloadToken={eisMagReloadToken + learningsReloadToken}
-                  dataUpdatedAt={eisMagUpdatedAt}
-                />
-              </ViewErrorBoundary>
+            <div className="flex flex-col flex-1 overflow-y-auto pr-1">
+              <div className="rounded-xl border border-[rgb(var(--border))]/50 bg-white/95 p-4">
+                <ViewErrorBoundary label="Missed opportunities">
+                  <MissedOpportunityPanel
+                    simTable={simTable ?? null}
+                    reloadToken={learningsReloadToken}
+                  />
+                </ViewErrorBoundary>
+              </div>
             </div>
           </div>
         )}
 
-        {tab === "performance" && performanceSubview === "learning" && (
+        {tab === "performance" && performanceSubview === "models-eval" && (
           <div className="flex flex-col flex-1 gap-3">
-            <button
-              type="button"
-              className="self-start shrink-0 rounded-md border border-[rgb(var(--border))]/60 bg-surface/40 px-3 py-1.5 text-xs font-medium text-ink hover:bg-surface/70 transition"
-              onClick={() => setPerformanceSubview("dashboard")}
-            >
-              ← {t("modelLab.performance.backToDashboard")}
-            </button>
-            <ViewErrorBoundary label="Learning Lab">
-              <LearningLabView reloadToken={learningReloadToken} simTable={simTable ?? null} />
-            </ViewErrorBoundary>
+            {/* Level-1 back + Level-2 sub-nav pills in one row */}
+            <div className="flex flex-wrap items-center gap-3 shrink-0">
+              <button
+                type="button"
+                className="rounded-md border border-[rgb(var(--border))]/60 bg-surface/40 px-3 py-1.5 text-xs font-medium text-ink hover:bg-surface/70 transition"
+                onClick={() => setPerformanceSubview("dashboard")}
+              >
+                ← {t("modelLab.performance.backToDashboard")}
+              </button>
+              <div className="flex items-center gap-1.5">
+                <button
+                  type="button"
+                  className={subNavPill(modelsEvalSubNav === "comparison")}
+                  onClick={() => setModelsEvalSubNav("comparison")}
+                >
+                  {t("modelLab.subtitle.comparison")}
+                </button>
+                <button
+                  type="button"
+                  className={subNavPill(modelsEvalSubNav === "sds-accuracy")}
+                  onClick={() => setModelsEvalSubNav("sds-accuracy")}
+                >
+                  {t("modelLab.performance.openSdsAccuracy")}
+                </button>
+                <button
+                  type="button"
+                  className={subNavPill(modelsEvalSubNav === "eis-analysis")}
+                  onClick={() => setModelsEvalSubNav("eis-analysis")}
+                >
+                  {t("modelLab.performance.openEisAnalysis")}
+                </button>
+              </div>
+            </div>
+
+            {modelsEvalSubNav === "comparison" && (
+              <div className="flex flex-col flex-1 overflow-y-auto pr-1">
+                <ViewErrorBoundary label="Model comparison">
+                  <ModelComparisonPanel />
+                </ViewErrorBoundary>
+              </div>
+            )}
+
+            {modelsEvalSubNav === "sds-accuracy" && (
+              <ViewErrorBoundary label="SDS Prediction Accuracy">
+                <SdsPredictionAccuracyPanel
+                  simTable={simTable ?? null}
+                  reloadToken={learningsReloadToken}
+                  dataUpdatedAt={sdsAccUpdatedAt}
+                />
+              </ViewErrorBoundary>
+            )}
+
+            {modelsEvalSubNav === "eis-analysis" && (
+              <div className="flex flex-col flex-1 pr-1">
+                <ViewErrorBoundary label="EIS signal impact">
+                  <EisSignalImpactPanel
+                    curveImpact={learningsSources?.signalCalib?.curve_impact_cumulative}
+                    reloadToken={eisMagReloadToken + learningsReloadToken}
+                    dataUpdatedAt={eisMagUpdatedAt}
+                  />
+                </ViewErrorBoundary>
+              </div>
+            )}
+
           </div>
         )}
 
@@ -443,19 +522,18 @@ export function ModelAccuracyLabView({
           </div>
         )}
 
-        {tab === "portfolio" && (
-          <div className="flex flex-col flex-1 pr-1">
-            <ViewErrorBoundary label="Your portfolio">
-              <InvestmentSimOutcomesPanel
-                reloadToken={portfolioReloadToken + signalsReloadToken}
+        {tab === "prediction" && (
+          <div className="flex flex-col flex-1 overflow-y-auto pr-1">
+            <ViewErrorBoundary label="Prediction & recommendation engine">
+              <TesterPredictionTab
+                apiOk={_apiOk}
                 simTable={simTable ?? null}
-                onOpenPredictionCharts={onOpenPredictionCharts}
-                onOpenSimulationPnl={onOpenSimulationPnl}
-                onOpenDailyPnlLedger={onOpenDailyPnlLedger}
+                chartsBundle={chartsBundle ?? null}
               />
             </ViewErrorBoundary>
           </div>
         )}
+
       </div>
     </section>
   );

@@ -13,16 +13,24 @@ import {
 } from "recharts";
 import {
   ADVICE_LEARNING_HISTORY_CHANGED_EVENT,
+  ADVICE_RECALCULATE_REQUEST_EVENT,
   clearAdviceLearningHistory,
   loadAdviceLearningHistory,
   type AdviceLearningSnapshot,
 } from "../sheet/adviceLearningHistory";
+import {
+  assessAdviceTimelineQuality,
+  ADVICE_TIMELINE_MIN_BUY_FOR_TREND,
+  ADVICE_TIMELINE_MIN_SELL_FOR_TREND,
+} from "../sheet/adviceLearningTimelineQuality";
 import { useT } from "../shared/i18n";
 import { DashboardPanelUpdatedLabel } from "./DashboardPanelUpdatedLabel";
 
 type ChartPoint = AdviceLearningSnapshot & {
   idx: number;
   label: string;
+  /** Diamond marker for manual checkpoints — null elsewhere (keeps Scatter on main series). */
+  manualMarker: number | null;
 };
 
 function fmtPct(v: number | null | undefined): string {
@@ -49,17 +57,61 @@ function trendDeltaPp(snaps: AdviceLearningSnapshot[], field: keyof AdviceLearni
   return Math.round((last - first) * 10) / 10;
 }
 
+function trendChipClass(positive: boolean): string {
+  return positive
+    ? "border-emerald-300/70 bg-emerald-50/70 text-emerald-800 dark:border-emerald-900/40 dark:bg-emerald-950/40 dark:text-emerald-300"
+    : "border-rose-300/70 bg-rose-50/70 text-rose-800 dark:border-rose-900/40 dark:bg-rose-950/40 dark:text-rose-300";
+}
+
+function TrendDeltaChip({
+  label,
+  delta,
+  show,
+  title,
+  className,
+}: {
+  label: string;
+  delta: number | null;
+  show: boolean;
+  title: string;
+  className?: string;
+}) {
+  if (delta == null || !show) return null;
+  return (
+    <span
+      className={`rounded-md border px-2 py-1 tabular-nums ${trendChipClass(delta >= 0)} ${className ?? ""}`}
+      title={title}
+    >
+      {label}{" "}
+      <span className="font-semibold">
+        {delta >= 0 ? "+" : ""}
+        {delta.toFixed(1)} pp
+      </span>
+    </span>
+  );
+}
+
+function resolveTooltipRow(payload?: { payload?: ChartPoint; dataKey?: string | number }[]): ChartPoint | null {
+  if (!payload?.length) return null;
+  const fromLine = payload.find(
+    (p) => p.dataKey === "buySuccessRatePct" && p.payload?.day,
+  )?.payload;
+  if (fromLine) return fromLine;
+  const any = payload.find((p) => p.payload?.day)?.payload;
+  return any ?? payload[0]?.payload ?? null;
+}
+
 function TooltipBox({
   active,
   payload,
   it,
 }: {
   active?: boolean;
-  payload?: { payload: ChartPoint }[];
+  payload?: { payload?: ChartPoint; dataKey?: string | number }[];
   it: boolean;
 }) {
   if (!active || !payload?.length) return null;
-  const row = payload[0]?.payload;
+  const row = resolveTooltipRow(payload);
   if (!row) return null;
   return (
     <div className="rounded-md border bg-white px-2.5 py-2 text-[10px] shadow-md space-y-0.5 dark:bg-slate-900 dark:border-slate-700">
@@ -72,26 +124,27 @@ function TooltipBox({
         ) : null}
       </p>
       <p>
-        <span className="text-ink-muted">{it ? "Successo complessivo:" : "Overall success:"}</span>{" "}
-        <span className="font-semibold">{fmtPct(row.overallSuccessRatePct)}</span>
-        <span className="text-ink-muted"> · n={row.scoredPoints}</span>
+        <span className="text-ink-muted">{it ? "BUY (24h):" : "BUY (24h):"}</span>{" "}
+        <span className="font-semibold text-teal-700 dark:text-teal-300">
+          {fmtPct(row.buySuccessRatePct)}
+        </span>
+        <span className="text-ink-muted"> · n={row.buyScored ?? 0}</span>
+        <span className="block text-[9px] text-ink-muted/90 mt-0.5">
+          {it ? "✓ se prezzo ≥ +0,5% entro 24h" : "✓ if price ≥ +0.5% within 24h"}
+        </span>
       </p>
       <p>
-        <span className="text-ink-muted">{it ? "Bucket bassi (<60%):" : "Low buckets (<60%):"}</span>{" "}
-        <span>{fmtPct(row.lowProbSuccessRatePct)}</span>
-        <span className="text-ink-muted"> · n={row.lowProbScored}</span>
+        <span className="text-ink-muted">{it ? "SELL (24h):" : "SELL (24h):"}</span>{" "}
+        <span className="font-semibold text-rose-700 dark:text-rose-300">
+          {fmtPct(row.sellSuccessRatePct ?? null)}
+        </span>
+        <span className="text-ink-muted"> · n={row.sellScored ?? 0}</span>
+        <span className="block text-[9px] text-ink-muted/90 mt-0.5">
+          {it
+            ? "✓ se prezzo ≤ −0,5% entro 24h (anticipo ribasso)"
+            : "✓ if price ≤ −0.5% within 24h (decline anticipated)"}
+        </span>
       </p>
-      <p>
-        <span className="text-ink-muted">{it ? "Bucket alti (≥70%):" : "High buckets (≥70%):"}</span>{" "}
-        <span>{fmtPct(row.highProbSuccessRatePct)}</span>
-        <span className="text-ink-muted"> · n={row.highProbScored}</span>
-      </p>
-      {row.unifiedAdviceSuccessPct != null ? (
-        <p>
-          <span className="text-ink-muted">{it ? "Direzione 24h:" : "24h direction:"}</span>{" "}
-          <span>{fmtPct(row.unifiedAdviceSuccessPct)}</span>
-        </p>
-      ) : null}
       {row.bucketCorrectionsActive > 0 || row.actionDemotionsActive > 0 ? (
         <p className="text-indigo-700 dark:text-indigo-300 pt-0.5 border-t border-slate-100/80">
           {it ? "Correzioni attive:" : "Active corrections:"}{" "}
@@ -130,25 +183,31 @@ export function AdviceLearningTimelinePanel({
         ...s,
         idx,
         label: dayLabel(s.day),
+        manualMarker:
+          s.manual && (s.buySuccessRatePct != null || s.sellSuccessRatePct != null)
+            ? (s.buySuccessRatePct ?? s.sellSuccessRatePct ?? null)
+            : null,
       })),
     [snaps],
   );
 
-  const overallTrend = useMemo(() => trendDeltaPp(snaps, "overallSuccessRatePct"), [snaps]);
-  const lowTrend = useMemo(() => trendDeltaPp(snaps, "lowProbSuccessRatePct"), [snaps]);
-  const highTrend = useMemo(() => trendDeltaPp(snaps, "highProbSuccessRatePct"), [snaps]);
+  const buyTrend = useMemo(() => trendDeltaPp(snaps, "buySuccessRatePct"), [snaps]);
+  const sellTrend = useMemo(() => trendDeltaPp(snaps, "sellSuccessRatePct"), [snaps]);
 
   const latest = snaps[snaps.length - 1] ?? null;
   const first = snaps[0] ?? null;
+  const quality = useMemo(() => assessAdviceTimelineQuality(snaps), [snaps]);
+
+  const anyTrendHidden =
+    (buyTrend != null && !quality.showBuyTrend) ||
+    (sellTrend != null && !quality.showSellTrend);
 
   const yDomain = useMemo<[number, number]>(() => {
     if (chartData.length === 0) return [0, 100];
     const values: number[] = [];
     for (const p of chartData) {
-      if (p.overallSuccessRatePct != null) values.push(p.overallSuccessRatePct);
-      if (p.lowProbSuccessRatePct != null) values.push(p.lowProbSuccessRatePct);
-      if (p.highProbSuccessRatePct != null) values.push(p.highProbSuccessRatePct);
-      if (p.unifiedAdviceSuccessPct != null) values.push(p.unifiedAdviceSuccessPct);
+      if (p.buySuccessRatePct != null) values.push(p.buySuccessRatePct);
+      if (p.sellSuccessRatePct != null) values.push(p.sellSuccessRatePct);
     }
     if (values.length === 0) return [0, 100];
     const minV = Math.max(0, Math.floor(Math.min(...values) - 5));
@@ -156,11 +215,6 @@ export function AdviceLearningTimelinePanel({
     if (maxV - minV < 30) return [Math.max(0, minV - 10), Math.min(100, maxV + 10)];
     return [minV, maxV];
   }, [chartData]);
-
-  const manualCheckpoints = useMemo(
-    () => chartData.filter((p) => p.manual && p.overallSuccessRatePct != null),
-    [chartData],
-  );
 
   const onResetClick = () => {
     if (typeof window === "undefined") return;
@@ -174,7 +228,16 @@ export function AdviceLearningTimelinePanel({
     setHistory(loadAdviceLearningHistory());
   };
 
-  const hasEnoughData = chartData.length >= 2;
+  const onRecalculateClick = () => {
+    if (typeof window === "undefined") return;
+    window.dispatchEvent(new CustomEvent(ADVICE_RECALCULATE_REQUEST_EVENT));
+  };
+
+  const showChart = chartData.length >= 1;
+  const singleCheckpoint = chartData.length === 1;
+  const xDomain: [number, number] | ["dataMin", "dataMax"] = singleCheckpoint
+    ? [-0.5, 0.5]
+    : ["dataMin", "dataMax"];
 
   return (
     <div
@@ -196,16 +259,74 @@ export function AdviceLearningTimelinePanel({
           ) : null}
         </div>
         {snaps.length > 0 ? (
+          <div className="flex flex-wrap gap-2 shrink-0">
+            <button
+              type="button"
+              onClick={onRecalculateClick}
+              className="rounded-md border border-indigo-200/70 bg-indigo-50/70 px-2.5 py-1 text-[10px] font-medium text-indigo-800 hover:bg-indigo-100/70 dark:border-indigo-900/40 dark:bg-indigo-950/40 dark:text-indigo-200 transition"
+              title={
+                it
+                  ? "Ricalcola correzioni bucket e aggiorna il checkpoint di oggi (lo storico resta)"
+                  : "Recalculate bucket corrections and update today's checkpoint (history kept)"
+              }
+            >
+              {t("adviceLearning.timeline.recalculate")}
+            </button>
+            <button
+              type="button"
+              onClick={onResetClick}
+              className="rounded-md border border-rose-200/70 bg-rose-50/70 px-2.5 py-1 text-[10px] font-medium text-rose-700 hover:bg-rose-100/70 dark:border-rose-900/40 dark:bg-rose-950/40 dark:text-rose-300 transition"
+              title={it ? "Cancella lo storico (irreversibile)" : "Clear history (irreversible)"}
+            >
+              {t("adviceLearning.timeline.reset")}
+            </button>
+          </div>
+        ) : (
           <button
             type="button"
-            onClick={onResetClick}
-            className="rounded-md border border-rose-200/70 bg-rose-50/70 px-2.5 py-1 text-[10px] font-medium text-rose-700 hover:bg-rose-100/70 dark:border-rose-900/40 dark:bg-rose-950/40 dark:text-rose-300 transition"
-            title={it ? "Cancella lo storico (irreversibile)" : "Clear history (irreversible)"}
+            onClick={onRecalculateClick}
+            className="rounded-md border border-indigo-200/70 bg-indigo-50/70 px-2.5 py-1 text-[10px] font-medium text-indigo-800 hover:bg-indigo-100/70 dark:border-indigo-900/40 dark:bg-indigo-950/40 dark:text-indigo-200 transition shrink-0"
           >
-            {t("adviceLearning.timeline.reset")}
+            {t("adviceLearning.timeline.recalculate")}
           </button>
-        ) : null}
+        )}
       </div>
+
+      {quality.showLowSampleBanner && latest ? (
+        <div className="rounded-md border border-amber-300/55 bg-amber-50/65 dark:bg-amber-950/25 dark:border-amber-800/45 px-3 py-2 space-y-1">
+          <p className="text-[11px] font-semibold text-amber-950 dark:text-amber-100">
+            {t("adviceLearning.timeline.lowSampleBannerTitle")}
+          </p>
+          <p className="text-[10px] text-amber-900/90 dark:text-amber-200/90 leading-snug">
+            {t("adviceLearning.timeline.cumulativeNote")}
+          </p>
+          <ul className="text-[10px] text-amber-900/90 dark:text-amber-200/90 leading-snug list-disc pl-4 space-y-0.5">
+            {quality.staleCheckpoint && quality.daysSinceLatest != null ? (
+              <li>
+                {t("adviceLearning.timeline.staleLine", {
+                  days: String(quality.daysSinceLatest),
+                })}
+              </li>
+            ) : null}
+            {quality.buyLowSample ? (
+              <li>
+                {t("adviceLearning.timeline.buyLowLine", {
+                  n: String(latest.buyScored ?? 0),
+                  min: String(ADVICE_TIMELINE_MIN_BUY_FOR_TREND),
+                })}
+              </li>
+            ) : null}
+            {quality.sellLowSample ? (
+              <li>
+                {t("adviceLearning.timeline.sellLowLine", {
+                  n: String(latest.sellScored ?? 0),
+                  min: String(ADVICE_TIMELINE_MIN_SELL_FOR_TREND),
+                })}
+              </li>
+            ) : null}
+          </ul>
+        </div>
+      ) : null}
 
       {snaps.length > 0 ? (
         <div className="flex flex-wrap gap-2 text-[10px]">
@@ -221,64 +342,52 @@ export function AdviceLearningTimelinePanel({
               </span>
             </span>
           ) : null}
-          {overallTrend != null ? (
-            <span
-              className={`rounded-md border px-2 py-1 tabular-nums ${
-                overallTrend >= 0
-                  ? "border-emerald-300/70 bg-emerald-50/70 text-emerald-800 dark:border-emerald-900/40 dark:bg-emerald-950/40 dark:text-emerald-300"
-                  : "border-rose-300/70 bg-rose-50/70 text-rose-800 dark:border-rose-900/40 dark:bg-rose-950/40 dark:text-rose-300"
-              }`}
+          {buyTrend != null ? (
+            <TrendDeltaChip
+              label="Δ BUY"
+              delta={buyTrend}
+              show={quality.showBuyTrend}
+              className={
+                buyTrend >= 0
+                  ? "!border-teal-300/70 !bg-teal-50/70 !text-teal-800 dark:!border-teal-900/40 dark:!bg-teal-950/40 dark:!text-teal-300"
+                  : undefined
+              }
               title={
                 it
-                  ? "Variazione del success rate complessivo tra primo e ultimo checkpoint"
-                  : "Change in overall success rate between first and last checkpoint"
+                  ? `Δ successo BUY (n≥${ADVICE_TIMELINE_MIN_BUY_FOR_TREND} all'ultimo checkpoint)`
+                  : `BUY success Δ (n≥${ADVICE_TIMELINE_MIN_BUY_FOR_TREND} at latest checkpoint)`
               }
-            >
-              {it ? "Δ complessivo:" : "Δ overall:"}{" "}
-              <span className="font-semibold">
-                {overallTrend >= 0 ? "+" : ""}
-                {overallTrend.toFixed(1)} pp
-              </span>
+            />
+          ) : null}
+          {sellTrend != null ? (
+            <TrendDeltaChip
+              label="Δ SELL"
+              delta={sellTrend}
+              show={quality.showSellTrend}
+              className={
+                sellTrend >= 0
+                  ? "!border-rose-300/70 !bg-rose-50/70 !text-rose-800 dark:!border-rose-900/40 dark:!bg-rose-950/40 dark:!text-rose-300"
+                  : undefined
+              }
+              title={
+                it
+                  ? `Δ successo SELL (n≥${ADVICE_TIMELINE_MIN_SELL_FOR_TREND} all'ultimo checkpoint)`
+                  : `SELL success Δ (n≥${ADVICE_TIMELINE_MIN_SELL_FOR_TREND} at latest checkpoint)`
+              }
+            />
+          ) : null}
+          {latest?.buySuccessRatePct != null ? (
+            <span className="rounded-md border border-teal-300/70 bg-teal-50/70 px-2 py-1 tabular-nums text-teal-900 dark:border-teal-900/40 dark:bg-teal-950/40 dark:text-teal-200">
+              {it ? "BUY attuale:" : "Latest BUY:"}{" "}
+              <span className="font-semibold">{latest.buySuccessRatePct.toFixed(1)}%</span>
+              <span className="text-ink-muted"> · n={latest.buyScored}</span>
             </span>
           ) : null}
-          {lowTrend != null ? (
-            <span
-              className={`rounded-md border px-2 py-1 tabular-nums ${
-                lowTrend >= 0
-                  ? "border-emerald-300/70 bg-emerald-50/70 text-emerald-800 dark:border-emerald-900/40 dark:bg-emerald-950/40 dark:text-emerald-300"
-                  : "border-rose-300/70 bg-rose-50/70 text-rose-800 dark:border-rose-900/40 dark:bg-rose-950/40 dark:text-rose-300"
-              }`}
-              title={
-                it
-                  ? "Variazione del success rate sui consigli a bassa P(plan) (<60%)"
-                  : "Change in success rate for low-P(plan) advice (<60%)"
-              }
-            >
-              {it ? "Δ bucket bassi:" : "Δ low buckets:"}{" "}
-              <span className="font-semibold">
-                {lowTrend >= 0 ? "+" : ""}
-                {lowTrend.toFixed(1)} pp
-              </span>
-            </span>
-          ) : null}
-          {highTrend != null ? (
-            <span
-              className={`rounded-md border px-2 py-1 tabular-nums ${
-                highTrend >= 0
-                  ? "border-emerald-300/70 bg-emerald-50/70 text-emerald-800 dark:border-emerald-900/40 dark:bg-emerald-950/40 dark:text-emerald-300"
-                  : "border-rose-300/70 bg-rose-50/70 text-rose-800 dark:border-rose-900/40 dark:bg-rose-950/40 dark:text-rose-300"
-              }`}
-              title={
-                it
-                  ? "Variazione del success rate sui consigli ad alta P(plan) (≥70%)"
-                  : "Change in success rate for high-P(plan) advice (≥70%)"
-              }
-            >
-              {it ? "Δ bucket alti:" : "Δ high buckets:"}{" "}
-              <span className="font-semibold">
-                {highTrend >= 0 ? "+" : ""}
-                {highTrend.toFixed(1)} pp
-              </span>
+          {latest?.sellSuccessRatePct != null ? (
+            <span className="rounded-md border border-rose-300/70 bg-rose-50/70 px-2 py-1 tabular-nums text-rose-900 dark:border-rose-900/40 dark:bg-rose-950/40 dark:text-rose-200">
+              {it ? "SELL attuale:" : "Latest SELL:"}{" "}
+              <span className="font-semibold">{latest.sellSuccessRatePct.toFixed(1)}%</span>
+              <span className="text-ink-muted"> · n={latest.sellScored ?? 0}</span>
             </span>
           ) : null}
           {latest && (latest.bucketCorrectionsActive > 0 || latest.actionDemotionsActive > 0) ? (
@@ -299,17 +408,26 @@ export function AdviceLearningTimelinePanel({
           ) : null}
         </div>
       ) : null}
+      {anyTrendHidden ? (
+        <p className="text-[9px] text-ink-muted leading-snug -mt-1">
+          {t("adviceLearning.timeline.hiddenDeltasHint")}
+        </p>
+      ) : null}
 
-      {hasEnoughData ? (
+      {showChart ? (
         <div className="space-y-1">
           <ResponsiveContainer width="100%" height={240}>
             <ComposedChart data={chartData} margin={{ top: 10, right: 16, left: 0, bottom: 8 }}>
               <CartesianGrid strokeDasharray="3 3" stroke="rgba(148, 163, 184, 0.25)" />
               <XAxis
-                dataKey="label"
+                dataKey="idx"
+                type="number"
+                domain={xDomain}
                 tick={{ fontSize: 10 }}
+                tickFormatter={(idx) => chartData[Number(idx)]?.label ?? ""}
                 interval="preserveStartEnd"
                 minTickGap={24}
+                allowDecimals={false}
               />
               <YAxis
                 tick={{ fontSize: 10 }}
@@ -317,7 +435,11 @@ export function AdviceLearningTimelinePanel({
                 tickFormatter={(v) => `${Math.round(Number(v))}%`}
                 width={42}
               />
-              <Tooltip content={<TooltipBox it={it} />} />
+              <Tooltip
+                content={<TooltipBox it={it} />}
+                shared
+                isAnimationActive={false}
+              />
               <ReferenceLine y={50} stroke="rgba(148, 163, 184, 0.5)" strokeDasharray="4 4" />
               <Legend
                 wrapperStyle={{ fontSize: 10 }}
@@ -325,67 +447,48 @@ export function AdviceLearningTimelinePanel({
               />
               <Line
                 type="monotone"
-                dataKey="overallSuccessRatePct"
-                name={it ? "Successo complessivo" : "Overall success"}
-                stroke="#4f46e5"
-                strokeWidth={2.4}
-                dot={{ r: 2.5, stroke: "#4f46e5", fill: "#4f46e5" }}
+                dataKey="buySuccessRatePct"
+                name={it ? "BUY (24h)" : "BUY (24h)"}
+                stroke="#0d9488"
+                strokeWidth={2.2}
+                dot={{ r: 2.5, stroke: "#0d9488", fill: "#0d9488" }}
                 activeDot={{ r: 4 }}
                 connectNulls
                 isAnimationActive={false}
               />
               <Line
                 type="monotone"
-                dataKey="lowProbSuccessRatePct"
-                name={it ? "Bucket bassi (<60%)" : "Low buckets (<60%)"}
-                stroke="#f59e0b"
-                strokeWidth={1.6}
-                strokeDasharray="5 4"
-                dot={false}
+                dataKey="sellSuccessRatePct"
+                name={it ? "SELL (24h)" : "SELL (24h)"}
+                stroke="#be123c"
+                strokeWidth={2.2}
+                dot={{ r: 2.5, stroke: "#be123c", fill: "#be123c" }}
+                activeDot={{ r: 4 }}
                 connectNulls
                 isAnimationActive={false}
               />
-              <Line
-                type="monotone"
-                dataKey="highProbSuccessRatePct"
-                name={it ? "Bucket alti (≥70%)" : "High buckets (≥70%)"}
-                stroke="#10b981"
-                strokeWidth={1.6}
-                strokeDasharray="5 4"
-                dot={false}
-                connectNulls
+              <Scatter
+                name={it ? "Apply learnings" : "Apply learnings"}
+                dataKey="manualMarker"
+                fill="#a855f7"
+                shape="diamond"
+                legendType="diamond"
                 isAnimationActive={false}
               />
-              <Line
-                type="monotone"
-                dataKey="unifiedAdviceSuccessPct"
-                name={it ? "Direzione 24h (KPI)" : "24h direction (KPI)"}
-                stroke="#0ea5e9"
-                strokeWidth={1.2}
-                dot={false}
-                connectNulls
-                isAnimationActive={false}
-              />
-              {manualCheckpoints.length > 0 ? (
-                <Scatter
-                  name={it ? "Apply learnings" : "Apply learnings"}
-                  data={manualCheckpoints}
-                  dataKey="overallSuccessRatePct"
-                  fill="#a855f7"
-                  shape="diamond"
-                />
-              ) : null}
             </ComposedChart>
           </ResponsiveContainer>
           <p className="text-[9px] text-ink-muted leading-snug">
             {t("adviceLearning.timeline.legendHint")}
           </p>
+          {singleCheckpoint ? (
+            <p className="text-[10px] text-ink-muted/90 text-center leading-snug">
+              {t("adviceLearning.timeline.notEnough")}
+            </p>
+          ) : null}
         </div>
       ) : (
         <div className="rounded-lg border border-dashed border-slate-300/60 bg-slate-50/60 dark:border-slate-700/60 dark:bg-slate-800/40 p-4 text-[11px] text-ink-muted text-center">
-          {snaps.length === 0
-            ? t("adviceLearning.timeline.empty")
-            : t("adviceLearning.timeline.notEnough")}
+          {t("adviceLearning.timeline.empty")}
         </div>
       )}
     </div>

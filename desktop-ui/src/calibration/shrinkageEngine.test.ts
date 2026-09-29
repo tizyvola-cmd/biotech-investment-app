@@ -170,4 +170,29 @@ describe("shrinkageEngine — real-data cases from the brief", () => {
     expect(confidenceFromN(15)).toBe("high");
     expect(confidenceFromN(50)).toBe("high");
   });
+
+  it("enforces monotonic P(plan) shrinkageApplied across buckets", () => {
+    const outcomes: SimOutcomeRow[] = [];
+    // Low P(plan): mostly wins
+    for (let i = 0; i < 8; i++) {
+      outcomes.push(row({ ticker: `LO${i}`, pnlPct: 5, pplanPct: 20 }));
+    }
+    // Mid P(plan): mostly flat wins under engine but fewer big wins
+    for (let i = 0; i < 20; i++) {
+      outcomes.push(row({ ticker: `MID${i}`, pnlPct: i % 5 === 0 ? -3 : 0.5, pplanPct: 60 }));
+    }
+    // High P(plan): all wins
+    for (let i = 0; i < 10; i++) {
+      outcomes.push(row({ ticker: `HI${i}`, pnlPct: 8, pplanPct: 75 }));
+    }
+    const snap = computeCalibrationSnapshot(outcomes);
+    const cells = snap.dimensions.pplanBucket.cells.filter((c) => c.n > 0);
+    const order = ["P(plan) <30%", "P(plan) 30-50%", "P(plan) 50-70%", "P(plan) ≥70%"];
+    const weights = order
+      .map((label) => cells.find((c) => c.cell === label)?.shrinkageApplied)
+      .filter((w): w is number => w != null);
+    for (let i = 1; i < weights.length; i++) {
+      expect(weights[i]).toBeGreaterThanOrEqual(weights[i - 1]!);
+    }
+  });
 });

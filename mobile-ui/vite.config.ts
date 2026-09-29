@@ -4,6 +4,10 @@ import react from "@vitejs/plugin-react";
 export default defineConfig(({ mode }) => {
   const env = loadEnv(mode, process.cwd(), "");
   const base = env.VITE_MOBILE_BASE?.trim() || "/";
+  const proxyTarget =
+    env.VITE_PROXY_TARGET?.trim() ||
+    env.VITE_DEFAULT_REMOTE_HOST?.trim() ||
+    "http://91.99.15.48:8765";
   return {
     base: base.endsWith("/") ? base : `${base}/`,
     plugins: [react()],
@@ -13,7 +17,7 @@ export default defineConfig(({ mode }) => {
       strictPort: true,
       proxy: {
         "/api": {
-          target: "http://127.0.0.1:8765",
+          target: proxyTarget.replace(/\/$/, ""),
           changeOrigin: true,
           timeout: 120_000,
           proxyTimeout: 120_000,

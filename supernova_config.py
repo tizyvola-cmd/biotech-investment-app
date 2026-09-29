@@ -6,6 +6,7 @@ Load via ``get_supernova_config()`` or ``SupernovaConfig.from_env()``.
 from __future__ import annotations
 
 import os
+import re
 from dataclasses import dataclass
 
 _TRUTHY_ON = frozenset({"1", "true", "yes", "on"})
@@ -21,11 +22,55 @@ def _env_explicit_on(name: str) -> bool:
     return os.environ.get(name, "").strip().lower() in _TRUTHY_ON
 
 
+_FALSY_OFF = frozenset({"0", "false", "no", "off"})
+
+
+def _env_default_on(name: str) -> bool:
+    raw = os.environ.get(name, "").strip().lower()
+    if not raw:
+        return True
+    return raw not in _FALSY_OFF
+
+
 def _parse_cors_origins() -> tuple[str, ...]:
     raw = os.environ.get("SUPERNOVA_CORS_ORIGINS", "").strip()
     if not raw:
         return ()
     return tuple(o.strip() for o in raw.split(",") if o.strip())
+
+
+def _public_cors_hosts() -> tuple[str, ...]:
+    """Hostnames that should be allowed as browser Origin (VPS web + localhost)."""
+    hosts = ["127.0.0.1", "localhost"]
+    public = os.environ.get("SUPERNOVA_PUBLIC_HOST", "").strip()
+    if public:
+        hosts.append(public.split("/")[0].split(":")[0])
+    base = os.environ.get("SUPERNOVA_PUBLIC_BASE_URL", "").strip()
+    if base:
+        try:
+            from urllib.parse import urlparse
+
+            parsed = urlparse(base if "://" in base else f"http://{base}")
+            if parsed.hostname:
+                hosts.append(parsed.hostname)
+        except Exception:
+            pass
+    # Dedupe, keep order
+    seen: set[str] = set()
+    out: list[str] = []
+    for h in hosts:
+        key = h.strip().lower()
+        if not key or key in seen:
+            continue
+        seen.add(key)
+        out.append(key)
+    return tuple(out)
+
+
+def cors_allow_origin_regex() -> str:
+    """CORS Origin regex: localhost + SUPERNOVA_PUBLIC_HOST (VPS IP/domain)."""
+    parts = [re.escape(h) for h in _public_cors_hosts()]
+    return rf"^https?://({'|'.join(parts)})(:\d+)?$"
 
 
 @dataclass(frozen=True)
@@ -58,6 +103,10 @@ class SupernovaConfig:
     saturday_weekly_full_time: str  # SUPERNOVA_SATURDAY_WEEKLY_FULL_TIME — HH:MM (WeeklyFull sabato)
     saturday_weekly_full_window_end: str  # SUPERNOVA_SATURDAY_WEEKLY_FULL_END — HH:MM (fine finestra)
     scheduler_poll_seconds: int  # SUPERNOVA_SCHEDULER_POLL_SECONDS
+    precat_calendar_enabled: bool  # SUPERNOVA_PRECAT_CALENDAR (default on)
+    volume_delta_enabled: bool  # SUPERNOVA_VOLUME_DELTA (default on)
+    trends_enabled: bool  # SUPERNOVA_TRENDS (default on; 0 to disable)
+    trends_pilot_tickers: str  # SUPERNOVA_TRENDS_TICKERS — empty = all requested
     uvicorn_host: str
     uvicorn_port: int
 
@@ -127,6 +176,10 @@ class SupernovaConfig:
         except ValueError:
             scheduler_poll_seconds = 60
         scheduler_poll_seconds = max(30, min(300, scheduler_poll_seconds))
+        precat_calendar_enabled = _env_default_on("SUPERNOVA_PRECAT_CALENDAR")
+        volume_delta_enabled = _env_default_on("SUPERNOVA_VOLUME_DELTA")
+        trends_enabled = _env_default_on("SUPERNOVA_TRENDS")
+        trends_pilot_tickers = os.environ.get("SUPERNOVA_TRENDS_TICKERS", "").strip()
         try:
             port = int(os.environ.get("SUPERNOVA_PORT", str(DEFAULT_PORT)).strip() or str(DEFAULT_PORT))
         except ValueError:
@@ -160,6 +213,10 @@ class SupernovaConfig:
             saturday_weekly_full_time=saturday_weekly_full_time,
             saturday_weekly_full_window_end=saturday_weekly_full_window_end,
             scheduler_poll_seconds=scheduler_poll_seconds,
+            precat_calendar_enabled=precat_calendar_enabled,
+            volume_delta_enabled=volume_delta_enabled,
+            trends_enabled=trends_enabled,
+            trends_pilot_tickers=trends_pilot_tickers,
             uvicorn_host=host,
             uvicorn_port=port,
         )
@@ -186,6 +243,7 @@ __all__ = [
     "LOCALHOST_ORIGIN_REGEX",
     "TOKEN_HEADER",
     "SupernovaConfig",
+    "cors_allow_origin_regex",
     "get_supernova_config",
     "reset_supernova_config",
 ]

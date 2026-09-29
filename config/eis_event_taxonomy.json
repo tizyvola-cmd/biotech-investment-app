@@ -1,0 +1,1064 @@
+{
+  "version": 9,
+  "source": "tassonomia_EIS_eventi_2.xlsx + study completion ladder v6 + earnings-reported v7 + litigation-filed v8 + scientific publication + company affiliation v9",
+  "score_scale": {
+    "min": -3.0,
+    "max": 3.0
+  },
+  "dimensions": [
+    {
+      "key": "clinical",
+      "label": "Clinica"
+    },
+    {
+      "key": "financial",
+      "label": "Finanziaria"
+    },
+    {
+      "key": "corporate",
+      "label": "Societaria"
+    },
+    {
+      "key": "market_access",
+      "label": "Market Access"
+    }
+  ],
+  "events": [
+    {
+      "id": "CLIN_PRIMARY_MET",
+      "dimension": "clinical",
+      "dimension_label": "Clinica",
+      "event_type": "Endpoint primario centrato (significativo)",
+      "polarity": "+",
+      "base_weight": 2.5,
+      "applicable_modifiers": [
+        "Fase trial",
+        "forza p-value",
+        "superiority vs non-inferiority"
+      ],
+      "typical_example": "met the primary endpoint with statistical significance (p<0.001)",
+      "notes": "Successo statistico esplicito — sopra CLIN_STUDY_SUCCESS; sotto solo approvazione (+3)"
+    },
+    {
+      "id": "CLIN_PRIMARY_MISSED",
+      "dimension": "clinical",
+      "dimension_label": "Clinica",
+      "event_type": "Endpoint primario mancato",
+      "polarity": "-",
+      "base_weight": -2.5,
+      "applicable_modifiers": [
+        "Fase trial",
+        "quanto vicino alla significativita'"
+      ],
+      "typical_example": "failed to meet the primary endpoint",
+      "notes": null
+    },
+    {
+      "id": "CLIN_SECONDARY_MET",
+      "dimension": "clinical",
+      "dimension_label": "Clinica",
+      "event_type": "Endpoint secondario centrato",
+      "polarity": "+",
+      "base_weight": 1.0,
+      "applicable_modifiers": [
+        "Solo se endpoint primario gia' noto/separato"
+      ],
+      "typical_example": "secondary endpoint also achieved statistical significance",
+      "notes": null
+    },
+    {
+      "id": "CLIN_SECONDARY_MISSED",
+      "dimension": "clinical",
+      "dimension_label": "Clinica",
+      "event_type": "Endpoint secondario mancato",
+      "polarity": "-",
+      "base_weight": -0.75,
+      "applicable_modifiers": [],
+      "typical_example": "did not achieve statistical significance on the secondary endpoint",
+      "notes": null
+    },
+    {
+      "id": "CLIN_TOPLINE_POSITIVE",
+      "dimension": "clinical",
+      "dimension_label": "Clinica",
+      "event_type": "Risultati topline/interim positivi",
+      "polarity": "+",
+      "base_weight": 1.5,
+      "applicable_modifiers": [
+        "Confidenza minore rispetto a un readout finale"
+      ],
+      "typical_example": "topline results showed a clinically meaningful reduction",
+      "notes": "Peso minore del finale per incertezza residua"
+    },
+    {
+      "id": "CLIN_TRIAL_HALTED_SAFETY",
+      "dimension": "clinical",
+      "dimension_label": "Clinica",
+      "event_type": "Trial fermato/sospeso per sicurezza",
+      "polarity": "-",
+      "base_weight": -2.5,
+      "applicable_modifiers": [],
+      "typical_example": "trial was paused following a safety signal",
+      "notes": null
+    },
+    {
+      "id": "CLIN_TRIAL_DISCONTINUED_FUTILITY",
+      "dimension": "clinical",
+      "dimension_label": "Clinica",
+      "event_type": "Trial interrotto per futilita'",
+      "polarity": "-",
+      "base_weight": -2.0,
+      "applicable_modifiers": [],
+      "typical_example": "discontinued due to futility",
+      "notes": null
+    },
+    {
+      "id": "CLIN_SERIOUS_AE",
+      "dimension": "clinical",
+      "dimension_label": "Clinica",
+      "event_type": "Evento avverso serio / black box warning",
+      "polarity": "-",
+      "base_weight": -2.0,
+      "applicable_modifiers": [
+        "Numero pazienti coinvolti",
+        "reversibilita'"
+      ],
+      "typical_example": "serious adverse event led to discontinuation",
+      "notes": null
+    },
+    {
+      "id": "CLIN_SAFETY_CONFIRMED",
+      "dimension": "clinical",
+      "dimension_label": "Clinica",
+      "event_type": "Profilo di sicurezza favorevole confermato",
+      "polarity": "+",
+      "base_weight": 0.5,
+      "applicable_modifiers": [],
+      "typical_example": "no new safety signals were observed",
+      "notes": "Peso basso: conferma, non nuova informazione forte"
+    },
+    {
+      "id": "CLIN_BTD_GRANTED",
+      "dimension": "clinical",
+      "dimension_label": "Clinica",
+      "event_type": "Breakthrough Therapy Designation concessa",
+      "polarity": "+",
+      "base_weight": 1.5,
+      "applicable_modifiers": [],
+      "typical_example": "granted Breakthrough Therapy Designation",
+      "notes": null
+    },
+    {
+      "id": "CLIN_FASTTRACK_PRIORITY",
+      "dimension": "clinical",
+      "dimension_label": "Clinica",
+      "event_type": "Fast Track / Priority Review concessa",
+      "polarity": "+",
+      "base_weight": 1.0,
+      "applicable_modifiers": [],
+      "typical_example": "granted Fast Track designation",
+      "notes": null
+    },
+    {
+      "id": "CLIN_ORPHAN_GRANTED",
+      "dimension": "clinical",
+      "dimension_label": "Clinica",
+      "event_type": "Orphan Drug Designation concessa",
+      "polarity": "+",
+      "base_weight": 0.75,
+      "applicable_modifiers": [],
+      "typical_example": "granted Orphan Drug Designation",
+      "notes": null
+    },
+    {
+      "id": "CLIN_CRL_RECEIVED",
+      "dimension": "clinical",
+      "dimension_label": "Clinica",
+      "event_type": "Complete Response Letter (CRL) ricevuta",
+      "polarity": "-",
+      "base_weight": -3.0,
+      "applicable_modifiers": [],
+      "typical_example": "received a Complete Response Letter from the FDA",
+      "notes": "Il negativo piu' forte della dimensione clinica"
+    },
+    {
+      "id": "CLIN_APPROVAL_GRANTED",
+      "dimension": "clinical",
+      "dimension_label": "Clinica",
+      "event_type": "Approvazione FDA/EMA",
+      "polarity": "+",
+      "base_weight": 3.0,
+      "applicable_modifiers": [
+        "Prima approvazione vs label expansion"
+      ],
+      "typical_example": "received FDA approval for",
+      "notes": "Il positivo piu' forte della dimensione clinica"
+    },
+    {
+      "id": "CLIN_LABEL_EXPANSION",
+      "dimension": "clinical",
+      "dimension_label": "Clinica",
+      "event_type": "Label expansion approvata",
+      "polarity": "+",
+      "base_weight": 1.5,
+      "applicable_modifiers": [],
+      "typical_example": "approved for an expanded indication",
+      "notes": null
+    },
+    {
+      "id": "CLIN_ENROLLMENT_COMPLETED",
+      "dimension": "clinical",
+      "dimension_label": "Clinica",
+      "event_type": "Arruolamento completato (in linea coi tempi)",
+      "polarity": "0",
+      "base_weight": 0.25,
+      "applicable_modifiers": [],
+      "typical_example": "completed enrollment ahead of schedule",
+      "notes": "Procedurale, non un risultato"
+    },
+    {
+      "id": "CLIN_STUDY_COMPLETED",
+      "dimension": "clinical",
+      "dimension_label": "Clinica",
+      "event_type": "Fine / completamento studio clinico (senza esito dichiarato)",
+      "polarity": "+",
+      "base_weight": 2.0,
+      "applicable_modifiers": [
+        "Fase trial"
+      ],
+      "typical_example": "completed the Phase 2 study; last patient last visit; database lock",
+      "notes": "Evento positivo importante. Scala per fase (Ph1→Ph4→post-mkt). Anchor dosing = 10%."
+    },
+    {
+      "id": "CLIN_STUDY_SUCCESS",
+      "dimension": "clinical",
+      "dimension_label": "Clinica",
+      "event_type": "Successo a fine studio (esito positivo)",
+      "polarity": "+",
+      "base_weight": 2.4,
+      "applicable_modifiers": [
+        "Fase trial"
+      ],
+      "typical_example": "successfully completed the Phase 3 study with positive results",
+      "notes": "Sopra completamento operativo; sotto primary met (+2.5) e approvazione (+3). Scala per fase."
+    },
+    {
+      "id": "CLIN_STUDY_FAILED",
+      "dimension": "clinical",
+      "dimension_label": "Clinica",
+      "event_type": "Insuccesso a fine studio",
+      "polarity": "-",
+      "base_weight": -2.0,
+      "applicable_modifiers": [
+        "Fase trial"
+      ],
+      "typical_example": "the Phase 2 study failed to achieve its objectives",
+      "notes": "Penalita' scalata per fase. Primary missed resta per linguaggio endpoint esplicito."
+    },
+    {
+      "id": "CLIN_DOSING_MILESTONE",
+      "dimension": "clinical",
+      "dimension_label": "Clinica",
+      "event_type": "Milestone dosing (first/last patient or subject dosed)",
+      "polarity": "+",
+      "base_weight": 0.2,
+      "applicable_modifiers": [
+        "Fase trial"
+      ],
+      "typical_example": "first patient dosed in the Phase 1 study; last subject has been dosed",
+      "notes": "10% di CLIN_STUDY_COMPLETED (2.0 → 0.2). Stessa scala per fase."
+    },
+    {
+      "id": "FIN_EARNINGS_BEAT",
+      "dimension": "financial",
+      "dimension_label": "Finanziaria",
+      "event_type": "Earnings sopra consenso",
+      "polarity": "+",
+      "base_weight": 1.0,
+      "applicable_modifiers": [
+        "Entita' dello scostamento"
+      ],
+      "typical_example": "reported revenue above consensus estimates",
+      "notes": null
+    },
+    {
+      "id": "FIN_EARNINGS_MISS",
+      "dimension": "financial",
+      "dimension_label": "Finanziaria",
+      "event_type": "Earnings sotto consenso",
+      "polarity": "-",
+      "base_weight": -1.0,
+      "applicable_modifiers": [],
+      "typical_example": "missed consensus revenue estimates",
+      "notes": null
+    },
+    {
+      "id": "FIN_EARNINGS_REPORTED",
+      "dimension": "financial",
+      "dimension_label": "Finanziaria",
+      "event_type": "Risultati finanziari / earnings report",
+      "polarity": "0",
+      "base_weight": 0.35,
+      "applicable_modifiers": [],
+      "typical_example": "reported Q2 net revenue, gross margin and cash position",
+      "notes": "Key financial facts without explicit beat/miss vs consensus — still a financial thermometer hit"
+    },
+    {
+      "id": "FIN_GUIDANCE_RAISED",
+      "dimension": "financial",
+      "dimension_label": "Finanziaria",
+      "event_type": "Guidance alzata",
+      "polarity": "+",
+      "base_weight": 1.5,
+      "applicable_modifiers": [],
+      "typical_example": "raised full-year guidance",
+      "notes": null
+    },
+    {
+      "id": "FIN_GUIDANCE_CUT",
+      "dimension": "financial",
+      "dimension_label": "Finanziaria",
+      "event_type": "Guidance tagliata/ritirata",
+      "polarity": "-",
+      "base_weight": -2.0,
+      "applicable_modifiers": [],
+      "typical_example": "withdrew previously issued guidance",
+      "notes": null
+    },
+    {
+      "id": "FIN_NONDILUTIVE_FUNDING",
+      "dimension": "financial",
+      "dimension_label": "Finanziaria",
+      "event_type": "Finanziamento non dilutivo (grant/milestone/royalty)",
+      "polarity": "+",
+      "base_weight": 1.5,
+      "applicable_modifiers": [
+        "Importo relativo alla capitalizzazione di mercato"
+      ],
+      "typical_example": "received a $50M milestone payment",
+      "notes": null
+    },
+    {
+      "id": "FIN_DILUTIVE_OFFERING",
+      "dimension": "financial",
+      "dimension_label": "Finanziaria",
+      "event_type": "Offerta azionaria dilutiva / utilizzo shelf",
+      "polarity": "-",
+      "base_weight": -1.5,
+      "applicable_modifiers": [
+        "% di diluizione",
+        "sconto rispetto al prezzo di mercato"
+      ],
+      "typical_example": "priced a dilutive public offering at a discount",
+      "notes": null
+    },
+    {
+      "id": "FIN_SHELF_FILED",
+      "dimension": "financial",
+      "dimension_label": "Finanziaria",
+      "event_type": "Shelf registration depositato (nessun utilizzo)",
+      "polarity": "0",
+      "base_weight": 0.0,
+      "applicable_modifiers": [],
+      "typical_example": "filed a shelf registration statement",
+      "notes": "Capacita' futura, non un evento di raccolta capitale effettivo"
+    },
+    {
+      "id": "FIN_DEBT_REFINANCED",
+      "dimension": "financial",
+      "dimension_label": "Finanziaria",
+      "event_type": "Debito rifinanziato favorevolmente",
+      "polarity": "+",
+      "base_weight": 1.0,
+      "applicable_modifiers": [],
+      "typical_example": "extended debt maturity on favorable terms",
+      "notes": null
+    },
+    {
+      "id": "FIN_COVENANT_BREACH",
+      "dimension": "financial",
+      "dimension_label": "Finanziaria",
+      "event_type": "Violazione di covenant / rischio default",
+      "polarity": "-",
+      "base_weight": -2.5,
+      "applicable_modifiers": [],
+      "typical_example": "at risk of breaching debt covenants",
+      "notes": null
+    },
+    {
+      "id": "FIN_RATING_UPGRADE",
+      "dimension": "financial",
+      "dimension_label": "Finanziaria",
+      "event_type": "Upgrade rating creditizio",
+      "polarity": "+",
+      "base_weight": 1.0,
+      "applicable_modifiers": [],
+      "typical_example": "credit rating upgraded by S&P",
+      "notes": null
+    },
+    {
+      "id": "FIN_RATING_DOWNGRADE",
+      "dimension": "financial",
+      "dimension_label": "Finanziaria",
+      "event_type": "Downgrade rating creditizio",
+      "polarity": "-",
+      "base_weight": -1.5,
+      "applicable_modifiers": [],
+      "typical_example": "credit rating downgraded",
+      "notes": null
+    },
+    {
+      "id": "FIN_GOING_CONCERN",
+      "dimension": "financial",
+      "dimension_label": "Finanziaria",
+      "event_type": "Going-concern doubt dichiarato",
+      "polarity": "-",
+      "base_weight": -3.0,
+      "applicable_modifiers": [],
+      "typical_example": "substantial doubt about its ability to continue as a going concern",
+      "notes": "Il negativo piu' forte della dimensione finanziaria"
+    },
+    {
+      "id": "FIN_RUNWAY_EXTENDED",
+      "dimension": "financial",
+      "dimension_label": "Finanziaria",
+      "event_type": "Runway di cassa esteso (dichiarazione esplicita)",
+      "polarity": "+",
+      "base_weight": 1.0,
+      "applicable_modifiers": [],
+      "typical_example": "extends cash runway into 2028",
+      "notes": null
+    },
+    {
+      "id": "FIN_RUNWAY_SHORT",
+      "dimension": "financial",
+      "dimension_label": "Finanziaria",
+      "event_type": "Runway di cassa <12 mesi segnalato",
+      "polarity": "-",
+      "base_weight": -2.0,
+      "applicable_modifiers": [],
+      "typical_example": "cash resources sufficient only into Q2 2027",
+      "notes": null
+    },
+    {
+      "id": "CORP_MNA_TARGET_PREMIUM",
+      "dimension": "corporate",
+      "dimension_label": "Societaria",
+      "event_type": "M&A annunciata come target (con premio)",
+      "polarity": "+",
+      "base_weight": 2.5,
+      "applicable_modifiers": [
+        "Entita' del premio sul prezzo"
+      ],
+      "typical_example": "to be acquired at a 45% premium",
+      "notes": null
+    },
+    {
+      "id": "CORP_MNA_TARGET_DISTRESSED",
+      "dimension": "corporate",
+      "dimension_label": "Societaria",
+      "event_type": "M&A annunciata come target (valutazione distressed)",
+      "polarity": "-",
+      "base_weight": -1.0,
+      "applicable_modifiers": [],
+      "typical_example": "agreed to a distressed sale",
+      "notes": null
+    },
+    {
+      "id": "CORP_MNA_COMPLETED",
+      "dimension": "corporate",
+      "dimension_label": "Societaria",
+      "event_type": "M&A completata",
+      "polarity": "+",
+      "base_weight": 1.5,
+      "applicable_modifiers": [
+        "Conferma il valore del deal"
+      ],
+      "typical_example": "completed the previously announced acquisition",
+      "notes": null
+    },
+    {
+      "id": "CORP_MNA_TERMINATED",
+      "dimension": "corporate",
+      "dimension_label": "Societaria",
+      "event_type": "M&A terminata/fallita",
+      "polarity": "-",
+      "base_weight": -2.0,
+      "applicable_modifiers": [],
+      "typical_example": "terminated the proposed merger agreement",
+      "notes": null
+    },
+    {
+      "id": "CORP_EXEC_HIRE",
+      "dimension": "corporate",
+      "dimension_label": "Societaria",
+      "event_type": "Assunzione dirigente chiave (track record forte)",
+      "polarity": "+",
+      "base_weight": 1.0,
+      "applicable_modifiers": [
+        "Ruolo: CEO/CMO/CFO pesano di piu'"
+      ],
+      "typical_example": "appointed as new Chief Medical Officer",
+      "notes": null
+    },
+    {
+      "id": "CORP_EXEC_DEPARTURE",
+      "dimension": "corporate",
+      "dimension_label": "Societaria",
+      "event_type": "Uscita dirigente chiave non pianificata",
+      "polarity": "-",
+      "base_weight": -1.5,
+      "applicable_modifiers": [
+        "Ruolo",
+        "se con effetto immediato"
+      ],
+      "typical_example": "CFO to step down effective immediately",
+      "notes": null
+    },
+    {
+      "id": "CORP_PARTNERSHIP_SIGNED",
+      "dimension": "corporate",
+      "dimension_label": "Societaria",
+      "event_type": "Partnership/licensing firmata (con upfront payment)",
+      "polarity": "+",
+      "base_weight": 2.0,
+      "applicable_modifiers": [
+        "Importo upfront + milestone totali"
+      ],
+      "typical_example": "entered into a licensing agreement with $80M upfront",
+      "notes": null
+    },
+    {
+      "id": "CORP_PARTNERSHIP_TERMINATED",
+      "dimension": "corporate",
+      "dimension_label": "Societaria",
+      "event_type": "Partnership/licensing terminata",
+      "polarity": "-",
+      "base_weight": -2.0,
+      "applicable_modifiers": [],
+      "typical_example": "partner terminated the collaboration agreement",
+      "notes": null
+    },
+    {
+      "id": "CORP_PATENT_GRANTED",
+      "dimension": "corporate",
+      "dimension_label": "Societaria",
+      "event_type": "Brevetto concesso",
+      "polarity": "+",
+      "base_weight": 0.75,
+      "applicable_modifiers": [],
+      "typical_example": "granted a new patent covering",
+      "notes": null
+    },
+    {
+      "id": "CORP_LITIGATION_WON",
+      "dimension": "corporate",
+      "dimension_label": "Societaria",
+      "event_type": "Causa/IP vinta",
+      "polarity": "+",
+      "base_weight": 1.5,
+      "applicable_modifiers": [],
+      "typical_example": "prevailed in patent litigation",
+      "notes": null
+    },
+    {
+      "id": "CORP_LITIGATION_LOST",
+      "dimension": "corporate",
+      "dimension_label": "Societaria",
+      "event_type": "Causa/IP persa",
+      "polarity": "-",
+      "base_weight": -2.0,
+      "applicable_modifiers": [],
+      "typical_example": "court ruled against the company in patent litigation",
+      "notes": null
+    },
+    {
+      "id": "CORP_LITIGATION_FILED",
+      "dimension": "corporate",
+      "dimension_label": "Societaria",
+      "event_type": "Causa/IP aperta o legal overhang",
+      "polarity": "-",
+      "base_weight": -1.0,
+      "applicable_modifiers": [],
+      "typical_example": "lawsuits add legal overhang; patent infringement suit filed",
+      "notes": "Filed / pending litigation or legal overhang — not a final win/loss"
+    },
+    {
+      "id": "CORP_INSIDER_BUYING",
+      "dimension": "corporate",
+      "dimension_label": "Societaria",
+      "event_type": "Insider buying rilevante",
+      "polarity": "+",
+      "base_weight": 0.5,
+      "applicable_modifiers": [
+        "% rispetto al possesso esistente"
+      ],
+      "typical_example": "director purchased shares on the open market",
+      "notes": null
+    },
+    {
+      "id": "CORP_INSIDER_SELLING",
+      "dimension": "corporate",
+      "dimension_label": "Societaria",
+      "event_type": "Insider selling rilevante (non pianificato)",
+      "polarity": "-",
+      "base_weight": -0.5,
+      "applicable_modifiers": [
+        "Escludere vendite 10b5-1 pianificate"
+      ],
+      "typical_example": "executive sold a significant stake",
+      "notes": null
+    },
+    {
+      "id": "CORP_DELISTING_NOTICE",
+      "dimension": "corporate",
+      "dimension_label": "Societaria",
+      "event_type": "Notice di delisting/non-compliance",
+      "polarity": "-",
+      "base_weight": -2.5,
+      "applicable_modifiers": [],
+      "typical_example": "received a delisting notice from Nasdaq",
+      "notes": null
+    },
+    {
+      "id": "ACCESS_PAYER_FAVORABLE",
+      "dimension": "market_access",
+      "dimension_label": "Market Access",
+      "event_type": "Decisione di copertura payer favorevole",
+      "polarity": "+",
+      "base_weight": 1.5,
+      "applicable_modifiers": [
+        "Dimensione della popolazione coperta"
+      ],
+      "typical_example": "received favorable coverage determination from",
+      "notes": null
+    },
+    {
+      "id": "ACCESS_PAYER_RESTRICTIVE",
+      "dimension": "market_access",
+      "dimension_label": "Market Access",
+      "event_type": "Decisione di copertura restrittiva",
+      "polarity": "-",
+      "base_weight": -1.5,
+      "applicable_modifiers": [],
+      "typical_example": "coverage subject to strict prior authorization",
+      "notes": null
+    },
+    {
+      "id": "ACCESS_HTA_FAVORABLE",
+      "dimension": "market_access",
+      "dimension_label": "Market Access",
+      "event_type": "Valutazione HTA favorevole (NICE/ICER)",
+      "polarity": "+",
+      "base_weight": 1.5,
+      "applicable_modifiers": [],
+      "typical_example": "received a positive recommendation from NICE",
+      "notes": null
+    },
+    {
+      "id": "ACCESS_HTA_UNFAVORABLE",
+      "dimension": "market_access",
+      "dimension_label": "Market Access",
+      "event_type": "Valutazione HTA sfavorevole",
+      "polarity": "-",
+      "base_weight": -2.0,
+      "applicable_modifiers": [],
+      "typical_example": "ICER review found insufficient evidence of value",
+      "notes": null
+    },
+    {
+      "id": "ACCESS_FORMULARY_INCLUSION",
+      "dimension": "market_access",
+      "dimension_label": "Market Access",
+      "event_type": "Inclusione in formulario",
+      "polarity": "+",
+      "base_weight": 1.0,
+      "applicable_modifiers": [],
+      "typical_example": "added to formulary by",
+      "notes": null
+    },
+    {
+      "id": "ACCESS_FORMULARY_EXCLUSION",
+      "dimension": "market_access",
+      "dimension_label": "Market Access",
+      "event_type": "Esclusione/downgrade di tier da formulario",
+      "polarity": "-",
+      "base_weight": -1.5,
+      "applicable_modifiers": [],
+      "typical_example": "removed from preferred formulary tier",
+      "notes": null
+    },
+    {
+      "id": "ACCESS_REIMBURSEMENT_CODE",
+      "dimension": "market_access",
+      "dimension_label": "Market Access",
+      "event_type": "Nuovo codice di rimborso assegnato",
+      "polarity": "+",
+      "base_weight": 0.75,
+      "applicable_modifiers": [],
+      "typical_example": "received a dedicated reimbursement code",
+      "notes": null
+    },
+    {
+      "id": "ACCESS_PATIENT_PROGRAM",
+      "dimension": "market_access",
+      "dimension_label": "Market Access",
+      "event_type": "Programma di accesso paziente lanciato",
+      "polarity": "+",
+      "base_weight": 0.5,
+      "applicable_modifiers": [],
+      "typical_example": "launched a patient assistance program",
+      "notes": null
+    },
+    {
+      "id": "ACCESS_COMPETITOR_APPROVED",
+      "dimension": "market_access",
+      "dimension_label": "Market Access",
+      "event_type": "Approvazione di un competitor (aumenta concorrenza)",
+      "polarity": "-",
+      "base_weight": -1.0,
+      "applicable_modifiers": [
+        "Stesso meccanismo d'azione o indicazione"
+      ],
+      "typical_example": "competitor received approval for a similar indication",
+      "notes": null
+    },
+    {
+      "id": "ACCESS_COMPETITOR_WITHDRAWN",
+      "dimension": "market_access",
+      "dimension_label": "Market Access",
+      "event_type": "Competitor ritirato dal mercato",
+      "polarity": "+",
+      "base_weight": 1.0,
+      "applicable_modifiers": [],
+      "typical_example": "competitor product was withdrawn from the market",
+      "notes": null
+    },
+    {
+      "id": "ACCESS_PRICING_PRESSURE",
+      "dimension": "market_access",
+      "dimension_label": "Market Access",
+      "event_type": "Pressione sui prezzi / richieste di rebate da PBM",
+      "polarity": "-",
+      "base_weight": -0.75,
+      "applicable_modifiers": [],
+      "typical_example": "facing pricing pressure from pharmacy benefit managers",
+      "notes": null
+    },
+    {
+      "id": "ACCESS_PRICE_FAVORABLE",
+      "dimension": "market_access",
+      "dimension_label": "Market Access",
+      "event_type": "Prezzo di listino favorevole raggiunto",
+      "polarity": "+",
+      "base_weight": 0.75,
+      "applicable_modifiers": [],
+      "typical_example": "set list price above analyst expectations",
+      "notes": null
+    },
+    {
+      "id": "CLIN_READOUT_GUIDED",
+      "dimension": "clinical",
+      "dimension_label": "Clinica",
+      "event_type": "Readout atteso con finestra dichiarata",
+      "polarity": "0",
+      "base_weight": 0.6,
+      "applicable_modifiers": [
+        "Fase trial"
+      ],
+      "typical_example": "expects to report Phase 3 topline results in 2H 2026",
+      "notes": "Catalyst scheduled, not yet occurred — low weight"
+    },
+    {
+      "id": "CLIN_SCIENTIFIC_PUBLICATION",
+      "dimension": "clinical",
+      "dimension_label": "Clinica",
+      "event_type": "Pubblicazione scientifica sul prodotto",
+      "polarity": "+",
+      "base_weight": 0.5,
+      "applicable_modifiers": [
+        "Fase trial",
+        "Affiliazione aziendale"
+      ],
+      "typical_example": "peer-reviewed paper on drug X in Journal of … (PMID …)",
+      "notes": "Product-relevant scientific article — baseline clinical weight; × company affiliation when authors match the company"
+    }
+  ],
+  "modifiers": [
+    {
+      "id": "trial_phase_phase1",
+      "category": "Fase trial",
+      "modifier": "Fase 1",
+      "multiplier": 0.5,
+      "applies_to": [
+        "clinical"
+      ]
+    },
+    {
+      "id": "company_affiliation_match",
+      "category": "Affiliazione aziendale",
+      "modifier": "Autori affiliati alla società",
+      "multiplier": 1.5,
+      "applies_to": [
+        "clinical"
+      ]
+    },
+    {
+      "id": "trial_phase_phase2",
+      "category": "Fase trial",
+      "modifier": "Fase 2",
+      "multiplier": 0.75,
+      "applies_to": [
+        "clinical"
+      ]
+    },
+    {
+      "id": "trial_phase_phase3",
+      "category": "Fase trial",
+      "modifier": "Fase 3 / pivotal",
+      "multiplier": 1.0,
+      "applies_to": [
+        "clinical"
+      ]
+    },
+    {
+      "id": "trial_phase_phase4",
+      "category": "Fase trial",
+      "modifier": "Fase 4",
+      "multiplier": 1.2,
+      "applies_to": [
+        "clinical"
+      ]
+    },
+    {
+      "id": "trial_phase_registrational",
+      "category": "Fase trial",
+      "modifier": "Registrational / confirmatory",
+      "multiplier": 1.1,
+      "applies_to": [
+        "clinical"
+      ]
+    },
+    {
+      "id": "trial_phase_post_market",
+      "category": "Fase trial",
+      "modifier": "Post-marketing / real-world study",
+      "multiplier": 1.35,
+      "applies_to": [
+        "clinical"
+      ]
+    },
+    {
+      "id": "statistical_significance_p_lt_0_05",
+      "category": "Significativita' statistica",
+      "modifier": "p<0.05 (soglia standard)",
+      "multiplier": 1.0,
+      "applies_to": [
+        "clinical"
+      ]
+    },
+    {
+      "id": "statistical_significance_p_lt_0_01",
+      "category": "Significativita' statistica",
+      "modifier": "p<0.01",
+      "multiplier": 1.15,
+      "applies_to": [
+        "clinical"
+      ]
+    },
+    {
+      "id": "statistical_significance_trend_only",
+      "category": "Significativita' statistica",
+      "modifier": "Trend / non significativo",
+      "multiplier": 0.5,
+      "applies_to": [
+        "clinical"
+      ]
+    },
+    {
+      "id": "endpoint_type_primary",
+      "category": "Gerarchia endpoint",
+      "modifier": "Primario",
+      "multiplier": 1.0,
+      "applies_to": [
+        "clinical"
+      ]
+    },
+    {
+      "id": "endpoint_type_secondary",
+      "category": "Gerarchia endpoint",
+      "modifier": "Secondario",
+      "multiplier": 0.5,
+      "applies_to": [
+        "clinical"
+      ]
+    },
+    {
+      "id": "endpoint_type_exploratory",
+      "category": "Gerarchia endpoint",
+      "modifier": "Esplorativo / post-hoc",
+      "multiplier": 0.25,
+      "applies_to": [
+        "clinical"
+      ]
+    },
+    {
+      "id": "surprise_vs_expected_expected",
+      "category": "Aspettativa di mercato",
+      "modifier": "Atteso / gia' prezzato",
+      "multiplier": 0.75,
+      "applies_to": [
+        "clinical",
+        "financial",
+        "corporate",
+        "market_access"
+      ]
+    },
+    {
+      "id": "surprise_vs_expected_surprise",
+      "category": "Aspettativa di mercato",
+      "modifier": "Sorpresa",
+      "multiplier": 1.25,
+      "applies_to": [
+        "clinical",
+        "financial",
+        "corporate",
+        "market_access"
+      ]
+    },
+    {
+      "id": "amount_pct_market_cap_under_5",
+      "category": "Importo finanziario (% market cap)",
+      "modifier": "< 5% market cap",
+      "multiplier": 0.5,
+      "applies_to": [
+        "financial",
+        "corporate"
+      ]
+    },
+    {
+      "id": "amount_pct_market_cap_5_to_20",
+      "category": "Importo finanziario (% market cap)",
+      "modifier": "5-20% market cap",
+      "multiplier": 1.0,
+      "applies_to": [
+        "financial",
+        "corporate"
+      ]
+    },
+    {
+      "id": "amount_pct_market_cap_over_20",
+      "category": "Importo finanziario (% market cap)",
+      "modifier": "> 20% market cap",
+      "multiplier": 1.5,
+      "applies_to": [
+        "financial",
+        "corporate"
+      ]
+    },
+    {
+      "id": "patient_population_narrow",
+      "category": "Popolazione paziente coperta",
+      "modifier": "Ristretta / nicchia",
+      "multiplier": 0.5,
+      "applies_to": [
+        "market_access"
+      ]
+    },
+    {
+      "id": "patient_population_broad",
+      "category": "Popolazione paziente coperta",
+      "modifier": "Ampia / mercato primario",
+      "multiplier": 1.25,
+      "applies_to": [
+        "market_access"
+      ]
+    }
+  ],
+  "id_aliases": {
+    "clinical_endpoint_primario_centrato_significativo": "CLIN_PRIMARY_MET",
+    "clinical_endpoint_primario_mancato": "CLIN_PRIMARY_MISSED",
+    "clinical_endpoint_secondario_centrato": "CLIN_SECONDARY_MET",
+    "clinical_endpoint_secondario_mancato": "CLIN_SECONDARY_MISSED",
+    "clinical_risultati_topline_interim_positivi": "CLIN_TOPLINE_POSITIVE",
+    "clinical_trial_fermato_sospeso_per_sicurezza": "CLIN_TRIAL_HALTED_SAFETY",
+    "clinical_trial_interrotto_per_futilita": "CLIN_TRIAL_DISCONTINUED_FUTILITY",
+    "clinical_evento_avverso_serio_black_box_warning": "CLIN_SERIOUS_AE",
+    "clinical_profilo_di_sicurezza_favorevole_confermato": "CLIN_SAFETY_CONFIRMED",
+    "clinical_breakthrough_therapy_designation_concessa": "CLIN_BTD_GRANTED",
+    "clinical_fast_track_priority_review_concessa": "CLIN_FASTTRACK_PRIORITY",
+    "clinical_orphan_drug_designation_concessa": "CLIN_ORPHAN_GRANTED",
+    "clinical_complete_response_letter_crl_ricevuta": "CLIN_CRL_RECEIVED",
+    "clinical_approvazione_fda_ema": "CLIN_APPROVAL_GRANTED",
+    "clinical_label_expansion_approvata": "CLIN_LABEL_EXPANSION",
+    "clinical_arruolamento_completato_in_linea_coi_tempi": "CLIN_ENROLLMENT_COMPLETED",
+    "clinical_fine_completamento_studio_clinico_senza_risultati": "CLIN_STUDY_COMPLETED",
+    "clinical_successo_a_fine_studio_esito_positivo": "CLIN_STUDY_SUCCESS",
+    "clinical_insuccesso_a_fine_studio": "CLIN_STUDY_FAILED",
+    "clinical_milestone_dosing_first_last_patient_subject_dosed": "CLIN_DOSING_MILESTONE",
+    "clinical_readout_attesa_con_finestra_dichiarata": "CLIN_READOUT_GUIDED",
+    "financial_earnings_sopra_consenso": "FIN_EARNINGS_BEAT",
+    "financial_earnings_sotto_consenso": "FIN_EARNINGS_MISS",
+    "financial_earnings_risultati_trimestrali": "FIN_EARNINGS_REPORTED",
+    "financial_guidance_alzata": "FIN_GUIDANCE_RAISED",
+    "financial_guidance_tagliata_ritirata": "FIN_GUIDANCE_CUT",
+    "financial_finanziamento_non_dilutivo_grant_milestone_royalty": "FIN_NONDILUTIVE_FUNDING",
+    "financial_offerta_azionaria_dilutiva_utilizzo_shelf": "FIN_DILUTIVE_OFFERING",
+    "financial_shelf_registration_depositato_nessun_utilizzo": "FIN_SHELF_FILED",
+    "financial_debito_rifinanziato_favorevolmente": "FIN_DEBT_REFINANCED",
+    "financial_violazione_di_covenant_rischio_default": "FIN_COVENANT_BREACH",
+    "financial_upgrade_rating_creditizio": "FIN_RATING_UPGRADE",
+    "financial_downgrade_rating_creditizio": "FIN_RATING_DOWNGRADE",
+    "financial_going_concern_doubt_dichiarato": "FIN_GOING_CONCERN",
+    "financial_runway_di_cassa_esteso_dichiarazione_esplicita": "FIN_RUNWAY_EXTENDED",
+    "financial_runway_di_cassa_12_mesi_segnalato": "FIN_RUNWAY_SHORT",
+    "corporate_m_a_annunciata_come_target_con_premio": "CORP_MNA_TARGET_PREMIUM",
+    "corporate_m_a_annunciata_come_target_valutazione_distressed": "CORP_MNA_TARGET_DISTRESSED",
+    "corporate_m_a_completata": "CORP_MNA_COMPLETED",
+    "corporate_m_a_terminata_fallita": "CORP_MNA_TERMINATED",
+    "corporate_assunzione_dirigente_chiave_track_record_forte": "CORP_EXEC_HIRE",
+    "corporate_uscita_dirigente_chiave_non_pianificata": "CORP_EXEC_DEPARTURE",
+    "corporate_partnership_licensing_firmata_con_upfront_payment": "CORP_PARTNERSHIP_SIGNED",
+    "corporate_partnership_licensing_terminata": "CORP_PARTNERSHIP_TERMINATED",
+    "corporate_brevetto_concesso": "CORP_PATENT_GRANTED",
+    "corporate_causa_ip_vinta": "CORP_LITIGATION_WON",
+    "corporate_causa_ip_persa": "CORP_LITIGATION_LOST",
+    "corporate_causa_ip_aperta_o_legal_overhang": "CORP_LITIGATION_FILED",
+    "corporate_contenzioso_in_corso": "CORP_LITIGATION_FILED",
+    "corporate_insider_buying_rilevante": "CORP_INSIDER_BUYING",
+    "corporate_insider_selling_rilevante_non_pianificato": "CORP_INSIDER_SELLING",
+    "corporate_notice_di_delisting_non_compliance": "CORP_DELISTING_NOTICE",
+    "market_access_decisione_di_copertura_payer_favorevole": "ACCESS_PAYER_FAVORABLE",
+    "market_access_decisione_di_copertura_restrittiva": "ACCESS_PAYER_RESTRICTIVE",
+    "market_access_valutazione_hta_favorevole_nice_icer": "ACCESS_HTA_FAVORABLE",
+    "market_access_valutazione_hta_sfavorevole": "ACCESS_HTA_UNFAVORABLE",
+    "market_access_inclusione_in_formulario": "ACCESS_FORMULARY_INCLUSION",
+    "market_access_esclusione_downgrade_di_tier_da_formulario": "ACCESS_FORMULARY_EXCLUSION",
+    "market_access_nuovo_codice_di_rimborso_assegnato": "ACCESS_REIMBURSEMENT_CODE",
+    "market_access_programma_di_accesso_paziente_lanciato": "ACCESS_PATIENT_PROGRAM",
+    "market_access_approvazione_di_un_competitor_aumenta_concorrenza": "ACCESS_COMPETITOR_APPROVED",
+    "market_access_competitor_ritirato_dal_mercato": "ACCESS_COMPETITOR_WITHDRAWN",
+    "market_access_pressione_sui_prezzi_richieste_di_rebate_da_pbm": "ACCESS_PRICING_PRESSURE",
+    "market_access_prezzo_di_listino_favorevole_raggiunto": "ACCESS_PRICE_FAVORABLE",
+    "fase_trial_fase_1": "trial_phase_phase1",
+    "fase_trial_fase_2": "trial_phase_phase2",
+    "fase_trial_fase_3_pivotal": "trial_phase_phase3",
+    "fase_trial_fase_4": "trial_phase_phase4",
+    "fase_trial_registrational_confirmatory": "trial_phase_registrational",
+    "fase_trial_post_marketing_real_world_study": "trial_phase_post_market",
+    "significativita_statistica_p_0_05": "statistical_significance_p_lt_0_05",
+    "significativita_statistica_p_0_01": "statistical_significance_p_lt_0_01",
+    "significativita_statistica_trend_non_significativo": "statistical_significance_trend_only",
+    "gerarchia_endpoint_primario": "endpoint_type_primary",
+    "gerarchia_endpoint_secondario": "endpoint_type_secondary",
+    "gerarchia_endpoint_esplorativo_post_hoc": "endpoint_type_exploratory",
+    "aspettativa_di_mercato_atteso_gia_prezzato": "surprise_vs_expected_expected",
+    "aspettativa_di_mercato_sorpresa": "surprise_vs_expected_surprise",
+    "importo_finanziario_pct_market_cap_under_5": "amount_pct_market_cap_under_5",
+    "importo_finanziario_pct_market_cap_5_20": "amount_pct_market_cap_5_to_20",
+    "importo_finanziario_pct_market_cap_over_20": "amount_pct_market_cap_over_20",
+    "popolazione_paziente_coperta_ristretta_nicchia": "patient_population_narrow",
+    "popolazione_paziente_coperta_ampia_mercato_primario": "patient_population_broad",
+    "significativita_statistica_p_0_05_soglia_standard": "statistical_significance_p_lt_0_05"
+  }
+}

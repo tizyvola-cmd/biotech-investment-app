@@ -1,0 +1,1711 @@
+{
+  "version": 2,
+  "source": "biotech_catalyst_benchmark_1.xlsx",
+  "scale": {
+    "min": -1,
+    "max": 1
+  },
+  "notes": "Signed importance (-1…+1). Sign=typical direction; magnitude=relative weight. Outcome-specific rows already encode event type + outcome (e.g. Ph3 MET vs MISSED). Scheduled=Y rows are calendar-eligible when a future date is found.",
+  "conference_calendar": {
+    "enabled": true,
+    "event_types": [
+      "conference",
+      "congress",
+      "investor_day",
+      "fireside"
+    ],
+    "keywords": [
+      "conference",
+      "congress",
+      "fireside",
+      "investor day",
+      "ASCO",
+      "ASH",
+      "ESMO",
+      "AACR",
+      "EULAR",
+      "AAN",
+      "ADA",
+      "wainwright",
+      "jefferies",
+      "jpmorgan",
+      "JP Morgan",
+      "Cowen",
+      "Leerink"
+    ],
+    "clinical_importance": 0.15,
+    "business_importance": 0.05
+  },
+  "events": [
+    {
+      "id": "bm.clin.ind-filing-clearance",
+      "axis": "clinical",
+      "subtype": "trial_readout",
+      "label": "IND filing / clearance",
+      "scheduled": true,
+      "company_stage": "Preclinical->Ph1",
+      "importance_score": 0.05,
+      "notes": "Routine unless clinical hold follows",
+      "taxonomy_event_id": "CLIN_DOSING_MILESTONE",
+      "search_terms": [
+        "filing",
+        "clearance"
+      ],
+      "calendar_eligible": true
+    },
+    {
+      "id": "bm.clin.ind-clinical-hold-imposed",
+      "axis": "clinical",
+      "subtype": "trial_readout",
+      "label": "IND clinical hold imposed",
+      "scheduled": false,
+      "company_stage": "Preclinical->Ph1",
+      "importance_score": -0.4,
+      "notes": "Halts development timeline",
+      "taxonomy_event_id": "CLIN_TRIAL_HALTED_SAFETY",
+      "search_terms": [
+        "clinical",
+        "hold",
+        "imposed"
+      ],
+      "calendar_eligible": false
+    },
+    {
+      "id": "bm.clin.phase-1-initiation-first-patient-dosed",
+      "axis": "clinical",
+      "subtype": "trial_readout",
+      "label": "Phase 1 initiation (first patient dosed)",
+      "scheduled": true,
+      "company_stage": "Phase 1",
+      "importance_score": 0.08,
+      "notes": "Confirms program is live",
+      "taxonomy_event_id": "CLIN_DOSING_MILESTONE",
+      "search_terms": [
+        "Phase 1",
+        "first patient"
+      ],
+      "calendar_eligible": true
+    },
+    {
+      "id": "bm.clin.phase-1-safety-pk-data-clean",
+      "axis": "clinical",
+      "subtype": "trial_readout",
+      "label": "Phase 1 safety/PK data, clean",
+      "scheduled": true,
+      "company_stage": "Phase 1",
+      "importance_score": 0.12,
+      "notes": "De-risks mechanism, low standalone impact",
+      "taxonomy_event_id": "CLIN_SAFETY_CONFIRMED",
+      "search_terms": [
+        "Phase 1",
+        "first patient"
+      ],
+      "calendar_eligible": true
+    },
+    {
+      "id": "bm.clin.phase-1-early-efficacy-signal-positive",
+      "axis": "clinical",
+      "subtype": "trial_readout",
+      "label": "Phase 1 early efficacy signal, positive",
+      "scheduled": false,
+      "company_stage": "Phase 1",
+      "importance_score": 0.25,
+      "notes": "Small-cap moving event if unexpected",
+      "taxonomy_event_id": "CLIN_TOPLINE_POSITIVE",
+      "search_terms": [
+        "Phase 1",
+        "first patient"
+      ],
+      "calendar_eligible": false
+    },
+    {
+      "id": "bm.clin.phase-2-initiation",
+      "axis": "clinical",
+      "subtype": "trial_readout",
+      "label": "Phase 2 initiation",
+      "scheduled": true,
+      "company_stage": "Phase 2",
+      "importance_score": 0.1,
+      "notes": null,
+      "taxonomy_event_id": "CLIN_DOSING_MILESTONE",
+      "search_terms": [
+        "Phase 2",
+        "topline",
+        "proof of concept"
+      ],
+      "calendar_eligible": true
+    },
+    {
+      "id": "bm.clin.phase-2-topline-positive-proof-of-concept",
+      "axis": "clinical",
+      "subtype": "trial_readout",
+      "label": "Phase 2 topline positive (proof of concept)",
+      "scheduled": true,
+      "company_stage": "Phase 2",
+      "importance_score": 0.55,
+      "notes": "Often the first major re-rating catalyst",
+      "taxonomy_event_id": "CLIN_TOPLINE_POSITIVE",
+      "search_terms": [
+        "Phase 2",
+        "topline",
+        "proof of concept"
+      ],
+      "calendar_eligible": true
+    },
+    {
+      "id": "bm.clin.phase-2-topline-negative-missed-endpoint",
+      "axis": "clinical",
+      "subtype": "trial_readout",
+      "label": "Phase 2 topline negative / missed endpoint",
+      "scheduled": true,
+      "company_stage": "Phase 2",
+      "importance_score": -0.5,
+      "notes": null,
+      "taxonomy_event_id": "CLIN_PRIMARY_MISSED",
+      "search_terms": [
+        "Phase 2",
+        "topline",
+        "proof of concept"
+      ],
+      "calendar_eligible": true
+    },
+    {
+      "id": "bm.clin.phase-2-topline-mixed-inconclusive",
+      "axis": "clinical",
+      "subtype": "trial_readout",
+      "label": "Phase 2 topline mixed / inconclusive",
+      "scheduled": true,
+      "company_stage": "Phase 2",
+      "importance_score": -0.1,
+      "notes": "Ambiguity itself is a mild negative",
+      "taxonomy_event_id": "CLIN_PRIMARY_MISSED",
+      "search_terms": [
+        "Phase 2",
+        "topline",
+        "proof of concept"
+      ],
+      "calendar_eligible": true
+    },
+    {
+      "id": "bm.clin.end-of-phase-2-fda-meeting-alignment-reached",
+      "axis": "clinical",
+      "subtype": "trial_readout",
+      "label": "End-of-Phase 2 FDA meeting, alignment reached",
+      "scheduled": false,
+      "company_stage": "Phase 2->3",
+      "importance_score": 0.2,
+      "notes": "De-risks pivotal design",
+      "taxonomy_event_id": "CLIN_READOUT_GUIDED",
+      "search_terms": [
+        "Phase 2",
+        "topline",
+        "proof of concept"
+      ],
+      "calendar_eligible": false
+    },
+    {
+      "id": "bm.clin.end-of-phase-2-fda-meeting-additional-studies-required",
+      "axis": "clinical",
+      "subtype": "trial_readout",
+      "label": "End-of-Phase 2 FDA meeting, additional studies required",
+      "scheduled": false,
+      "company_stage": "Phase 2->3",
+      "importance_score": -0.3,
+      "notes": "Timeline and cost overhang",
+      "taxonomy_event_id": "CLIN_READOUT_GUIDED",
+      "search_terms": [
+        "Phase 2",
+        "topline",
+        "proof of concept"
+      ],
+      "calendar_eligible": false
+    },
+    {
+      "id": "bm.clin.phase-3-pivotal-initiation",
+      "axis": "clinical",
+      "subtype": "trial_readout",
+      "label": "Phase 3 / pivotal initiation",
+      "scheduled": true,
+      "company_stage": "Phase 3",
+      "importance_score": 0.15,
+      "notes": null,
+      "taxonomy_event_id": "CLIN_DOSING_MILESTONE",
+      "search_terms": [
+        "Phase 3",
+        "pivotal",
+        "topline"
+      ],
+      "calendar_eligible": true
+    },
+    {
+      "id": "bm.clin.phase-3-enrollment-completion",
+      "axis": "clinical",
+      "subtype": "trial_readout",
+      "label": "Phase 3 enrollment completion",
+      "scheduled": true,
+      "company_stage": "Phase 3",
+      "importance_score": 0.08,
+      "notes": "Signals proximity of readout",
+      "taxonomy_event_id": "CLIN_ENROLLMENT_COMPLETED",
+      "search_terms": [
+        "Phase 3",
+        "pivotal",
+        "topline",
+        "enrollment complete",
+        "enrollment completion"
+      ],
+      "calendar_eligible": true
+    },
+    {
+      "id": "bm.clin.dsmb-interim-analysis-continue-as-planned",
+      "axis": "clinical",
+      "subtype": "trial_readout",
+      "label": "DSMB interim analysis, continue as planned",
+      "scheduled": false,
+      "company_stage": "Phase 3",
+      "importance_score": 0.1,
+      "notes": "Mild de-risking, rarely pre-announced",
+      "taxonomy_event_id": "CLIN_SAFETY_CONFIRMED",
+      "search_terms": [
+        "DSMB",
+        "interim",
+        "analysis",
+        "continue"
+      ],
+      "calendar_eligible": false
+    },
+    {
+      "id": "bm.clin.dsmb-interim-analysis-halted-for-futility-safety",
+      "axis": "clinical",
+      "subtype": "trial_readout",
+      "label": "DSMB interim analysis, halted for futility/safety",
+      "scheduled": false,
+      "company_stage": "Phase 3",
+      "importance_score": -0.7,
+      "notes": "Program-ending in most cases",
+      "taxonomy_event_id": "CLIN_TRIAL_DISCONTINUED_FUTILITY",
+      "search_terms": [
+        "DSMB",
+        "interim",
+        "analysis",
+        "halted"
+      ],
+      "calendar_eligible": false
+    },
+    {
+      "id": "bm.clin.phase-3-topline-primary-endpoint-met-registrational",
+      "axis": "clinical",
+      "subtype": "trial_readout",
+      "label": "Phase 3 topline primary endpoint MET (registrational)",
+      "scheduled": true,
+      "company_stage": "Phase 3",
+      "importance_score": 0.85,
+      "notes": "Single largest catalyst in a clinical-stage lifecycle",
+      "taxonomy_event_id": "CLIN_PRIMARY_MET",
+      "search_terms": [
+        "Phase 3",
+        "pivotal",
+        "topline"
+      ],
+      "calendar_eligible": true
+    },
+    {
+      "id": "bm.clin.phase-3-topline-primary-endpoint-missed",
+      "axis": "clinical",
+      "subtype": "trial_readout",
+      "label": "Phase 3 topline primary endpoint MISSED",
+      "scheduled": true,
+      "company_stage": "Phase 3",
+      "importance_score": -0.75,
+      "notes": null,
+      "taxonomy_event_id": "CLIN_PRIMARY_MISSED",
+      "search_terms": [
+        "Phase 3",
+        "pivotal",
+        "topline"
+      ],
+      "calendar_eligible": true
+    },
+    {
+      "id": "bm.clin.detailed-congress-data-beats-topline-expectations",
+      "axis": "clinical",
+      "subtype": "trial_readout",
+      "label": "Detailed congress data beats topline expectations",
+      "scheduled": true,
+      "company_stage": "Phase 3/Commercial",
+      "importance_score": 0.2,
+      "notes": "Market reacts to granularity beyond the press release",
+      "taxonomy_event_id": "CLIN_TOPLINE_POSITIVE",
+      "search_terms": [
+        "ASCO",
+        "ASH",
+        "ESMO",
+        "congress abstract"
+      ],
+      "calendar_eligible": true
+    },
+    {
+      "id": "bm.clin.detailed-congress-data-underwhelms-despite-met-topline",
+      "axis": "clinical",
+      "subtype": "trial_readout",
+      "label": "Detailed congress data underwhelms despite met topline",
+      "scheduled": true,
+      "company_stage": "Phase 3/Commercial",
+      "importance_score": -0.25,
+      "notes": null,
+      "taxonomy_event_id": "CLIN_PRIMARY_MISSED",
+      "search_terms": [
+        "ASCO",
+        "ASH",
+        "ESMO",
+        "congress abstract"
+      ],
+      "calendar_eligible": true
+    },
+    {
+      "id": "bm.clin.peer-reviewed-publication-of-pivotal-data-nejm-lancet-jama",
+      "axis": "clinical",
+      "subtype": "trial_readout",
+      "label": "Peer-reviewed publication of pivotal data (NEJM/Lancet/JAMA)",
+      "scheduled": false,
+      "company_stage": "Phase 3/Commercial",
+      "importance_score": 0.1,
+      "notes": "Validates but rarely surprises",
+      "taxonomy_event_id": "CLIN_STUDY_SUCCESS",
+      "search_terms": [
+        "Phase 3",
+        "pivotal",
+        "topline"
+      ],
+      "calendar_eligible": false
+    },
+    {
+      "id": "bm.clin.breakthrough-therapy-fast-track-rmat-prime-designation",
+      "axis": "clinical",
+      "subtype": "regulatory",
+      "label": "Breakthrough Therapy / Fast Track / RMAT / PRIME designation",
+      "scheduled": false,
+      "company_stage": "Any",
+      "importance_score": 0.25,
+      "notes": null,
+      "taxonomy_event_id": "CLIN_BTD_GRANTED",
+      "search_terms": [
+        "Breakthrough Therapy",
+        "Fast Track",
+        "RMAT"
+      ],
+      "calendar_eligible": false
+    },
+    {
+      "id": "bm.clin.orphan-drug-designation",
+      "axis": "clinical",
+      "subtype": "regulatory",
+      "label": "Orphan Drug Designation",
+      "scheduled": false,
+      "company_stage": "Any",
+      "importance_score": 0.12,
+      "notes": null,
+      "taxonomy_event_id": "CLIN_ORPHAN_GRANTED",
+      "search_terms": [
+        "Orphan Drug"
+      ],
+      "calendar_eligible": false
+    },
+    {
+      "id": "bm.clin.nda-bla-filing",
+      "axis": "clinical",
+      "subtype": "regulatory",
+      "label": "NDA / BLA filing",
+      "scheduled": true,
+      "company_stage": "Regulatory",
+      "importance_score": 0.1,
+      "notes": null,
+      "taxonomy_event_id": "CLIN_READOUT_GUIDED",
+      "search_terms": [
+        "NDA",
+        "BLA",
+        "accepted for review"
+      ],
+      "calendar_eligible": true
+    },
+    {
+      "id": "bm.clin.fda-acceptance-with-priority-review",
+      "axis": "clinical",
+      "subtype": "regulatory",
+      "label": "FDA acceptance with Priority Review",
+      "scheduled": true,
+      "company_stage": "Regulatory",
+      "importance_score": 0.15,
+      "notes": "Shortens PDUFA clock, signals confidence",
+      "taxonomy_event_id": "CLIN_FASTTRACK_PRIORITY",
+      "search_terms": [
+        "acceptance",
+        "with",
+        "Priority",
+        "Review"
+      ],
+      "calendar_eligible": true
+    },
+    {
+      "id": "bm.clin.fda-acceptance-standard-review",
+      "axis": "clinical",
+      "subtype": "regulatory",
+      "label": "FDA acceptance, Standard Review",
+      "scheduled": true,
+      "company_stage": "Regulatory",
+      "importance_score": 0.05,
+      "notes": null,
+      "taxonomy_event_id": "CLIN_READOUT_GUIDED",
+      "search_terms": [
+        "NDA",
+        "BLA",
+        "accepted for review"
+      ],
+      "calendar_eligible": true
+    },
+    {
+      "id": "bm.clin.refuse-to-file-rtf",
+      "axis": "clinical",
+      "subtype": "regulatory",
+      "label": "Refuse to File (RTF)",
+      "scheduled": false,
+      "company_stage": "Regulatory",
+      "importance_score": -0.55,
+      "notes": null,
+      "taxonomy_event_id": "CLIN_CRL_RECEIVED",
+      "search_terms": [
+        "Refuse",
+        "File"
+      ],
+      "calendar_eligible": false
+    },
+    {
+      "id": "bm.clin.pdufa-date-fda-approval",
+      "axis": "clinical",
+      "subtype": "regulatory",
+      "label": "PDUFA date: FDA APPROVAL",
+      "scheduled": true,
+      "company_stage": "Regulatory",
+      "importance_score": 0.8,
+      "notes": null,
+      "taxonomy_event_id": "CLIN_APPROVAL_GRANTED",
+      "search_terms": [
+        "PDUFA",
+        "FDA approval"
+      ],
+      "calendar_eligible": true
+    },
+    {
+      "id": "bm.clin.pdufa-date-complete-response-letter-crl",
+      "axis": "clinical",
+      "subtype": "regulatory",
+      "label": "PDUFA date: Complete Response Letter (CRL)",
+      "scheduled": true,
+      "company_stage": "Regulatory",
+      "importance_score": -0.7,
+      "notes": null,
+      "taxonomy_event_id": "CLIN_CRL_RECEIVED",
+      "search_terms": [
+        "PDUFA",
+        "FDA approval",
+        "CRL",
+        "Complete Response Letter"
+      ],
+      "calendar_eligible": true
+    },
+    {
+      "id": "bm.clin.advisory-committee-adcom-positive-vote",
+      "axis": "clinical",
+      "subtype": "regulatory",
+      "label": "Advisory Committee (AdCom): positive vote",
+      "scheduled": true,
+      "company_stage": "Regulatory",
+      "importance_score": 0.45,
+      "notes": null,
+      "taxonomy_event_id": "CLIN_APPROVAL_GRANTED",
+      "search_terms": [
+        "advisory committee",
+        "AdCom"
+      ],
+      "calendar_eligible": true
+    },
+    {
+      "id": "bm.clin.advisory-committee-adcom-negative-vote",
+      "axis": "clinical",
+      "subtype": "regulatory",
+      "label": "Advisory Committee (AdCom): negative vote",
+      "scheduled": true,
+      "company_stage": "Regulatory",
+      "importance_score": -0.55,
+      "notes": null,
+      "taxonomy_event_id": "CLIN_CRL_RECEIVED",
+      "search_terms": [
+        "advisory committee",
+        "AdCom"
+      ],
+      "calendar_eligible": true
+    },
+    {
+      "id": "bm.clin.approved-label-broad-favorable-no-boxed-warning",
+      "axis": "clinical",
+      "subtype": "regulatory",
+      "label": "Approved label: broad/favorable, no boxed warning",
+      "scheduled": false,
+      "company_stage": "Regulatory",
+      "importance_score": 0.15,
+      "notes": "Additive to the approval event itself",
+      "taxonomy_event_id": "CLIN_APPROVAL_GRANTED",
+      "search_terms": [
+        "Approved",
+        "label",
+        "broad/favorable",
+        "boxed"
+      ],
+      "calendar_eligible": false
+    },
+    {
+      "id": "bm.clin.approved-label-restrictive-boxed-warning-or-narrow-population",
+      "axis": "clinical",
+      "subtype": "regulatory",
+      "label": "Approved label: restrictive, boxed warning or narrow population",
+      "scheduled": false,
+      "company_stage": "Regulatory",
+      "importance_score": -0.2,
+      "notes": "Offsets an otherwise positive approval",
+      "taxonomy_event_id": "CLIN_SERIOUS_AE",
+      "search_terms": [
+        "Approved",
+        "label",
+        "restrictive",
+        "boxed"
+      ],
+      "calendar_eligible": false
+    },
+    {
+      "id": "bm.clin.ema-ex-us-approval",
+      "axis": "clinical",
+      "subtype": "regulatory",
+      "label": "EMA / ex-US approval",
+      "scheduled": true,
+      "company_stage": "Regulatory",
+      "importance_score": 0.2,
+      "notes": null,
+      "taxonomy_event_id": "CLIN_APPROVAL_GRANTED",
+      "search_terms": [
+        "PDUFA",
+        "FDA approval"
+      ],
+      "calendar_eligible": true
+    },
+    {
+      "id": "bm.clin.ema-ex-us-rejection",
+      "axis": "clinical",
+      "subtype": "regulatory",
+      "label": "EMA / ex-US rejection",
+      "scheduled": true,
+      "company_stage": "Regulatory",
+      "importance_score": -0.25,
+      "notes": null,
+      "taxonomy_event_id": "CLIN_CRL_RECEIVED",
+      "search_terms": [
+        "rejection"
+      ],
+      "calendar_eligible": true
+    },
+    {
+      "id": "bm.clin.serious-adverse-event-cluster-safety-signal-identified",
+      "axis": "clinical",
+      "subtype": "safety",
+      "label": "Serious adverse event cluster / safety signal identified",
+      "scheduled": false,
+      "company_stage": "Any",
+      "importance_score": -0.6,
+      "notes": null,
+      "taxonomy_event_id": "CLIN_SERIOUS_AE",
+      "search_terms": [
+        "Serious",
+        "adverse",
+        "event",
+        "cluster"
+      ],
+      "calendar_eligible": false
+    },
+    {
+      "id": "bm.clin.clinical-hold-due-to-safety",
+      "axis": "clinical",
+      "subtype": "safety",
+      "label": "Clinical hold due to safety",
+      "scheduled": false,
+      "company_stage": "Any",
+      "importance_score": -0.65,
+      "notes": null,
+      "taxonomy_event_id": "CLIN_TRIAL_HALTED_SAFETY",
+      "search_terms": [
+        "Clinical",
+        "hold",
+        "safety"
+      ],
+      "calendar_eligible": false
+    },
+    {
+      "id": "bm.clin.post-marketing-rems-requirement-imposed",
+      "axis": "clinical",
+      "subtype": "safety",
+      "label": "Post-marketing REMS requirement imposed",
+      "scheduled": false,
+      "company_stage": "Commercial",
+      "importance_score": -0.3,
+      "notes": null,
+      "taxonomy_event_id": "CLIN_SERIOUS_AE",
+      "search_terms": [
+        "Post",
+        "marketing",
+        "REMS",
+        "requirement"
+      ],
+      "calendar_eligible": false
+    },
+    {
+      "id": "bm.clin.black-box-warning-added-post-approval",
+      "axis": "clinical",
+      "subtype": "safety",
+      "label": "Black box warning added post-approval",
+      "scheduled": false,
+      "company_stage": "Commercial",
+      "importance_score": -0.45,
+      "notes": null,
+      "taxonomy_event_id": "CLIN_SERIOUS_AE",
+      "search_terms": [
+        "PDUFA",
+        "FDA approval",
+        "NDA",
+        "BLA",
+        "accepted for review"
+      ],
+      "calendar_eligible": false
+    },
+    {
+      "id": "bm.clin.voluntary-or-fda-mandated-market-withdrawal",
+      "axis": "clinical",
+      "subtype": "safety",
+      "label": "Voluntary or FDA-mandated market withdrawal",
+      "scheduled": false,
+      "company_stage": "Commercial",
+      "importance_score": -0.9,
+      "notes": null,
+      "taxonomy_event_id": "CLIN_TRIAL_HALTED_SAFETY",
+      "search_terms": [
+        "NDA",
+        "BLA",
+        "accepted for review"
+      ],
+      "calendar_eligible": false
+    },
+    {
+      "id": "bm.clin.preclinical-data-supporting-mechanism-published",
+      "axis": "clinical",
+      "subtype": "publication",
+      "label": "Preclinical data supporting mechanism, published",
+      "scheduled": false,
+      "company_stage": "Preclinical",
+      "importance_score": 0.08,
+      "notes": null,
+      "taxonomy_event_id": "CLIN_STUDY_SUCCESS",
+      "search_terms": [
+        "Preclinical",
+        "data",
+        "supporting",
+        "mechanism"
+      ],
+      "calendar_eligible": false
+    },
+    {
+      "id": "bm.clin.competitor-trial-readout-same-class-target-positive-read-through",
+      "axis": "clinical",
+      "subtype": "publication",
+      "label": "Competitor trial readout, same class/target - positive read-through",
+      "scheduled": false,
+      "company_stage": "Any",
+      "importance_score": 0.15,
+      "notes": "De-risks the class without an event of your own",
+      "taxonomy_event_id": "CLIN_TOPLINE_POSITIVE",
+      "search_terms": [
+        "Competitor",
+        "trial",
+        "readout",
+        "same"
+      ],
+      "calendar_eligible": false
+    },
+    {
+      "id": "bm.clin.competitor-trial-readout-same-class-target-negative-read-through",
+      "axis": "clinical",
+      "subtype": "publication",
+      "label": "Competitor trial readout, same class/target - negative read-through",
+      "scheduled": false,
+      "company_stage": "Any",
+      "importance_score": -0.25,
+      "notes": "Class risk repriced even absent company news",
+      "taxonomy_event_id": "CLIN_PRIMARY_MISSED",
+      "search_terms": [
+        "Competitor",
+        "trial",
+        "readout",
+        "same"
+      ],
+      "calendar_eligible": false
+    },
+    {
+      "id": "bm.fina.non-dilutive-financing-royalty-deal-venture-debt-grant",
+      "axis": "financial",
+      "subtype": "financing",
+      "label": "Non-dilutive financing (royalty deal, venture debt, grant)",
+      "scheduled": false,
+      "company_stage": "Any",
+      "importance_score": 0.18,
+      "notes": null,
+      "taxonomy_event_id": "FIN_NONDILUTIVE_FUNDING",
+      "search_terms": [
+        "dilutive",
+        "financing",
+        "royalty",
+        "deal"
+      ],
+      "calendar_eligible": false
+    },
+    {
+      "id": "bm.fina.dilutive-equity-raise-priced-at-near-market-with-strong-demand",
+      "axis": "financial",
+      "subtype": "financing",
+      "label": "Dilutive equity raise, priced at/near market with strong demand",
+      "scheduled": false,
+      "company_stage": "Any",
+      "importance_score": 0.05,
+      "notes": "Net positive despite dilution if well-subscribed",
+      "taxonomy_event_id": "FIN_DILUTIVE_OFFERING",
+      "search_terms": [
+        "Dilutive",
+        "equity",
+        "raise",
+        "priced"
+      ],
+      "calendar_eligible": false
+    },
+    {
+      "id": "bm.fina.dilutive-equity-raise-steep-discount-distressed-pricing",
+      "axis": "financial",
+      "subtype": "financing",
+      "label": "Dilutive equity raise, steep discount / distressed pricing",
+      "scheduled": false,
+      "company_stage": "Any",
+      "importance_score": -0.35,
+      "notes": null,
+      "taxonomy_event_id": "FIN_DILUTIVE_OFFERING",
+      "search_terms": [
+        "Dilutive",
+        "equity",
+        "raise",
+        "steep"
+      ],
+      "calendar_eligible": false
+    },
+    {
+      "id": "bm.fina.going-concern-warning-issued",
+      "axis": "financial",
+      "subtype": "financing",
+      "label": "Going concern warning issued",
+      "scheduled": true,
+      "company_stage": "Any",
+      "importance_score": -0.65,
+      "notes": "Typically disclosed in 10-K/10-Q",
+      "taxonomy_event_id": "FIN_GOING_CONCERN",
+      "search_terms": [
+        "Going",
+        "concern",
+        "warning",
+        "issued"
+      ],
+      "calendar_eligible": true
+    },
+    {
+      "id": "bm.fina.cash-runway-extended-via-guidance-update-no-new-capital",
+      "axis": "financial",
+      "subtype": "financing",
+      "label": "Cash runway extended via guidance update, no new capital",
+      "scheduled": false,
+      "company_stage": "Any",
+      "importance_score": 0.1,
+      "notes": null,
+      "taxonomy_event_id": "FIN_RUNWAY_EXTENDED",
+      "search_terms": [
+        "earnings",
+        "quarterly results",
+        "guidance"
+      ],
+      "calendar_eligible": false
+    },
+    {
+      "id": "bm.fina.company-acquired-at-premium",
+      "axis": "financial",
+      "subtype": "m_and_a",
+      "label": "Company acquired at premium",
+      "scheduled": false,
+      "company_stage": "Any",
+      "importance_score": 0.7,
+      "notes": null,
+      "taxonomy_event_id": "CORP_MNA_TARGET_PREMIUM",
+      "search_terms": [
+        "acquisition",
+        "to acquire"
+      ],
+      "calendar_eligible": false
+    },
+    {
+      "id": "bm.fina.company-acquired-at-below-market-distressed-sale",
+      "axis": "financial",
+      "subtype": "m_and_a",
+      "label": "Company acquired at/below market (distressed sale)",
+      "scheduled": false,
+      "company_stage": "Any",
+      "importance_score": -0.2,
+      "notes": "Provides an exit but signals prior failure",
+      "taxonomy_event_id": "CORP_MNA_COMPLETED",
+      "search_terms": [
+        "acquisition",
+        "to acquire"
+      ],
+      "calendar_eligible": false
+    },
+    {
+      "id": "bm.fina.acquisition-of-external-asset-program-accretive-strategic-fit",
+      "axis": "financial",
+      "subtype": "m_and_a",
+      "label": "Acquisition of external asset/program, accretive strategic fit",
+      "scheduled": false,
+      "company_stage": "Any",
+      "importance_score": 0.3,
+      "notes": null,
+      "taxonomy_event_id": "CORP_MNA_COMPLETED",
+      "search_terms": [
+        "acquisition",
+        "to acquire"
+      ],
+      "calendar_eligible": false
+    },
+    {
+      "id": "bm.fina.acquisition-of-external-asset-dilutive-financing-required-weak-fit",
+      "axis": "financial",
+      "subtype": "m_and_a",
+      "label": "Acquisition of external asset, dilutive financing required / weak fit",
+      "scheduled": false,
+      "company_stage": "Any",
+      "importance_score": -0.2,
+      "notes": null,
+      "taxonomy_event_id": "CORP_MNA_COMPLETED",
+      "search_terms": [
+        "acquisition",
+        "to acquire"
+      ],
+      "calendar_eligible": false
+    },
+    {
+      "id": "bm.fina.major-licensing-partnership-deal-large-upfront-milestones",
+      "axis": "financial",
+      "subtype": "partnership",
+      "label": "Major licensing/partnership deal, large upfront + milestones",
+      "scheduled": false,
+      "company_stage": "Any",
+      "importance_score": 0.4,
+      "notes": null,
+      "taxonomy_event_id": "CORP_PARTNERSHIP_SIGNED",
+      "search_terms": [
+        "partnership",
+        "licensing deal"
+      ],
+      "calendar_eligible": false
+    },
+    {
+      "id": "bm.fina.minor-partnership-option-deal-no-meaningful-upfront",
+      "axis": "financial",
+      "subtype": "partnership",
+      "label": "Minor partnership/option deal, no meaningful upfront",
+      "scheduled": false,
+      "company_stage": "Any",
+      "importance_score": 0.1,
+      "notes": null,
+      "taxonomy_event_id": "CORP_PARTNERSHIP_SIGNED",
+      "search_terms": [
+        "partnership",
+        "licensing deal"
+      ],
+      "calendar_eligible": false
+    },
+    {
+      "id": "bm.fina.partnership-terminated-partner-walks-away",
+      "axis": "financial",
+      "subtype": "partnership",
+      "label": "Partnership terminated / partner walks away",
+      "scheduled": false,
+      "company_stage": "Any",
+      "importance_score": -0.35,
+      "notes": null,
+      "taxonomy_event_id": "CORP_PARTNERSHIP_TERMINATED",
+      "search_terms": [
+        "partnership",
+        "licensing deal"
+      ],
+      "calendar_eligible": false
+    },
+    {
+      "id": "bm.fina.strategic-restructuring-reducing-burn-without-pipeline-sacrifice",
+      "axis": "financial",
+      "subtype": "restructuring",
+      "label": "Strategic restructuring reducing burn without pipeline sacrifice",
+      "scheduled": false,
+      "company_stage": "Any",
+      "importance_score": 0.15,
+      "notes": null,
+      "taxonomy_event_id": "FIN_SHELF_FILED",
+      "search_terms": [
+        "Strategic",
+        "restructuring",
+        "reducing",
+        "burn"
+      ],
+      "calendar_eligible": false
+    },
+    {
+      "id": "bm.fina.restructuring-via-layoffs-pipeline-cuts-distress-signal",
+      "axis": "financial",
+      "subtype": "restructuring",
+      "label": "Restructuring via layoffs / pipeline cuts (distress signal)",
+      "scheduled": false,
+      "company_stage": "Any",
+      "importance_score": -0.45,
+      "notes": null,
+      "taxonomy_event_id": "FIN_RATING_DOWNGRADE",
+      "search_terms": [
+        "Restructuring",
+        "layoffs",
+        "pipeline",
+        "cuts"
+      ],
+      "calendar_eligible": false
+    },
+    {
+      "id": "bm.fina.executive-departure-ceo-cmo-cfo-near-a-binary-event",
+      "axis": "financial",
+      "subtype": "restructuring",
+      "label": "Executive departure (CEO/CMO/CFO) near a binary event",
+      "scheduled": false,
+      "company_stage": "Any",
+      "importance_score": -0.25,
+      "notes": "Context-dependent, worse close to a catalyst",
+      "taxonomy_event_id": "FIN_RATING_DOWNGRADE",
+      "search_terms": [
+        "Executive",
+        "departure",
+        "CEO/CMO/CFO",
+        "near"
+      ],
+      "calendar_eligible": false
+    },
+    {
+      "id": "bm.fina.new-executive-hire-with-strong-track-record",
+      "axis": "financial",
+      "subtype": "restructuring",
+      "label": "New executive hire with strong track record",
+      "scheduled": false,
+      "company_stage": "Any",
+      "importance_score": 0.12,
+      "notes": null,
+      "taxonomy_event_id": "FIN_RATING_UPGRADE",
+      "search_terms": [
+        "executive",
+        "hire",
+        "with",
+        "strong"
+      ],
+      "calendar_eligible": false
+    },
+    {
+      "id": "bm.fina.routine-8-k-administrative",
+      "axis": "financial",
+      "subtype": "restructuring",
+      "label": "Routine 8-K, administrative",
+      "scheduled": true,
+      "company_stage": "Any",
+      "importance_score": 0.0,
+      "notes": "Baseline / no-signal reference point",
+      "taxonomy_event_id": "FIN_SHELF_FILED",
+      "search_terms": [
+        "Routine",
+        "administrative"
+      ],
+      "calendar_eligible": true
+    },
+    {
+      "id": "bm.fina.favorable-pbm-formulary-placement-preferred-tier",
+      "axis": "market_access",
+      "subtype": "market_access",
+      "label": "Favorable PBM formulary placement (preferred tier)",
+      "scheduled": false,
+      "company_stage": "Commercial",
+      "importance_score": 0.35,
+      "notes": "CVS Caremark / Express Scripts / OptumRx decisions",
+      "taxonomy_event_id": "ACCESS_PAYER_FAVORABLE",
+      "search_terms": [
+        "Favorable",
+        "formulary",
+        "placement",
+        "preferred"
+      ],
+      "calendar_eligible": false
+    },
+    {
+      "id": "bm.fina.unfavorable-formulary-placement-prior-authorization-imposed",
+      "axis": "market_access",
+      "subtype": "market_access",
+      "label": "Unfavorable formulary placement / prior authorization imposed",
+      "scheduled": false,
+      "company_stage": "Commercial",
+      "importance_score": -0.3,
+      "notes": null,
+      "taxonomy_event_id": "ACCESS_PAYER_RESTRICTIVE",
+      "search_terms": [
+        "Unfavorable",
+        "formulary",
+        "placement",
+        "prior"
+      ],
+      "calendar_eligible": false
+    },
+    {
+      "id": "bm.fina.positive-icer-value-assessment-favorable-hta-decision",
+      "axis": "market_access",
+      "subtype": "market_access",
+      "label": "Positive ICER value assessment / favorable HTA decision",
+      "scheduled": false,
+      "company_stage": "Commercial",
+      "importance_score": 0.2,
+      "notes": "Payers reference these directly in pricing talks",
+      "taxonomy_event_id": "ACCESS_PAYER_FAVORABLE",
+      "search_terms": [
+        "Positive",
+        "ICER",
+        "value",
+        "assessment"
+      ],
+      "calendar_eligible": false
+    },
+    {
+      "id": "bm.fina.negative-icer-assessment-unfavorable-hta-decision",
+      "axis": "market_access",
+      "subtype": "market_access",
+      "label": "Negative ICER assessment / unfavorable HTA decision",
+      "scheduled": false,
+      "company_stage": "Commercial",
+      "importance_score": -0.25,
+      "notes": null,
+      "taxonomy_event_id": "ACCESS_PAYER_RESTRICTIVE",
+      "search_terms": [
+        "Negative",
+        "ICER",
+        "assessment",
+        "unfavorable"
+      ],
+      "calendar_eligible": false
+    },
+    {
+      "id": "bm.fina.strong-nbrx-trx-script-trend-launch-beating-expectations",
+      "axis": "market_access",
+      "subtype": "market_access",
+      "label": "Strong NBRx/TRx script trend, launch beating expectations",
+      "scheduled": false,
+      "company_stage": "Commercial",
+      "importance_score": 0.3,
+      "notes": "Leading indicator tracked weekly via IQVIA/Symphony",
+      "taxonomy_event_id": "ACCESS_PAYER_FAVORABLE",
+      "search_terms": [
+        "Strong",
+        "NBRx/TRx",
+        "script",
+        "trend"
+      ],
+      "calendar_eligible": false
+    },
+    {
+      "id": "bm.fina.weak-script-trend-launch-disappointing",
+      "axis": "market_access",
+      "subtype": "market_access",
+      "label": "Weak script trend, launch disappointing",
+      "scheduled": false,
+      "company_stage": "Commercial",
+      "importance_score": -0.35,
+      "notes": null,
+      "taxonomy_event_id": "ACCESS_PAYER_RESTRICTIVE",
+      "search_terms": [
+        "Weak",
+        "script",
+        "trend",
+        "launch"
+      ],
+      "calendar_eligible": false
+    },
+    {
+      "id": "bm.fina.biosimilar-or-generic-entry-into-the-class",
+      "axis": "market_access",
+      "subtype": "market_access",
+      "label": "Biosimilar or generic entry into the class",
+      "scheduled": true,
+      "company_stage": "Commercial",
+      "importance_score": -0.5,
+      "notes": "Often has a knowable entry window (patent expiry)",
+      "taxonomy_event_id": "ACCESS_PAYER_RESTRICTIVE",
+      "search_terms": [
+        "Biosimilar",
+        "generic",
+        "entry",
+        "into"
+      ],
+      "calendar_eligible": true
+    },
+    {
+      "id": "bm.fina.competitor-product-launch-in-same-class",
+      "axis": "market_access",
+      "subtype": "market_access",
+      "label": "Competitor product launch in same class",
+      "scheduled": false,
+      "company_stage": "Commercial",
+      "importance_score": -0.15,
+      "notes": null,
+      "taxonomy_event_id": "ACCESS_PAYER_RESTRICTIVE",
+      "search_terms": [
+        "Competitor",
+        "product",
+        "launch",
+        "same"
+      ],
+      "calendar_eligible": false
+    },
+    {
+      "id": "bm.fina.label-expansion-to-a-larger-addressable-population",
+      "axis": "market_access",
+      "subtype": "market_access",
+      "label": "Label expansion to a larger addressable population",
+      "scheduled": true,
+      "company_stage": "Commercial",
+      "importance_score": 0.25,
+      "notes": null,
+      "taxonomy_event_id": "CLIN_LABEL_EXPANSION",
+      "search_terms": [
+        "Label",
+        "expansion",
+        "larger",
+        "addressable"
+      ],
+      "calendar_eligible": true
+    },
+    {
+      "id": "bm.fina.quarterly-revenue-beat-vs-consensus-strong-gross-to-net",
+      "axis": "market_access",
+      "subtype": "market_access",
+      "label": "Quarterly revenue beat vs consensus, strong gross-to-net",
+      "scheduled": true,
+      "company_stage": "Commercial",
+      "importance_score": 0.2,
+      "notes": null,
+      "taxonomy_event_id": "FIN_EARNINGS_BEAT",
+      "search_terms": [
+        "earnings",
+        "quarterly results",
+        "guidance"
+      ],
+      "calendar_eligible": true
+    },
+    {
+      "id": "bm.fina.quarterly-revenue-miss-vs-consensus-gross-to-net-erosion",
+      "axis": "market_access",
+      "subtype": "market_access",
+      "label": "Quarterly revenue miss vs consensus / gross-to-net erosion",
+      "scheduled": true,
+      "company_stage": "Commercial",
+      "importance_score": -0.3,
+      "notes": null,
+      "taxonomy_event_id": "FIN_EARNINGS_MISS",
+      "search_terms": [
+        "earnings",
+        "quarterly results",
+        "guidance"
+      ],
+      "calendar_eligible": true
+    },
+    {
+      "id": "bm.fina.full-year-commercial-guidance-raised",
+      "axis": "market_access",
+      "subtype": "market_access",
+      "label": "Full-year commercial guidance raised",
+      "scheduled": false,
+      "company_stage": "Commercial",
+      "importance_score": 0.15,
+      "notes": null,
+      "taxonomy_event_id": "FIN_GUIDANCE_RAISED",
+      "search_terms": [
+        "earnings",
+        "quarterly results",
+        "guidance"
+      ],
+      "calendar_eligible": false
+    },
+    {
+      "id": "bm.fina.full-year-commercial-guidance-lowered",
+      "axis": "market_access",
+      "subtype": "market_access",
+      "label": "Full-year commercial guidance lowered",
+      "scheduled": false,
+      "company_stage": "Commercial",
+      "importance_score": -0.35,
+      "notes": null,
+      "taxonomy_event_id": "FIN_GUIDANCE_CUT",
+      "search_terms": [
+        "earnings",
+        "quarterly results",
+        "guidance"
+      ],
+      "calendar_eligible": false
+    },
+    {
+      "id": "bm.cov.clin-secondary-met",
+      "axis": "clinical",
+      "subtype": "trial_readout",
+      "label": "Secondary endpoint met",
+      "scheduled": false,
+      "company_stage": "Any",
+      "importance_score": 0.33,
+      "notes": "Catalog coverage seed (taxonomy id was unmapped)",
+      "taxonomy_event_id": "CLIN_SECONDARY_MET",
+      "search_terms": [
+        "Secondary",
+        "endpoint"
+      ],
+      "calendar_eligible": false
+    },
+    {
+      "id": "bm.cov.clin-secondary-missed",
+      "axis": "clinical",
+      "subtype": "trial_readout",
+      "label": "Secondary endpoint missed",
+      "scheduled": false,
+      "company_stage": "Any",
+      "importance_score": -0.25,
+      "notes": "Catalog coverage seed (taxonomy id was unmapped)",
+      "taxonomy_event_id": "CLIN_SECONDARY_MISSED",
+      "search_terms": [
+        "Secondary",
+        "endpoint",
+        "missed"
+      ],
+      "calendar_eligible": false
+    },
+    {
+      "id": "bm.cov.fin-debt-refinanced",
+      "axis": "financial",
+      "subtype": "financing",
+      "label": "Debt refinanced favorably",
+      "scheduled": false,
+      "company_stage": "Any",
+      "importance_score": 0.18,
+      "notes": "Catalog coverage seed (taxonomy id was unmapped)",
+      "taxonomy_event_id": "FIN_DEBT_REFINANCED",
+      "search_terms": [
+        "Debt",
+        "refinanced",
+        "favorably"
+      ],
+      "calendar_eligible": false
+    },
+    {
+      "id": "bm.cov.fin-covenant-breach",
+      "axis": "financial",
+      "subtype": "distress",
+      "label": "Covenant breach / default risk",
+      "scheduled": false,
+      "company_stage": "Any",
+      "importance_score": -0.65,
+      "notes": "Catalog coverage seed (taxonomy id was unmapped)",
+      "taxonomy_event_id": "FIN_COVENANT_BREACH",
+      "search_terms": [
+        "Covenant",
+        "breach",
+        "default",
+        "risk"
+      ],
+      "calendar_eligible": false
+    },
+    {
+      "id": "bm.cov.fin-runway-short",
+      "axis": "financial",
+      "subtype": "distress",
+      "label": "Cash runway short (<12m)",
+      "scheduled": false,
+      "company_stage": "Any",
+      "importance_score": -0.45,
+      "notes": "Catalog coverage seed (taxonomy id was unmapped)",
+      "taxonomy_event_id": "FIN_RUNWAY_SHORT",
+      "search_terms": [
+        "Cash",
+        "runway",
+        "short",
+        "(<12m)"
+      ],
+      "calendar_eligible": false
+    },
+    {
+      "id": "bm.cov.corp-mna-target-distressed",
+      "axis": "financial",
+      "subtype": "m_and_a",
+      "label": "Company acquired at/below market (distressed)",
+      "scheduled": false,
+      "company_stage": "Any",
+      "importance_score": -0.2,
+      "notes": "Catalog coverage seed (taxonomy id was unmapped)",
+      "taxonomy_event_id": "CORP_MNA_TARGET_DISTRESSED",
+      "search_terms": [
+        "Company",
+        "acquired",
+        "at/below",
+        "market"
+      ],
+      "calendar_eligible": false
+    },
+    {
+      "id": "bm.cov.corp-mna-terminated",
+      "axis": "financial",
+      "subtype": "m_and_a",
+      "label": "M&A terminated / deal broken",
+      "scheduled": false,
+      "company_stage": "Any",
+      "importance_score": -0.35,
+      "notes": "Catalog coverage seed (taxonomy id was unmapped)",
+      "taxonomy_event_id": "CORP_MNA_TERMINATED",
+      "search_terms": [
+        "terminated",
+        "deal",
+        "broken"
+      ],
+      "calendar_eligible": false
+    },
+    {
+      "id": "bm.cov.corp-exec-hire",
+      "axis": "financial",
+      "subtype": "restructuring",
+      "label": "New executive hire with strong track record",
+      "scheduled": false,
+      "company_stage": "Any",
+      "importance_score": 0.12,
+      "notes": "Catalog coverage seed (taxonomy id was unmapped)",
+      "taxonomy_event_id": "CORP_EXEC_HIRE",
+      "search_terms": [
+        "executive",
+        "hire",
+        "with",
+        "strong"
+      ],
+      "calendar_eligible": false
+    },
+    {
+      "id": "bm.cov.corp-exec-departure",
+      "axis": "financial",
+      "subtype": "restructuring",
+      "label": "Executive departure near a binary event",
+      "scheduled": false,
+      "company_stage": "Any",
+      "importance_score": -0.25,
+      "notes": "Catalog coverage seed (taxonomy id was unmapped)",
+      "taxonomy_event_id": "CORP_EXEC_DEPARTURE",
+      "search_terms": [
+        "Executive",
+        "departure",
+        "near",
+        "binary"
+      ],
+      "calendar_eligible": false
+    },
+    {
+      "id": "bm.cov.corp-patent-granted",
+      "axis": "financial",
+      "subtype": "restructuring",
+      "label": "Patent granted",
+      "scheduled": false,
+      "company_stage": "Any",
+      "importance_score": 0.12,
+      "notes": "Catalog coverage seed (taxonomy id was unmapped)",
+      "taxonomy_event_id": "CORP_PATENT_GRANTED",
+      "search_terms": [
+        "Patent",
+        "granted"
+      ],
+      "calendar_eligible": false
+    },
+    {
+      "id": "bm.cov.corp-litigation-won",
+      "axis": "financial",
+      "subtype": "restructuring",
+      "label": "Litigation / IP won",
+      "scheduled": false,
+      "company_stage": "Any",
+      "importance_score": 0.25,
+      "notes": "Catalog coverage seed (taxonomy id was unmapped)",
+      "taxonomy_event_id": "CORP_LITIGATION_WON",
+      "search_terms": [
+        "Litigation"
+      ],
+      "calendar_eligible": false
+    },
+    {
+      "id": "bm.cov.corp-litigation-lost",
+      "axis": "financial",
+      "subtype": "restructuring",
+      "label": "Litigation / IP lost",
+      "scheduled": false,
+      "company_stage": "Any",
+      "importance_score": -0.4,
+      "notes": "Catalog coverage seed (taxonomy id was unmapped)",
+      "taxonomy_event_id": "CORP_LITIGATION_LOST",
+      "search_terms": [
+        "Litigation",
+        "lost"
+      ],
+      "calendar_eligible": false
+    },
+    {
+      "id": "bm.cov.corp-insider-buying",
+      "axis": "financial",
+      "subtype": "restructuring",
+      "label": "Insider buying (material)",
+      "scheduled": false,
+      "company_stage": "Any",
+      "importance_score": 0.08,
+      "notes": "Catalog coverage seed (taxonomy id was unmapped)",
+      "taxonomy_event_id": "CORP_INSIDER_BUYING",
+      "search_terms": [
+        "Insider",
+        "buying",
+        "(material)"
+      ],
+      "calendar_eligible": false
+    },
+    {
+      "id": "bm.cov.corp-insider-selling",
+      "axis": "financial",
+      "subtype": "restructuring",
+      "label": "Insider selling (unplanned)",
+      "scheduled": false,
+      "company_stage": "Any",
+      "importance_score": -0.08,
+      "notes": "Catalog coverage seed (taxonomy id was unmapped)",
+      "taxonomy_event_id": "CORP_INSIDER_SELLING",
+      "search_terms": [
+        "Insider",
+        "selling",
+        "(unplanned)"
+      ],
+      "calendar_eligible": false
+    },
+    {
+      "id": "bm.cov.corp-delisting-notice",
+      "axis": "financial",
+      "subtype": "distress",
+      "label": "Delisting / non-compliance notice",
+      "scheduled": false,
+      "company_stage": "Any",
+      "importance_score": -0.7,
+      "notes": "Catalog coverage seed (taxonomy id was unmapped)",
+      "taxonomy_event_id": "CORP_DELISTING_NOTICE",
+      "search_terms": [
+        "Delisting",
+        "non-compliance",
+        "notice"
+      ],
+      "calendar_eligible": false
+    },
+    {
+      "id": "bm.cov.access-hta-favorable",
+      "axis": "market_access",
+      "subtype": "market_access",
+      "label": "Positive ICER / favorable HTA decision",
+      "scheduled": false,
+      "company_stage": "Any",
+      "importance_score": 0.2,
+      "notes": "Catalog coverage seed (taxonomy id was unmapped)",
+      "taxonomy_event_id": "ACCESS_HTA_FAVORABLE",
+      "search_terms": [
+        "Positive",
+        "ICER",
+        "favorable",
+        "decision"
+      ],
+      "calendar_eligible": false
+    },
+    {
+      "id": "bm.cov.access-hta-unfavorable",
+      "axis": "market_access",
+      "subtype": "market_access",
+      "label": "Negative ICER / unfavorable HTA decision",
+      "scheduled": false,
+      "company_stage": "Any",
+      "importance_score": -0.25,
+      "notes": "Catalog coverage seed (taxonomy id was unmapped)",
+      "taxonomy_event_id": "ACCESS_HTA_UNFAVORABLE",
+      "search_terms": [
+        "Negative",
+        "ICER",
+        "unfavorable",
+        "decision"
+      ],
+      "calendar_eligible": false
+    },
+    {
+      "id": "bm.cov.access-formulary-inclusion",
+      "axis": "market_access",
+      "subtype": "market_access",
+      "label": "Favorable formulary inclusion / preferred tier",
+      "scheduled": false,
+      "company_stage": "Any",
+      "importance_score": 0.35,
+      "notes": "Catalog coverage seed (taxonomy id was unmapped)",
+      "taxonomy_event_id": "ACCESS_FORMULARY_INCLUSION",
+      "search_terms": [
+        "Favorable",
+        "formulary",
+        "inclusion",
+        "preferred"
+      ],
+      "calendar_eligible": false
+    },
+    {
+      "id": "bm.cov.access-formulary-exclusion",
+      "axis": "market_access",
+      "subtype": "market_access",
+      "label": "Unfavorable formulary / prior authorization",
+      "scheduled": false,
+      "company_stage": "Any",
+      "importance_score": -0.3,
+      "notes": "Catalog coverage seed (taxonomy id was unmapped)",
+      "taxonomy_event_id": "ACCESS_FORMULARY_EXCLUSION",
+      "search_terms": [
+        "Unfavorable",
+        "formulary",
+        "prior",
+        "authorization"
+      ],
+      "calendar_eligible": false
+    },
+    {
+      "id": "bm.cov.access-reimbursement-code",
+      "axis": "market_access",
+      "subtype": "market_access",
+      "label": "New reimbursement code assigned",
+      "scheduled": false,
+      "company_stage": "Any",
+      "importance_score": 0.12,
+      "notes": "Catalog coverage seed (taxonomy id was unmapped)",
+      "taxonomy_event_id": "ACCESS_REIMBURSEMENT_CODE",
+      "search_terms": [
+        "reimbursement",
+        "code",
+        "assigned"
+      ],
+      "calendar_eligible": false
+    },
+    {
+      "id": "bm.cov.access-patient-program",
+      "axis": "market_access",
+      "subtype": "market_access",
+      "label": "Patient access program launched",
+      "scheduled": false,
+      "company_stage": "Any",
+      "importance_score": 0.08,
+      "notes": "Catalog coverage seed (taxonomy id was unmapped)",
+      "taxonomy_event_id": "ACCESS_PATIENT_PROGRAM",
+      "search_terms": [
+        "Patient",
+        "access",
+        "program",
+        "launched"
+      ],
+      "calendar_eligible": false
+    },
+    {
+      "id": "bm.cov.access-competitor-approved",
+      "axis": "market_access",
+      "subtype": "market_access",
+      "label": "Competitor product launch / approval in class",
+      "scheduled": false,
+      "company_stage": "Any",
+      "importance_score": -0.15,
+      "notes": "Catalog coverage seed (taxonomy id was unmapped)",
+      "taxonomy_event_id": "ACCESS_COMPETITOR_APPROVED",
+      "search_terms": [
+        "Competitor",
+        "product",
+        "launch",
+        "approval"
+      ],
+      "calendar_eligible": false
+    },
+    {
+      "id": "bm.cov.access-competitor-withdrawn",
+      "axis": "market_access",
+      "subtype": "market_access",
+      "label": "Competitor withdrawn from market",
+      "scheduled": false,
+      "company_stage": "Any",
+      "importance_score": 0.18,
+      "notes": "Catalog coverage seed (taxonomy id was unmapped)",
+      "taxonomy_event_id": "ACCESS_COMPETITOR_WITHDRAWN",
+      "search_terms": [
+        "Competitor",
+        "withdrawn",
+        "from",
+        "market"
+      ],
+      "calendar_eligible": false
+    },
+    {
+      "id": "bm.cov.access-pricing-pressure",
+      "axis": "market_access",
+      "subtype": "market_access",
+      "label": "PBM pricing / rebate pressure",
+      "scheduled": false,
+      "company_stage": "Any",
+      "importance_score": -0.2,
+      "notes": "Catalog coverage seed (taxonomy id was unmapped)",
+      "taxonomy_event_id": "ACCESS_PRICING_PRESSURE",
+      "search_terms": [
+        "pricing",
+        "rebate",
+        "pressure"
+      ],
+      "calendar_eligible": false
+    },
+    {
+      "id": "bm.cov.access-price-favorable",
+      "axis": "market_access",
+      "subtype": "market_access",
+      "label": "Favorable list price achieved",
+      "scheduled": false,
+      "company_stage": "Any",
+      "importance_score": 0.15,
+      "notes": "Catalog coverage seed (taxonomy id was unmapped)",
+      "taxonomy_event_id": "ACCESS_PRICE_FAVORABLE",
+      "search_terms": [
+        "Favorable",
+        "list",
+        "price",
+        "achieved"
+      ],
+      "calendar_eligible": false
+    }
+  ]
+}

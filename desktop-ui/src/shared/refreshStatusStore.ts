@@ -37,6 +37,8 @@ export type RefreshLifecycleInfo = {
   elapsedSec: number;
   message: string;
   profile: RefreshProfile;
+  /** Badge/modale = WeeklyFull sul VPS (non subprocess locale). */
+  fromServerWeeklyFull?: boolean;
 };
 
 const IDLE: RefreshLifecycleInfo = {
@@ -80,6 +82,8 @@ type RefreshSnapshot = {
   /** Ultimo esito domenica full (resta dopo chiusura popup). */
   lastSundayResult: SundayRefreshResult | null;
   lastSundayFinishedAt: Date | null;
+  /** Finestra «orchestrator in corso sul server» (WeeklyFull VPS). */
+  weeklyFullServerRunningOpen: boolean;
 };
 
 let snapshot: RefreshSnapshot = {
@@ -97,6 +101,7 @@ let snapshot: RefreshSnapshot = {
   sundayResult: null,
   lastSundayResult: null,
   lastSundayFinishedAt: null,
+  weeklyFullServerRunningOpen: false,
 };
 
 const listeners = new Set<() => void>();
@@ -131,6 +136,7 @@ export function subscribeRefresh(listener: () => void): () => void {
 export function makeRefreshLife(
   partial: Pick<RefreshLifecycleInfo, "state" | "elapsedSec" | "message"> & {
     profile?: RefreshProfile;
+    fromServerWeeklyFull?: boolean;
   }
 ): RefreshLifecycleInfo {
   return {
@@ -138,6 +144,7 @@ export function makeRefreshLife(
     elapsedSec: partial.elapsedSec,
     message: partial.message,
     profile: partial.profile ?? snapshot.profile ?? "daily",
+    fromServerWeeklyFull: partial.fromServerWeeklyFull,
   };
 }
 
@@ -146,7 +153,8 @@ export function setRefreshLife(life: RefreshLifecycleInfo): void {
     snapshot.life.state === life.state &&
     snapshot.life.elapsedSec === life.elapsedSec &&
     snapshot.life.message === life.message &&
-    snapshot.life.profile === life.profile
+    snapshot.life.profile === life.profile &&
+    Boolean(snapshot.life.fromServerWeeklyFull) === Boolean(life.fromServerWeeklyFull)
   ) {
     return;
   }
@@ -227,7 +235,14 @@ export function showSundayRefreshResult(result: SundayRefreshResult): void {
     lastSundayResult: result,
     lastSundayFinishedAt: new Date(),
     profile: "daily",
+    weeklyFullServerRunningOpen: false,
   };
+  emit();
+}
+
+export function setWeeklyFullServerRunningOpen(open: boolean): void {
+  if (snapshot.weeklyFullServerRunningOpen === open) return;
+  snapshot = { ...snapshot, weeklyFullServerRunningOpen: open };
   emit();
 }
 

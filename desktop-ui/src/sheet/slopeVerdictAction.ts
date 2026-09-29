@@ -31,6 +31,21 @@ export function slopeVerdictDisagreesWithFinalAction(
   return false;
 }
 
+/**
+ * Slope says exit/avoid but the arbiter kept hold/buy/review —
+ * UI must not present this as a sell order (CERS-style confusion).
+ */
+export function slopeExitOverriddenByFinalAction(
+  verdict: StabilityVerdict,
+  suggestedAction: string | null | undefined,
+  curveRisingHold = false,
+): boolean {
+  if (suggestedAction !== "hold" && suggestedAction !== "buy" && suggestedAction !== "review") {
+    return false;
+  }
+  return slopeVerdictImpliedAction(verdict, curveRisingHold) === "sell";
+}
+
 export function suggestedActionDisplayLabel(
   action: string | null | undefined,
   lang: "it" | "en",
@@ -48,7 +63,7 @@ export function suggestedActionDisplayLabel(
     case "hold":
       return "HOLD";
     case "review":
-      return lang === "it" ? "REVIEW" : "REVIEW";
+      return lang === "it" ? "INCERTO" : "UNCERTAIN";
     default:
       return String(action).toUpperCase();
   }

@@ -1,0 +1,369 @@
+﻿
+==============================================================================
+A) File has NO language branching ΓÇö Italian-only strings ΓÇö 115 findings in 51 files
+==============================================================================
+
+-- desktop-ui\src\sheet\financialIndicatorGuide.ts  (13) --
+  L23 [1m]  Nome societ├á da Yahoo Finance.
+  L31 [1m]  Capitalizzazione di mercato ($). Barra verde: larghezza vs minΓÇômax colonna in tabella.
+  L39 [2m]  Prezzo corrente ($). Barra navy proporzionale al prezzo nella tabella.
+  L40 [2m]  Ultima chiusura ($). Γÿà se prezzo attuale ΓëÑ+5% vs chiusura; ΓÜí se ΓëñΓêÆ5%. Testo verde/rosso allo stesso scarto.
+  L41 [3m]  Massimo/minimo 52 settimane e medie chiusura. Γÿà se il livello ├¿ ΓëÑ+5% vs prezzo attuale; ΓÜí se ΓëñΓêÆ5%.
+  L42 [2m]  Variazioni % con Γû▓ verde / Γû╝ rosso (senza riempimento cella). Day = vs chiusura precedente; 1M/3M/6M = vs media chiusura periodo.
+  L49 [2m]  Attivo corrente ├╖ passivo corrente. <1 rosso ┬╖ 1ΓÇô1,5 ambra ┬╖ ΓëÑ1,5 verde ┬╖ barra = intensit├á (cap visual 20).
+  L50 [1m]  (Attivo corrente ΓêÆ magazzino) ├╖ passivo corrente. <0,8 rosso ┬╖ 0,8ΓÇô1 ambra ┬╖ ΓëÑ1 verde.
+  L51 [1m]  (Cassa + titoli brevi) ├╖ passivo corrente. <0,25 rosso ┬╖ 0,25ΓÇô0,5 ambra ┬╖ ΓëÑ0,5 verde.
+  L52 [1m]  Riepilogo testuale CR/QR/Cash (chip colorati).
+  L53 [2m]  Score 0ΓÇô1 (pi├╣ alto = pi├╣ liquido). Barra e colore: verde alto, ambra medio, navy basso. 1,00 = neutro se mancano i ratio.
+  L61 [2m]  Correlazione 5Y vs mercato (non direzione n├⌐ rischio). ╬▓┬▓ Γëê quota varianza market-driven. Verde <0,85 = segnale company-specific pi├╣ pulito ┬╖ ambra >1,35 ┬╖ ΓÜí >2. Non ├¿ consulenza finanziaria.
+  L117 [3m]  Apri ┬½Guida indicatori┬╗ per definizioni complete. Colori: var.% Γû▓Γû╝ ┬╖ barre $/ratio ┬╖ Γÿà/ΓÜí ┬▒5% ┬╖ P/W.
+
+-- desktop-ui\src\components\RegulatoryRiskPanel.tsx  (7) --
+  L86 [1m]  >Aggiungi data PDUFA</p>       <div className=
+  L121 [1m]             onClick={handleSave}         >           Salva         </button>         <button           type=
+  L164 [1m]  >Aggiungi precedente CRL / CMC</p>       <textarea         className=
+  L180 [1m]             onClick={handleSave}         >           Salva         </button>         <button           type=
+  L257 [1m]  Menzioni CMC / manufacturing
+  L268 [2m]  }                   </span>                   {h.text}                 </p>               ))}             </div>           ) : (             <span>Nessuna menzione in catalyst o flag</span>           
+  L287 [1m]  >┬╖ {e.flaggedAt.slice(0, 10)}</span>                 </p>               ))}             </div>           ) : (             <span>Nessun precedente registrato</span>           )}           {!showCrlFor
+
+-- desktop-ui\src\sheet\decisionChartLogic.ts  (7) --
+  L150 [1m]  P(plan) alto (${Math.round(s.pplan)})
+  L151 [1m]  P(plan) basso (${Math.round(s.pplan)}) ΓÇö segnale di uscita
+  L152 [2m]  posizione in rescue space ΓÇö 0 recuperi pieni osservati finora
+  L163 [3m]  P(plan) nella fascia 50ΓÇô70% ΓÇö soggetto a variazione dopo fix bucket in corso
+  L165 [1m]  MCS non ancora disponibile ΓÇö contesto esterno non valutato
+  L167 [1m]  score insufficienti per raccomandazione affidabile
+  L172 [2m]  Profilo di score nella norma ΓÇö nessun segnale anomalo rilevato.
+
+-- desktop-ui\src\components\CdPatternPolygonAccuracySection.tsx  (5) --
+  L108 [1m]  Pearson r ΓÇö correlazione polygon match vs P&L
+  L136 [2m]  >           Dati insufficienti ({n} posizioni)         </p>       ) : (         <ResponsiveContainer width=
+  L337 [1m]  Tutte
+  L377 [1m]   I dati proxy sottostimano leggermente il match reale.
+  L394 [1m]  }             con campi per ogni valutazione:{
+
+-- desktop-ui\src\sheet\precatCurve.ts  (5) --
+  L23 [2m]  MOLTO ALTA
+  L119 [1m]  BASSA
+  L121 [1m]  ALTA
+  L122 [2m]  MOLTO ALTA
+  L666 [1m]  ,     };   }    // ΓöÇΓöÇ Unfavorable slope ΓÇö avoid / valuta uscita se in portafoglio ΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇ   if (effSlope <= 0) {     const slopeDesc = slope5d != null && slope5d < 0 && slope20d != null && slope20
+
+-- desktop-ui\src\components\catalystCopilotFocus.ts  (4) --
+  L18 [1m]  Su ${tk} prepara un summary strutturato delle **criticit├á** e dei **passi avanti** 
+  L19 [2m]  usando solo righe e KPI della tabella Catalyst Feed (EIS, T+1/T+3, indicatori ORR/DCR, data_gaps). 
+  L20 [3m]  Sezioni: Contesto ┬╖ Passi avanti ┬╖ Criticit├á/rischi ┬╖ KPI & prezzo ┬╖ Lacune dati. 
+  L35 [2m]  Per ${tk}: spiega ORR, DCR, EIS e reazione prezzo T+1/T+3 delle righe visibili in tabella, con tabella comparativa eventi.
+
+-- desktop-ui\src\components\PipelineStaleWarningModal.tsx  (4) --
+  L2 [1m]  ultimo refresh EIS ha fallito.  * Non scompare da solo ΓÇö richiede click esplicito su "Ho capito".  * Non blocca l
+  L50 [1m]  >               Aggiornamento EIS non riuscito             </h2>             <p className=
+  L53 [4m]  >               L'ultimo refresh schedulato del feed clinico (EIS) ha fallito.               I dati visualizzati sono quelli dell'ultimo aggiornamento riuscito.             </p>           </div>      
+  L77 [1m]  >             Gli score EIS e Regulatory Risk rimangono quelli calcolati in precedenza.             Verifica i log o rilancia manualmente <code className=
+
+-- desktop-ui\src\components\SimulationAnalysisView.tsx  (3) --
+  L785 [3m]  Nessuna posizione aperta in Simulation
+  L786 [4m]  Mostra tutte le curve delle posizioni aperte
+  L877 [1m]   disabled>ΓÇö seleziona preset ΓÇö</option>               <option value=
+
+-- desktop-ui\src\components\WeightSimExpPanel.tsx  (3) --
+  L95 [1m]  Calcola la distribuzione ottimale del capitale tra i deal aperti per raggiungere il target di guadagno (+${Math.round(targetEur).toLocaleString("it-IT")} Γé¼ in 24h). 
+  L96 [2m]  Parte dai pesi approvati nel Learning Lab e li ottimizza sul rendimento reale recente di ogni deal. 
+  L97 [3m]  Le curve rosa/fucsia nel grafico ΓÇ£Tre portafogliΓÇ¥ mostrano come performerebbe il portafoglio usando questa mix ottimizzata.
+
+-- desktop-ui\src\sheet\investSignalScore.test.ts  (3) --
+  L159 [1m]  prefers Affidabilit├á calib over +5gg column
+  L200 [1m]  alta
+  L203 [1m]  bassa
+
+-- desktop-ui\src\sheet\recommendationCompositionGuide.ts  (3) --
+  L153 [1m]  Top2 ┬½yes┬╗ oppure ┬½wait┬╗ + Precat enter/accumulate + P(plan) ΓëÑ ${SIM_LOOP_BUY_WATCH_PROB_MIN}%
+  L195 [2m]  Posizione aperta (portafoglio o paper) + exitDecision = exit
+  L276 [1m]  Top2 ┬½wait┬╗ senza path BUY completo
+
+-- desktop-ui\src\sheet\simulationStyles.ts  (3) --
+  L166 [1m]  Prezzo Corrente ($)
+  L189 [1m]   } };     }     return undefined;   }    // Liquidit├á ΓÇö only flag risk (CR < 1)   if (col === 
+  L244 [1m]  Affidabilit├á
+
+-- desktop-ui\src\components\ManualAllocationSynthesizerPanel.tsx  (2) --
+  L120 [1m]  ovvero circa ${(100 - result.estimatedErrorPct).toFixed(0)}% sono stati win. 
+  L388 [3m]  Precision/recall sulle aperte misura solo il fit con gli slider. La validazione vera ├¿ nel grafico sotto.
+
+-- desktop-ui\src\components\TableViewSettings.tsx  (2) --
+  L93 [2m]  Chiudi pannello layout
+  L169 [1m]  Mostra colonna
+
+-- desktop-ui\src\data\accuracyModelData.ts  (2) --
+  L59 [1m]  File assente (${DIR_CALIB_FILE}). Esegui scripts/_build_directional_calibration.py.
+  L192 [1m]  ${detail} ΓÇö snapshot monitor assente. Cartella: ${desktopDataDirHint()}
+
+-- desktop-ui\src\data\investmentSimOutcomesData.ts  (2) --
+  L183 [5m]  Rigenerazione non disponibile (${rebuildWarning}); dati dall'ultimo snapshot.
+  L200 [5m]  Rigenerazione non disponibile (${rebuildWarning}); dati dall'ultimo file locale.
+
+-- desktop-ui\src\data\simulationCharts.ts  (2) --
+  L50 [3m]  ,       error:         detail ||         `Dati grafici assenti (${CHARTS_FILE}) e API offline.`,     };   }    try {     const bundle = await api<ChartBundle>(
+  L71 [1m]  ,       error:         `${msg} ΓÇö esegui Export_Desktop_Snapshots.bat (include grafici) ` +         `o avvia API su :8765. Cartella: ${desktopDataDirHint()}`,     };   }    return {     bundle: null,  
+
+-- desktop-ui\src\riskPattern\continuousFeatureRegression.ts  (2) --
+  L15 [2m]  quali parametri sono SEMPRE BASSI quando il trade  * va in perdita?
+  L17 [1m]  se basso, attento
+
+-- desktop-ui\src\sheet\clinicalSimulationFilter.ts  (2) --
+  L114 [1m]  )),       nct,       company: String(best.Societ├á ?? best.Nome ?? best.Company ?? 
+  L346 [1m]  Societ├á
+
+-- desktop-ui\src\sheet\dashboardRecommendationsView.ts  (2) --
+  L153 [1m]  ;   return String(     simRow.Company ?? simRow.company ?? simRow.Societ├á ?? simRow[
+  L270 [1m]  Prezzo Corrente ($)
+
+-- desktop-ui\src\sheet\decisionChartLogic.test.ts  (2) --
+  L88 [1m]  P(plan) alto
+  L89 [1m]  MCS non ancora disponibile
+
+-- desktop-ui\src\sheet\investSimStorage.ts  (2) --
+  L643 [2m]  ; }  /** Evita punti duplicati se valore invariato nell'ultima ora. Con 
+  L646 [2m]  , sostituisce l'ultimo punto dello stesso giorno di calendario. 
+
+-- desktop-ui\src\sheet\portfolioSizingWidget.ts  (2) --
+  L825 [1m]  Cap indicazione "${ind}" raggiunto: slider fermato a ${Math.round(size).toLocaleString("it-IT")} Γé¼.
+  L828 [2m]  Cap singola posizione raggiunto: slider fermato a ${Math.round(size).toLocaleString("it-IT")} Γé¼.
+
+-- desktop-ui\src\sheet\scoreValidationExport.test.ts  (2) --
+  L11 [1m]  reads P(plan) from Affidabilit├á column (decimal 0ΓÇô1)
+  L13 [1m]  Affidabilit├á\n%
+
+-- desktop-ui\src\sheet\sharedTableCellStyle.ts  (2) --
+  L186 [1m]  Affidabilit├á
+  L194 [1m]  Affidabilit├á
+
+-- desktop-ui\src\sheet\simRowBetaLiquidity.test.ts  (2) --
+  L18 [1m]  computes liquidity score from Liquidit├á (FY) display text
+  L20 [1m]  Liquidit├á (FY)
+
+-- desktop-ui\src\sheet\simRowTargetStop.ts  (2) --
+  L117 [1m]  Modello in calo verso CD (${planReturnPct >= 0 ? "+" : ""}${planReturnPct.toFixed(1)}%)
+  L149 [1m]  Target modello ${pctLabel} ΓåÆ ${fmtTargetUsd(targetPriceUsd)} verso CD
+
+-- desktop-ui\src\sheet\slopeErrorRank.ts  (2) --
+  L38 [2m]   ├¿ peggiore di 
+  L74 [2m]   ├¿ peggiore di 
+
+-- desktop-ui\src\calibration\featureSnapshotStore.ts  (1) --
+  L2 [2m]  immutabilit├á  * delle feature al momento dell
+
+-- desktop-ui\src\calibration\sizingRules.test.ts  (1) --
+  L104 [1m]  indicazione
+
+-- desktop-ui\src\components\DealUrgencyColdFlameIcon.tsx  (1) --
+  L51 [1m]           />         {/* Gocciolina ΓÇö ΓÇ£sta sciogliendo / freddo che colaΓÇ¥ */}         <path           fill=
+
+-- desktop-ui\src\components\RiskBenefitScaleIcon.tsx  (1) --
+  L305 [1m]  }. Clicca per il dettaglio per-bucket.`     : `Risk ${riskUnknown ? 
+
+-- desktop-ui\src\data\modelLearningsData.ts  (1) --
+  L61 [2m]  File assente (${CALIB_STATE_FILE}). Serve un refresh con ricalibrazione.
+
+-- desktop-ui\src\data\predictions.ts  (1) --
+  L51 [1m]  API /api/predictions: nessuna riga
+
+-- desktop-ui\src\data\signalCalibrationData.ts  (1) --
+  L383 [2m]   }; }  /** Anteprima da Simulation quando l'audit log non ├¿ ancora popolato. */ export function liveSignalRowsFromSimulation(simTable: SheetTable | null): SignalLiveRow[] {   if (!simTable?.rows?.leng
+
+-- desktop-ui\src\finance\buildFinancialGraph.ts  (1) --
+  L204 [1m]  ╬ö giorno ${formatPct(row.dailyChangePct)}
+
+-- desktop-ui\src\shared\refreshStatusStore.ts  (1) --
+  L10 [1m]  altra ha appena fatto partire  *      un refresh (badge ΓÅ│ visibile ovunque, non solo in Decision Lab);  *   2. mostrare in tutte le tab l
+
+-- desktop-ui\src\sheet\chartNodes.ts  (1) --
+  L11 [1m]   : PREDICTION_CURVE_RECALIB_LABEL; }  /** Panel title for the % chart (dashboard + Grafici). */ export function predictionCurveRecalibChartTitle(scope?: string): string {   const base = PREDICTION_CUR
+
+-- desktop-ui\src\sheet\decisionSimTradePortfolio.ts  (1) --
+  L27 [1m]  Prezzo Corrente ($)
+
+-- desktop-ui\src\sheet\gapInvestigationTypes.ts  (1) --
+  L4 [1m]  Aggiungi
+
+-- desktop-ui\src\sheet\investDecisionSimLoop.test.ts  (1) --
+  L671 [1m]  Top2 s├¼ + exit hold
+
+-- desktop-ui\src\sheet\learningTrendVisual.ts  (1) --
+  L122 [4m]  Ci sono ${pending} previsioni ancora da verificare (servono circa 5 giorni di borsa). Finch├⌐ non si chiudono, il modello resta in pausa e non si aggiorna.
+
+-- desktop-ui\src\sheet\manualFeedEvents.ts  (1) --
+  L143 [1m]  ).trim() || null;   let title = (fields.TITLE ?? fields.TITOLO ?? fields.NEWS ?? 
+
+-- desktop-ui\src\sheet\paperSimMaturation.ts  (1) --
+  L227 [1m]  );   return d.slice(0, 10); }  /** Etichetta compatta asse X ΓÇö solo giorno o ┬╖ now. */ export function maturationAxisShortLabel(p: Pick<PaperMaturationPoint, 
+
+-- desktop-ui\src\sheet\planProbOutcomeAudit.ts  (1) --
+  L147 [1m]  );   const condition = String(simRow?.Indicazione ?? simRow?.indication ?? 
+
+-- desktop-ui\src\sheet\portfolioWeightedSizing.ts  (1) --
+  L48 [1m]  frizione su LOW confidence
+
+-- desktop-ui\src\sheet\rascoreCalibrationHistory.ts  (1) --
+  L181 [4m]  Nessuno snapshot ancora ΓÇö si accumula aprendo questo pannello ogni settimana.
+
+-- desktop-ui\src\sheet\realPortfolioAccuracy.ts  (1) --
+  L91 [1m]  Prezzo Corrente ($)
+
+-- desktop-ui\src\sheet\sdsRoiSimConvergence.test.ts  (1) --
+  L34 [1m]  PORTAFOGLIO|2026-01-01
+
+-- desktop-ui\src\sheet\simulationBuyPriceAudit.ts  (1) --
+  L84 [1m]  ;     note = `Ricostruito da P&L foglio (${sheetPct.toFixed(1)}%) ΓÇö pu├▓ essere obsoleto se hai comprato oggi.`;   } else if (localBuy > 0) {     source = 
+
+-- desktop-ui\src\sheet\slopeEventLog.ts  (1) --
+  L148 [4m]   permette di calcolare un P&L proxy quando non c'├¿ una    * posizione aperta reale (
+
+==============================================================================
+B) File uses language branching but literal NOT paired ΓÇö 74 findings in 32 files
+==============================================================================
+
+-- desktop-ui\src\sheet\simulationPosition.ts  (11) --
+  L19 [2m]  N┬░ Azioni Implicite
+  L400 [1m]  Prezzo Acquisto ($)
+  L421 [1m]  Prezzo Corrente ($)
+  L432 [1m]  Prezzo Apertura ($)
+  L433 [1m]  Prezzo Apertura
+  L452 [1m]  Prezzo Acquisto ($)
+  L461 [2m]  Variazione giornaliera %
+  L922 [3m]  ingresso (capitale). */   entryValue: number;   /** Valore a inizio ultima giornata (chiusura precedente). */   priorValue: number | null;   /** Somma gain giorni prima dell
+  L1890 [1m]  Societ├á
+  L1996 [2m]  N┬░ Azioni Implicite
+  L1997 [2m]  N┬░ Azioni Implicite
+
+-- desktop-ui\src\components\LearningLabUnifiedView.tsx  (7) --
+  L55 [1m]  C ┬╖ Portafoglio / sizing / advice
+  L56 [1m]  D ┬╖ Monitoring & qualit├á
+  L90 [1m]  In miglioramento
+  L93 [1m]  Raccolta dati
+  L100 [1m]  settimanale ┬╖ Dom
+  L101 [1m]  refresh giornaliero
+  L359 [1m]  C ┬╖ Portafoglio
+
+-- desktop-ui\src\components\InvestmentDecisionLabView.tsx  (4) --
+  L309 [1m]  Un job ├¿ gi├á in   // corso
+  L377 [1m]  );         // Solo il subprocess API conta come ┬½in corso┬╗ ΓÇö non st.state dal file (pu├▓ restare ┬½running┬╗).         const procRunning = Boolean(st.running);         const exitCode =           typeof s
+  L451 [1m]  : snapshot JSON per la UI (salta se il server li ha gi├á scritti).   useEffect(() => {     if (state !== 
+  L856 [1m]  >Prezzo acquisto</span> /{
+
+-- desktop-ui\src\components\InvestmentSimulationView.tsx  (4) --
+  L1048 [1m]  Affidabilit├á
+  L1051 [1m]  Affidabilit├á
+  L2279 [1m]  Affidabilit├á\ncalib %
+  L2279 [1m]  Affidabilit├á\n%
+
+-- desktop-ui\src\components\ModelComparisonPanel.tsx  (4) --
+  L88 [1m]  portafoglio
+  L1671 [1m]  portafoglio
+  L1723 [1m]  Affidabilit├á\n%
+  L2421 [1m]  ${polyMeta.nKeys.toLocaleString()} titoli ┬╖ ${polyMeta.nKeysLive} live ┬╖ ${fmtTs(polyMeta.generatedAt)}
+
+-- desktop-ui\src\components\CapDivStep2RiskView.tsx  (3) --
+  L200 [1m]  Questo step identifica automaticamente quali combinazioni di caratteristiche (fascia SDS, fase clinica, ecc.) sono statisticamente associate alle perdite nel tuo storico. 
+  L201 [2m]  Il sistema cerca il pattern AND che meglio predice le perdite, lo mostra nel grafico scatter, e ti chiede se vuoi approvarlo. 
+  L789 [4m]  Clicca \"Usa nello score\" per attivarlo: i deal che lo matchano riceveranno un sizing suggerito pi├╣ basso in Step 3.
+
+-- desktop-ui\src\components\CapDivStep3BreakevenView.tsx  (3) --
+  L245 [1m]  Se il pattern di Step 2 non ├¿ ancora   // implementato [ΓÇª], patternPenalty pu├▓ restare fisso a 1.0
+  L1278 [1m]  Nessun deal del portfolio con gain SDS positivo
+  L1279 [1m]  Nessun deal del sim loop con gain SDS positivo
+
+-- desktop-ui\src\components\ContinuousFeatureRegressionPanel.tsx  (3) --
+  L9 [3m]  il feature ├¿ basso nelle perdite
+  L11 [3m]  il feature ├¿ alto nelle perdite
+  L266 [1m]  red flag se basso
+
+-- desktop-ui\src\components\PatternSearchMonitorPanel.tsx  (3) --
+  L338 [1m]  Il lift misura quanto un pattern ├¿ discriminante: 1.5├ù significa che i deal che lo matchano perdono 1.5 volte pi├╣ spesso della media (${runResult.globalLossRate.toFixed(1)}%). 
+  L339 [2m]  La curva che scende ├¿ normale: il lift si stabilizza man mano che si accumulano dati. La linea tratteggiata ├¿ la soglia minima per promuovere il pattern allo score. 
+  L340 [2m]  Clicca fino a ${MAX_COMPARE} righe nella tabella sotto per confrontarne le curve direttamente.
+
+-- desktop-ui\src\components\SlopeTrajectoryChart.tsx  (3) --
+  L323 [1m]  >Oggi</span> = linea arancione (0% =             prezzo attuale).{
+  L324 [2m]  }             {daysToCd > 0 ? (               <>                 A sinistra il passato, a destra verso CD ({daysToCd}g).               </>             ) : (               <>Giorno CD.</>             )
+  L359 [2m]  }                     = traiettoria attesa (20g proiettata da ΓêÆ10g, prima dell&apos;errore slope).                   </>                 ) : null}               </>             ) : (               <> 
+
+-- desktop-ui\src\sheet\portfolioLossAnalysis.ts  (3) --
+  L499 [1m]  ));     if (Number.isFinite(n)) return n;   }   return null; }  /** Off-portfolio Simulation rows per finestra CD (hot Γëñ2 mesi ┬╖ watch 4ΓÇô2 mesi). */ export function detectOpportunityAnalysisAlerts(   
+  L1081 [1m]  Societ├á
+  L1262 [1m]  Societ├á
+
+-- desktop-ui\src\components\CapDivStep1GainView.tsx  (2) --
+  L306 [1m]  Aperte\" mostrano le opportunit├á ancora aperte e il loro ROI atteso. 
+  L307 [1m]  Le colonne \"Chiusi\" mostrano i trade gi├á conclusi e la performance reale. 
+
+-- desktop-ui\src\components\InvestmentSimOutcomesPanel.tsx  (2) --
+  L666 [1m]  >               I KPI sotto sono dall&apos;ultimo snapshot salvato ΓÇö non sono stati aggiornati.             </span>           ) : null}         </p>       ) : null}       {doc?.trade_calibration?.cali
+  L836 [1m]  , { n: kpis.nTotal })}           </p>         </div>       )}        {/* ΓöÇΓöÇ P&L alignment (dettaglio giornaliero solo in Simulation ΓåÆ P&L) ΓöÇΓöÇΓöÇ */}       <div className=
+
+-- desktop-ui\src\sheet\catalystProbabilityProxy.ts  (2) --
+  L15 [1m]  proxy indicativo da dispersione analisti, non probabilit├á calibrata
+  L246 [1m]  Dati insufficienti
+
+-- desktop-ui\src\sheet\financialStyles.tsx  (2) --
+  L1066 [1m]   && vsCurrentPct != null         ? `Prezzo attuale ${vsCurrentPct >= 0 ? 
+  L1067 [1m]  }${vsCurrentPct.toFixed(1)}% vs ultima chiusura (Γÿà ΓëÑ+5% ┬╖ ΓÜí ΓëñΓêÆ5%)`         : vsCurrentPct != null           ? `${vsCurrentPct >= 0 ? 
+
+-- desktop-ui\src\sheet\investSignalScore.ts  (2) --
+  L485 [1m]  Stesso segno (${slopeSrc}), pred piccola +3
+  L487 [2m]  |Pred +5| troppo piccola ΓåÆ neutro
+
+-- desktop-ui\src\components\ClinicalPreCdFeedPanel.tsx  (1) --
+  L981 [1m]  ${providerLabel} attivo.
+
+-- desktop-ui\src\components\ClinicalStudyCards.tsx  (1) --
+  L683 [1m]  ).trim().toUpperCase();       if (!t) continue;       const name = String(r.Societ├á ?? r.Nome ?? r.Company ?? 
+
+-- desktop-ui\src\components\ManualFeedNewsBox.tsx  (1) --
+  L14 [1m]  Formato rapido (una news per riga): INBS | 13/05/2026 | FDA orphan drug designation | GlobeNewswire | breve riassuntoΓÇª  Oppure formato etichettato: TICKER: PMVP DATA: 2026-03-01 FONTE: BioSpace NEWS: 
+
+-- desktop-ui\src\components\MissedOpportunityPanel.tsx  (1) --
+  L563 [1m]  }                   giorno/i di snapshot reali                   {matchedComparison.firstDate                     ? ` dal ${matchedComparison.firstDate}`                     : 
+
+-- desktop-ui\src\components\PortfolioBreakevenComparisonView.tsx  (1) --
+  L2 [1m]  Mio portafoglio
+
+-- desktop-ui\src\components\PortfolioDiversificationLabPanel.tsx  (1) --
+  L254 [1m]  Sim loop (raccomandazioni BUY + paper book)
+
+-- desktop-ui\src\components\PriceVariationChart.tsx  (1) --
+  L53 [1m]  7 giorni
+
+-- desktop-ui\src\riskPattern\manualAllocationPatternApply.ts  (1) --
+  L32 [2m]  Applicazione diretta dal pannello errori
+
+-- desktop-ui\src\riskPattern\patternProposalEngine.ts  (1) --
+  L216 [1m]  calcola empiricamente il pattern   //    associato al fallimento
+
+-- desktop-ui\src\sheet\investDecisionSimAdviceCalibration.ts  (1) --
+  L1251 [1m]  Direzione sbagliata in 24h con P(plan) ${point.probPct.toFixed(0)}% ΓÇö verifica Top2/precat/momentum (${rationale || "ΓÇö"}).
+
+-- desktop-ui\src\sheet\missedOpportunityAudit.ts  (1) --
+  L278 [1m]  Societ├á
+
+-- desktop-ui\src\sheet\predictionCurveDailyRecalib.ts  (1) --
+  L123 [1m]  Prezzo TΓêÆ60 ($)
+
+-- desktop-ui\src\sheet\recoveryProbability.ts  (1) --
+  L939 [1m]  P(realizzazione) ${probabilityPct.toFixed(0)}% ┬╖ ${driverText}
+
+-- desktop-ui\src\sheet\suggestionMonitor.ts  (1) --
+  L114 [1m]  ;   } }  /** Testo motivazione per tabella monitor (exit / hold / buy / block). */ export function recommendationRationale(   row: Pick<     SuggestionMonitorRow,     | 
+
+-- desktop-ui\src\sheet\synthExposureBridge.ts  (1) --
+  L162 [2m]  Synth: riduci esposizione verso ${targetLabel} (capitale attuale Γé¼${verdict.actualCapitalEur.toLocaleString("it-IT")})
+
+-- desktop-ui\src\sheet\unifiedAdviceSuccess.ts  (1) --
+  L174 [1m]  Attenzione: solo ${unified.closed.n} chiusure ΓÇö il ${unified.closed.pct}% sim non sostituisce live/paper.
+
+
+Summary
+  Total findings: 189
+  A (no lang branch): 115
+  B (lang branch present but literal unpaired): 74

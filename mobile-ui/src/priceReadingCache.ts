@@ -8,6 +8,8 @@ export type PriceReadingSnapshot = {
   priceUsd: number;
   ts: string;
   simTableVersion?: string | null;
+  /** Prior price inferred from daily % move when no real history exists. */
+  synthetic?: boolean;
 };
 
 export type PriceReadingPair = {

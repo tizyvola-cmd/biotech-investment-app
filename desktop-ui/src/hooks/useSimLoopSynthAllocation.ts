@@ -6,13 +6,17 @@ import { useEffect, useMemo, useState } from "react";
 import type { ChartPoint, SheetTable } from "../types";
 import type { SdsRow } from "../api/supernova";
 import {
-  closedSimOutcomeRowsFromDoc,
+  closedValidationOutcomeRowsFromDoc,
+} from "../sheet/simOutcomeCycleDedup";
+import {
   loadInvestmentSimOutcomes,
   type SimOutcomeRow,
 } from "../data/investmentSimOutcomesData";
 import { computeCalibrationSnapshot } from "../calibration/shrinkageEngine";
 import { computeSdsGainBreakdown } from "../sheet/sdsGainBreakdown";
 import { buildSynthCurveAllocation } from "../sheet/buildSynthCurveAllocation";
+import { buildSimLoopSynthCapDivTotals } from "../sheet/simLoopSynthCapDivTotals";
+import type { SimLoopPulseTotals } from "../sheet/simLoopPulseView";
 import { runUnivariateScreening } from "../riskPattern/lossRiskScreening";
 import { loadApprovedPattern } from "../riskPattern/patternProposalStore";
 import { matchPattern } from "../riskPattern/lossRiskPattern";
@@ -20,6 +24,8 @@ import { extractAllRowFeatures } from "../riskPattern/lossRiskScreening";
 import type { ComparisonDeal } from "../sheet/threePortfolioCompare";
 import type { InvestSimInputs } from "../sheet/investSimStorage";
 import { useLang } from "../shared/i18n";
+import type { PaperPosition } from "../sheet/investDecisionSimLoop";
+import type { SimTableApprovedWeightMaps } from "../sheet/simTableApprovedWeightHints";
 
 export type SimLoopSynthAllocation = {
   /** Sim loop BUY deals — Weight Sim Exp synth shares. */
@@ -33,6 +39,10 @@ export type SimLoopSynthAllocation = {
   simLoopDisplayShareByRowKey: Record<string, number>;
   totalCapitalEur: number;
   targetGainEur: number;
+  /** Cap Div snapshot totals — same basis as 3-experiment synth curve. */
+  capDivTotals: SimLoopPulseTotals | null;
+  /** Approved-weight Rec $ column + Sync → Synth targets (not Weight Sim Exp). */
+  simTableApprovedWeightMaps: SimTableApprovedWeightMaps;
 };
 
 export function useSimLoopSynthAllocation(args: {
@@ -41,6 +51,7 @@ export function useSimLoopSynthAllocation(args: {
   investInputs?: InvestSimInputs;
   pointsBySeriesKey?: Map<string, ChartPoint[]>;
   totalCapitalEur: number;
+  paperPortfolio?: PaperPosition[];
   enabled?: boolean;
 }): SimLoopSynthAllocation | null {
   const { lang } = useLang();
@@ -51,7 +62,7 @@ export function useSimLoopSynthAllocation(args: {
     let cancelled = false;
     void loadInvestmentSimOutcomes().then((doc) => {
       if (cancelled) return;
-      setClosedRows(closedSimOutcomeRowsFromDoc(doc));
+      setClosedRows(closedValidationOutcomeRowsFromDoc(doc));
     });
     return () => {
       cancelled = true;
@@ -126,16 +137,39 @@ export function useSimLoopSynthAllocation(args: {
       phaseA,
       approvedPattern,
       matchesStep2Pattern,
+      paperPortfolio: args.paperPortfolio,
     });
     if (!payload?.simLoopSharesByRowKey && !payload?.portfolioSharesByRowKey) return null;
+
+    const capDivTotals =
+      args.paperPortfolio != null
+        ? buildSimLoopSynthCapDivTotals({
+            closedRows,
+            simTable: args.simTable,
+            sdsRows: args.sdsRows,
+            investInputs: args.investInputs,
+            pointsBySeriesKey: args.pointsBySeriesKey ?? new Map(),
+            totalCapitalEur: args.totalCapitalEur,
+            paperPortfolio: args.paperPortfolio,
+            lang: lang === "it" ? "it" : "en",
+          })
+        : null;
+
     return {
       shareByRowKey: payload.simLoopSharesByRowKey ?? {},
       simLoopApprovedShareByRowKey: payload.simLoopApprovedSharesByRowKey ?? {},
       portfolioShareByRowKey: payload.portfolioSharesByRowKey ?? {},
       portfolioDisplayShareByRowKey: payload.portfolioDisplaySharesByRowKey ?? {},
       simLoopDisplayShareByRowKey: payload.simLoopDisplaySharesByRowKey ?? {},
+      simTableApprovedWeightMaps: payload.simTableApprovedWeightMaps ?? {
+        portfolioApprovedShareByRowKey: payload.portfolioApprovedSharesByRowKey ?? {},
+        opportunityApprovedShareByRowKey: payload.simLoopApprovedSharesByRowKey ?? {},
+        multiplierByRowKey: {},
+        patternPenaltyByRowKey: {},
+      },
       totalCapitalEur: args.totalCapitalEur,
       targetGainEur,
+      capDivTotals,
     };
   }, [
     args.enabled,
@@ -144,6 +178,7 @@ export function useSimLoopSynthAllocation(args: {
     args.investInputs,
     args.pointsBySeriesKey,
     args.totalCapitalEur,
+    args.paperPortfolio,
     closedRows,
     approvedPattern,
     matchesStep2Pattern,

@@ -403,3 +403,670 @@ html[data-theme]:not(.dark) .seg-btn-active {
   background: var(--sn-primary) !important;
   color: #fff !important;
 }
+
+/* ── SuperNova landing layout (tabs + chrome) ─────────────────────────── */
+[data-theme="supernova"] {
+  --sn-bg: #0b0d17;
+  --sn-surface: #121729;
+  --sn-surface-raised: #1a2136;
+  --sn-border: rgba(255, 255, 255, 0.08);
+  --sn-border-subtle: rgba(255, 255, 255, 0.08);
+
+  --sn-primary: #7c6cf3;
+  --sn-primary-dark: #6d5ce6;
+  --sn-primary-pale: rgba(124, 108, 243, 0.16);
+
+  --sn-accent: #a79aff;
+  --sn-accent-dark: #7c6cf3;
+  --sn-accent-pale: rgba(124, 108, 243, 0.16);
+
+  --sn-sidebar-bg: #050608;
+  --sn-sidebar-active: #7c6cf3;
+  --sn-sidebar-text: #97a2ba;
+  --sn-sidebar-muted: #5b6580;
+  --sn-sidebar-section: #5b6580;
+
+  --sn-text: #f3f5fa;
+  --sn-text-2: #97a2ba;
+  --sn-text-3: #5b6580;
+  --sn-text-on-dark: #f3f5fa;
+
+  --sn-long-bg: rgba(34, 197, 94, 0.14);
+  --sn-long-text: #4ade80;
+  --sn-short-bg: rgba(239, 68, 68, 0.16);
+  --sn-short-text: #f87171;
+  --sn-watch-bg: rgba(124, 58, 237, 0.16);
+  --sn-watch-text: #c4b5fd;
+  --sn-hold-bg: rgba(255, 255, 255, 0.06);
+  --sn-hold-text: rgba(255, 255, 255, 0.7);
+
+  --sn-piggy-bg: rgba(124, 58, 237, 0.16);
+  --sn-piggy-border: rgba(167, 139, 250, 0.35);
+  --sn-piggy-label: #c4b5fd;
+
+  --sn-chart-grid: rgba(255, 255, 255, 0.08);
+  --sn-chart-tick: rgba(255, 255, 255, 0.45);
+  --sn-zone-past: rgba(255, 255, 255, 0.04);
+  --sn-zone-cd: rgba(250, 238, 180, 0.18);
+
+  --sn-violet-50: rgba(124, 58, 237, 0.16);
+  --sn-violet-200: #a78bfa;
+  --sn-violet-500: #7c3aed;
+  --sn-violet-700: #6d28d9;
+  --sn-violet-900: #2e1065;
+
+  --sn-green-50: rgba(34, 197, 94, 0.14);
+  --sn-green-200: #86efac;
+  --sn-green-500: #22c55e;
+  --sn-green-700: #16a34a;
+
+  --sn-rose-50: rgba(244, 63, 94, 0.14);
+  --sn-rose-200: #fda4af;
+  --sn-rose-500: #f43f5e;
+  --sn-rose-700: #be123c;
+
+  --sn-red-50: rgba(239, 68, 68, 0.16);
+  --sn-red-500: #ef4444;
+  --sn-red-700: #b91c1c;
+}
+
+html[data-theme="supernova"] {
+  color-scheme: dark;
+  --surface: 18 23 41;
+  --surface-elevated: 26 33 54;
+  --bg-deep: 11 13 23;
+  --ink: 243 245 250;
+  --ink-muted: 151 162 186;
+  --accent: 124 108 243;
+  --border: 255 255 255;
+  --surface-3: 26 33 54;
+  --positive: 52 211 153;
+  --negative: 248 113 133;
+  --signal-up: 52 211 153;
+  --signal-down: 248 113 133;
+  --signal-neutral: 251 191 36;
+  --warn: 243 196 81;
+  --purple-soft: 167 154 255;
+
+  --panel-feed-bg: 18 23 41;
+  --panel-feed-header-bg: 26 33 54;
+  --panel-feed-border: 255 255 255;
+  --panel-feed-border-soft: 255 255 255;
+  --panel-feed-accent: 124 108 243;
+  --panel-feed-accent-strong: 167 154 255;
+  --panel-feed-toolbar: 26 33 54;
+  --panel-feed-row-hover: 32 40 64;
+
+  --panel-mint-bg: 12 22 22;
+  --panel-mint-bg-soft: 10 20 20;
+  --panel-mint-bg-elevated: 18 20 31;
+  --panel-mint-border: 36 70 62;
+  --panel-mint-border-soft: 38 44 66;
+  --panel-mint-thead: 16 32 28;
+  --panel-mint-ink: 248 250 252;
+  --panel-mint-ink-muted: 148 163 184;
+  --panel-mint-row-hover: 20 40 36;
+
+  --clinical-panel: 12 16 28;
+  --clinical-panel-border: 51 58 82;
+
+  --panel-rose-bg: 32 16 24;
+  --panel-rose-bg-soft: 42 18 28;
+  --panel-portfolio-flat-bg: 11 14 24;
+
+  --panel-lab-shell-bg: 11 14 24;
+  --panel-lab-card-bg: 18 20 31;
+  --panel-lab-block-bg: 14 16 26;
+}
+
+/* SuperNova ink (no starfield paint on these nodes). */
+html[data-theme="supernova"],
+html[data-theme="supernova"] body,
+html[data-theme="supernova"] #root {
+  background-color: #0b0d17 !important;
+  color: #f3f5fa;
+}
+
+/*
+ * Starfield: ONE fixed GPU layer on .app-shell::before.
+ * Scrolling surfaces stay transparent so stars show through without
+ * re-rasterizing ~117 radial-gradients on every scroll frame
+ * (background-attachment:fixed on .desk-page-scroll was the lag source).
+ */
+html[data-theme="supernova"] .app-shell,
+html[data-theme="supernova"] .app-main,
+html[data-theme="supernova"] .desk-page-scroll {
+  background-color: transparent !important;
+  background-image: none !important;
+  background-attachment: scroll !important;
+}
+
+html[data-theme="supernova"] .app-shell {
+  isolation: isolate;
+}
+
+html[data-theme="supernova"] .app-shell::before {
+  content: "";
+  position: fixed;
+  inset: 0;
+  z-index: 0;
+  pointer-events: none;
+  transform: translateZ(0);
+  will-change: transform;
+  backface-visibility: hidden;
+  background-color: #0b0d17;
+  background-image:
+radial-gradient(ellipse 85% 38% at 78% 6%, rgba(124, 108, 243, 0.18) 0%, transparent 68%),
+    radial-gradient(ellipse 70% 28% at 18% 88%, rgba(47, 107, 255, 0.10) 0%, transparent 70%),
+    radial-gradient(ellipse 55% 18% at 52% 42%, rgba(236, 242, 255, 0.07) 0%, transparent 72%),
+    radial-gradient(1.2px 1.2px at 63.9% 2.5%, rgba(255,255,255,0.34), transparent),
+    radial-gradient(2.0px 2.0px at 73.6% 67.7%, rgba(255,255,255,0.28), transparent),
+    radial-gradient(1.1px 1.1px at 42.2% 3.0%, rgba(255,255,255,0.45), transparent),
+    radial-gradient(1.6px 1.6px at 2.7% 19.9%, rgba(255,255,255,0.47), transparent),
+    radial-gradient(1.9px 1.9px at 22.0% 58.9%, rgba(255,255,255,0.25), transparent),
+    radial-gradient(1.2px 1.2px at 80.6% 69.8%, rgba(255,255,255,0.31), transparent),
+    radial-gradient(0.9px 0.9px at 95.7% 33.7%, rgba(255,255,255,0.29), transparent),
+    radial-gradient(1.8px 1.8px at 84.7% 60.4%, rgba(255,255,255,0.54), transparent),
+    radial-gradient(1.3px 1.3px at 53.6% 97.3%, rgba(255,255,255,0.47), transparent),
+    radial-gradient(1.9px 1.9px at 82.9% 61.9%, rgba(255,255,255,0.48), transparent),
+    radial-gradient(1.1px 1.1px at 70.5% 4.6%, rgba(255,255,255,0.37), transparent),
+    radial-gradient(0.9px 0.9px at 8.0% 23.3%, rgba(255,255,255,0.36), transparent),
+    radial-gradient(1.3px 1.3px at 63.6% 36.5%, rgba(255,255,255,0.33), transparent),
+    radial-gradient(1.6px 1.6px at 26.7% 93.7%, rgba(255,255,255,0.49), transparent),
+    radial-gradient(1.0px 1.0px at 17.1% 72.9%, rgba(255,255,255,0.40), transparent),
+    radial-gradient(1.5px 1.5px at 99.0% 64.0%, rgba(255,255,255,0.52), transparent),
+    radial-gradient(1.1px 1.1px at 84.3% 77.6%, rgba(255,255,255,0.26), transparent),
+    radial-gradient(1.1px 1.1px at 31.5% 26.8%, rgba(255,255,255,0.63), transparent),
+    radial-gradient(1.7px 1.7px at 87.6% 31.5%, rgba(255,255,255,0.41), transparent),
+    radial-gradient(1.1px 1.1px at 91.5% 45.9%, rgba(255,255,255,0.35), transparent),
+    radial-gradient(1.6px 1.6px at 56.1% 26.3%, rgba(255,255,255,0.61), transparent),
+    radial-gradient(2.1px 2.1px at 39.9% 21.9%, rgba(255,255,255,0.45), transparent),
+    radial-gradient(0.9px 0.9px at 9.1% 4.7%, rgba(255,255,255,0.50), transparent),
+    radial-gradient(0.9px 0.9px at 79.2% 42.2%, rgba(255,255,255,0.40), transparent),
+    radial-gradient(2.1px 2.1px at 99.6% 52.9%, rgba(255,255,255,0.59), transparent),
+    radial-gradient(1.7px 1.7px at 1.1% 72.1%, rgba(255,255,255,0.46), transparent),
+    radial-gradient(0.9px 0.9px at 26.7% 64.1%, rgba(255,255,255,0.42), transparent),
+    radial-gradient(1.9px 1.9px at 45.4% 95.4%, rgba(255,255,255,0.36), transparent),
+    radial-gradient(2.0px 2.0px at 50.1% 17.9%, rgba(255,255,255,0.60), transparent),
+    radial-gradient(1.6px 1.6px at 29.8% 63.9%, rgba(255,255,255,0.31), transparent),
+    radial-gradient(1.8px 1.8px at 76.3% 53.9%, rgba(255,255,255,0.46), transparent),
+    radial-gradient(0.8px 0.8px at 0.1% 32.4%, rgba(255,255,255,0.62), transparent),
+    radial-gradient(1.2px 1.2px at 87.9% 83.2%, rgba(255,255,255,0.27), transparent),
+    radial-gradient(0.9px 0.9px at 87.8% 94.7%, rgba(255,255,255,0.44), transparent),
+    radial-gradient(1.8px 1.8px at 6.9% 76.1%, rgba(255,255,255,0.30), transparent),
+    radial-gradient(1.1px 1.1px at 47.5% 55.0%, rgba(255,255,255,0.60), transparent),
+    radial-gradient(1.5px 1.5px at 42.3% 21.2%, rgba(255,255,255,0.54), transparent),
+    radial-gradient(2.1px 2.1px at 20.1% 31.2%, rgba(255,255,255,0.51), transparent),
+    radial-gradient(1.0px 1.0px at 43.8% 51.8%, rgba(255,255,255,0.34), transparent),
+    radial-gradient(1.1px 1.1px at 33.8% 58.8%, rgba(255,255,255,0.34), transparent),
+    radial-gradient(1.1px 1.1px at 7.1% 63.1%, rgba(255,255,255,0.61), transparent),
+    radial-gradient(1.1px 1.1px at 86.0% 7.1%, rgba(255,255,255,0.52), transparent),
+    radial-gradient(2.0px 2.0px at 21.4% 13.2%, rgba(255,255,255,0.48), transparent),
+    radial-gradient(1.8px 1.8px at 47.3% 78.5%, rgba(255,255,255,0.33), transparent),
+    radial-gradient(1.4px 1.4px at 9.7% 43.1%, rgba(255,255,255,0.44), transparent),
+    radial-gradient(2.1px 2.1px at 72.9% 67.3%, rgba(255,255,255,0.29), transparent),
+    radial-gradient(1.9px 1.9px at 40.3% 33.9%, rgba(255,255,255,0.35), transparent),
+    radial-gradient(1.3px 1.3px at 19.0% 44.9%, rgba(255,255,255,0.36), transparent),
+    radial-gradient(1.0px 1.0px at 27.0% 34.3%, rgba(236,242,255,0.55), transparent),
+    radial-gradient(1.6px 1.6px at 54.6% 43.7%, rgba(236,242,255,0.54), transparent),
+    radial-gradient(1.4px 1.4px at 93.1% 90.4%, rgba(236,242,255,0.28), transparent),
+    radial-gradient(1.0px 1.0px at 48.7% 41.3%, rgba(236,242,255,0.24), transparent),
+    radial-gradient(0.8px 0.8px at 38.9% 45.3%, rgba(236,242,255,0.52), transparent),
+    radial-gradient(1.6px 1.6px at 45.9% 42.3%, rgba(236,242,255,0.60), transparent),
+    radial-gradient(0.7px 0.7px at 55.1% 54.8%, rgba(236,242,255,0.33), transparent),
+    radial-gradient(1.1px 1.1px at 93.1% 84.8%, rgba(236,242,255,0.50), transparent),
+    radial-gradient(1.1px 1.1px at 9.3% 13.8%, rgba(236,242,255,0.54), transparent),
+    radial-gradient(0.6px 0.6px at 18.5% 27.7%, rgba(236,242,255,0.29), transparent),
+    radial-gradient(0.8px 0.8px at 58.7% 57.2%, rgba(236,242,255,0.27), transparent),
+    radial-gradient(1.2px 1.2px at 85.9% 73.4%, rgba(236,242,255,0.46), transparent),
+    radial-gradient(1.1px 1.1px at 42.6% 42.0%, rgba(236,242,255,0.58), transparent),
+    radial-gradient(0.8px 0.8px at 22.8% 27.4%, rgba(236,242,255,0.37), transparent),
+    radial-gradient(0.9px 0.9px at 65.8% 57.2%, rgba(236,242,255,0.51), transparent),
+    radial-gradient(1.6px 1.6px at 10.7% 13.0%, rgba(236,242,255,0.60), transparent),
+    radial-gradient(0.8px 0.8px at 10.7% 9.1%, rgba(236,242,255,0.57), transparent),
+    radial-gradient(0.9px 0.9px at 85.0% 82.8%, rgba(236,242,255,0.28), transparent),
+    radial-gradient(1.2px 1.2px at 80.7% 76.3%, rgba(236,242,255,0.60), transparent),
+    radial-gradient(1.4px 1.4px at 64.2% 51.1%, rgba(236,242,255,0.33), transparent),
+    radial-gradient(0.7px 0.7px at 65.0% 66.8%, rgba(236,242,255,0.26), transparent),
+    radial-gradient(0.8px 0.8px at 13.8% 17.2%, rgba(236,242,255,0.45), transparent),
+    radial-gradient(1.2px 1.2px at 70.0% 59.2%, rgba(236,242,255,0.32), transparent),
+    radial-gradient(1.4px 1.4px at 48.9% 52.6%, rgba(236,242,255,0.26), transparent),
+    radial-gradient(0.6px 0.6px at 43.0% 37.5%, rgba(236,242,255,0.51), transparent),
+    radial-gradient(1.3px 1.3px at 62.6% 53.9%, rgba(236,242,255,0.43), transparent),
+    radial-gradient(0.6px 0.6px at 43.3% 33.5%, rgba(236,242,255,0.56), transparent),
+    radial-gradient(1.4px 1.4px at 87.2% 79.2%, rgba(236,242,255,0.44), transparent),
+    radial-gradient(0.9px 0.9px at 17.6% 13.6%, rgba(236,242,255,0.56), transparent),
+    radial-gradient(1.5px 1.5px at 77.2% 75.9%, rgba(236,242,255,0.30), transparent),
+    radial-gradient(1.4px 1.4px at 27.0% 21.1%, rgba(236,242,255,0.56), transparent),
+    radial-gradient(0.7px 0.7px at 41.4% 41.6%, rgba(236,242,255,0.57), transparent),
+    radial-gradient(1.4px 1.4px at 83.5% 83.1%, rgba(236,242,255,0.55), transparent),
+    radial-gradient(0.9px 0.9px at 6.3% 13.7%, rgba(236,242,255,0.57), transparent),
+    radial-gradient(1.4px 1.4px at 77.8% 76.4%, rgba(236,242,255,0.32), transparent),
+    radial-gradient(1.5px 1.5px at 76.4% 63.1%, rgba(236,242,255,0.55), transparent),
+    radial-gradient(1.0px 1.0px at 24.5% 30.4%, rgba(236,242,255,0.34), transparent),
+    radial-gradient(0.6px 0.6px at 77.2% 65.7%, rgba(236,242,255,0.29), transparent),
+    radial-gradient(1.6px 1.6px at 34.2% 39.4%, rgba(236,242,255,0.33), transparent),
+    radial-gradient(1.6px 1.6px at 63.0% 56.4%, rgba(236,242,255,0.42), transparent),
+    radial-gradient(1.6px 1.6px at 90.4% 75.1%, rgba(236,242,255,0.29), transparent),
+    radial-gradient(0.7px 0.7px at 92.6% 79.3%, rgba(236,242,255,0.39), transparent),
+    radial-gradient(1.2px 1.2px at 71.0% 61.8%, rgba(236,242,255,0.41), transparent),
+    radial-gradient(0.8px 0.8px at 39.4% 39.3%, rgba(236,242,255,0.49), transparent),
+    radial-gradient(1.1px 1.1px at 4.2% 14.9%, rgba(236,242,255,0.49), transparent),
+    radial-gradient(0.9px 0.9px at 72.3% 68.6%, rgba(236,242,255,0.25), transparent),
+    radial-gradient(0.9px 0.9px at 65.1% 57.1%, rgba(236,242,255,0.54), transparent),
+    radial-gradient(0.9px 0.9px at 70.2% 60.9%, rgba(236,242,255,0.38), transparent),
+    radial-gradient(0.7px 0.7px at 41.0% 36.1%, rgba(236,242,255,0.38), transparent),
+    radial-gradient(1.5px 1.5px at 90.5% 84.2%, rgba(236,242,255,0.45), transparent),
+    radial-gradient(0.6px 0.6px at 31.7% 32.2%, rgba(236,242,255,0.33), transparent),
+    radial-gradient(1.2px 1.2px at 43.5% 42.8%, rgba(236,242,255,0.40), transparent),
+    radial-gradient(1.0px 1.0px at 44.7% 37.9%, rgba(236,242,255,0.56), transparent),
+    radial-gradient(0.6px 0.6px at 77.2% 64.8%, rgba(236,242,255,0.42), transparent),
+    radial-gradient(1.4px 1.4px at 62.2% 54.7%, rgba(236,242,255,0.51), transparent),
+    radial-gradient(0.8px 0.8px at 65.9% 56.1%, rgba(236,242,255,0.23), transparent),
+    radial-gradient(2.5px 2.5px at 24.5% 47.5%, rgba(255,255,255,0.57), transparent),
+    radial-gradient(1.8px 1.8px at 41.4% 63.0%, rgba(255,255,255,0.74), transparent),
+    radial-gradient(2.3px 2.3px at 49.4% 24.4%, rgba(255,255,255,0.55), transparent),
+    radial-gradient(1.7px 1.7px at 75.1% 77.0%, rgba(255,255,255,0.67), transparent),
+    radial-gradient(2.2px 2.2px at 17.6% 95.8%, rgba(255,255,255,0.56), transparent),
+    radial-gradient(2.1px 2.1px at 24.9% 84.8%, rgba(255,255,255,0.77), transparent),
+    radial-gradient(2.3px 2.3px at 66.8% 98.8%, rgba(255,255,255,0.82), transparent),
+    radial-gradient(2.4px 2.4px at 89.1% 61.3%, rgba(255,255,255,0.69), transparent)
+  ;
+  background-repeat: no-repeat;
+  background-attachment: scroll;
+}
+
+html[data-theme="supernova"] .app-shell > * {
+  position: relative;
+  z-index: 1;
+}
+
+/* Calendar table: opaque navy + bright ink (starfield must not wash the rows). */
+html[data-theme="supernova"] .calendar-contrast-table {
+  background: #121729 !important;
+  color: #f3f5fa !important;
+}
+html[data-theme="supernova"] .calendar-contrast-table thead,
+html[data-theme="supernova"] .calendar-contrast-table thead th {
+  background: #1a2136 !important;
+  color: #f3f5fa !important;
+}
+html[data-theme="supernova"] .calendar-contrast-table tbody tr {
+  background: #121729;
+}
+html[data-theme="supernova"] .calendar-contrast-table tbody tr.cal-row-near {
+  background: #1a2136;
+}
+html[data-theme="supernova"] .calendar-contrast-table .cal-muted {
+  color: #d7deee !important;
+}
+
+html[data-theme="supernova"].theme-chiaro,
+html[data-theme="supernova"].theme-chiaro body,
+html[data-theme="supernova"].theme-chiaro #root {
+  background-color: #0b0d17 !important;
+}
+html[data-theme="supernova"].theme-chiaro .app-shell,
+html[data-theme="supernova"].theme-chiaro .app-main {
+  background-color: transparent !important;
+}
+
+html[data-theme="supernova"] .platform-rail {
+  background: #050608 !important;
+  border-bottom-color: rgba(255, 255, 255, 0.08) !important;
+}
+
+html[data-theme="supernova"] .app-sidebar {
+  background: #050608 !important;
+  border-color: rgba(255, 255, 255, 0.08) !important;
+  color: #97a2ba;
+  --ink: 243 245 250;
+  --ink-muted: 151 162 186;
+  --accent: 124 108 243;
+  --purple-soft: 167 154 255;
+}
+
+html[data-theme="supernova"] .app-sidebar .font-bold {
+  color: #f3f5fa !important;
+  letter-spacing: 0.2em;
+  text-transform: uppercase;
+  font-size: 13px !important;
+}
+
+html[data-theme="supernova"] .app-sidebar-nav-btn {
+  color: #97a2ba !important;
+  background: transparent !important;
+  box-shadow: none !important;
+  font-size: 13px !important;
+  font-weight: 500;
+  padding: 0.4rem 0.95rem !important;
+  border-radius: 9999px !important;
+}
+
+html[data-theme="supernova"] .app-sidebar-nav-btn:hover {
+  color: #f3f5fa !important;
+  background: rgba(124, 108, 243, 0.12) !important;
+}
+
+html[data-theme="supernova"] .app-sidebar-nav-btn[aria-current="page"] {
+  background: #7c6cf3 !important;
+  color: #ffffff !important;
+  box-shadow: none !important;
+}
+
+html[data-theme="supernova"] .app-sidebar-nav-btn--link {
+  border-radius: 0.4rem !important;
+  padding: 0.35rem 0.6rem !important;
+}
+
+html[data-theme="supernova"] .app-sidebar-nav-btn--link[aria-current="page"] {
+  background: rgba(124, 108, 243, 0.16) !important;
+  color: #a79aff !important;
+}
+
+html[data-theme="supernova"] .app-sidebar [class*="text-ink-muted"] {
+  color: #97a2ba !important;
+}
+
+html[data-theme="supernova"] .app-main > header {
+  background: #0b0d17 !important;
+  border-bottom-color: rgba(255, 255, 255, 0.08) !important;
+  color: #f3f5fa;
+}
+
+html[data-theme="supernova"] .card {
+  background: #121729 !important;
+  border-color: rgba(255, 255, 255, 0.08) !important;
+  color: #f3f5fa !important;
+  box-shadow: none !important;
+}
+
+/* System Refresh: card grows with content; page scroll lives on SystemView. */
+html[data-theme="supernova"] .refresh-view-panel {
+  overflow: visible !important;
+  height: auto !important;
+  max-height: none !important;
+}
+
+html[data-theme="supernova"] .input {
+  background: #1a2136 !important;
+  color: #f3f5fa !important;
+  border-color: rgba(255, 255, 255, 0.08) !important;
+}
+
+html[data-theme="supernova"] .bg-white\/90,
+html[data-theme="supernova"] .bg-white\/95,
+html[data-theme="supernova"] .bg-white\/80 {
+  background-color: #121729 !important;
+  color: #f3f5fa !important;
+}
+
+html[data-theme="supernova"] .text-amber-900,
+html[data-theme="supernova"] .text-amber-950 {
+  color: #f3c451 !important;
+}
+html[data-theme="supernova"] .text-sky-900,
+html[data-theme="supernova"] .text-sky-950 {
+  color: #a79aff !important;
+}
+
+html[data-theme="supernova"] .btn,
+html[data-theme="supernova"] .btn-primary {
+  background: #7c6cf3 !important;
+  color: #fff !important;
+  box-shadow: none !important;
+}
+
+html[data-theme="supernova"] [data-page="catalyst-days"] thead,
+html[data-theme="supernova"] [data-page="catalyst-days"] thead th {
+  background: #1a2136 !important;
+  color: #97a2ba;
+}
+
+/* Catalyst Days: table card must not paint an opaque slab over the milky-way. */
+html[data-theme="supernova"] [data-page="catalyst-days"] .desk-signals-table-scroll {
+  background: transparent !important;
+  border: none !important;
+}
+
+/* Thermometer card — lacquered pearl, soft blue wash from the top-left corner. */
+.eis-thermo-gloss,
+html[data-theme="supernova"] .eis-thermo-gloss {
+  position: relative;
+  isolation: isolate;
+  overflow: hidden;
+  color: #1a2136 !important;
+  background-color: #fbfcff !important;
+  background-image:
+    linear-gradient(
+      128deg,
+      rgba(255, 255, 255, 0.94) 0%,
+      rgba(255, 255, 255, 0.42) 26%,
+      rgba(255, 255, 255, 0) 48%
+    ),
+    radial-gradient(
+      120% 95% at 0% 0%,
+      rgba(47, 107, 255, 0.22) 0%,
+      rgba(124, 168, 255, 0.12) 34%,
+      rgba(247, 250, 255, 0.55) 62%,
+      #ffffff 100%
+    ) !important;
+  border: 1px solid rgba(47, 107, 255, 0.22) !important;
+  box-shadow:
+    inset 0 1px 0 rgba(255, 255, 255, 0.98),
+    inset 0 -1px 0 rgba(47, 107, 255, 0.06),
+    0 10px 28px rgba(15, 23, 42, 0.08);
+}
+.eis-thermo-gloss::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  border-radius: inherit;
+  pointer-events: none;
+  background:
+    radial-gradient(
+      70% 55% at 0% 0%,
+      rgba(255, 255, 255, 0.7) 0%,
+      rgba(186, 214, 255, 0.18) 38%,
+      transparent 70%
+    );
+  z-index: 0;
+}
+.eis-thermo-gloss > * {
+  position: relative;
+  z-index: 1;
+}
+html[data-theme="supernova"] .eis-thermo-gloss .text-ink,
+.eis-thermo-gloss .text-ink {
+  color: #1a2136 !important;
+}
+html[data-theme="supernova"] .eis-thermo-gloss .text-ink-muted,
+html[data-theme="supernova"] .eis-thermo-gloss [class*="text-ink-muted"],
+.eis-thermo-gloss .text-ink-muted,
+.eis-thermo-gloss [class*="text-ink-muted"] {
+  color: #5b6580 !important;
+}
+html[data-theme="supernova"] .eis-thermo-gloss input,
+.eis-thermo-gloss input {
+  background: #ffffff !important;
+  color: #1a2136 !important;
+  border-color: rgba(91, 101, 128, 0.28) !important;
+}
+
+/* Deep-dive price / volume / 12-month path — bright white, palette ink (beat SuperNova light text). */
+html[data-theme="supernova"] .invest-trend-chart-panel {
+  background-color: #ffffff !important;
+  background-image:
+    linear-gradient(
+      118deg,
+      rgba(255, 255, 255, 0.95) 0%,
+      rgba(255, 255, 255, 0.35) 38%,
+      rgba(255, 255, 255, 0) 62%
+    ),
+    linear-gradient(180deg, #ffffff 0%, #ffffff 58%, #f4f6fb 100%) !important;
+  border-color: rgba(124, 108, 243, 0.32) !important;
+  color: #0b0d17 !important;
+  box-shadow:
+    inset 0 1.5px 0 rgba(255, 255, 255, 1),
+    0 1px 2px rgba(11, 13, 23, 0.04),
+    0 10px 24px -10px rgba(124, 108, 243, 0.2);
+}
+html[data-theme="supernova"] .invest-trend-chart-panel .text-ink {
+  color: #0b0d17 !important;
+}
+html[data-theme="supernova"] .invest-trend-chart-panel .text-ink-muted,
+html[data-theme="supernova"] .invest-trend-chart-panel [class*="text-ink-muted"] {
+  color: #5b6580 !important;
+}
+html[data-theme="supernova"] .invest-trend-chart-panel .text-positive {
+  color: #059669 !important;
+}
+html[data-theme="supernova"] .invest-trend-chart-panel .text-negative {
+  color: #e11d48 !important;
+}
+html[data-theme="supernova"] .invest-trend-chart-panel .recharts-cartesian-axis-tick text,
+html[data-theme="supernova"] .invest-trend-chart-panel .recharts-label {
+  fill: #334155 !important;
+}
+
+/* Landing is always night sky — Chiaro must not paint a white header/input box. */
+html[data-theme]:not(.dark) .sn-landing,
+html[data-theme="supernova"] .sn-landing,
+.dark .sn-landing,
+.sn-landing {
+  color: #ffffff;
+}
+html[data-theme]:not(.dark) .sn-landing header,
+html[data-theme="supernova"] .sn-landing header,
+.dark .sn-landing header,
+.sn-landing header,
+.sn-landing .sn-landing-bar {
+  background: transparent !important;
+  border: none !important;
+  box-shadow: none !important;
+  color: #ffffff !important;
+}
+.sn-landing .sn-landing-card {
+  border-radius: 1.35rem;
+  border: 1px solid rgba(255, 255, 255, 0.12);
+  background: rgba(18, 23, 41, 0.52);
+  backdrop-filter: blur(22px) saturate(1.2);
+  -webkit-backdrop-filter: blur(22px) saturate(1.2);
+  box-shadow:
+    0 24px 64px rgba(0, 0, 0, 0.4),
+    inset 0 1px 0 rgba(255, 255, 255, 0.1);
+  padding: 1.7rem 1.55rem 1.45rem;
+}
+.sn-landing .sn-landing-premium-card {
+  border-radius: 1.5rem;
+  border: 1px solid rgba(243, 196, 81, 0.42);
+  background: rgba(11, 14, 28, 0.78);
+  backdrop-filter: blur(22px) saturate(1.15);
+  -webkit-backdrop-filter: blur(22px) saturate(1.15);
+  box-shadow:
+    0 28px 70px rgba(0, 0, 0, 0.48),
+    inset 0 1px 0 rgba(243, 196, 81, 0.12);
+  padding: 1.55rem 1.4rem 1.25rem;
+}
+.sn-landing .sn-landing-field-shell {
+  border-radius: 0.9rem;
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  background: rgba(255, 255, 255, 0.07);
+  overflow: hidden;
+}
+.sn-landing .sn-landing-field,
+.sn-landing .sn-landing-field-shell input,
+.sn-landing input:not([type="radio"]):not([type="checkbox"]),
+.sn-landing textarea {
+  background: transparent !important;
+  color: #ffffff !important;
+  border: none !important;
+  border-radius: 0 !important;
+  box-shadow: none !important;
+  -webkit-text-fill-color: #ffffff;
+  width: 100%;
+  padding: 0.7rem 0.85rem !important;
+  font-size: 0.875rem;
+  outline: none;
+}
+.sn-landing .sn-landing-field::placeholder,
+.sn-landing input::placeholder,
+.sn-landing textarea::placeholder {
+  color: rgba(255, 255, 255, 0.38) !important;
+  -webkit-text-fill-color: rgba(255, 255, 255, 0.38);
+}
+.sn-landing input:-webkit-autofill,
+.sn-landing input:-webkit-autofill:hover,
+.sn-landing input:-webkit-autofill:focus,
+.sn-landing textarea:-webkit-autofill {
+  -webkit-text-fill-color: #ffffff !important;
+  caret-color: #ffffff;
+  transition: background-color 99999s ease-out;
+  box-shadow: 0 0 0 1000px rgba(12, 14, 22, 0.95) inset !important;
+}
+@keyframes sn-landing-twinkle {
+  0%,
+  100% {
+    opacity: 0.2;
+  }
+  50% {
+    opacity: 0.85;
+  }
+}
+.sn-landing .sn-landing-twinkle {
+  animation: sn-landing-twinkle 4.5s ease-in-out infinite;
+}
+@keyframes sn-landing-brand-pulse {
+  0%,
+  100% {
+    filter: drop-shadow(0 0 0 rgba(167, 139, 250, 0));
+    transform: scale(1);
+  }
+  50% {
+    filter: drop-shadow(0 0 8px rgba(167, 139, 250, 0.65));
+    transform: scale(1.06);
+  }
+}
+.sn-landing .sn-landing-brand-pulse {
+  animation: sn-landing-brand-pulse 3.2s ease-in-out infinite;
+}
+.sn-landing-hero-star {
+  position: absolute;
+  right: -20%;
+  top: -28%;
+  width: min(98vw, 920px);
+  height: min(98vw, 920px);
+  pointer-events: none;
+  filter: drop-shadow(0 0 72px rgba(124, 108, 243, 0.28));
+}
+.sn-landing .sn-landing-feature-card {
+  border-radius: 1.25rem;
+  border: 1px solid rgba(255, 255, 255, 0.09);
+  background: rgba(14, 17, 30, 0.72);
+  backdrop-filter: blur(16px);
+  -webkit-backdrop-filter: blur(16px);
+  box-shadow: 0 20px 48px rgba(0, 0, 0, 0.35);
+}
+@keyframes sn-landing-fade-up {
+  from {
+    opacity: 0;
+    transform: translateY(14px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+.sn-landing .sn-landing-fade-up {
+  animation: sn-landing-fade-up 0.7s ease-out both;
+}
+.sn-landing .sn-landing-fade-up:nth-of-type(2) {
+  animation-delay: 0.06s;
+}
+.sn-landing .sn-landing-fade-up:nth-of-type(3) {
+  animation-delay: 0.12s;
+}
+.sn-landing .sn-landing-fade-up:nth-of-type(4) {
+  animation-delay: 0.18s;
+}
+

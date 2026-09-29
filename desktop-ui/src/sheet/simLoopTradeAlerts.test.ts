@@ -1,5 +1,8 @@
 import { describe, expect, it } from "vitest";
-import { buildSimLoopTradeAlertsFromTick } from "./simLoopTradeAlerts";
+import {
+  buildSimLoopTradeAlertsFromTick,
+  simLoopTradeAlertBatchSignature,
+} from "./simLoopTradeAlerts";
 import type { DecisionSimTick } from "./investDecisionSimLoop";
 
 describe("buildSimLoopTradeAlertsFromTick", () => {
@@ -172,5 +175,55 @@ describe("buildSimLoopTradeAlertsFromTick", () => {
       "LCTX|2026-08-31": { capital: 5000, buyPrice: 10, investedAt: "2026-06-01T10:00:00.000Z" },
     });
     expect(alerts[0]?.inRealPortfolio).toBe(true);
+  });
+
+  it("builds a stable batch signature for dismiss / dedupe", () => {
+    const a = simLoopTradeAlertBatchSignature({
+      tickId: "t1",
+      at: "2026-07-22T16:27:00.000Z",
+      pending: true,
+      executeAfter: "2026-07-22T16:37:00.000Z",
+      alerts: [
+        {
+          key: "MLTX|2026-09-28",
+          ticker: "MLTX",
+          completionDate: "2026-09-28",
+          side: "sell",
+          at: "2026-07-22T16:27:00.000Z",
+          commandLabel: "SELL",
+          recommendation: "SELL",
+          detail: "",
+          capital: null,
+          pnlEur: 0,
+          pnlPct: null,
+          inRealPortfolio: false,
+        },
+      ],
+    });
+    const b = simLoopTradeAlertBatchSignature({
+      tickId: "t2",
+      at: "2026-07-22T16:28:00.000Z",
+      pending: true,
+      executeAfter: "2026-07-22T16:37:00.000Z",
+      alerts: [
+        {
+          key: "MLTX|2026-09-28",
+          ticker: "MLTX",
+          completionDate: "2026-09-28",
+          side: "sell",
+          at: "2026-07-22T16:28:00.000Z",
+          commandLabel: "SELL",
+          recommendation: "SELL · other",
+          detail: "",
+          capital: null,
+          pnlEur: 0,
+          pnlPct: null,
+          inRealPortfolio: false,
+        },
+      ],
+    });
+    expect(a).toBe(b);
+    expect(a).toContain("pending");
+    expect(a).toContain("sell:MLTX|2026-09-28");
   });
 });

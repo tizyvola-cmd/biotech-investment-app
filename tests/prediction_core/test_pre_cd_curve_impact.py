@@ -1,6 +1,8 @@
 """Tests for pre-CD curve impact (path RMSE)."""
 from __future__ import annotations
 
+import json
+
 from prediction.past_pred_display_enrich import enrich_past_pred_display_record
 from prediction.pre_cd_curve_impact import (
     RECALIB_SCHEDULE,
@@ -78,6 +80,38 @@ def test_eis_detected_uses_eis_score_nonzero():
     assert _eis_detected({"eis_score": 0.0, "eis_shift_pp": 0.0}) is False
     assert _eis_detected({"eis_score": None, "eis_shift_pp": 0.0}) is False
     assert _eis_detected({"eis_score": None, "eis_shift_pp": 1.5}) is True
+
+
+def test_load_eis_cohort_api_payload_uses_signal_calibration_cache(tmp_path, monkeypatch):
+    from prediction import pre_cd_curve_impact as pci
+    from prediction.signal_audit import SIGNAL_CALIB_PATH
+
+    cal_path = tmp_path / "signal_calibration.json"
+    cal_path.write_text(
+        json.dumps(
+            {
+                "curve_impact_cumulative": {
+                    "eis_cohort_comparison": {"with_eis": {"n": 3}, "without_eis": {"n": 2}},
+                    "eis_magnitude_analysis": {"n_events_scored": 5},
+                    "n_simulation_events": 10,
+                    "n_with_eis_data": 3,
+                    "built_at": "2026-07-09T08:00:00Z",
+                }
+            }
+        ),
+        encoding="utf-8",
+    )
+    monkeypatch.setattr(pci, "build_curve_impact_cumulative", lambda **_: (_ for _ in ()).throw(AssertionError("no rebuild")))
+    monkeypatch.setattr("prediction.signal_audit.SIGNAL_CALIB_PATH", cal_path)
+    monkeypatch.setattr(
+        "prediction.eis_cohort_weekly_history.load_weekly_history",
+        lambda: {"weeks": []},
+    )
+
+    out = pci.load_eis_cohort_api_payload()
+    assert out["cache_source"] == "signal_calibration.json"
+    assert out["eis_cohort_comparison"]["with_eis"]["n"] == 3
+    assert out["weekly_history"] == {"weeks": []}
 
 
 def test_eis_cohort_comparison_splits_detected_vs_absent():

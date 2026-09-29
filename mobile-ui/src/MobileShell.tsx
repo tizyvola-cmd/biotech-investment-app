@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState, useCallback } from "react";
+import { useEffect, useRef, useState, useCallback, type ReactNode } from "react";
 import { InstallHelp } from "./InstallHelp";
 import { BrandMark } from "./components/MobileUi";
 import { OwnershipDisclaimer } from "./components/OwnershipDisclaimer";
@@ -7,8 +7,17 @@ import { fetchRefreshStatus, runRefreshProfile } from "./api";
 import { useMobileLang } from "./hooks/useMobileLang";
 import type { MobileLang } from "./langStorage";
 import type { MobileTheme } from "./hooks/useTheme";
+import {
+  disableActionPush,
+  enableActionPush,
+  getActionPushStatus,
+  isPushPrefEnabled,
+  refreshActionPushStatus,
+  type ActionPushStatus,
+} from "./mobilePushClient";
 
-type TabId = "dashboard" | "portfolio" | "opportunities";
+/** Mobile companion is dashboard-only (desktop keeps Piggy / trades). */
+export type TabId = "dashboard";
 
 type SettingsSheetProps = {
   open: boolean;
@@ -52,6 +61,10 @@ export function SettingsSheet({
   const [pipeErr, setPipeErr] = useState<string | null>(null);
   const [refreshBusy, setRefreshBusy] = useState(false);
   const wasRunningRef = useRef(false);
+  const [pushBusy, setPushBusy] = useState(false);
+  const [pushStatus, setPushStatus] = useState<ActionPushStatus>(() => getActionPushStatus());
+  const [pushErr, setPushErr] = useState<string | null>(null);
+  const pushEnabled = isPushPrefEnabled() && pushStatus.permission === "granted" && pushStatus.subscribed;
 
   const syncRefreshStatus = useCallback(async () => {
     try {
@@ -68,6 +81,9 @@ export function SettingsSheet({
   useEffect(() => {
     if (!open) return;
     setPipeErr(null);
+    setPushErr(null);
+    setPushStatus(getActionPushStatus());
+    void refreshActionPushStatus().then(setPushStatus);
     void syncRefreshStatus();
   }, [open, syncRefreshStatus]);
 
@@ -167,6 +183,61 @@ export function SettingsSheet({
             </div>
           </div>
           <div className="card sheet-card">
+            <h3>{t("push.section")}</h3>
+            <p className="hint">{t("push.sectionHint")}</p>
+            <p className="hint">{t("push.iosNote")}</p>
+            <p className="hint">
+              {!pushStatus.supported
+                ? t("push.status.unsupported")
+                : pushStatus.permission === "denied"
+                  ? t("push.status.denied")
+                  : pushEnabled
+                    ? t("push.status.subscribed")
+                    : pushStatus.permission === "granted"
+                      ? t("push.status.granted")
+                      : t("push.status.default")}
+            </p>
+            {pushErr ? <p className="err">{t("push.status.error", { err: pushErr })}</p> : null}
+            <div className="btn-row">
+              <button
+                type="button"
+                className="btn btn-primary"
+                disabled={pushBusy || !pushStatus.supported || pushStatus.permission === "denied"}
+                onClick={() => {
+                  setPushBusy(true);
+                  setPushErr(null);
+                  void enableActionPush()
+                    .then((st) => setPushStatus(st))
+                    .catch((e) => {
+                      setPushErr(e instanceof Error ? e.message : String(e));
+                      setPushStatus(getActionPushStatus());
+                    })
+                    .finally(() => setPushBusy(false));
+                }}
+              >
+                {pushBusy ? "…" : t("push.enable")}
+              </button>
+              <button
+                type="button"
+                className="btn btn-outline"
+                disabled={pushBusy || !pushEnabled}
+                onClick={() => {
+                  setPushBusy(true);
+                  setPushErr(null);
+                  void disableActionPush()
+                    .then((st) => setPushStatus(st))
+                    .catch((e) => {
+                      setPushErr(e instanceof Error ? e.message : String(e));
+                      setPushStatus(getActionPushStatus());
+                    })
+                    .finally(() => setPushBusy(false));
+                }}
+              >
+                {t("push.disable")}
+              </button>
+            </div>
+          </div>
+          <div className="card sheet-card">
             <h3>{t("refresh.section")}</h3>
             <p className="hint">{t("refresh.sectionHint")}</p>
             <div className="refresh-profile-card">
@@ -228,34 +299,6 @@ export function SettingsSheet({
   );
 }
 
-export function TabBar({ active, onChange }: { active: TabId; onChange: (tab: TabId) => void }) {
-  const { t } = useMobileLang();
-  const tabs: { id: TabId; icon: string; labelKey: "nav.dashboard" | "nav.portfolio" | "nav.opportunities" }[] = [
-    { id: "dashboard", icon: "🏠", labelKey: "nav.dashboard" },
-    { id: "portfolio", icon: "💼", labelKey: "nav.portfolio" },
-    { id: "opportunities", icon: "🎯", labelKey: "nav.opportunities" },
-  ];
-
-  return (
-    <nav className="app-tabbar" aria-label={t("nav.main")}>
-      {tabs.map((tab) => (
-        <button
-          key={tab.id}
-          type="button"
-          className={active === tab.id ? "active" : ""}
-          onClick={() => onChange(tab.id)}
-          aria-current={active === tab.id ? "page" : undefined}
-        >
-          <span className="tab-icon" aria-hidden>
-            {tab.icon}
-          </span>
-          <span className="tab-label">{t(tab.labelKey)}</span>
-        </button>
-      ))}
-    </nav>
-  );
-}
-
 export function AppHeader({
   tab,
   title,
@@ -265,6 +308,7 @@ export function AppHeader({
   apiOk,
   theme,
   onToggleTheme,
+  headerExtra,
 }: {
   tab?: TabId;
   title?: string;
@@ -274,14 +318,10 @@ export function AppHeader({
   apiOk?: boolean | null;
   theme?: MobileTheme;
   onToggleTheme?: () => void;
+  headerExtra?: ReactNode;
 }) {
   const { t } = useMobileLang();
-  const tabLabels: Record<TabId, string> = {
-    dashboard: t("nav.dashboard"),
-    portfolio: t("nav.portfolio"),
-    opportunities: t("nav.opportunities"),
-  };
-  const heading = title ?? (tab ? tabLabels[tab] : "SuperNova");
+  const heading = title ?? (tab === "dashboard" ? t("nav.dashboard") : "SuperNova");
 
   if (onBack) {
     return (
@@ -305,6 +345,7 @@ export function AppHeader({
         <h1>{heading}</h1>
         {subtitle ? <p>{subtitle}</p> : null}
       </div>
+      {headerExtra ? <div className="app-header-extra">{headerExtra}</div> : null}
       {apiOk === true ? <span className="status-pill">{t("common.online")}</span> : null}
       {theme && onToggleTheme ? <ThemeToggle theme={theme} onToggle={onToggleTheme} /> : null}
       {onSettings ? (

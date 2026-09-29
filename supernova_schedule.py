@@ -2,11 +2,13 @@
 Timezone-aware refresh windows for the web host scheduler (``Europe/Rome`` default).
 
 * **Hourly financial** — Lun–Ven, slot ogni ora da ``15:30`` a ``21:30`` (fine ``22:00``).
-* **Morning research** — Lun–Ven, una volta al giorno a ``07:00`` (CD + IPO).
+* **Morning research** — Lun–Ven, una volta al giorno a ``07:00`` (CD + IPO + hype volume).
 * **SDS cohort refresh** — Lun–Ven, una volta al giorno a ``09:00`` (ricalcolo completo coorte Supernova).
 * **EIS / clinical feed** — Lun–Ven, una volta al giorno a ``10:00`` (arricchimento feed + rebuild calibrazione EIS).
 * **Model Lab accuracy** — Lun–Ven, una volta al giorno a ``16:30`` (RA Calibration + SDS Accuracy + EIS Magnitude snapshots).
 * **Saturday WeeklyFull** — Sabato, una volta al giorno nella finestra ``at``–``window_end`` (default 07:00–14:00).
+* **Google Trends** — giorni NYSE aperti: 3×/giorno (10:00, 16:00, 21:00 Rome);
+  weekend / festivi NYSE: 11:30 e 17:00. (Google Trends è ~giornaliero; niente poll orario.)
 """
 from __future__ import annotations
 
@@ -16,6 +18,9 @@ from zoneinfo import ZoneInfo
 
 _TIME_RE = re.compile(r"^(\d{1,2}):(\d{2})$")
 
+# Fixed Trends poll times (Rome). Baseline Trends is daily — avoid hourly spam.
+_TRENDS_OPEN_SLOTS: tuple[dt.time, ...] = (dt.time(10, 0), dt.time(16, 0), dt.time(21, 0))
+_TRENDS_CLOSED_SLOTS: tuple[dt.time, ...] = (dt.time(11, 30), dt.time(17, 0))
 
 def parse_hhmm(value: str, *, default: dt.time) -> dt.time:
     raw = (value or "").strip()
@@ -166,6 +171,57 @@ def is_saturday(d: dt.date) -> bool:
     return d.weekday() == 5
 
 
+def is_trends_market_open_day(d: dt.date) -> bool:
+    """Rome civil date: weekday and not a NYSE holiday (early-warning poll cadence)."""
+    if d.weekday() >= 5:
+        return False
+    from us_equity_session import NYSE_HOLIDAYS
+
+    return d not in NYSE_HOLIDAYS
+
+
+def trends_refresh_slot_id(
+    now: dt.datetime,
+    *,
+    grace_minutes: int = 20,
+    open_slots: tuple[dt.time, ...] | None = None,
+    closed_slots: tuple[dt.time, ...] | None = None,
+) -> str | None:
+    """
+    Slot id if ``now`` is inside a Trends poll window, else ``None``.
+
+    Open NYSE days: fixed slots (default 10:00 / 16:00 / 21:00 Rome) — Google's
+    daily index does not justify hourly polling.
+    Closed days (weekend / NYSE holiday): 11:30 and 17:00.
+    """
+    if is_trends_market_open_day(now.date()):
+        slots = open_slots or _TRENDS_OPEN_SLOTS
+        prefix = "O"
+    else:
+        slots = closed_slots or _TRENDS_CLOSED_SLOTS
+        prefix = "C"
+    now_m = now.hour * 60 + now.minute
+    grace = max(1, int(grace_minutes))
+    for slot in slots:
+        target = slot.hour * 60 + slot.minute
+        if target <= now_m <= target + grace:
+            return f"{now.date().isoformat()}{prefix}{slot.hour:02d}{slot.minute:02d}"
+    return None
+
+
+def should_run_trends_refresh(
+    now: dt.datetime,
+    *,
+    last_slot: str | None,
+    grace_minutes: int = 20,
+) -> bool:
+    """True once per Trends slot (3× open days, 2× when closed)."""
+    slot = trends_refresh_slot_id(now, grace_minutes=grace_minutes)
+    if slot is None:
+        return False
+    return slot != last_slot
+
+
 def should_run_saturday_weekly_full(
     now: dt.datetime,
     *,
@@ -190,6 +246,50 @@ def should_run_saturday_weekly_full(
     return target_m <= now_m < end_m
 
 
+def iso_week_key(d: dt.date) -> str:
+    """ISO week key ``YYYY-Www`` (Monday-based)."""
+    iso = d.isocalendar()
+    return f"{iso.year:04d}-W{iso.week:02d}"
+
+
+def should_run_guidance_calendar_weekly(
+    now: dt.datetime,
+    *,
+    last_week: str | None,
+    at: dt.time | None = None,
+) -> bool:
+    """True once per ISO week after Monday ``at`` (default 10:30 Rome).
+
+    Primary: Monday ≥ 10:30.
+    Catch-up: Tue–Sun if this week's run was missed (server down on Monday).
+    """
+    target = at or dt.time(10, 30)
+    week = iso_week_key(now.date())
+    if last_week == week:
+        return False
+    # Monday before window → wait
+    if now.weekday() == 0:
+        return (now.hour, now.minute) >= (target.hour, target.minute)
+    # Tue–Sun: catch-up so the rolling 6-month Calendar still refreshes
+    return now.weekday() >= 1
+
+
+def should_run_8k_dossier_weekly(
+    now: dt.datetime,
+    *,
+    last_week: str | None,
+    at: dt.time | None = None,
+) -> bool:
+    """True once per Wednesday after ``at`` (default 07:15 Rome) for 8-K dossier refresh."""
+    target = at or dt.time(7, 15)
+    if now.weekday() != 2:  # Wednesday
+        return False
+    week = iso_week_key(now.date())
+    if last_week == week:
+        return False
+    return (now.hour, now.minute) >= (target.hour, target.minute)
+
+
 __all__ = [
     "current_hourly_financial_slot",
     "is_weekday",
@@ -203,4 +303,10 @@ __all__ = [
     "should_run_model_lab_refresh",
     "is_saturday",
     "should_run_saturday_weekly_full",
+    "is_trends_market_open_day",
+    "trends_refresh_slot_id",
+    "should_run_trends_refresh",
+    "iso_week_key",
+    "should_run_guidance_calendar_weekly",
+    "should_run_8k_dossier_weekly",
 ]

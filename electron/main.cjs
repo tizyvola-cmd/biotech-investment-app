@@ -1,5 +1,5 @@
 require("./bootstrap-cache.cjs");
-const { app, BrowserWindow, ipcMain, dialog } = require("electron");
+const { app, BrowserWindow, ipcMain, dialog, Menu } = require("electron");
 const path = require("path");
 const { spawn } = require("child_process");
 const http = require("http");
@@ -111,6 +111,7 @@ function createWindow() {
   mainWindow = new BrowserWindow({
     width: 1280,
     height: 860,
+    autoHideMenuBar: true,
     webPreferences: {
       preload: path.join(__dirname, "preload.cjs"),
       contextIsolation: true,
@@ -125,6 +126,7 @@ ipcMain.handle("get-api-url", () => API_URL);
 ipcMain.handle("get-api-token", () => API_TOKEN);
 
 app.whenReady().then(async () => {
+  Menu.setApplicationMenu(null);
   startApi();
   try {
     await waitForApi();

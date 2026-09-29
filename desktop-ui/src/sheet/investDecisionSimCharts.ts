@@ -16,6 +16,7 @@ import type {
 import { MISSED_OPP_CAPITAL_EUR, pnlEurFrom24hPct } from "./missedOpportunityAudit";
 import { computeFairRecs24hFromEvaluations } from "./missedOpportunityFairRecs";
 import { DECISION_SIM_MARKET_TZ } from "./investDecisionSimSchedule";
+import { loadUiPrefsLocal } from "./uiPrefs";
 
 function roundEur(n: number): number {
   return Math.round(n * 100) / 100;
@@ -38,6 +39,22 @@ export function resolveSimLoopCapitalPot(
       ? maxOpenPositions
       : SIM_LOOP_DISPLAY_MAX_SLOTS;
   return Math.max(1, Math.round(perTrade * slots));
+}
+
+/**
+ * Dashboard synth pot — aligned with Cap Div / 3-experiment compare when the user
+ * sets `topCapitalSynth` or `topCapital` in ui prefs; otherwise sim-loop slots pot.
+ */
+export function resolveDashboardSynthCapitalPot(
+  capitalPerTrade: number,
+  maxOpenPositions: number,
+): number {
+  const prefs = loadUiPrefsLocal();
+  const fromPrefs = prefs.topCapitalSynth ?? prefs.topCapital;
+  if (fromPrefs != null && Number.isFinite(fromPrefs) && fromPrefs > 0) {
+    return Math.round(fromPrefs);
+  }
+  return resolveSimLoopCapitalPot(capitalPerTrade, maxOpenPositions);
 }
 
 /** Etichetta asse X: MM-DD HH:mm (Europe/Rome — allineata al pannello Decision Lab). */
@@ -238,7 +255,7 @@ export function buildDecisionSimCumulativeSeries(
       : 0;
     cumFairRecs = roundEur(cumFairRecs + fairDaily);
     points.push({
-      at: new Date().toISOString(),
+      at: sorted.length > 0 ? sorted[sorted.length - 1]!.at : new Date().toISOString(),
       atLabel: live.atLabel ?? "· now",
       totalPnlEur,
       openMtmEur: openMtm,

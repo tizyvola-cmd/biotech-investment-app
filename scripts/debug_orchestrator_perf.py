@@ -193,10 +193,46 @@ def main() -> int:
         "ORCH_SKIP_RETROSPECTIVE", "ORCH_SKIP_SEC_K8", "ORCH_PERF",
         "ACC_SIM_SHEET_CATALYST_HORIZON_CAL_DAYS", "PRED_CURVE_SEQ_CALIB",
         "ORCH_OPTIONS_WORKERS",
+        "HOURLY_YF_SKIP_IF_WITHIN_MIN", "MODEL_LAB_YF_SKIP_IF_WITHIN_MIN",
+        "SDS_LIGHT_SKIP_IF_WITHIN_MIN", "POST_PIPELINE_SKIP_IF_WITHIN_MIN",
     ):
         v = os.environ.get(k, "")
         if v:
             print(f"  {k}={v}")
+
+    _section("7. Refresh gates (dedup scheduler / UI)")
+    try:
+        from orch_refresh_gates import gate_status
+
+        gs = gate_status()
+        for key, info in gs.items():
+            if isinstance(info, dict):
+                age = info.get("age_minutes")
+                age_s = f"{age:.1f} min" if isinstance(age, (int, float)) else "—"
+                print(f"  {key}: {info}  (age={age_s})")
+            else:
+                print(f"  {key}: {info}")
+    except Exception as exc:
+        print(f"  gate_status error: {exc}")
+
+    _section("8. Ultimo log orchestrator (tail timing)")
+    log_path = _ROOT / "data" / "last_orchestrator.log"
+    if not log_path.is_file():
+        log_path = _ROOT / "data" / "last_refresh_desktop.log"
+    if log_path.is_file():
+        try:
+            text = log_path.read_text(encoding="utf-8", errors="replace")
+            lines = [ln for ln in text.splitlines() if ln.strip()]
+            for ln in lines[-25:]:
+                if any(
+                    tok in ln.lower()
+                    for tok in ("perf", "step", "skip", "completato", "ensure_", "merge", "pred")
+                ):
+                    print(f"  {ln[:140]}")
+        except OSError as exc:
+            print(f"  log read error: {exc}")
+    else:
+        print(f"  log non trovato in data/")
 
     print("\nFine debug.\n")
     return 0

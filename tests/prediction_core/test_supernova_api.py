@@ -76,6 +76,25 @@ def test_cors_allows_localhost_origin(monkeypatch: pytest.MonkeyPatch) -> None:
     assert r.headers.get("access-control-allow-origin") == origin
 
 
+def test_cors_allows_public_host_origin(monkeypatch: pytest.MonkeyPatch) -> None:
+    client = _client(
+        monkeypatch,
+        SUPERNOVA_CORS_PERMISSIVE=None,
+        SUPERNOVA_PUBLIC_HOST="91.99.15.48",
+    )
+    origin = "http://91.99.15.48:8765"
+    r = client.options(
+        "/api/tester-feedback/testers/register",
+        headers={
+            "Origin": origin,
+            "Access-Control-Request-Method": "POST",
+            "Access-Control-Request-Headers": "content-type",
+        },
+    )
+    assert r.status_code == 200
+    assert r.headers.get("access-control-allow-origin") == origin
+
+
 def test_manifest_endpoint(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
     import json
 
@@ -137,7 +156,8 @@ def test_mobile_tester_register_no_admin_token(monkeypatch: pytest.MonkeyPatch) 
     )
     assert r.status_code != 401
     assert r.status_code == 200
-    assert r.json()["tester"]["status"] == "pending"
+    assert r.json()["tester"]["status"] == "approved"
+    assert r.json()["tester"]["allowed"] is True
 
 
 def test_tester_status_still_requires_admin_token(monkeypatch: pytest.MonkeyPatch) -> None:

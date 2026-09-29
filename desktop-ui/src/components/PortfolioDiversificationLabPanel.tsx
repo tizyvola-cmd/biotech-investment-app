@@ -1,26 +1,37 @@
 /**
- * Capital & Diversification — orchestrator of the 3-step narrative.
+ * Capital & Diversification — orchestrator.
  *
- * Step 1: Gain potential (SDS × time) — CapDivStep1GainView
- * Step 2: Loss risk pattern (Phase A screening + Phase B builder + queue)
- *         — CapDivStep2RiskView
- * Step 3: Break-even sizing — CapDivStep3BreakevenView
+ * Top: capital pot · approved weights panel · three-portfolio compare.
+ * Bottom: breakeven vs success-rate chart for the 3 experiments.
  *
- * This file used to host a single vertical pile of analytical panels with no
- * narrative thread. The old "Open Complete Guide" markdown modal banner is
- * removed since its content is now embedded in the three steps.
+ * PERF: all heavy shared computations (calibrationSnapshot, sdsBreakdown,
+ * phaseA, approvedPattern, frozenWeights, comparison, patternMatchByRowKey)
+ * are computed ONCE here and passed down as props to the child panels, which
+ * used to duplicate them (up to 5× computeCalibrationSnapshot and 4×
+ * buildThreePortfolioComparison per open of the tab).
  */
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import type { SimOutcomeRow } from "../data/investmentSimOutcomesData";
 import type { ChartPoint, SheetTable } from "../types";
 import type { SdsRow } from "../api/supernova";
 import type { InvestSimInputs } from "../sheet/investSimStorage";
 import { hydrateUiPrefsFromDisk, loadUiPrefsLocal, saveUiPrefs } from "../sheet/uiPrefs";
-import { CapDivStep2RiskView } from "./CapDivStep2RiskView";
-import { CapDivStep3BreakevenView } from "./CapDivStep3BreakevenView";
-import { CapDivStep3BreakevenWidget } from "./CapDivStep3BreakevenWidget";
 import { ThreePortfolioCompareView } from "./ThreePortfolioCompareView";
+import { ApprovedWeightsAllocationPanel } from "./ApprovedWeightsAllocationPanel";
 import { useLang } from "../shared/i18n";
+import { loadInvestSimInputs } from "../sheet/investSimStorage";
+import { computeCalibrationSnapshot } from "../calibration/shrinkageEngine";
+import { buildThreePortfolioComparison } from "../sheet/threePortfolioCompare";
+import { computeSdsGainBreakdown } from "../sheet/sdsGainBreakdown";
+import {
+  extractAllRowFeatures,
+  runUnivariateScreening,
+} from "../riskPattern/lossRiskScreening";
+import { matchPattern } from "../riskPattern/lossRiskPattern";
+import { loadApprovedPattern } from "../riskPattern/patternProposalStore";
+import { loadFrozenWeights } from "../calibration/proposalStore";
+import { loadDecisionSimState } from "../sheet/investDecisionSimStorage";
+import type { ComparisonDeal } from "../sheet/threePortfolioCompare";
 
 export function PortfolioDiversificationLabPanel({
   closedRows,
@@ -32,20 +43,11 @@ export function PortfolioDiversificationLabPanel({
   closedRows: SimOutcomeRow[];
   simTable?: SheetTable | null;
   sdsRows?: SdsRow[] | null;
-  /** Live portfolio inputs (open positions capital/buyPrice). Optional for
-   * backwards-compat with callers that haven't been updated yet. */
   investInputs?: InvestSimInputs;
-  /** Chart points per series key — required by buildSuggestionMonitorRows to
-   * compute per-row probPct/planReturnPct. Optional (empty map ⇒ degraded but
-   * still functional). */
   pointsBySeriesKey?: Map<string, ChartPoint[]>;
 }) {
   const { lang } = useLang();
   const it = lang === "it";
-
-  // Bumped whenever the approved pattern changes — so Step 3 re-reads it.
-  const [patternVersion, setPatternVersion] = useState(0);
-  const onPatternChanged = () => setPatternVersion((v) => v + 1);
 
   const [frozenWeightsTick, setFrozenWeightsTick] = useState(0);
   useEffect(() => {
@@ -54,16 +56,6 @@ export function PortfolioDiversificationLabPanel({
     return () => window.removeEventListener("supernova:frozen-weights-updated", onFrozen);
   }, []);
 
-  // Top-of-page widget: own capital pot, independent of Step 3 controls.
-  // Persistence is delegated to `uiPrefs.ts` which writes both to
-  // localStorage (fast path) and to `data/desktop_ui_prefs.json` on disk
-  // via the Electron preload bridge. This keeps the value stable across
-  // tab switches, app close/reopen, page reloads and even localStorage
-  // wipes (browser cache clear, private mode, different origin).
-  //
-  // We deliberately do NOT persist the default until the user (or the
-  // disk hydrate) provides a real value, so a fresh-tab default of 5000
-  // never overwrites a previously saved value still on disk.
   const TOP_CAPITAL_DEFAULT = 5000;
   const isCapitalUserSetRef = useRef(false);
   const [topCapital, setTopCapital] = useState<number>(() => {
@@ -97,22 +89,138 @@ export function PortfolioDiversificationLabPanel({
     if (!isCapitalUserSetRef.current) return;
     saveUiPrefs({ topCapital });
   }, [topCapital]);
-  const TOP_TARGET_POSITIONS = 6;
-  const topBreakevenTarget = Math.max(50, Math.round(topCapital * 0.02));
+
+  // ── Shared heavy computations — done ONCE, propagated to child panels.
+  // Before this refactor, each of ApprovedWeightsAllocationPanel,
+  // ThreePortfolioCompareView and (indirectly) buildSynthCurveAllocation
+  // independently recomputed all of these.
+
+  const calibrationSnapshot = useMemo(() => {
+    try {
+      return computeCalibrationSnapshot(closedRows, {
+        simTable: simTable ?? null,
+        sdsRows: sdsRows ?? null,
+      });
+    } catch {
+      return null;
+    }
+    // frozenWeightsTick invalidates when Learning Lab approves new weights.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [closedRows, simTable, sdsRows, frozenWeightsTick]);
+
+  const sdsBreakdown = useMemo(
+    () =>
+      computeSdsGainBreakdown(closedRows, {
+        simTable: simTable ?? null,
+        sdsRows: sdsRows ?? null,
+      }),
+    [closedRows, simTable, sdsRows],
+  );
+
+  const phaseA = useMemo(() => {
+    try {
+      return runUnivariateScreening(closedRows, {
+        simTable: simTable ?? null,
+        sdsRows: sdsRows ?? null,
+      });
+    } catch {
+      return null;
+    }
+  }, [closedRows, simTable, sdsRows]);
+
+  const approvedPattern = useMemo(() => {
+    try {
+      return loadApprovedPattern().current ?? null;
+    } catch {
+      return null;
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [frozenWeightsTick]);
+
+  const frozenWeights = useMemo(
+    () => loadFrozenWeights(),
+    // frozenWeightsTick fires on the "supernova:frozen-weights-updated" event.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [frozenWeightsTick],
+  );
+
+  const patternMatchByRowKey = useMemo(() => {
+    const map = new Map<string, boolean>();
+    if (!approvedPattern) return map;
+    try {
+      const features = extractAllRowFeatures(closedRows, {
+        simTable: simTable ?? null,
+        sdsRows: sdsRows ?? null,
+      });
+      for (const [fk, fc] of features) {
+        const ticker = fk.split("|")[0]?.toUpperCase();
+        if (!ticker) continue;
+        if (matchPattern(approvedPattern, fc)) map.set(ticker, true);
+      }
+    } catch {
+      /* swallow — empty map keeps deals at neutral patternPenalty=1.0 */
+    }
+    return map;
+  }, [approvedPattern, closedRows, simTable, sdsRows]);
+
+  const matchesStep2Pattern = useMemo(
+    () => (deal: ComparisonDeal) =>
+      patternMatchByRowKey.get(deal.ticker.toUpperCase()) === true,
+    [patternMatchByRowKey],
+  );
+
+  // Single `buildThreePortfolioComparison` call for the whole tab. The old
+  // orchestrator computed only `simLoopDealsForWeights` here and let the
+  // children recompute the full comparison independently 3 more times.
+  const comparison = useMemo(() => {
+    try {
+      return buildThreePortfolioComparison({
+        closedRows,
+        simTable: simTable ?? null,
+        sdsRows: sdsRows ?? null,
+        inputs: investInputs ?? loadInvestSimInputs(),
+        pointsBySeriesKey: pointsBySeriesKey ?? new Map(),
+        lang,
+        calibrationSnapshot,
+        sdsBreakdown,
+        totalCapitalEur: topCapital,
+        phaseA,
+        approvedPattern,
+        matchesStep2Pattern,
+        paperPortfolio: loadDecisionSimState().paperPortfolio,
+      });
+    } catch {
+      return null;
+    }
+  }, [
+    closedRows,
+    simTable,
+    sdsRows,
+    investInputs,
+    pointsBySeriesKey,
+    lang,
+    calibrationSnapshot,
+    sdsBreakdown,
+    phaseA,
+    approvedPattern,
+    matchesStep2Pattern,
+    topCapital,
+  ]);
+
+  const simLoopDealsForWeights = comparison?.simLoopDeals ?? [];
 
   return (
     <div className="space-y-4">
-      {/* TOP — Interactive breakeven widget (hero) */}
       <div className="rounded-2xl border border-indigo-200/50 dark:border-indigo-800/40 bg-white/60 dark:bg-surface/60 p-3 space-y-3">
         <div className="flex flex-wrap items-end justify-between gap-3 px-1">
           <div>
             <p className="text-[10px] uppercase font-semibold text-indigo-700 dark:text-indigo-300 tracking-wider">
-              {it ? "Sopra ogni cosa — modula il sizing live" : "Above everything — modulate sizing live"}
+              {it ? "Capitale del portafoglio" : "Portfolio capital pot"}
             </p>
             <p className="text-[11px] text-ink-muted max-w-2xl mt-0.5">
               {it
-                ? "Slider per opportunità con EV aggiornato in tempo reale. Per il calcolo dell'EV usiamo win rate dal Calibration Center e payoff dallo Step 1 (fallback se mancante). Read-only: non scrive sul portfolio reale."
-                : "Per-opportunity sliders with live EV. Win rate from the Calibration Center, payoff from Step 1 (fallback if missing). Read-only: nothing is written to the real portfolio."}
+                ? "Capitale ipotetico condiviso dai confronti e dal grafico breakeven sotto."
+                : "Shared hypothetical capital for comparisons and the breakeven chart below."}
             </p>
           </div>
           <label className="flex items-center gap-2 text-[11px]">
@@ -134,20 +242,24 @@ export function PortfolioDiversificationLabPanel({
             />
           </label>
         </div>
-        <CapDivStep3BreakevenWidget
-          closedRows={closedRows}
-          simTable={simTable}
-          sdsRows={sdsRows}
-          investInputs={investInputs}
-          pointsBySeriesKey={pointsBySeriesKey}
-          totalCapitalEur={topCapital}
-          breakevenTargetEur={topBreakevenTarget}
-          targetPositions={TOP_TARGET_POSITIONS}
-          patternStoreVersion={patternVersion}
-        />
       </div>
 
-      {/* TOP — Three-portfolio comparison (mine / sim equal / sim weighted) */}
+      <ApprovedWeightsAllocationPanel
+        deals={simLoopDealsForWeights}
+        outcomes={closedRows}
+        simTable={simTable}
+        sdsRows={sdsRows}
+        universeLabelIt="Sim loop (raccomandazioni BUY + paper book)"
+        universeLabelEn="Sim loop (BUY recommendations + paper book)"
+        defaultOpen
+        sharedCalibrationSnapshot={calibrationSnapshot}
+        sharedFrozenWeights={frozenWeights}
+        totalCapitalEur={topCapital}
+        investInputs={investInputs ?? loadInvestSimInputs()}
+        pointsBySeriesKey={pointsBySeriesKey}
+        paperPortfolio={loadDecisionSimState().paperPortfolio}
+      />
+
       <ThreePortfolioCompareView
         closedRows={closedRows}
         simTable={simTable}
@@ -155,64 +267,16 @@ export function PortfolioDiversificationLabPanel({
         investInputs={investInputs}
         pointsBySeriesKey={pointsBySeriesKey}
         totalCapitalEur={topCapital}
-        patternStoreVersion={patternVersion}
+        patternStoreVersion={0}
         frozenWeightsTick={frozenWeightsTick}
+        sharedComparison={comparison}
+        sharedCalibrationSnapshot={calibrationSnapshot}
+        sharedSdsBreakdown={sdsBreakdown}
+        sharedPhaseA={phaseA}
+        sharedApprovedPattern={approvedPattern}
+        sharedPatternMatchByRowKey={patternMatchByRowKey}
       />
 
-      {/* Top-level narrative banner */}
-      <div className="rounded-2xl border border-[rgb(var(--border))]/40 bg-gradient-to-r from-emerald-50/30 via-rose-50/30 to-teal-50/30 dark:from-emerald-950/15 dark:via-rose-950/15 dark:to-teal-950/15 px-4 py-3">
-        <p className="text-[11px] font-semibold text-ink uppercase tracking-wider">
-          {it ? "Capital & diversification — narrazione in 2 step" : "Capital & diversification — 2-step narrative"}
-        </p>
-        <p className="text-[11px] text-ink-muted leading-relaxed max-w-4xl mt-1">
-          {it ? (
-            <>
-              <span className="text-rose-700 dark:text-rose-300 font-semibold">1) Come si perde valore</span> (Phase A: feature più associate alla perdita, Phase B: pattern AND con proposed→approved + holdout rolling) →{" "}
-              <span className="text-teal-700 dark:text-teal-300 font-semibold">2) Quanto capitale serve</span> per chiudere sempre in positivo, con opzione di applicare il filtro pattern dello Step 1.
-            </>
-          ) : (
-            <>
-              <span className="text-rose-700 dark:text-rose-300 font-semibold">1) How value is lost</span> (Phase A: features most associated with loss, Phase B: AND pattern with proposed→approved + rolling holdout) →{" "}
-              <span className="text-teal-700 dark:text-teal-300 font-semibold">2) How much capital</span> is needed to always close positive, with optional Step 1 pattern filter.
-            </>
-          )}
-        </p>
-      </div>
-
-      {/* STEP 1 — Loss risk pattern (main, collapsible) */}
-      <details className="rounded-2xl border border-rose-200/40 dark:border-rose-800/30 bg-white/40 dark:bg-surface/40">
-        <summary className="px-4 py-2.5 cursor-pointer text-[12px] font-semibold text-ink hover:bg-rose-50/30 dark:hover:bg-rose-950/20 transition flex items-center gap-2">
-          <span className="inline-flex items-center justify-center w-5 h-5 rounded-full bg-rose-100 dark:bg-rose-900/40 text-rose-700 dark:text-rose-300 text-[10px] font-bold">
-            1
-          </span>
-          <span>
-            {it
-              ? "▸ Step 1 — Loss risk pattern (Phase A screening + Phase B builder)"
-              : "▸ Step 1 — Loss risk pattern (Phase A screening + Phase B builder)"}
-          </span>
-        </summary>
-        <div className="px-3 pb-3 pt-1">
-          <CapDivStep2RiskView
-            closedRows={closedRows}
-            simTable={simTable}
-            sdsRows={sdsRows}
-            onPatternChanged={onPatternChanged}
-          />
-        </div>
-      </details>
-
-      {/* STEP 2 — Break-even sizing */}
-      <CapDivStep3BreakevenView
-        closedRows={closedRows}
-        simTable={simTable}
-        sdsRows={sdsRows}
-        investInputs={investInputs}
-        pointsBySeriesKey={pointsBySeriesKey}
-        topCapital={topCapital}
-        patternStoreVersion={patternVersion}
-        onPatternChanged={onPatternChanged}
-        frozenWeightsTick={frozenWeightsTick}
-      />
     </div>
   );
 }

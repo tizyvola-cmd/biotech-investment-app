@@ -1030,16 +1030,47 @@ def _phase_numbers_min_max(val) -> tuple[int, int] | None:
     return nums[0], nums[-1]
 
 
-def _phase_study_matches_row_tier(study_phase: str, row_phase: str) -> bool:
+def _medtech_ticker_set_cached() -> set[str]:
+    try:
+        from medtech_universe import CURATED_MEDTECH, MEDTECH_SYMBOLS_JSON, load_json_list
+
+        return set(load_json_list(MEDTECH_SYMBOLS_JSON)) | set(CURATED_MEDTECH)
+    except Exception:
+        return set()
+
+
+def _phase_is_na_or_empty(phase: str) -> bool:
+    p = str(phase or "").strip().lower()
+    return not p or p in ("na", "n/a", "nd", "—", "-", "none", "[]")
+
+
+def _study_is_device_context(study_intervention: str, ticker: str) -> bool:
+    iv = str(study_intervention or "").lower()
+    if "device" in iv or "510" in iv or "pma" in iv or "ivd" in iv:
+        return True
+    tk = str(ticker or "").strip().upper()
+    return bool(tk) and tk in _medtech_ticker_set_cached()
+
+
+def _phase_study_matches_row_tier(
+    study_phase: str,
+    row_phase: str,
+    *,
+    study_intervention: str = "",
+    ticker: str = "",
+) -> bool:
     """
     Allinea NCT alla fase della riga: stessa «scala» massima (es. riga Ph I → solo studi Ph I).
-    Se la riga non ha fase, non filtra. Se lo studio non ha fase esplicita, esclude (evita mix).
+    Se la riga non ha fase, non filtra. Se lo studio non ha fase esplicita, esclude (evita mix)
+    — salvo studi device/medtech dove CT.gov spesso omette la fase.
     """
     r = _phase_numbers_min_max(row_phase)
     s = _phase_numbers_min_max(study_phase)
     if r is None:
         return True
     if s is None:
+        if _phase_is_na_or_empty(study_phase) and _study_is_device_context(study_intervention, ticker):
+            return True
         return False
     return s[1] == r[1]
 
@@ -1105,7 +1136,12 @@ def _nct_lookup_for_completati_row(ticker_studies: dict | None, row_dict: dict,
     fallback = ""
     best_d = None
     for study in lst:
-        if not _phase_study_matches_row_tier(study.get("Phase", ""), _row_ph):
+        if not _phase_study_matches_row_tier(
+            study.get("Phase", ""),
+            _row_ph,
+            study_intervention=str(study.get("Interventions", "") or study.get("interventions", "")),
+            ticker=tk,
+        ):
             continue
         nct = str(study.get("NCT ID") or "").strip().upper()
         if not (nct.startswith("NCT") and len(nct) >= 9):
@@ -1707,7 +1743,12 @@ def _completati_study_aligned(ticker_studies: dict | None, ticker_upper: str,
     for st in ts.get(tk) or []:
         if str(st.get("NCT ID") or "").strip().upper() != nid:
             continue
-        if not _phase_study_matches_row_tier(st.get("Phase", ""), row_phase):
+        if not _phase_study_matches_row_tier(
+            st.get("Phase", ""),
+            row_phase,
+            study_intervention=str(st.get("Interventions", "") or st.get("interventions", "")),
+            ticker=tk,
+        ):
             continue
         return st
     return None
@@ -4743,7 +4784,13 @@ def _past_pred_key_from_harvest_row(r: dict) -> str | None:
         return None
 
 
+_PAST_PRED_DISK_CACHE: dict | None = None
+
+
 def _past_pred_disk_load() -> dict:
+    global _PAST_PRED_DISK_CACHE
+    if _PAST_PRED_DISK_CACHE is not None:
+        return _PAST_PRED_DISK_CACHE
     p = pathlib.Path(PAST_CATALYST_PREDICTIONS_JSON)
     if not p.exists():
         return {"schema_version": 1, "rows": {}}
@@ -4753,16 +4800,19 @@ def _past_pred_disk_load() -> dict:
             raise ValueError()
         if "rows" not in d or not isinstance(d["rows"], dict):
             d["rows"] = {}
+        _PAST_PRED_DISK_CACHE = d
         return d
     except Exception:
         return {"schema_version": 1, "rows": {}}
 
 
 def _past_pred_disk_save(doc: dict) -> None:
+    global _PAST_PRED_DISK_CACHE
     p = pathlib.Path(PAST_CATALYST_PREDICTIONS_JSON)
     p.parent.mkdir(parents=True, exist_ok=True)
     p.write_text(json.dumps(doc, ensure_ascii=False, indent=2, default=str),
                   encoding="utf-8")
+    _PAST_PRED_DISK_CACHE = doc  # invalidate/update in-process cache
 
 
 def _past_pred_normalize_loaded(rec: dict) -> dict:
@@ -5791,6 +5841,10 @@ _MODALITY_RULES = [
     ("Small Molecule",   ["small molecule", "kinase inhibitor", "protease inhibitor",
                           "tyrosine kinase", "oral tablet", "oral capsule",
                           "low molecular weight"]),
+    ("Medical Device",   ["medical device", "510(k)", "510k", "predicate device", "pma",
+                          "de novo", "ivd", "in vitro diagnostic", "implantable device",
+                          "wearable device", "surgical system", "diagnostic system",
+                          "pathogen reduction", "intercept blood", "drug-device combination"]),
 ]
 
 _MODALITY_COLORS = {
@@ -5800,6 +5854,7 @@ _MODALITY_COLORS = {
     "Advanced Therapy": "FFE699",   # oro chiaro
     "Antibody":         "FFB4B4",   # rosso salmone
     "Small Molecule":   "D9D9D9",   # grigio neutro
+    "Medical Device":   "C6E0B4",   # verde device
     "Other":            "F2F2F2",   # grigio chiarissimo
 }
 
@@ -5982,9 +6037,13 @@ def _match_one_orch(q: str, candidate: str) -> str:
         if common and len(common) / len(q_words) >= 0.70:
             return "Partial"
 
-    # 4. Similarità caratteri (abbreviazioni / typo)
-    if _SM(None, q, candidate).ratio() >= 0.85:
-        return "Partial"
+    # 4. Similarità caratteri — solo sul nucleo significativo (evita
+    # "Eton Pharmaceuticals Inc" ≈ "PMV Pharmaceuticals Inc" via stopword condivise).
+    q_sig = " ".join(w for w in q.split() if w not in _SPONSOR_STOPWORDS)
+    c_sig = " ".join(w for w in candidate.split() if w not in _SPONSOR_STOPWORDS)
+    if q_sig and c_sig and len(q_sig) >= 3 and len(c_sig) >= 3:
+        if _SM(None, q_sig, c_sig).ratio() >= 0.85:
+            return "Partial"
 
     return ""
 
@@ -6099,9 +6158,12 @@ def _match_one_orch_detailed(q: str, candidate: str,
             ptype = "Sussidiaria" if len(c_words) > len(q_words) else "Nome abbreviato"
             return ("Partial", ptype, candidate_raw)
 
-    # ── 4. Similarità caratteri ───────────────────────────────────────────────
-    if _SM(None, q, candidate).ratio() >= 0.85:
-        return ("Partial", "Nome abbreviato", candidate_raw)
+    # ── 4. Similarità caratteri (solo nucleo significativo) ───────────────────
+    q_sig = " ".join(w for w in q.split() if w not in _SPONSOR_STOPWORDS)
+    c_sig = " ".join(w for w in candidate.split() if w not in _SPONSOR_STOPWORDS)
+    if q_sig and c_sig and len(q_sig) >= 3 and len(c_sig) >= 3:
+        if _SM(None, q_sig, c_sig).ratio() >= 0.85:
+            return ("Partial", "Nome abbreviato", candidate_raw)
 
     return ("", "", "")
 
@@ -6255,6 +6317,125 @@ def add_sponsor_match_column(df: pd.DataFrame) -> pd.DataFrame:
     return df
 
 
+def _resolve_lead_sponsor_sec_ticker(
+    lead_sponsor: str,
+    name_to_ticker: dict[str, str],
+    *,
+    min_ratio: float = 0.88,
+) -> str | None:
+    """
+    Risolve lead_sponsor CT.gov → ticker SEC (es. ModernaTX, Inc. → MRNA).
+    Usato quando il trial è stato indicizzato sotto un altro query_company/ticker.
+    """
+    from difflib import SequenceMatcher as _SM
+
+    q = _norm(str(lead_sponsor or ""))
+    if not q:
+        return None
+    if q in name_to_ticker:
+        return name_to_ticker[q]
+    # Alias noti (ModernaTX è la entità operativa CT.gov di Moderna, Inc.)
+    q_alt = q.replace("modernatx", "moderna")
+    if q_alt in name_to_ticker:
+        return name_to_ticker[q_alt]
+    best_tk: str | None = None
+    best_r = 0.0
+    for nm, tk in name_to_ticker.items():
+        r = _SM(None, q, nm).ratio()
+        if r > best_r:
+            best_r = r
+            best_tk = tk
+    if best_tk and best_r >= min_ratio:
+        return best_tk
+    return None
+
+
+def expand_clinical_lead_sponsor_sec_rows(
+    clinical_df: pd.DataFrame,
+    financial_df: pd.DataFrame | None = None,
+) -> pd.DataFrame:
+    """
+    Duplica righe cliniche quando lead_sponsor mappa a un ticker SEC diverso
+    dal ticker/query_company della riga (es. sponsor ModernaTX su riga SPRY).
+
+    Le copie usano ticker SEC + query_company da financial_df così sponsor_match
+    può diventare Exact/Partial e il catalyst entra in Simulation / Completati.
+    """
+    if clinical_df is None or getattr(clinical_df, "empty", True):
+        return clinical_df
+
+    _, sec_name_to_tk = _load_sec_cik_map()
+    if not sec_name_to_tk:
+        return clinical_df
+
+    fin_syms: set[str] = set()
+    fin_name_by_sym: dict[str, str] = {}
+    if financial_df is not None and not getattr(financial_df, "empty", True):
+        sym_col = next(
+            (c for c in ("symbol", "ticker", "Ticker") if c in financial_df.columns),
+            None,
+        )
+        name_col = next(
+            (c for c in ("companyName", "name", "longName", "shortName")
+             if c in financial_df.columns),
+            None,
+        )
+        if sym_col:
+            for _, fr in financial_df.iterrows():
+                sym = str(fr.get(sym_col) or "").strip().upper()
+                if not sym:
+                    continue
+                fin_syms.add(sym)
+                if name_col:
+                    fin_name_by_sym[sym] = str(fr.get(name_col) or "").strip()
+
+    tk_col = next((c for c in ("ticker", "symbol") if c in clinical_df.columns), None)
+    nct_col = next(
+        (c for c in ("nct_id", "NCTId", "nct_number", "study_id", "nctId")
+         if c in clinical_df.columns),
+        None,
+    )
+    ls_col = next((c for c in ("lead_sponsor", "sponsor") if c in clinical_df.columns), None)
+    if not tk_col or not ls_col:
+        return clinical_df
+
+    existing: set[tuple[str, str]] = set()
+    for _, row in clinical_df.iterrows():
+        tk = str(row.get(tk_col) or "").strip().upper()
+        nct = str(row.get(nct_col) or "").strip().upper() if nct_col else ""
+        if tk:
+            existing.add((tk, nct))
+
+    extras: list[dict] = []
+    for _, row in clinical_df.iterrows():
+        lead = str(row.get(ls_col) or "").strip()
+        sec_tk = _resolve_lead_sponsor_sec_ticker(lead, sec_name_to_tk)
+        if not sec_tk or sec_tk not in fin_syms:
+            continue
+        cur_tk = str(row.get(tk_col) or "").strip().upper()
+        nct = str(row.get(nct_col) or "").strip().upper() if nct_col else ""
+        if sec_tk == cur_tk or (sec_tk, nct) in existing:
+            continue
+        copy = row.to_dict()
+        copy[tk_col] = sec_tk
+        if "query_company" in copy:
+            copy["query_company"] = fin_name_by_sym.get(sec_tk) or copy.get("query_company", "")
+        copy["company_match"] = "sec_lead_sponsor"
+        extras.append(copy)
+        existing.add((sec_tk, nct))
+
+    if not extras:
+        return clinical_df
+
+    out = pd.concat([clinical_df, pd.DataFrame(extras)], ignore_index=True)
+    out = add_sponsor_match_column(out)
+    print(
+        f"[Clinical] expand_lead_sponsor_sec: +{len(extras)} righe "
+        f"(lead_sponsor → ticker SEC in financial_df)"
+    )
+    return out
+
+
 def write_clinical_sheet(workbook, clinical_df):
     ws = workbook.create_sheet("Clinical_OpenFDA")
     ws.sheet_properties.tabColor = "5CDB5C"
@@ -6345,6 +6526,129 @@ def write_clinical_sheet(workbook, clinical_df):
             row_idx += 1
 
 
+def _clinical_date_and_ticker_cols(clinical_df) -> tuple[str | None, str | None]:
+    _DATE_CANDS = [
+        "primary_completion_date", "completion_date",
+        "study_completion_date", "estimated_completion_date", "end_date",
+    ]
+    _TICKER_CANDS = ["ticker", "symbol", "_tk_up"]
+    if clinical_df is None or getattr(clinical_df, "empty", True):
+        return None, None
+    date_col = next((c for c in _DATE_CANDS if c in clinical_df.columns), None)
+    ticker_col = next((c for c in _TICKER_CANDS if c in clinical_df.columns), None)
+    return date_col, ticker_col
+
+
+def _pick_best_trusted_catalyst_by_ticker(
+    clinical_df,
+    *,
+    horizon_calendar_days: int | None = None,
+    window: str = "horizon",
+    today=None,
+) -> dict[str, pd.Series]:
+    """
+    Per ogni ticker sceglie **una** riga clinica coerente (CD + NCT + sponsor).
+
+    - Solo ``sponsor_match`` Exact o Partial (mai «No match»).
+    - Se esiste almeno uno studio **Exact**, ignorare i Partial (evita CD spurie
+      quando il pivot Exact è oltre l'orizzonte, es. LCTX 2033).
+    - ``window='horizon'``: CD in [oggi, oggi+N]; ``'past'``: CD < oggi; ``'any'``: tutte.
+    """
+    from datetime import date as _date, timedelta
+
+    date_col, ticker_col = _clinical_date_and_ticker_cols(clinical_df)
+    if not date_col or not ticker_col:
+        return {}
+
+    df = clinical_df.copy()
+    try:
+        df[date_col] = pd.to_datetime(df[date_col], errors="coerce", format="mixed")
+    except (TypeError, ValueError):
+        df[date_col] = pd.to_datetime(df[date_col], errors="coerce")
+    nct_col = next(
+        (c for c in ["nct_id", "NCTId", "nct_number", "study_id", "nctId"] if c in df.columns),
+        None,
+    )
+    df[ticker_col] = df[ticker_col].astype(str).str.strip().str.upper()
+    if nct_col:
+        df[nct_col] = df[nct_col].astype(str).str.strip().str.upper()
+        df = df.sort_values(date_col, ascending=True, na_position="last")
+        df = df.drop_duplicates(subset=[ticker_col, nct_col], keep="first")
+    df = df.dropna(subset=[date_col])
+    if df.empty:
+        return {}
+
+    _today = today or _date.today()
+    _hz_days = SIM_PRED_HORIZON_CAL_DAYS if horizon_calendar_days is None else int(
+        horizon_calendar_days
+    )
+    _horizon = _today + timedelta(days=_hz_days)
+
+    _nearest_future_exact_days: dict[str, int | None] = {}
+    if "sponsor_match" in df.columns:
+        _future_exact = df.loc[
+            (df["sponsor_match"] == "Exact")
+            & (df[date_col].dt.date >= _today)
+        ]
+        for _tk_u, _grp in _future_exact.groupby(ticker_col, sort=False):
+            try:
+                _nearest = _grp.sort_values(date_col).iloc[0][date_col].date()
+                _nearest_future_exact_days[str(_tk_u)] = (_nearest - _today).days
+            except Exception:
+                _nearest_future_exact_days[str(_tk_u)] = None
+
+    if "sponsor_match" in df.columns:
+        df = df.loc[df["sponsor_match"].isin(["Exact", "Partial"])]
+    if df.empty:
+        return {}
+
+    df["_tk_up"] = df[ticker_col].astype(str).str.strip().str.upper()
+    df = df.loc[df["_tk_up"].astype(str).str.len() > 0]
+    if df.empty:
+        return {}
+
+    if window == "horizon":
+        df = df.loc[
+            (df[date_col].dt.date >= _today) & (df[date_col].dt.date <= _horizon)
+        ]
+    elif window == "past":
+        df = df.loc[df[date_col].dt.date < _today]
+    if df.empty:
+        return {}
+
+    def _rank_rows(grp: pd.DataFrame) -> pd.Series | None:
+        if grp.empty:
+            return None
+        if "sponsor_match" in grp.columns:
+            exact = grp.loc[grp["sponsor_match"] == "Exact"]
+        else:
+            exact = grp.iloc[0:0]
+        pool = exact if not exact.empty else grp
+        if pool.empty:
+            return None
+        pool = pool.sort_values(date_col, ascending=(window != "past"))
+        return pool.iloc[0]
+
+    out: dict[str, pd.Series] = {}
+    for _tk_u, _grp in df.groupby("_tk_up", sort=False):
+        _nearest_exact_days = _nearest_future_exact_days.get(str(_tk_u))
+        if (
+            window == "horizon"
+            and _nearest_exact_days is not None
+            and _nearest_exact_days > _hz_days
+        ):
+            if "sponsor_match" not in _grp.columns:
+                continue
+            _exact_hz = _grp.loc[_grp["sponsor_match"] == "Exact"]
+            if _exact_hz.empty:
+                continue
+            _grp = _exact_hz
+        row = _rank_rows(_grp)
+        if row is not None:
+            out[str(_tk_u)] = row
+    return out
+
+
 def _extract_catalyst_dates(clinical_df,
                             horizon_calendar_days: int | None = None) -> dict:
     """
@@ -6354,35 +6658,76 @@ def _extract_catalyst_dates(clinical_df,
 
     Per popolare le date nel build della sheet Simulation, passare
     ``SIM_SHEET_DISPLAY_HORIZON_CAL_DAYS``.
+
+    Usa solo righe Exact/Partial; se esiste Exact per ticker, i Partial sono ignorati.
     """
-    from datetime import date as _date, timedelta
-    _DATE_CANDS   = ["primary_completion_date", "completion_date",
-                     "study_completion_date", "estimated_completion_date", "end_date"]
-    _TICKER_CANDS = ["ticker", "symbol"]
-
-    if clinical_df is None or clinical_df.empty:
+    date_col, _ = _clinical_date_and_ticker_cols(clinical_df)
+    if not date_col:
         return {}
 
-    date_col   = next((c for c in _DATE_CANDS   if c in clinical_df.columns), None)
-    ticker_col = next((c for c in _TICKER_CANDS if c in clinical_df.columns), None)
-    if not date_col or not ticker_col:
-        return {}
-
-    df = clinical_df.copy()
-    df[date_col] = pd.to_datetime(df[date_col], errors="coerce")
-    today   = _date.today()
-    _hz     = horizon_calendar_days
-    _days   = SIM_PRED_HORIZON_CAL_DAYS if _hz is None else _hz
-    horizon = today + timedelta(days=_days)
-    mask    = (df[date_col].dt.date >= today) & (df[date_col].dt.date <= horizon)
-    cat_df  = df[mask].dropna(subset=[date_col]).sort_values(date_col)
-
-    result = {}
-    for _, row in cat_df.iterrows():
-        sym = str(row[ticker_col]).strip().upper()
-        if sym not in result:
-            result[sym] = row[date_col]   # datetime, formattato in simulation_core
+    picks = _pick_best_trusted_catalyst_by_ticker(
+        clinical_df,
+        horizon_calendar_days=horizon_calendar_days,
+        window="horizon",
+    )
+    result: dict = {}
+    for sym, row in picks.items():
+        try:
+            result[sym] = row[date_col]
+        except Exception:
+            pass
     return result
+
+
+def _is_exact_or_partial_sponsor_label(s: object) -> bool:
+    return str(s or "").strip().lower() in ("exact", "partial")
+
+
+def _sim_merge_trusted_pick_into_lookups(
+    tk_u: str,
+    pick_row: pd.Series,
+    *,
+    dt_col: str,
+    date_lookup: dict,
+    date_lookup_horizon: dict | None,
+    spon_lookup: dict,
+    ptype_lookup: dict,
+    psource_lookup: dict,
+    nct_lookup: dict,
+    phase_lookup: dict,
+    lead_lookup: dict,
+    ph_col: str | None,
+    nct_col: str | None,
+    ls_col: str | None,
+    in_horizon: bool = True,
+) -> None:
+    """Allinea lookup Simulation (CD, sponsor, NCT) da una riga pick trusted."""
+    _tk_u = str(tk_u).strip().upper()
+    if not _tk_u:
+        return
+    try:
+        _cd_parsed = pd.Timestamp(pick_row[dt_col]).date()
+    except Exception:
+        _cd_parsed = None
+    if _cd_parsed is not None:
+        date_lookup[_tk_u] = _cd_parsed
+        if in_horizon and date_lookup_horizon is not None:
+            date_lookup_horizon[_tk_u] = _cd_parsed
+    _sm = str(pick_row.get("sponsor_match", "") or "").strip()
+    if _is_exact_or_partial_sponsor_label(_sm):
+        spon_lookup[_tk_u] = _sm
+    ptype_lookup[_tk_u] = str(pick_row.get("partial_type", "") or "").strip()
+    psource_lookup[_tk_u] = str(pick_row.get("partial_source", "") or "").strip()
+    if ph_col:
+        phase_lookup[_tk_u] = _phase_str_norm(pick_row.get(ph_col, ""))
+    if ls_col:
+        _ls = str(pick_row.get(ls_col, "") or "").strip()
+        if _ls and _ls.upper() != "N/D":
+            lead_lookup[_tk_u] = _ls
+    if nct_col:
+        _nct_val = str(pick_row.get(nct_col, "") or "").strip().upper()
+        if _nct_val.startswith("NCT") and len(_nct_val) >= 9:
+            nct_lookup[_tk_u] = _nct_val
 
 
 def _build_accuracy_sim_supplement_rows(
@@ -8201,6 +8546,12 @@ def _accuracy_monitor_append_entry(
             f"→ {MODEL_ACCURACY_MONITOR_JSON}",
             flush=True,
         )
+        try:
+            from supernova_web_scheduler import bump_desktop_manifest
+
+            bump_desktop_manifest()
+        except Exception as _bump_exc:
+            print(f"[AccMonitor] manifest bump (non bloccante): {_bump_exc}", flush=True)
     except Exception as _awe:
         print(f"[AccMonitor] Salvataggio storico KO: {_awe}")
     return snap
@@ -16442,8 +16793,12 @@ def _write_full_sim_sheet(ws, rows, ticker_studies, pnl_data=None, pred_data=Non
                 for _sx in _ts_esc.get(_tk_pf) or []:
                     if str(_sx.get("NCT ID") or "").strip().upper() != _nid_pf.strip().upper():
                         continue
-                    if not _phase_study_matches_row_tier(_sx.get("Phase", ""),
-                                                        _pr.get("phase")):
+                    if not _phase_study_matches_row_tier(
+                        _sx.get("Phase", ""),
+                        _pr.get("phase"),
+                        study_intervention=str(_sx.get("Interventions", "") or ""),
+                        ticker=_tk_pf,
+                    ):
                         continue
                     _st_pf = _sx
                     break
@@ -19952,6 +20307,86 @@ def _load_calibration_state(path=None) -> dict | None:
     except Exception as _e:
         print(f"[CalibState] Errore lettura: {_e}")
         return None
+
+
+def _calib_state_has_payload(st: dict | None) -> bool:
+    if not isinstance(st, dict):
+        return False
+    try:
+        if int(st.get("n_retro_total") or 0) > 0:
+            return True
+    except (TypeError, ValueError):
+        pass
+    _cf = st.get("cal_factor")
+    if isinstance(_cf, dict) and any(v is not None for v in _cf.values()):
+        return True
+    _cr = st.get("curves")
+    if isinstance(_cr, dict):
+        for _vb in _cr.values():
+            if not isinstance(_vb, dict):
+                continue
+            for _cat in ("success", "failure", "neutral", "control"):
+                _blk = _vb.get(_cat)
+                if not isinstance(_blk, dict):
+                    continue
+                try:
+                    if int(_blk.get("n") or 0) > 0:
+                        return True
+                except (TypeError, ValueError):
+                    pass
+    return False
+
+
+def _calib_refresh_decision() -> tuple[bool, str, dict | None, int | None]:
+    """
+    Decide se ricalcolare la calibrazione modello.
+
+    Returns:
+        (do_refresh, reason, existing_cur, age_days)
+    """
+    from datetime import datetime as _dt_cs
+
+    _force_refresh = os.environ.get("FORCE_CALIB_REFRESH", "").strip().lower() in (
+        "1", "true", "yes", "on",
+    )
+    _existing_full = None
+    if _CALIB_STATE_PATH.exists():
+        try:
+            _existing_full = json.loads(_CALIB_STATE_PATH.read_text(encoding="utf-8"))
+        except Exception as _je:
+            print(f"[CalibState] File esistente illeggibile: {_je}")
+            _existing_full = None
+
+    _existing_cur = (_existing_full or {}).get("current") if _existing_full else None
+    _last_ts_str = (_existing_cur or {}).get("timestamp")
+    _last_dt = None
+    if _last_ts_str:
+        try:
+            _last_dt = _dt_cs.fromisoformat(_last_ts_str)
+        except Exception:
+            _last_dt = None
+
+    _age_days = ((_dt_cs.now() - _last_dt).days if _last_dt is not None else None)
+
+    if _force_refresh:
+        return True, "Forzato (FORCE_CALIB_REFRESH=1)", _existing_cur, _age_days
+    if _existing_cur is None:
+        return True, "Primo avvio (file assente)", _existing_cur, _age_days
+    if str((_existing_cur or {}).get("population_filter") or "") != "nct_relation_restricted_v1":
+        return True, "Cambio popolazione: solo relazioni NCT forti", _existing_cur, _age_days
+    if _age_days is None:
+        return True, "Timestamp precedente illeggibile", _existing_cur, _age_days
+    if _age_days >= _CALIB_REFRESH_DAYS:
+        return (
+            True,
+            (
+                f"Scaduto: {_age_days}gg dall'ultimo aggiornamento "
+                f"(intervallo: {_CALIB_REFRESH_DAYS}gg)"
+            ),
+            _existing_cur,
+            _age_days,
+        )
+    return False, "", _existing_cur, _age_days
 
 
 def describe_active_model_bundle(calibration_state: dict | None = None) -> str:
@@ -32266,7 +32701,8 @@ def _merge_liquidity_into_financial_df(
         merged = {}
         if os.path.isfile(path):
             try:
-                merged = _js.load(open(path, encoding="utf-8")) or {}
+                with open(path, encoding="utf-8") as _fh:
+                    merged = _js.load(_fh) or {}
             except Exception:
                 merged = {}
         merge_liquidity_dict(merged, patch)
@@ -32437,7 +32873,7 @@ def _enrich_financial_df(df: "pd.DataFrame") -> "pd.DataFrame":
     # Finnhub: campi che può fornire (profile + quote + target)
     # Nota: q.get("h"/"l"/"c") = high/low/close del giorno corrente (non 52w).
     #       Filtriamo 0 perché Finnhub restituisce 0 (non null) per stock non coperti.
-    _FH_API_KEY = "d7jh0jpr01qhf13er8bgd7jh0jpr01qhf13er8c0"
+    _FH_API_KEY = os.environ.get("FINNHUB_API_KEY", "d7jh0jpr01qhf13er8bgd7jh0jpr01qhf13er8c0")
     _FH_FILL_MAP = {
         "currentPrice":  lambda p, q, t: _nz(q.get("c")),
         "dailyChange_%": lambda p, q, t: q.get("dp"),      # % change vs prev close (0% legittimo)
@@ -32482,7 +32918,8 @@ def _enrich_financial_df(df: "pd.DataFrame") -> "pd.DataFrame":
                 return None
         try:
             import json as _js
-            return _js.load(open(p, encoding="utf-8"))
+            with open(p, encoding="utf-8") as _fh:
+                return _js.load(_fh)
         except Exception:
             return None
 
@@ -32569,7 +33006,10 @@ def _enrich_financial_df(df: "pd.DataFrame") -> "pd.DataFrame":
         _tgt_path  = _os.path.join(DATA_DIR, "finnhub_target_cache",  f"{sym}.json")
         def _load(path):
             try:
-                return _json.load(open(path, encoding="utf-8")) if _os.path.exists(path) else None
+                if not _os.path.exists(path):
+                    return None
+                with open(path, encoding="utf-8") as _fh:
+                    return _json.load(_fh)
             except Exception:
                 return None
         prof = _load(_prof_path) or _fh_api("stock/profile2", {"symbol": sym})
@@ -32580,14 +33020,17 @@ def _enrich_financial_df(df: "pd.DataFrame") -> "pd.DataFrame":
     # ── Priorità: ticker completamente vuoti prima (sono quelli rate-limitati) ──
     # Conta i campi mancanti per ogni ticker → più campi mancanti = priorità alta
     _check_cols = [c for c in _YF_FILL_MAP if c in df.columns]
-    def _missing_count(sym):
-        mask = df[sym_col].astype(str).str.strip().str.upper() == sym
-        return int(df.loc[mask, _check_cols].isna().sum(axis=1).max() or 0)
+    # Pre-compute normalized column ONCE (avoid O(N*M) repeated .str.upper())
+    _sym_normalized = df[sym_col].astype(str).str.strip().str.upper()
+    _mc_map: dict[str, int] = {}
+    for _s in syms_to_fill:
+        _mask_s = _sym_normalized == _s
+        _mc_map[_s] = int(df.loc[_mask_s, _check_cols].isna().sum(axis=1).max() or 0)
 
-    syms_to_fill.sort(key=_missing_count, reverse=True)   # più vuoti prima
+    syms_to_fill.sort(key=lambda s: _mc_map.get(s, 0), reverse=True)   # più vuoti prima
     _syms_batch = syms_to_fill[:_cap]
 
-    _fully_empty = sum(1 for s in _syms_batch if _missing_count(s) == len(_check_cols))
+    _fully_empty = sum(1 for s in _syms_batch if _mc_map.get(s, 0) == len(_check_cols))
 
     # ── Pre-pass: estrai cache-hit (zero API call, zero delay) ────────────────
     # Separiamo i ticker che hanno già la cache completa: vengono applicati
@@ -32614,7 +33057,7 @@ def _enrich_financial_df(df: "pd.DataFrame") -> "pd.DataFrame":
 
     for sym, _cached_data in _cache_hits:
         _cached_data = strip_untrusted_liquidity_from_enrich_dict(_cached_data, ticker=sym)
-        mask = df[sym_col].astype(str).str.strip().str.upper() == sym
+        mask = _sym_normalized == sym
         _filled_any = False
         for col, val in _cached_data.items():
             if col in df.columns and val is not None:
@@ -32695,7 +33138,7 @@ def _enrich_financial_df(df: "pd.DataFrame") -> "pd.DataFrame":
                     _api_failed += 1
                 # Applica al df nel main thread (thread-safe per pandas)
                 if _yf_vals:
-                    mask = df[sym_col].astype(str).str.strip().str.upper() == sym
+                    mask = _sym_normalized == sym
                     _filled_any = False
                     for col, val in _yf_vals.items():
                         if col in df.columns:
@@ -34160,7 +34603,8 @@ def _write_coverage_sheet(wb, master_df, clinical_df) -> None:
     _var_set: set = set()
     if os.path.exists(_var_json):
         try:
-            _vd = json.load(open(_var_json, encoding="utf-8"))
+            with open(_var_json, encoding="utf-8") as _fh_var:
+                _vd = json.load(_fh_var)
             _var_set = set(_vd.keys()) if isinstance(_vd, dict) else {
                 str(r.get("ticker") or r.get("symbol","")).upper()
                 for r in _vd if r.get("ticker") or r.get("symbol")}
@@ -34456,10 +34900,15 @@ def _run_simulation_sheet_into_workbook(
         else:
             ws_sim = wb.create_sheet("Simulation")
         ws_sim.sheet_properties.tabColor = "7030A0"
+        _catalyst_src = (
+            clinical_df_rich
+            if clinical_df_rich is not None and not clinical_df_rich.empty
+            else clinical_df
+        )
         _sim_rows = build_rows_from_df(
             financial_df,
             catalyst_dates=_extract_catalyst_dates(
-                clinical_df,
+                _catalyst_src,
                 horizon_calendar_days=SIM_SHEET_DISPLAY_HORIZON_CAL_DAYS,
             ),
         )
@@ -34668,6 +35117,45 @@ def _run_simulation_sheet_into_workbook(
                                     break
                 except Exception as _e3:
                     print(f"[Simulation] Pass3 skip: {_e3}")
+
+                # ── Pass 4: lead_sponsor → ticker SEC (ModernaTX → MRNA, …) ─────
+                try:
+                    _, _sec_nt4 = _load_sec_cik_map()
+                    _ls4 = next(
+                        (c for c in ["lead_sponsor", "sponsor"] if c in _tmp.columns),
+                        None,
+                    )
+                    _fin_syms4: set[str] = set()
+                    if _fn_col and _sym_col_fin:
+                        _fin_syms4 = {
+                            str(s).strip().upper()
+                            for s in financial_df[_sym_col_fin].astype(str).tolist()
+                            if str(s).strip()
+                        }
+                    if _ls4 and _sec_nt4 and _fin_syms4:
+                        _seen4: set[str] = set()
+                        for _, _ar4 in _tmp.iterrows():
+                            _lead4 = str(_ar4.get(_ls4, "") or "").strip()
+                            _stk4 = _resolve_lead_sponsor_sec_ticker(_lead4, _sec_nt4)
+                            if not _stk4 or _stk4 not in _fin_syms4 or _stk4 in _seen4:
+                                continue
+                            _fnm4 = _fin_nm.get(_stk4, "") if _fn_col else ""
+                            if not _fnm4:
+                                continue
+                            _rpo4 = str(_ar4.get("responsible_party_org", "") or "")
+                            _clb4 = str(_ar4.get("collaborators", "") or "")
+                            if _compute_sponsor_match(_fnm4, _lead4, _rpo4, _clb4) in (
+                                "Exact",
+                                "Partial",
+                            ):
+                                _match_ok.add(_stk4)
+                                _seen4.add(_stk4)
+                                print(
+                                    f"[Simulation] Pass4 SEC lead_sponsor ✓ "
+                                    f"'{_lead4}' → {_stk4}"
+                                )
+                except Exception as _e4:
+                    print(f"[Simulation] Pass4 skip: {_e4}")
         
                 # ── Diagnostica opzionale (costosa): abilita con SIM_DIAG=1
                 if os.environ.get("SIM_DIAG", "").strip() == "1":
@@ -34771,13 +35259,31 @@ def _run_simulation_sheet_into_workbook(
                      if c in _clin_filt.columns),
                     None,
                 )
-                for _tk_u, _grp in _clin_filt.groupby("_tk_up"):
-                    _first = _grp.iloc[0]
+                _catalyst_picks_horizon = _pick_best_trusted_catalyst_by_ticker(
+                    _clin_filt,
+                    horizon_calendar_days=SIM_SHEET_DISPLAY_HORIZON_CAL_DAYS,
+                    window="horizon",
+                )
+                _catalyst_picks_past = _pick_best_trusted_catalyst_by_ticker(
+                    _clin_filt,
+                    horizon_calendar_days=SIM_SHEET_DISPLAY_HORIZON_CAL_DAYS,
+                    window="past",
+                )
+                _date_lookup_horizon: dict = {}
+                _pick_rows_ordered = list(_catalyst_picks_horizon.items()) + [
+                    (tk, row)
+                    for tk, row in _catalyst_picks_past.items()
+                    if tk not in _catalyst_picks_horizon
+                ]
+                for _tk_u, _first in _pick_rows_ordered:
                     _raw_dt = _first[_dt_col]
                     try:
-                        _date_lookup[_tk_u] = pd.Timestamp(_raw_dt).date()
+                        _cd_parsed = pd.Timestamp(_raw_dt).date()
                     except Exception:
-                        _date_lookup[_tk_u] = None
+                        _cd_parsed = None
+                    _date_lookup[_tk_u] = _cd_parsed
+                    if _tk_u in _catalyst_picks_horizon:
+                        _date_lookup_horizon[_tk_u] = _cd_parsed
                     if _ph_col:
                         _phase_lookup[_tk_u] = _phase_str_norm(_first[_ph_col])
                     # sponsor_match / partial_type / partial_source
@@ -34889,42 +35395,99 @@ def _run_simulation_sheet_into_workbook(
                             s: n for s, n in zip(_sym_ser_dl.tolist(), _name_ser_dl.tolist()) if s
                         }
                     _spon_cols = [c for c in [_lsc_dl, _rpoc_dl, _clbc_dl, _dt_col, _ph_col] if c]
-                    _spon_records = (
-                        _tmp.loc[_mask_spon, _spon_cols].fillna("").to_dict("records")
-                        if _spon_cols else []
-                    )
                     for _dtk in list(_match_ok):
                         if _dtk in _date_lookup:
                             continue
-                        # cerca il nome azienda in financial_df
                         _dname = _sym_to_name.get(_dtk, "")
-                        # usa _mask_spon (tutti gli Exact) — non solo _mask_date
-                        # IMPORTANTE: matching SOLO con _dname (companyName del
-                        # financial_df legato al ticker _dtk). NON usare _dqc
-                        # (query_company dello studio) come fallback: produce sempre
-                        # match con il proprio _dls e attribuirebbe date a ticker
-                        # sbagliati.
                         if not _dname:
                             continue
-                        for _dlr in _spon_records:
-                            _dls  = str(_dlr.get(_lsc_dl,  "") or "") if _lsc_dl  else ""
-                            _drpo = str(_dlr.get(_rpoc_dl, "") or "") if _rpoc_dl else ""
-                            _dclb = str(_dlr.get(_clbc_dl, "") or "") if _clbc_dl else ""
-                            if _compute_sponsor_match(_dname, _dls, _drpo, _dclb) in ("Exact", "Partial"):
-                                try:
-                                    _date_lookup[_dtk] = pd.Timestamp(_dlr[_dt_col]).date()
-                                except Exception:
-                                    _date_lookup[_dtk] = None
-                                if _ph_col:
-                                    _phase_lookup[_dtk] = _phase_str_norm(
-                                        _dlr.get(_ph_col, ""))
-                                if (_lsc_dl and _dtk not in _lead_lookup):
-                                    _ls_p2 = str(_dlr.get(_lsc_dl, "") or "").strip()
-                                    if _ls_p2 and _ls_p2.upper() != "N/D":
-                                        _lead_lookup[_dtk] = _ls_p2
-                                break
+                        _sub = _tmp.loc[_mask_spon].copy()
+                        _sub["_tk_up"] = _sub[_tk_col].astype(str).str.strip().str.upper()
+                        _matched_idx = []
+                        for _idx, _ar in _sub.iterrows():
+                            _dls = str(_ar.get(_lsc_dl, "") or "") if _lsc_dl else ""
+                            _drpo = str(_ar.get(_rpoc_dl, "") or "") if _rpoc_dl else ""
+                            _dclb = str(_ar.get(_clbc_dl, "") or "") if _clbc_dl else ""
+                            if _compute_sponsor_match(_dname, _dls, _drpo, _dclb) in (
+                                "Exact", "Partial"
+                            ):
+                                _matched_idx.append(_idx)
+                        if not _matched_idx:
+                            continue
+                        _matched_df = _sub.loc[_matched_idx].copy()
+                        _matched_df["_tk_up"] = _dtk
+                        _pick_map = _pick_best_trusted_catalyst_by_ticker(
+                            _matched_df,
+                            horizon_calendar_days=SIM_SHEET_DISPLAY_HORIZON_CAL_DAYS,
+                            window="horizon",
+                        )
+                        if not _pick_map:
+                            _pick_map = _pick_best_trusted_catalyst_by_ticker(
+                                _matched_df,
+                                horizon_calendar_days=SIM_SHEET_DISPLAY_HORIZON_CAL_DAYS,
+                                window="past",
+                            )
+                        _pick_row = _pick_map.get(_dtk)
+                        if _pick_row is None and len(_pick_map) == 1:
+                            _pick_row = next(iter(_pick_map.values()))
+                        if _pick_row is None:
+                            continue
+                        _sim_merge_trusted_pick_into_lookups(
+                            _dtk,
+                            _pick_row,
+                            dt_col=_dt_col,
+                            date_lookup=_date_lookup,
+                            date_lookup_horizon=_date_lookup_horizon,
+                            spon_lookup=_spon_lookup,
+                            ptype_lookup=_ptype_lookup,
+                            psource_lookup=_psource_lookup,
+                            nct_lookup=_nct_lookup,
+                            phase_lookup=_phase_lookup,
+                            lead_lookup=_lead_lookup,
+                            ph_col=_ph_col,
+                            nct_col=_nct_col_sim,
+                            ls_col=_lsc_dl,
+                            in_horizon=bool(_dtk in _pick_map),
+                        )
                 except Exception as _dle:
                     print(f"[Simulation] date_lookup Pass2/3 skip: {_dle}")
+
+                # Backfill sponsor/CD/NCT per ticker in _match_ok senza sponsor affidabile
+                # (es. CD da clinical grezzo ma pick solo su arricchito, o Pass2/3 incompleto).
+                for _bf_tk in list(_match_ok):
+                    if _is_exact_or_partial_sponsor_label(_spon_lookup.get(_bf_tk)):
+                        continue
+                    _bf_pick = _catalyst_picks_horizon.get(_bf_tk)
+                    if _bf_pick is None:
+                        _bf_sub = _clin_filt[
+                            _clin_filt[_tk_col].astype(str).str.strip().str.upper() == _bf_tk
+                        ]
+                        if not _bf_sub.empty:
+                            _bf_map = _pick_best_trusted_catalyst_by_ticker(
+                                _bf_sub,
+                                horizon_calendar_days=SIM_SHEET_DISPLAY_HORIZON_CAL_DAYS,
+                                window="horizon",
+                            )
+                            _bf_pick = _bf_map.get(_bf_tk)
+                    if _bf_pick is None:
+                        continue
+                    _sim_merge_trusted_pick_into_lookups(
+                        _bf_tk,
+                        _bf_pick,
+                        dt_col=_dt_col,
+                        date_lookup=_date_lookup,
+                        date_lookup_horizon=_date_lookup_horizon,
+                        spon_lookup=_spon_lookup,
+                        ptype_lookup=_ptype_lookup,
+                        psource_lookup=_psource_lookup,
+                        nct_lookup=_nct_lookup,
+                        phase_lookup=_phase_lookup,
+                        lead_lookup=_lead_lookup,
+                        ph_col=_ph_col,
+                        nct_col=_nct_col_sim,
+                        ls_col=_ls_col_sim,
+                        in_horizon=_bf_tk in _catalyst_picks_horizon,
+                    )
         
                 # FIX Bug 2: aggiungi righe stub per ticker Exact/Partial presenti nel
                 # clinical ma assenti in financial_df (fetch prezzi fallito).
@@ -34977,7 +35540,12 @@ def _run_simulation_sheet_into_workbook(
                         _tk_u, str(_r.get("nct_id", "") or "").strip().upper())
                     _r["nct_sponsor_identified"] = _nct_spon_lookup.get(_tk_u, "")
                     _r["nct_relation_type"] = _nct_rel_lookup.get(_tk_u, "")
-                    if not _r.get("completion_date"):
+                    _cd_horizon = _date_lookup_horizon.get(_tk_u)
+                    if _cd_horizon is not None:
+                        _r["completion_date"] = _cd_horizon
+                    elif _date_lookup.get(_tk_u) is not None:
+                        _r["completion_date"] = _date_lookup.get(_tk_u)
+                    elif not _r.get("completion_date"):
                         _r["completion_date"] = _date_lookup.get(_tk_u)
                     if not _phase_str_norm(_r.get("phase")):
                         _r["phase"] = _phase_lookup.get(_tk_u, "")
@@ -35028,6 +35596,42 @@ def _run_simulation_sheet_into_workbook(
                         _sim_rows_past.append(_r)
                     # futuri oltre _horizon_display: scartati dalla sheet
         
+                # Prefer tradeable common over warrant when both land in the
+                # future window (JSPR + JSPRW → keep JSPR only).
+                _fut_tickers = {
+                    str(_r.get("ticker") or "").strip().upper()
+                    for _r in _sim_rows_future
+                    if str(_r.get("ticker") or "").strip()
+                }
+                _fut_commons = {
+                    _t
+                    for _t in _fut_tickers
+                    if not (
+                        len(_t) >= 2
+                        and _t.endswith("W")
+                        and not _t.endswith("WW")
+                    )
+                }
+                _before_w = len(_sim_rows_future)
+                _kept_fut = []
+                for _r in _sim_rows_future:
+                    _tw = str(_r.get("ticker") or "").strip().upper()
+                    _is_w = (
+                        len(_tw) >= 2
+                        and _tw.endswith("W")
+                        and not _tw.endswith("WW")
+                    )
+                    if _is_w and _tw[:-1] in _fut_commons:
+                        continue
+                    _kept_fut.append(_r)
+                _sim_rows_future = _kept_fut
+                _dropped_w = _before_w - len(_sim_rows_future)
+                if _dropped_w:
+                    print(
+                        f"[Simulation] Dropped {_dropped_w} redundant warrant "
+                        f"row(s) (common already in harvest)"
+                    )
+
                 _before_date = len(_sim_rows)
                 _sim_rows    = _sim_rows_future   # la Simulation sheet usa solo futuri
                 _removed_date = _before_date - len(_sim_rows) - len(_sim_rows_past)
@@ -35284,6 +35888,9 @@ def regenerate_simulation_sheet_quick(xlsx_path: str | None = None) -> bool:
     else:
         clinical_df_rich = add_modality_column(clinical_df)
         clinical_df_rich = add_sponsor_match_column(clinical_df_rich)
+        clinical_df_rich = expand_clinical_lead_sponsor_sec_rows(
+            clinical_df_rich, financial_df
+        )
     print(f"[Simulation-only] apertura workbook: {tgt}", flush=True)
     wb = load_workbook(tgt, read_only=False, keep_vba=False)
     _preserved_sim: dict = {}
@@ -35450,6 +36057,9 @@ def regenerate_sec_k8_sheet_quick(xlsx_path: str | None = None) -> bool:
     else:
         clinical_df_rich = add_modality_column(clinical_df)
         clinical_df_rich = add_sponsor_match_column(clinical_df_rich)
+        clinical_df_rich = expand_clinical_lead_sponsor_sec_rows(
+            clinical_df_rich, financial_df
+        )
 
     print("[SEC K-8 only] coorte Simulation in memoria (lite se possibile) …", flush=True)
     _twb = Workbook()
@@ -35512,6 +36122,17 @@ def regenerate_sec_k8_sheet_quick(xlsx_path: str | None = None) -> bool:
 
 def save_final_outputs(master_df, clinical_df):
     import tempfile
+
+    _orch_perf = os.environ.get("ORCH_PERF", "").strip() == "1"
+    _orch_perf_t0 = time.perf_counter()
+
+    def _orch_perf_log(label: str) -> None:
+        if _orch_perf:
+            print(
+                f"[PERF] save_final_outputs/{label}: "
+                f"{time.perf_counter() - _orch_perf_t0:.2f}s",
+                flush=True,
+            )
 
     _financial_snapshot = None
     _out_dir = os.path.dirname(os.path.abspath(FINAL_XLSX)) or "."
@@ -35618,6 +36239,7 @@ def save_final_outputs(master_df, clinical_df):
                 ws1.freeze_panes = "A4"
     
                 _financial_snapshot = financial_df.copy()
+                _orch_perf_log("financial")
     
                 # Setup stampa
                 ws1.page_setup.orientation = "landscape"
@@ -35629,6 +36251,9 @@ def save_final_outputs(master_df, clinical_df):
             if not clinical_df.empty:
                 clinical_df_rich = add_modality_column(clinical_df)
                 clinical_df_rich = add_sponsor_match_column(clinical_df_rich)
+                clinical_df_rich = expand_clinical_lead_sponsor_sec_rows(
+                    clinical_df_rich, financial_df
+                )
             else:
                 clinical_df_rich = clinical_df
     
@@ -35674,6 +36299,7 @@ def save_final_outputs(master_df, clinical_df):
                 _past_pred_for_modello = _sim_ctx.get("_past_pred_for_modello")
                 _all_past_rows_cache = _sim_ctx.get("_all_past_rows_cache")
                 _main_row_positions = _sim_ctx.get("_main_row_positions")
+                _orch_perf_log("simulation")
             # ── Sheet 6: IPO Snapshot (5 società da retrospective_config.json) ──
             print("\n[Sheet 6] IPO Snapshot…")
             write_ipo_snapshot_sheet(writer.book, clinical_df)
@@ -35683,11 +36309,33 @@ def save_final_outputs(master_df, clinical_df):
                   "(export senza fogli Modello / Modello 2.x)…")
             print(f"[Calib] Backtesting retro (Exact/Partial) — "
                   f"cohorte RETRO_CALIB_COHORT={RETRO_CALIB_COHORT}…")
+            _skip_retro_bt = os.environ.get("ORCH_SKIP_RETRO_BACKTEST", "").strip().lower() in (
+                "1", "true", "yes", "on",
+            )
+            _need_calib_refresh, _calib_skip_reason, _existing_cur_pre, _age_pre = (
+                _calib_refresh_decision()
+            )
             try:
-                _retro_recs = _run_retro_backtest(
-                    clinical_df,
-                    financial_df=financial_df if not financial_df.empty else None,
-                )
+                if _skip_retro_bt:
+                    print(
+                        "[RetroBacktest] ORCH_SKIP_RETRO_BACKTEST=1 — skip backtest in-sessione.",
+                        flush=True,
+                    )
+                    _retro_recs = []
+                elif not _need_calib_refresh and _calib_state_has_payload(_existing_cur_pre):
+                    print(
+                        f"[RetroBacktest] Skip: calib su disco valida "
+                        f"(età {_age_pre}gg, refresh tra "
+                        f"{max(0, _CALIB_REFRESH_DAYS - (_age_pre or 0))}gg). "
+                        f"Forza: FORCE_CALIB_REFRESH=1",
+                        flush=True,
+                    )
+                    _retro_recs = []
+                else:
+                    _retro_recs = _run_retro_backtest(
+                        clinical_df,
+                        financial_df=financial_df if not financial_df.empty else None,
+                    )
             except Exception as _rbe:
                 print(f"[RetroBacktest] Errore non bloccante: {_rbe}")
                 _retro_recs = []
@@ -35733,82 +36381,19 @@ def save_final_outputs(master_df, clinical_df):
             _calib_refresh_reason = ""       # motivo del refresh (log console)
             try:
                 from datetime import datetime as _dt_cs, timedelta as _td_cs
-                import os as _os_cs
-    
-                _force_refresh = (_os_cs.environ.get("FORCE_CALIB_REFRESH", "")
-                                  .strip() in ("1", "true", "TRUE", "yes"))
-    
-                # Carica lo stato corrente (se esiste)
-                _existing_full = None
-                if _CALIB_STATE_PATH.exists():
-                    try:
-                        _existing_full = json.loads(
-                            _CALIB_STATE_PATH.read_text(encoding="utf-8"))
-                    except Exception as _je:
-                        print(f"[CalibState] File esistente illeggibile: {_je}")
-                        _existing_full = None
-    
-                _existing_cur = (_existing_full or {}).get("current") if _existing_full else None
-                _last_ts_str  = (_existing_cur or {}).get("timestamp")
-                _last_dt      = None
+
+                _do_refresh, _calib_refresh_reason, _existing_cur, _age_days = (
+                    _calib_refresh_decision()
+                )
+                _now_dt = _dt_cs.now()
+                _last_ts_str = (_existing_cur or {}).get("timestamp")
+                _last_dt = None
                 if _last_ts_str:
                     try:
                         _last_dt = _dt_cs.fromisoformat(_last_ts_str)
                     except Exception:
                         _last_dt = None
-    
-                _now_dt = _dt_cs.now()
-                _age_days = ((_now_dt - _last_dt).days
-                             if _last_dt is not None else None)
-    
-                def _has_non_empty_calib_payload(_st: dict | None) -> bool:
-                    if not isinstance(_st, dict):
-                        return False
-                    try:
-                        if int(_st.get("n_retro_total") or 0) > 0:
-                            return True
-                    except (TypeError, ValueError):
-                        pass
-                    _cf = _st.get("cal_factor")
-                    if isinstance(_cf, dict) and any(v is not None for v in _cf.values()):
-                        return True
-                    _cr = _st.get("curves")
-                    if isinstance(_cr, dict):
-                        for _vb in _cr.values():
-                            if not isinstance(_vb, dict):
-                                continue
-                            for _cat in ("success", "failure", "neutral", "control"):
-                                _blk = _vb.get(_cat)
-                                if not isinstance(_blk, dict):
-                                    continue
-                                try:
-                                    if int(_blk.get("n") or 0) > 0:
-                                        return True
-                                except (TypeError, ValueError):
-                                    pass
-                    return False
-    
-                # Decisione: ricalcolare o riusare?
-                _do_refresh = False
-                if _force_refresh:
-                    _do_refresh = True
-                    _calib_refresh_reason = "Forzato (FORCE_CALIB_REFRESH=1)"
-                elif _existing_cur is None:
-                    _do_refresh = True
-                    _calib_refresh_reason = "Primo avvio (file assente)"
-                elif str((_existing_cur or {}).get("population_filter") or "") != "nct_relation_restricted_v1":
-                    _do_refresh = True
-                    _calib_refresh_reason = "Cambio popolazione: solo relazioni NCT forti"
-                elif _age_days is None:
-                    _do_refresh = True
-                    _calib_refresh_reason = "Timestamp precedente illeggibile"
-                elif _age_days >= _CALIB_REFRESH_DAYS:
-                    _do_refresh = True
-                    _calib_refresh_reason = (
-                        f"Scaduto: {_age_days}gg dall'ultimo aggiornamento "
-                        f"(intervallo: {_CALIB_REFRESH_DAYS}gg)"
-                    )
-    
+
                 if _do_refresh:
                     print("\n" + "═" * 70)
                     print("⚠  AGGIORNAMENTO AUTOMATICO STATO CALIBRAZIONE MODELLO")
@@ -35823,7 +36408,7 @@ def save_final_outputs(master_df, clinical_df):
                             if not clinical_df_rich.empty else None,
                         population_filter_label="nct_relation_restricted_v1",
                     )
-                    if _has_non_empty_calib_payload(_calib_state):
+                    if _calib_state_has_payload(_calib_state):
                         _save_calibration_state(_calib_state)
                         _calib_just_updated = True
                         _next_refresh = (_now_dt + _td_cs(days=_CALIB_REFRESH_DAYS)
@@ -35832,7 +36417,7 @@ def save_final_outputs(master_df, clinical_df):
                               f"{_calib_state.get('cal_factor', {})}")
                         print(f"  Prossimo aggiornamento previsto: {_next_refresh}")
                     else:
-                        if _has_non_empty_calib_payload(_existing_cur):
+                        if _calib_state_has_payload(_existing_cur):
                             _calib_state = _existing_cur
                             print("[CalibState] Nuovo stato vuoto: mantengo ultimo stato valido su disco "
                                   "(evito azzeramento Modello 2.1).")
@@ -35873,7 +36458,10 @@ def save_final_outputs(master_df, clinical_df):
                     elif not _ent_am_pre:
                         _am_trigger = "first_history"
                     elif _am_every:
-                        _am_trigger = "every_run"
+                        _am_trigger = (
+                            os.environ.get("ACCURACY_MONITOR_TRIGGER", "").strip()
+                            or "every_run"
+                        )
                     elif _am_force:
                         _am_trigger = "forced_model_change"
                     else:
@@ -35916,13 +36504,17 @@ def save_final_outputs(master_df, clinical_df):
     
             # Allinea lo stato calibrazione per i fogli successivi (Accuratezza/Casistiche):
             # se il file stato è presente ma senza curve graficabili, ricalcola in-sessione.
-            if _retro_for_calib_curves_restricted and not _state_has_curve_data(_calib_state):
+            # Skip se la calibrazione è stata appena ricalcolata nello stesso run
+            # (_calib_just_updated=True) — non può produrre risultati diversi senza nuovo download.
+            if (_retro_for_calib_curves_restricted
+                    and not _state_has_curve_data(_calib_state)
+                    and not _calib_just_updated):
                 try:
                     _calib_state_refreshed = _compute_calibration_state(
                         _retro_for_calib_curves_restricted,
                         clinical_df_rich=clinical_df_rich
                             if not clinical_df_rich.empty else None,
-                        skip_price_warm=bool(_calib_just_updated),
+                        skip_price_warm=False,
                         population_filter_label="nct_relation_restricted_v1",
                     )
                     if _state_has_curve_data(_calib_state_refreshed):
@@ -35956,6 +36548,25 @@ def save_final_outputs(master_df, clinical_df):
             # ── Sheet «SEC K-8» (Form SEC 8-K) — stessa coorte del foglio Simulation ──
             _skip_k8 = os.environ.get("ORCH_SKIP_SEC_K8", "").strip().lower() in (
                 "1", "true", "yes", "on")
+            if not _skip_k8:
+                try:
+                    _k8_fresh_days = float(
+                        os.environ.get("SEC_K8_SKIP_IF_FRESH_DAYS", "0") or "0")
+                except ValueError:
+                    _k8_fresh_days = 0.0
+                if _k8_fresh_days > 0:
+                    try:
+                        from orch_refresh_gates import sec_k8_fresh_within_days
+
+                        if sec_k8_fresh_within_days(_k8_fresh_days):
+                            _skip_k8 = True
+                            print(
+                                f"[SEC K-8] Skip: foglio aggiornato negli ultimi "
+                                f"{_k8_fresh_days:.0f} gg (SEC_K8_SKIP_IF_FRESH_DAYS).",
+                                flush=True,
+                            )
+                    except ImportError:
+                        pass
             if _skip_k8:
                 print(
                     "[SEC K-8] ORCH_SKIP_SEC_K8=1 — foglio non generato "
@@ -35987,6 +36598,12 @@ def save_final_outputs(master_df, clinical_df):
                         "$ baseline (−1) e Δ% +1…+3 vs baseline; coorte = merge Accuracy, rel. CT ≠ N/D).",
                         flush=True,
                     )
+                    try:
+                        from orch_refresh_gates import mark_sec_k8_run
+
+                        mark_sec_k8_run()
+                    except ImportError:
+                        pass
                 except Exception as _k8e:
                     print(f"[SEC K-8] Errore non bloccante: {_k8e}")
     
@@ -36161,6 +36778,7 @@ def save_final_outputs(master_df, clinical_df):
                     print(f"[AccuratezzaSimulation] ERRORE (non bloccante, coorte solo futura):\n"
                           f"{_tb_sim2.format_exc()}")
     
+            _orch_perf_log("past_pred_accuracy")
     
             try:
                 _n_san = _sanitize_openpyxl_workbook_string_cells(writer.book)
@@ -36187,6 +36805,7 @@ def save_final_outputs(master_df, clinical_df):
         _written_xlsx = _orch_commit_xlsx_replace_or_stage(
             FINAL_XLSX, _tmp_xlsx, log_label="[Excel]")
         _tmp_committed = True
+        _orch_perf_log("total")
     finally:
         if not _tmp_committed and os.path.isfile(_tmp_xlsx):
             try:
@@ -36410,6 +37029,14 @@ def _sync_extra_tickers() -> int:
         with open(RETRO_CONFIG_FILE, encoding="utf-8") as fh:
             cfg = json.load(fh)
         extra = [t.strip().upper() for t in cfg.get("extra_tickers", []) if t.strip()]
+        # Anche tickers / benchmark_tickers (es. MRNA in watchlist ma fuori extra_tickers)
+        for _key in ("tickers", "benchmark_tickers"):
+            extra.extend(
+                t.strip().upper()
+                for t in cfg.get(_key, [])
+                if isinstance(t, str) and t.strip()
+            )
+        extra = sorted(set(extra))
     except Exception as exc:
         print(f"[WARN] _sync_extra_tickers: errore parsing {RETRO_CONFIG_FILE}: {exc}")
         return 0
@@ -36450,12 +37077,63 @@ def _sync_extra_tickers() -> int:
         print(f"[SYNC] Nessun nuovo ticker da aggiungere "
               f"(extra_tickers già presenti in biotech_symbols.json).")
 
+    # Drop warrant symbols when the tradeable common is already listed
+    # (JSPRW if JSPR exists) — avoids dual Simulation rows for one issuer.
+    _prune_redundant_warrant_symbols()
+
     return len(nuovi)
 
 
+def _prune_redundant_warrant_symbols() -> int:
+    """Remove ``*W`` tickers from ``biotech_symbols.json`` when the common exists.
+
+    Example: keep ``JSPR``, drop ``JSPRW``. Lone warrants (no common) are kept.
+    """
+    if not os.path.exists(_BIOTECH_SYMBOLS_JSON):
+        return 0
+    try:
+        with open(_BIOTECH_SYMBOLS_JSON, encoding="utf-8") as fh:
+            raw = json.load(fh)
+    except Exception as exc:
+        print(f"[WARN] _prune_redundant_warrant_symbols: read failed: {exc}")
+        return 0
+    if not isinstance(raw, list):
+        return 0
+    upper = [str(t).strip().upper() for t in raw if str(t).strip()]
+    commons = {
+        t
+        for t in upper
+        if not (len(t) >= 2 and t.endswith("W") and not t.endswith("WW"))
+    }
+    kept: list[str] = []
+    removed: list[str] = []
+    for t in upper:
+        is_w = len(t) >= 2 and t.endswith("W") and not t.endswith("WW")
+        if is_w and t[:-1] in commons:
+            removed.append(t)
+            continue
+        kept.append(t)
+    if not removed:
+        return 0
+    try:
+        with open(_BIOTECH_SYMBOLS_JSON, "w", encoding="utf-8") as fh:
+            json.dump(sorted(set(kept)), fh, indent=2, ensure_ascii=False)
+        print(
+            f"[SYNC] Rimossi {len(removed)} warrant ridondanti "
+            f"(common già in lista): {', '.join(sorted(set(removed))[:20])}"
+        )
+    except Exception as exc:
+        print(f"[WARN] _prune_redundant_warrant_symbols: write failed: {exc}")
+        return 0
+    return len(removed)
+
+
 def _orch_fast_relaunch_active() -> bool:
-    return os.environ.get("ORCH_FAST_RELUNCH", "").strip().lower() in (
-        "1", "true", "yes", "on")
+    # Accept both correct and legacy (typo) env var names for backward compat
+    return (os.environ.get("ORCH_FAST_RELAUNCH", "").strip().lower() in (
+                "1", "true", "yes", "on")
+            or os.environ.get("ORCH_FAST_RELUNCH", "").strip().lower() in (
+                "1", "true", "yes", "on"))
 
 
 def _orch_apply_fast_relaunch_env_defaults() -> None:
@@ -36674,7 +37352,7 @@ if _orch_invoked_as_script():
             sys.argv[0],
             *[a for a in sys.argv[1:] if a not in ("--fast-relaunch", "--quick")],
         ]
-        os.environ["ORCH_FAST_RELUNCH"] = "1"
+        os.environ["ORCH_FAST_RELAUNCH"] = "1"
     _skip_argv = "--skip-fetch" in sys.argv[1:]
     if _skip_argv:
         sys.argv = [sys.argv[0]] + [a for a in sys.argv[1:] if a != "--skip-fetch"]

@@ -30,7 +30,15 @@ import {
   resolveSlopeCapitalImpact,
   resolveSlopeStockPrices,
 } from "./slopeStockPrices";
-import { computeSimulationPosition, positionPnlForOpenRow } from "./simulationPosition";
+import {
+  commonTickersOnSheet,
+  computeSimulationPosition,
+  dailyChangePctFromRow,
+  isRedundantWarrantOpportunityRow,
+  isStalePhantomOpportunityRow,
+  positionPnlForOpenRow,
+  rowHasActivePortfolio,
+} from "./simulationPosition";
 import { signalMetricsFromSimRow } from "./investSignalScore";
 import {
   detectPortfolioPositionAlerts,
@@ -69,12 +77,19 @@ import {
   resolveCdPatternWindowCorr,
   type CdPatternPolygonOverview,
 } from "./cdPatternPolygonAccuracyView";
+import {
+  detectHighVolOffBookRescueAlerts,
+  detectOffBookUpcomingCdAlerts,
+  mergeOpportunityAlertsByKey,
+} from "./evaluationMomentumInclude";
 
 /** External polygon / SDS / MII / EIS inputs for probabilistic exit/entry. */
 export type LossAnalysisProbOptions = {
   sdsRows?: SdsRow[] | null;
   migSolidityByKey?: Map<string, MigSoliditySnapshot>;
   eisSuperScoreState?: EisSuperScoreState | null;
+  /** Clinical feed rows — required for EIS off localStorage (VPS snapshot / mobile publish). */
+  clinicalPreCdRecords?: import("../api/supernova").ClinicalPreCdRecord[];
   /** Learning Lab cd_pattern_polygon — ρ(match, stock) per CD window. */
   polygonOverview?: CdPatternPolygonOverview | null;
   /** Bulk audit: skip EIS lookup inside polygon rec. */
@@ -106,6 +121,7 @@ function probCtxForAlert(
         lang: langCode,
         includeEis: probOptions.lightweightPolygon !== true,
         eisSuperScoreState: probOptions.eisSuperScoreState ?? undefined,
+        clinicalPreCdRecords: probOptions.clinicalPreCdRecords,
       })
     : null;
   return recoveryContextFromExternals({
@@ -148,20 +164,19 @@ export function buildRecoveryProbContextForAlert(
 
 export type LossExitDecision = "exit" | "hold" | "review";
 
-/** Strong P(plan) + polygon match soften precat avoid/too_early → Wait instead of hard Skip. */
+/** Strong P(plan) softens precat avoid/too_early → Wait instead of hard Skip. */
 export const PRECAT_PROB_OVERRIDE_MIN = 65;
-export const PRECAT_MATCH_OVERRIDE_MIN = 80;
 
 export type BuyExitResolutionOpts = {
   precatKind?: string;
   probPct?: number | null;
-  matchPct?: number | null;
   forwardPct?: number | null;
   daysToCd?: number | null;
   targetProvisional?: boolean;
   dailyPct24h?: number | null;
   simRow?: Record<string, unknown> | null;
   sdsVeto?: boolean;
+  matchPct?: number | null;
 };
 
 export function resolveBuyExitDecision(
@@ -171,20 +186,14 @@ export function resolveBuyExitDecision(
   opts?: BuyExitResolutionOpts,
 ): LossExitDecision {
   const probPct = opts?.probPct;
-  const matchPct = opts?.matchPct;
   const precatKind = opts?.precatKind ?? "";
   const precatSoftBlock = precatKind === "avoid" || precatKind === "too_early";
   const strongProbOverride =
-    precatSoftBlock &&
-    probPct != null &&
-    probPct >= PRECAT_PROB_OVERRIDE_MIN &&
-    matchPct != null &&
-    matchPct >= PRECAT_MATCH_OVERRIDE_MIN;
+    precatSoftBlock && probPct != null && probPct >= PRECAT_PROB_OVERRIDE_MIN;
   const watchOverride =
     watchPrecatProbOverride({
       daysToCd: opts?.daysToCd ?? null,
       probPct,
-      matchPct: matchPct ?? null,
       precatKind,
       targetProvisional: opts?.targetProvisional,
       dailyPct24h: opts?.dailyPct24h,
@@ -192,12 +201,12 @@ export function resolveBuyExitDecision(
     qualifiesWatchZoneEnter({
       daysToCd: opts?.daysToCd ?? null,
       probPct,
-      matchPct: matchPct ?? null,
       forwardPct: opts?.forwardPct ?? null,
       dailyPct24h: opts?.dailyPct24h,
       targetProvisional: opts?.targetProvisional,
       simRow: opts?.simRow ?? null,
       sdsVeto: opts?.sdsVeto,
+      matchPct: opts?.matchPct ?? null,
     }).qualified;
 
   if (sdsVeto) {
@@ -230,7 +239,7 @@ function mapBuyVerdictToExit(
   return resolveBuyExitDecision(v, probDecision, sdsVeto, opts);
 }
 
-export type LossAnalysisProfile = "portfolio" | "opportunities";
+export type LossAnalysisProfile = "portfolio" | "opportunities" | "catalysts";
 
 export type { RecoveryProbabilityContext } from "./recoveryProbability";
 
@@ -284,6 +293,15 @@ export type PortfolioLossAnalysisItem = PortfolioLossAlert & {
   recoveryCoversLoss: boolean | null;
   recoveryExpectedValuePct: number | null;
   recoverySummary: string | null;
+  /** Polygon match % — pattern vs stock (opportunity buy evidence). */
+  matchPct?: number | null;
+  /** SDS score 0–100 — distance/solidity gate. */
+  sdsScore?: number | null;
+  sdsVeto?: boolean;
+  /** Nearest clinical EIS super-score — catalyst evidence for entry. */
+  eisSuperScore?: number | null;
+  /** Bypass watch-zone Top KPI filter — positive Δ24h + Δ7d off-book mover. */
+  momentumInclude?: boolean;
 };
 
 function mapInvestVerdictToExit(
@@ -294,10 +312,13 @@ function mapInvestVerdictToExit(
   probDecision: LossExitDecision | null,
   curveRisingHold: boolean,
 ): LossExitDecision {
-  /** Curva ↑ o P(recupero) forte — non forzare uscita meccanica su pendenza/precat. */
+  /** Curva ↑ con tesi recovery viva — non forzare uscita meccanica. */
   if (curveRisingHold) {
     if (probDecision === "hold" || probDecision === "review") return probDecision;
-    return v === "yes" && slopeDeclining ? "review" : "hold";
+    // P(recovery) già in exit: la sola curva ↑ non deve bloccare il Sell in perdita.
+    if (probDecision !== "exit") {
+      return v === "yes" && slopeDeclining ? "review" : "hold";
+    }
   }
   if (inLoss && probDecision === "hold") return "hold";
   if (inLoss && probDecision === "review") {
@@ -307,11 +328,23 @@ function mapInvestVerdictToExit(
     return "review";
   }
 
+  // In utile / flat: Top2-yes + pendenza↓ sono segnali di *rescue* su perdita, non
+  // di take-profit. Forzare «exit» qui metteva BIIB-like (+P&L) in SELL sul
+  // Decision Chart mentre Open Positions restava HOLD — incoerenza percepita
+  // come «vendi perché in perdita». Soften → review/hold.
+  if (!inLoss) {
+    if (probDecision === "hold" || probDecision === "review") return probDecision;
+    if (v === "wait") return "review";
+    if (v === "yes" || slopeDeclining || stabVerdict === "exit" || stabVerdict === "avoid") {
+      return "review";
+    }
+    return "hold";
+  }
+
   if (v === "yes" || slopeDeclining || stabVerdict === "exit" || stabVerdict === "avoid") {
     return "exit";
   }
-  if (inLoss && probDecision) return probDecision;
-  if (!inLoss && probDecision) return probDecision;
+  if (probDecision) return probDecision;
   if (v === "wait") return "review";
   return "review";
 }
@@ -326,10 +359,48 @@ function forwardPctForOutlook(
 }
 
 export type PlanProbHeroPayload = {
+  /** Entry P(plan) / affidabilità — primary readout in hero. */
   probPct: number;
+  entryProbPct: number;
+  /** P(recupero) when in portafoglio in perdita. */
+  recoveryProbPct: number | null;
   decision: LossExitDecision;
   summary: string;
 };
+
+function buildPlanProbOutlookInput(
+  item: PortfolioLossAnalysisItem,
+  inLoss: boolean,
+  extras?: {
+    matchPct?: number | null;
+    sdsScore?: number | null;
+    sdsVeto?: boolean;
+    miiAngleDeg?: number | null;
+    eisSuperScore?: number | null;
+    windowCorr?: number | null;
+    segmentRoiPct?: number | null;
+    lang?: "it" | "en";
+  },
+): Parameters<typeof computeRecoveryOutlook>[0] {
+  const lang = extras?.lang ?? "it";
+  return {
+    lang,
+    inLoss,
+    pnlPct: inLoss ? item.pnlPct : item.pnlPct24h ?? item.pnlPct,
+    forwardPct: forwardPctForOutlook(item.planReturnPct, item.curvePeakReturnPct),
+    curveGapPct: item.curveGapPct,
+    matchPct: extras?.matchPct ?? null,
+    sdsScore: extras?.sdsScore ?? null,
+    sdsVeto: extras?.sdsVeto ?? false,
+    miiAngleDeg: extras?.miiAngleDeg ?? null,
+    stabilityVerdict: item.stabilityVerdict,
+    curveRisingHold: item.curveRisingHold,
+    daysToCd: item.daysToCd,
+    windowCorr: extras?.windowCorr ?? null,
+    eisSuperScore: extras?.eisSuperScore ?? null,
+    segmentRoiPct: extras?.segmentRoiPct ?? null,
+  };
+}
 
 /** P(plan) / P(recovery) readout — uses stored item fields or recomputes from card context. */
 export function resolvePlanProbHeroPayload(
@@ -346,34 +417,32 @@ export function resolvePlanProbHeroPayload(
   },
 ): PlanProbHeroPayload {
   const lang = extras?.lang ?? "it";
-  if (item.recoveryProbabilityPct != null && Number.isFinite(item.recoveryProbabilityPct)) {
+  const entryOutlook = computeRecoveryOutlook(buildPlanProbOutlookInput(item, false, extras));
+  const entryProbPct = entryOutlook.probabilityPct;
+
+  if (item.inLoss && item.hasPosition) {
+    const recoveryOutlook = computeRecoveryOutlook(buildPlanProbOutlookInput(item, true, extras));
+    const recoveryProbPct =
+      item.recoveryProbabilityPct != null && Number.isFinite(item.recoveryProbabilityPct)
+        ? item.recoveryProbabilityPct
+        : recoveryOutlook.probabilityPct;
     return {
-      probPct: item.recoveryProbabilityPct,
+      probPct: entryProbPct,
+      entryProbPct,
+      recoveryProbPct,
       decision: item.exitDecision,
-      summary: item.recoverySummary ?? "",
+      summary:
+        item.recoverySummary ??
+        (lang === "it" ? recoveryOutlook.summaryIt : recoveryOutlook.summaryEn),
     };
   }
-  const outlook = computeRecoveryOutlook({
-    lang,
-    inLoss: item.inLoss,
-    pnlPct: item.pnlPct,
-    forwardPct: forwardPctForOutlook(item.planReturnPct, item.curvePeakReturnPct),
-    curveGapPct: item.curveGapPct,
-    matchPct: extras?.matchPct ?? null,
-    sdsScore: extras?.sdsScore ?? null,
-    sdsVeto: extras?.sdsVeto ?? false,
-    miiAngleDeg: extras?.miiAngleDeg ?? null,
-    stabilityVerdict: item.stabilityVerdict,
-    curveRisingHold: item.curveRisingHold,
-    daysToCd: item.daysToCd,
-    windowCorr: extras?.windowCorr ?? null,
-    eisSuperScore: extras?.eisSuperScore ?? null,
-    segmentRoiPct: extras?.segmentRoiPct ?? null,
-  });
+
   return {
-    probPct: outlook.probabilityPct,
-    decision: outlook.suggestedDecision,
-    summary: lang === "it" ? outlook.summaryIt : outlook.summaryEn,
+    probPct: entryProbPct,
+    entryProbPct,
+    recoveryProbPct: null,
+    decision: entryOutlook.suggestedDecision,
+    summary: lang === "it" ? entryOutlook.summaryIt : entryOutlook.summaryEn,
   };
 }
 
@@ -490,13 +559,7 @@ export function recoveryContextFromExternals(args: {
 
 function parseDailyVarPct(simRow: Record<string, unknown> | null): number | null {
   if (!simRow) return null;
-  for (const col of ["Var. Giorn. %", "Var. Giorn.%", "Var. Giornaliera %"]) {
-    const v = simRow[col];
-    if (v == null || v === "" || v === "—") continue;
-    const n = typeof v === "number" ? v : Number(String(v).replace(/,/g, "."));
-    if (Number.isFinite(n)) return n;
-  }
-  return null;
+  return dailyChangePctFromRow(simRow);
 }
 
 /** Off-portfolio Simulation rows per finestra CD (hot ≤2 mesi · watch 4–2 mesi). */
@@ -507,12 +570,51 @@ export function detectOpportunityAnalysisAlerts(
 ): PortfolioLossAlert[] {
   if (!simTable?.rows?.length) return [];
   const rows = filterOffPortfolioByCdHorizonSimRows(simTable.rows, inputs, scope);
+  const commons = commonTickersOnSheet(simTable.rows);
   const out: PortfolioLossAlert[] = [];
   for (const row of rows) {
     const ticker = String(row["Ticker"] ?? "").trim();
     if (!ticker || ticker.includes("TOTALE")) continue;
+    // Stale warrants only (NRXPW…). Commons stay even if refresh marked
+    // direction_live=stale after a temporary quote miss.
+    if (isStalePhantomOpportunityRow(row)) continue;
+    // Same issuer: prefer common (JSPR) over warrant (JSPRW) when both exist.
+    if (isRedundantWarrantOpportunityRow(row, commons)) continue;
     const cd = String(row["Completion Date"] ?? "").trim();
     if (!cd || cd === "—") continue;
+    out.push({
+      key: normalizedRowKey(ticker, cd),
+      ticker,
+      completionDate: cd,
+      pnlEur: 0,
+      pnlPct: 0,
+      capital: DEFAULT_PLAN_CAPITAL_EUR,
+      valueNow: 0,
+      buyPrice: 0,
+      seriesKey: simulationRowSeriesKey(row),
+    });
+  }
+  return out;
+}
+
+/** Upcoming calendar-catalyst rows — always a Top KPI / deep-dive candidate. */
+export function detectUpcomingCatalystAlerts(
+  simTable: SheetTable | null,
+  inputs: InvestSimInputs,
+): PortfolioLossAlert[] {
+  if (!simTable?.rows?.length) return [];
+  const commons = commonTickersOnSheet(simTable.rows);
+  const out: PortfolioLossAlert[] = [];
+  for (const row of simTable.rows) {
+    if (row["guidance_calendar_catalyst"] !== true) continue;
+    if (rowHasActivePortfolio(row, inputs)) continue;
+    if (isStalePhantomOpportunityRow(row)) continue;
+    if (isRedundantWarrantOpportunityRow(row, commons)) continue;
+    const ticker = String(row["Ticker"] ?? "").trim();
+    const cd = String(row["Completion Date"] ?? "").trim();
+    if (!ticker || ticker.includes("TOTALE") || !cd || cd === "—") continue;
+    const days = daysFromToday(cd);
+    if (days == null || !Number.isFinite(days) || days < 0) continue;
     out.push({
       key: normalizedRowKey(ticker, cd),
       ticker,
@@ -1035,9 +1137,11 @@ export function buildPortfolioLossAnalysisItems(
       probCtx,
     );
     const openPnl = simRow ? positionPnlForOpenRow(simRow, inputs, history) : null;
+    const sheetDailyPct = parseDailyVarPct(simRow);
     const daily = {
       pnlEur24h: openPnl?.pnlEur24h ?? null,
-      pnlPct24h: openPnl?.pnlPct24h ?? null,
+      // Weekend / off-session: position engine skips "today"; still show stock Δ from Var. Giorn. %.
+      pnlPct24h: openPnl?.pnlPct24h ?? sheetDailyPct,
     };
     const metrics = simRow ? signalMetricsFromSimRow(simRow, columns) : null;
     const curves = simRow ? extractCurveInputs(simRow) : null;
@@ -1156,6 +1260,10 @@ export function buildPortfolioLossAnalysisItems(
       recoveryCoversLoss: exit.recoveryCoversLoss,
       recoveryExpectedValuePct: exit.recoveryExpectedValuePct,
       recoverySummary: exit.recoverySummary,
+      matchPct: probCtx?.matchPct ?? null,
+      sdsScore: probCtx?.sdsScore ?? null,
+      sdsVeto: probCtx?.sdsVeto ?? false,
+      eisSuperScore: probCtx?.eisSuperScore ?? null,
     };
   });
 
@@ -1176,6 +1284,7 @@ export function buildOpportunityAnalysisItems(
   lang: "it" | "en",
   probOptions?: LossAnalysisProbOptions | null,
   scope: SimCdHorizonScope = "hot",
+  highVolTickers?: Iterable<string> | null,
 ): PortfolioLossAnalysisItem[] {
   if (!simTable?.rows?.length) return [];
 
@@ -1185,7 +1294,19 @@ export function buildOpportunityAnalysisItems(
   const probOptsEff = probOptions
     ? { ...probOptions, mergedInputs: merged }
     : null;
-  const alerts = detectOpportunityAnalysisAlerts(simTable, inputs, scope);
+  const rescueAlerts =
+    scope === "watch"
+      ? detectHighVolOffBookRescueAlerts(simTable, inputs, highVolTickers)
+      : [];
+  const rescueKeys = new Set(rescueAlerts.map((a) => a.key));
+  const primary =
+    scope === "watch"
+      ? detectOffBookUpcomingCdAlerts(simTable, inputs)
+      : detectOpportunityAnalysisAlerts(simTable, inputs, scope);
+  const alerts = mergeOpportunityAlertsByKey(
+    mergeOpportunityAlertsByKey(primary, rescueAlerts),
+    detectUpcomingCatalystAlerts(simTable, inputs),
+  );
 
   const items = alerts.map((alert) => {
     const simRow = rowByKey.get(alert.key) ?? null;
@@ -1346,6 +1467,11 @@ export function buildOpportunityAnalysisItems(
       recoveryCoversLoss: exit.recoveryCoversLoss,
       recoveryExpectedValuePct: exit.recoveryExpectedValuePct,
       recoverySummary: exit.recoverySummary,
+      matchPct: probCtx?.matchPct ?? null,
+      sdsScore: probCtx?.sdsScore ?? null,
+      sdsVeto: probCtx?.sdsVeto ?? false,
+      eisSuperScore: probCtx?.eisSuperScore ?? null,
+      momentumInclude: rescueKeys.has(alert.key),
     };
   });
 
@@ -1358,6 +1484,232 @@ export function buildOpportunityAnalysisItems(
   });
 }
 
+/**
+ * Build items for catalyst-only tickers (``guidance_calendar_catalyst`` rows).
+ *
+ * Same scoring pipeline as opportunities but without the CD-horizon filter:
+ * every catalyst row is included regardless of how far the catalyst date is.
+ */
+export function buildCatalystAnalysisItems(
+  simTable: SheetTable | null,
+  inputs: InvestSimInputs,
+  pointsBySeriesKey: Map<string, ChartPoint[]>,
+  lang: "it" | "en",
+  probOptions?: LossAnalysisProbOptions | null,
+): PortfolioLossAnalysisItem[] {
+  if (!simTable?.rows?.length) return [];
+
+  const catalystRows = simTable.rows.filter(
+    (r) => r["guidance_calendar_catalyst"] === true,
+  );
+  if (!catalystRows.length) return [];
+
+  const catSimTable: SheetTable = {
+    ...simTable,
+    rows: catalystRows,
+    row_count: catalystRows.length,
+  };
+
+  const rowByKey = buildSimRowByKeyMap(catalystRows);
+  const columns = simTable.columns ?? Object.keys(simTable.rows[0] ?? {});
+  const merged = reconcileInvestSimInputs(inputs, catalystRows);
+  const probOptsEff = probOptions
+    ? { ...probOptions, mergedInputs: merged }
+    : null;
+
+  const alerts: PortfolioLossAlert[] = [];
+  for (const row of catalystRows) {
+    const ticker = String(row["Ticker"] ?? "").trim();
+    if (!ticker || ticker.includes("TOTALE")) continue;
+    const cd = String(row["Completion Date"] ?? "").trim();
+    if (!cd || cd === "—") continue;
+    alerts.push({
+      key: normalizedRowKey(ticker, cd),
+      ticker,
+      completionDate: cd,
+      pnlEur: 0,
+      pnlPct: 0,
+      capital: DEFAULT_PLAN_CAPITAL_EUR,
+      valueNow: 0,
+      buyPrice: 0,
+      seriesKey: simulationRowSeriesKey(row),
+    });
+  }
+
+  const items = alerts.map((alert) => {
+    const simRow = rowByKey.get(alert.key) ?? null;
+    const chartPts = alert.seriesKey
+      ? pointsBySeriesKey.get(alert.seriesKey) ?? null
+      : null;
+
+    const probCtx = probCtxForAlert(
+      alert,
+      simRow,
+      chartPts,
+      inputs,
+      catSimTable.rows,
+      lang,
+      probOptsEff,
+    );
+
+    const exit = resolveOpportunityEntryForAlert(
+      alert,
+      simRow,
+      chartPts,
+      columns,
+      lang,
+      probCtx,
+    );
+    const dailyPct = parseDailyVarPct(simRow);
+    const daily = {
+      pnlPct24h: dailyPct,
+      pnlEur24h:
+        dailyPct != null
+          ? Math.round((DEFAULT_PLAN_CAPITAL_EUR * dailyPct) / 100 * 100) / 100
+          : null,
+    };
+    const metrics = simRow ? signalMetricsFromSimRow(simRow, columns) : null;
+    const curves = simRow ? extractCurveInputs(simRow) : null;
+    const days = metrics?.daysToCd ?? daysFromToday(alert.completionDate);
+    const gainPlan = simRow
+      ? resolveExpectedGainPlan(simRow, DEFAULT_PLAN_CAPITAL_EUR, { chartPoints: chartPts })
+      : null;
+    const roi = gainPlan
+      ? planRoiBundleFromGainPlan(
+          gainPlan,
+          DEFAULT_PLAN_CAPITAL_EUR,
+          daysFromToday(alert.completionDate),
+        )
+      : {
+          planReturnPct: exit.planReturnPct,
+          planCdReturnPct: null as number | null,
+          planDays: null,
+          planGainEur: null,
+          planCdDays: null,
+          planCdGainEur: null,
+          planTargetReturnPct: null,
+          planTargetDays: null,
+          planTargetHighPct: null,
+        };
+
+    const precat = buildPrecatEntry(
+      exit.slope5d,
+      exit.slope20d,
+      curves?.runUp30d ?? null,
+      days,
+      { hasPosition: false },
+    );
+
+    const todayPrices = simRow
+      ? resolveTodayExpectedVsRealUsd(simRow, chartPts)
+      : { modelUsd: null, realUsd: null, gapPct: null, gapUsd: null };
+
+    const company = simRow
+      ? String(simRow["Società"] ?? simRow["Societa"] ?? "").trim()
+      : "";
+
+    const peak = simRow ? resolveAssessmentSupernovaPeak(simRow, chartPts) : null;
+
+    const stock = simRow ? resolveSlopeStockPrices(simRow, chartPts, null) : null;
+    const capImpact = resolveSlopeCapitalImpact(
+      simRow,
+      inputs,
+      stock?.actual ?? null,
+      stock?.expected ?? null,
+    );
+    let modelGapLossEur = capImpact.modelGapLossEur;
+    if (modelGapLossEur == null && stock?.actual != null && stock?.expected != null) {
+      const price = stock.actual;
+      if (price > 0) {
+        const shares = DEFAULT_PLAN_CAPITAL_EUR / price;
+        modelGapLossEur =
+          Math.round(shares * (stock.actual - stock.expected) * 100) / 100;
+      }
+    }
+
+    let curveGapLossEur: number | null = null;
+    if (simRow && todayPrices.gapUsd != null && Number.isFinite(todayPrices.gapUsd)) {
+      const price = stock?.actual ?? null;
+      const shares =
+        price != null && price > 0 ? DEFAULT_PLAN_CAPITAL_EUR / price : 0;
+      if (shares > 0) {
+        curveGapLossEur = Math.round(shares * todayPrices.gapUsd * 100) / 100;
+      }
+    }
+
+    const inLoss = daily.pnlPct24h != null && daily.pnlPct24h < -0.05;
+
+    return {
+      ...alert,
+      hasPosition: false,
+      seriesKey: alert.seriesKey ?? (simRow ? simulationRowSeriesKey(simRow) : null),
+      company,
+      daysToCd: days,
+      investedAt: null,
+      holdDaysElapsed: null,
+      planReturnPct: exit.planReturnPct,
+      planCdReturnPct: roi.planCdReturnPct ?? gainPlan?.expectedReturnPct ?? null,
+      curveGapPct: todayPrices.gapPct,
+      curveGapUsd: todayPrices.gapUsd,
+      slope5d: exit.slope5d,
+      slope20d: exit.slope20d,
+      slope45d: exit.slope45d,
+      pred5Pp: exit.pred5Pp ?? metrics?.pred5Pp ?? null,
+      stabilityVerdict: exit.stabilityVerdict,
+      precatKind: precat.kind,
+      precatLabel: precat.label,
+      investVerdict: resolveTop2InvestVerdict({
+        side: "buy",
+        planReturnPct: exit.planReturnPct,
+        planCdReturnPct: roi.planCdReturnPct ?? gainPlan?.expectedReturnPct ?? null,
+        daysToCd: days,
+        precatKind: precat.kind,
+        action: "",
+        precatLabel: precat.label,
+        stabilityVerdict: exit.stabilityVerdict,
+        curveRisingHold: exit.curveRisingHold,
+        slopeDeclining: exit.slopeDeclining,
+        portfolioPnlLoss: false,
+        targetProvisional: gainPlan?.targetProvisional ?? false,
+        matchPct: probCtx?.matchPct ?? null,
+        dailyPct24h: dailyPct,
+      }),
+      exitDecision: exit.exitDecision,
+      exitReason: exit.exitReason,
+      daysToCurvePeak: peak?.days ?? null,
+      curvePeakReturnPct: peak?.returnPct ?? null,
+      chartPointsLoaded: Boolean(chartPts?.length),
+      modelGapLossEur,
+      curveGapLossEur,
+      priceGapUsd: capImpact.priceGapUsd,
+      pnlEur24h: daily.pnlEur24h,
+      pnlPct24h: daily.pnlPct24h,
+      pnlEurSinceReading: null,
+      pnlPctSinceReading: null,
+      priorReadingTs: null,
+      inLoss,
+      curveRisingHold: exit.curveRisingHold,
+      planTargetProvisional: gainPlan?.targetProvisional ?? false,
+      planTargetConfidencePct: gainPlan?.targetConfidencePct ?? null,
+      recoveryProbabilityPct: exit.recoveryProbabilityPct,
+      recoveryCoversLoss: exit.recoveryCoversLoss,
+      recoveryExpectedValuePct: exit.recoveryExpectedValuePct,
+      recoverySummary: exit.recoverySummary,
+      matchPct: probCtx?.matchPct ?? null,
+      sdsScore: probCtx?.sdsScore ?? null,
+      sdsVeto: probCtx?.sdsVeto ?? false,
+      eisSuperScore: probCtx?.eisSuperScore ?? null,
+      momentumInclude: false,
+    };
+  });
+
+  return items.sort((a, b) => {
+    const aD = a.daysToCd ?? 9999;
+    const bD = b.daysToCd ?? 9999;
+    return aD - bD;
+  });
+}
+
 export function buildLossAnalysisItems(
   profile: LossAnalysisProfile,
   simTable: SheetTable | null,
@@ -1367,7 +1719,17 @@ export function buildLossAnalysisItems(
   history?: InvestSimHistoryPoint[] | null,
   probOptions?: LossAnalysisProbOptions | null,
   oppCdScope: SimCdHorizonScope = "hot",
+  highVolTickers?: Iterable<string> | null,
 ): PortfolioLossAnalysisItem[] {
+  if (profile === "catalysts") {
+    return buildCatalystAnalysisItems(
+      simTable,
+      inputs,
+      pointsBySeriesKey,
+      lang,
+      probOptions,
+    );
+  }
   if (profile === "opportunities") {
     return buildOpportunityAnalysisItems(
       simTable,
@@ -1376,6 +1738,7 @@ export function buildLossAnalysisItems(
       lang,
       probOptions,
       oppCdScope,
+      highVolTickers,
     );
   }
   return buildPortfolioLossAnalysisItems(
@@ -1386,6 +1749,183 @@ export function buildLossAnalysisItems(
     history,
     probOptions,
   );
+}
+
+/**
+ * Minimal Deep Dive card so a Catalyst ticker click always has a sheet,
+ * even when the name is calendar-only (not in Simulation catalogs yet).
+ */
+function stubDiveItem(opts: {
+  ticker: string;
+  key: string;
+  completionDate?: string;
+  company?: string;
+  seriesKey?: string | null;
+}): PortfolioLossAnalysisItem {
+  const ticker = opts.ticker.trim().toUpperCase();
+  const cd = (opts.completionDate ?? "").trim();
+  const key =
+    opts.key.trim() ||
+    (cd && cd !== "—" ? normalizedRowKey(ticker, cd) : ticker);
+  return {
+    key,
+    ticker,
+    completionDate: cd === "—" ? "" : cd,
+    pnlEur: 0,
+    pnlPct: 0,
+    capital: DEFAULT_PLAN_CAPITAL_EUR,
+    valueNow: 0,
+    buyPrice: 0,
+    seriesKey: opts.seriesKey ?? null,
+    hasPosition: false,
+    company: opts.company ?? "",
+    daysToCd: cd && cd !== "—" ? daysFromToday(cd) : null,
+    investedAt: null,
+    holdDaysElapsed: null,
+    planReturnPct: null,
+    planCdReturnPct: null,
+    curveGapPct: null,
+    curveGapUsd: null,
+    slope5d: null,
+    slope20d: null,
+    slope45d: null,
+    pred5Pp: null,
+    stabilityVerdict: "none",
+    precatKind: "",
+    precatLabel: "",
+    investVerdict: "wait",
+    exitDecision: "review",
+    exitReason: "",
+    daysToCurvePeak: null,
+    curvePeakReturnPct: null,
+    chartPointsLoaded: false,
+    modelGapLossEur: null,
+    curveGapLossEur: null,
+    priceGapUsd: null,
+    pnlEur24h: null,
+    pnlPct24h: null,
+    pnlEurSinceReading: null,
+    pnlPctSinceReading: null,
+    priorReadingTs: null,
+    inLoss: false,
+    curveRisingHold: false,
+    recoveryProbabilityPct: null,
+    recoveryCoversLoss: null,
+    recoveryExpectedValuePct: null,
+    recoverySummary: null,
+  };
+}
+
+/**
+ * Company Deep Dive for a Catalyst ticker click — catalogs first, then the
+ * Simulation row unfiltered, then a stub so the empty "not in list" pane never
+ * blocks the sheet.
+ */
+export function buildForcedLossAnalysisItem(
+  keyOrTicker: string,
+  simTable: SheetTable | null,
+  inputs: InvestSimInputs,
+  pointsBySeriesKey: Map<string, ChartPoint[]>,
+  lang: "it" | "en",
+  history?: InvestSimHistoryPoint[] | null,
+  probOptions?: LossAnalysisProbOptions | null,
+): PortfolioLossAnalysisItem | null {
+  const raw = keyOrTicker.trim();
+  if (!raw) return null;
+  const tkGuess = raw.split("|")[0]?.trim().toUpperCase() ?? "";
+  if (!tkGuess) return null;
+  const cdFromKey = raw.includes("|") ? raw.slice(raw.indexOf("|") + 1).trim() : "";
+
+  const row = simTable?.rows?.length
+    ? simTable.rows.find(
+        (r) =>
+          normalizedRowKey(String(r["Ticker"] ?? ""), String(r["Completion Date"] ?? "")) ===
+          raw,
+      ) ??
+      simTable.rows.find((r) => String(r["Ticker"] ?? "").trim().toUpperCase() === tkGuess) ??
+      null
+    : null;
+
+  if (row) {
+    const mini: SheetTable = { ...simTable!, rows: [row] };
+    const tk = String(row["Ticker"] ?? "").trim().toUpperCase() || tkGuess;
+    const port = buildLossAnalysisItems(
+      "portfolio",
+      mini,
+      inputs,
+      pointsBySeriesKey,
+      lang,
+      history,
+      probOptions,
+    );
+    if (port[0]) return port[0];
+    const watch = buildLossAnalysisItems(
+      "opportunities",
+      mini,
+      inputs,
+      pointsBySeriesKey,
+      lang,
+      history,
+      probOptions,
+      "watch",
+      tk ? [tk] : null,
+    );
+    if (watch[0]) return watch[0];
+    const hot = buildLossAnalysisItems(
+      "opportunities",
+      mini,
+      inputs,
+      pointsBySeriesKey,
+      lang,
+      history,
+      probOptions,
+      "hot",
+    );
+    if (hot[0]) return hot[0];
+    const cat = buildLossAnalysisItems(
+      "catalysts",
+      mini,
+      inputs,
+      pointsBySeriesKey,
+      lang,
+      history,
+      probOptions,
+    );
+    if (cat[0]) return cat[0];
+
+    const rowCd = String(row["Completion Date"] ?? "").trim();
+    const cd = rowCd && rowCd !== "—" ? rowCd : cdFromKey;
+    if (cd && cd !== "—") {
+      const tagged = {
+        ...row,
+        Ticker: tk,
+        "Completion Date": cd,
+        guidance_calendar_catalyst: true,
+      };
+      const direct = buildCatalystAnalysisItems(
+        { ...simTable!, rows: [tagged], row_count: 1 },
+        inputs,
+        pointsBySeriesKey,
+        lang,
+        probOptions,
+      );
+      if (direct[0]) return direct[0];
+    }
+
+    return stubDiveItem({
+      ticker: tk,
+      key: cd && cd !== "—" ? normalizedRowKey(tk, cd) : raw,
+      completionDate: cd,
+      company: String(row["Società"] ?? row["Societa"] ?? "").trim(),
+      seriesKey: simulationRowSeriesKey(row),
+    });
+  }
+
+  return stubDiveItem({
+    ticker: tkGuess,
+    key: raw.includes("|") ? raw : tkGuess,
+    completionDate: cdFromKey,
+  });
 }
 
 export function summarizeLossAnalysis(items: PortfolioLossAnalysisItem[]): {

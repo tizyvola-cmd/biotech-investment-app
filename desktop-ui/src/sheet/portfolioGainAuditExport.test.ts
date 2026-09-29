@@ -51,14 +51,14 @@ describe("portfolioGainAuditExport", () => {
 
     expect(exp.rows.length).toBeGreaterThanOrEqual(2);
     const entry = exp.rows.find((r) => r.rowKind === "entry");
-    expect(entry?.capitalEur).toBe(5000);
     expect(entry?.buyPriceUsd).toBe(2.5);
     expect(entry?.shares).toBeCloseTo(2000, 2);
-    expect(entry?.cumulativePnlEur).toBe(0);
+    expect(entry?.cumulativePnlPct).toBe(0);
 
     const dayRow = exp.rows.find((r) => r.day === "2026-06-10");
-    expect(dayRow?.positionValueEur).toBeCloseTo(4143.33, 2);
-    expect(dayRow?.cumulativePnlEur).toBeCloseTo(-856.67, 2);
+    // shares=2000, close=$2.073165 → pnlPct = (4143.33−5000)/5000×100 ≈ −17.13%
+    expect(dayRow?.closePriceUsd).toBeCloseTo(4143.33 / 2000, 2);
+    expect(dayRow?.cumulativePnlPct).toBeCloseTo(-17.13, 1);
   });
 
   it("builds spreadsheet xml with movements sheet", () => {

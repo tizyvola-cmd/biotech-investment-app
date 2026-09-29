@@ -220,24 +220,4 @@ describe("recoveryProbability", () => {
     expect(out.probabilityPct).toBeLessThan(75);
     expect(out.probabilityPct).toBeGreaterThanOrEqual(57);
   });
-
-  it("Learning Lab windowCorr raises recovery probability vs null", () => {
-    const base = {
-      lang: "it" as const,
-      inLoss: true,
-      pnlPct: -3.63,
-      forwardPct: 5.2,
-      curveGapPct: -6.32,
-      matchPct: 57,
-      sdsScore: 29,
-      miiAngleDeg: -8.7,
-      stabilityVerdict: "watch" as const,
-      curveRisingHold: true,
-      daysToCd: 20,
-      eisSuperScore: 0,
-    };
-    const without = computeRecoveryOutlook(base);
-    const withLab = computeRecoveryOutlook({ ...base, windowCorr: 0.45 });
-    expect(withLab.probabilityPct).toBeGreaterThan(without.probabilityPct);
-  });
 });

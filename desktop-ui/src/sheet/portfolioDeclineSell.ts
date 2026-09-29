@@ -15,6 +15,12 @@ import {
   type StabilityVerdict,
 } from "./slopeStability";
 import { RECOVERY_HOLD_PROB_MIN } from "./recoveryProbability";
+import {
+  shouldHoldDespiteExternalMarketContext,
+  shouldSellDespiteRecoveryForInternalContext,
+} from "./marketContextDecision";
+import { contWeakensRecoveryHold } from "./continuationScore";
+import { SOFT_SELL_G1_DEEP_PNL_PCT } from "./softSignalGrades";
 
 export type SustainedDeclineInput = {
   /** ROI target (decisioni). */
@@ -33,7 +39,11 @@ export type SustainedDeclineInput = {
   dailyVarPct?: number | null;
 };
 
-const FORWARD_RISE_HOLD_MIN_PCT = 0.12;
+/**
+ * Remaining model upside that can justify Hold (was 0.12% — almost any
+ * positive plan froze Sell on open losers).
+ */
+export const FORWARD_RISE_HOLD_MIN_PCT = 2;
 const DAILY_BOUNCE_MIN_PCT = 0.8;
 
 function readDailyVarPctFromRow(row: Record<string, unknown>): number | null {
@@ -293,72 +303,110 @@ export type PortfolioExitRecoveryGuardInput = {
   recoveryProbabilityPct?: number | null;
   recoveryCoversLoss?: boolean | null;
   pnlPct24h?: number | null;
+  pnlPct?: number | null;
   planReturnPct?: number | null;
   curvePeakReturnPct?: number | null;
   stabilityVerdict?: StabilityVerdict;
+  regulatoryRiskScore?: number | null;
+  externalAlignmentScore?: number | null;
+  volumeAnomalyScore?: number | null;
+  marketContext?: import("./marketContextScore").MarketContextDecisionCtx | null;
+  /** Simulation row — g10 / exhaustion can weaken recovery HOLD on red book. */
+  simRow?: Record<string, unknown> | null;
 };
 
 /** Var. 24h above this on a positive plan → not clearly falling; defer paper exit. */
 export const AMBIGUOUS_EXIT_MOMENTUM_FLOOR_PCT = -0.5;
 
+/** True when P(recovery) + cover still support waiting on an open loser. */
+export function recoveryThesisAlive(
+  input: Pick<
+    PortfolioExitRecoveryGuardInput,
+    "recoveryProbabilityPct" | "recoveryCoversLoss"
+  >,
+): boolean {
+  const p = input.recoveryProbabilityPct;
+  if (p == null || !Number.isFinite(p) || p < RECOVERY_HOLD_PROB_MIN) return false;
+  return input.recoveryCoversLoss !== false;
+}
+
 /**
  * Recovery guards before paper/real portfolio exit — shared by sim loop,
  * synth bridge, and dashboard sell chips.
+ *
+ * Hold only when the recovery thesis is still alive. Micro-peaks, Top2=wait
+ * alone, or a flat 24h on a positive plan must not freeze Sell forever.
+ * MTM>0 never-sell stays in `deriveSuggestedAction` (separate layer).
  */
 export function portfolioExitRecoveryGuardsActive(
   input: PortfolioExitRecoveryGuardInput | null | undefined,
 ): boolean {
   if (!input) return false;
-  if (input.curveRisingHold) return true;
-  if (input.investVerdict === "wait") return true;
 
-  const mom24 = input.pnlPct24h;
-  if (mom24 != null && Number.isFinite(mom24) && mom24 >= MOMENTUM_24H_SELL_HOLD_MIN) {
+  // Deep open loss: recovery thesis must not freeze Soft/Urgent SELL (JSPR −47%).
+  if (
+    input.pnlPct != null &&
+    Number.isFinite(input.pnlPct) &&
+    input.pnlPct <= SOFT_SELL_G1_DEEP_PNL_PCT
+  ) {
+    return false;
+  }
+
+  // Declining / out-of-regime / exhaustion edge on red book → don't sticky-HOLD.
+  if (
+    contWeakensRecoveryHold({
+      pnlPct: input.pnlPct,
+      simRow: input.simRow,
+    })
+  ) {
+    return false;
+  }
+
+  if (
+    shouldSellDespiteRecoveryForInternalContext(
+      {
+        pnlPct: input.pnlPct,
+        recoveryProbabilityPct: input.recoveryProbabilityPct,
+        regulatoryRiskScore: input.regulatoryRiskScore,
+        externalAlignmentScore: input.externalAlignmentScore,
+        volumeAnomalyScore: input.volumeAnomalyScore,
+        stabilityVerdict: input.stabilityVerdict,
+      },
+      input.marketContext,
+    )
+  ) {
+    return false;
+  }
+
+  if (
+    shouldHoldDespiteExternalMarketContext(
+      {
+        pnlPct: input.pnlPct,
+        recoveryProbabilityPct: input.recoveryProbabilityPct,
+        regulatoryRiskScore: input.regulatoryRiskScore,
+      },
+      input.marketContext,
+    )
+  ) {
     return true;
   }
 
+  // Core: P(recovery)≥55% and curve still covers the loss.
+  if (recoveryThesisAlive(input)) return true;
+
+  // Meaningful remaining upside that explicitly covers the book — not a 0.1% stub.
   const plan = input.planReturnPct;
   const peak = input.curvePeakReturnPct;
   if (
     peak != null &&
     Number.isFinite(peak) &&
     peak >= FORWARD_RISE_HOLD_MIN_PCT &&
-    (plan == null || plan > 0)
-  ) {
-    return true;
-  }
-  if (
-    mom24 != null &&
-    Number.isFinite(mom24) &&
-    mom24 >= DAILY_BOUNCE_MIN_PCT &&
-    peak != null &&
-    peak > 0 &&
-    (plan == null || plan > 0)
-  ) {
-    return true;
-  }
-
-  if (
-    input.recoveryProbabilityPct != null &&
-    input.recoveryProbabilityPct >= RECOVERY_HOLD_PROB_MIN &&
-    input.recoveryCoversLoss !== false
-  ) {
-    return true;
-  }
-
-  // 24h not clearly ↓ on a positive plan — avoid premature exit before bounce (learning loop pattern).
-  const stab = input.stabilityVerdict;
-  if (
-    mom24 != null &&
-    Number.isFinite(mom24) &&
-    mom24 > AMBIGUOUS_EXIT_MOMENTUM_FLOOR_PCT &&
-    mom24 < MOMENTUM_24H_SELL_HOLD_MIN &&
     (plan == null || plan > 0) &&
-    stab !== "exit" &&
-    stab !== "avoid"
+    input.recoveryCoversLoss === true
   ) {
     return true;
   }
 
+  // curveRisingHold / Top2=wait / green 24h alone no longer freeze Sell.
   return false;
 }

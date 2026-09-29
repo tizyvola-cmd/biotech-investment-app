@@ -18,6 +18,8 @@ from __future__ import annotations
 import argparse
 import datetime as dt
 import json
+import logging
+import os
 import sys
 import uuid
 from pathlib import Path
@@ -125,18 +127,27 @@ def main() -> int:
     stats: dict = {}
 
     try:
-        rc = run_step(
-            logger,
-            name="fetch_yfinance_quotes",
-            cmd=[py, "-u", "fetch_yfinance.py"],
-            timeout_min=25,
-            extra_env={
-                "YF_QUOTE_REFRESH_HOURS": "0.5",
-                "YF_CACHE_STICKY": "1",
-            },
-        )
-        if rc != 0:
-            failures.append(f"fetch_yfinance (exit {rc})")
+        from orch_refresh_gates import ran_within_minutes
+
+        yf_skip_min = float(os.environ.get("MODEL_LAB_YF_SKIP_IF_WITHIN_MIN", "50"))
+        if ran_within_minutes("yfinance", yf_skip_min):
+            logger.info(
+                "SKIP fetch_yfinance — già eseguito negli ultimi %.0f min (hourly/model lab)",
+                yf_skip_min,
+            )
+        else:
+            rc = run_step(
+                logger,
+                name="fetch_yfinance_quotes",
+                cmd=[py, "-u", "fetch_yfinance.py"],
+                timeout_min=25,
+                extra_env={
+                    "YF_QUOTE_REFRESH_HOURS": os.environ.get("YF_QUOTE_REFRESH_HOURS", "1"),
+                    "YF_CACHE_STICKY": "1",
+                },
+            )
+            if rc != 0:
+                failures.append(f"fetch_yfinance (exit {rc})")
 
         logger.info("Step — export simulation + chart snapshots")
         try:
@@ -156,15 +167,34 @@ def main() -> int:
             logger.exception("Simulation snapshot export failed")
 
         logger.info("Step — SDS cohort light")
+        sds_skip_min = float(os.environ.get("MODEL_LAB_SDS_SKIP_IF_WITHIN_MIN", "55"))
         try:
-            from prediction.sds_data import refresh_sds_cohort_light
+            from orch_refresh_gates import ran_within_minutes
 
-            sds = refresh_sds_cohort_light()
-            stats["sds_n"] = sds.get("n")
-            stats["sds_generated_at"] = sds.get("generated_at")
-        except Exception as exc:
-            failures.append(f"sds_cohort_light ({exc})")
-            logger.exception("SDS light refresh failed")
+            skip_sds = ran_within_minutes("sds_light", sds_skip_min)
+        except Exception:
+            skip_sds = False
+        if skip_sds:
+            logger.info(
+                "SKIP SDS light — già eseguito negli ultimi %.0f min",
+                sds_skip_min,
+            )
+        else:
+            try:
+                from prediction.sds_data import refresh_sds_cohort_light
+
+                sds = refresh_sds_cohort_light()
+                stats["sds_n"] = sds.get("n")
+                stats["sds_generated_at"] = sds.get("generated_at")
+                try:
+                    from orch_refresh_gates import mark_run
+
+                    mark_run("sds_light", stats={"n": sds.get("n")})
+                except Exception:
+                    pass
+            except Exception as exc:
+                failures.append(f"sds_cohort_light ({exc})")
+                logger.exception("SDS light refresh failed")
 
         logger.info("Step — EIS magnitude (clinical prices + calibration curve)")
         try:
@@ -202,6 +232,32 @@ def main() -> int:
         except Exception as exc:
             failures.append(f"eis_magnitude ({exc})")
             logger.exception("EIS magnitude refresh failed")
+
+        logger.info("Step — export backtest polygon match (past + live CD)")
+        try:
+            from scripts.export_backtest_polygon_match import (
+                OUT_PATH as _POLY_OUT,
+                build_backtest_polygon_match_map,
+            )
+
+            poly_doc = build_backtest_polygon_match_map()
+            _tmp = _POLY_OUT.with_suffix(".json.tmp")
+            import json as _json
+            _tmp.write_text(
+                _json.dumps(poly_doc, ensure_ascii=False, indent=2, default=str),
+                encoding="utf-8",
+            )
+            _tmp.replace(_POLY_OUT)
+            stats["polygon_match_keys"] = poly_doc.get("n_keys")
+            stats["polygon_match_live_keys"] = poly_doc.get("n_keys_live")
+            logger.info(
+                "Polygon match export OK — total=%s live=%s",
+                poly_doc.get("n_keys"),
+                poly_doc.get("n_keys_live"),
+            )
+        except Exception as exc:
+            failures.append(f"polygon_match_export ({exc})")
+            logger.exception("Polygon match export failed")
 
         finished_at = dt.datetime.now(dt.timezone.utc).isoformat()
         report = _write_report(

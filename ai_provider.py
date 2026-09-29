@@ -1,22 +1,23 @@
 """
 Multi-provider AI abstraction
 =============================
-Default priority (when AI_PROVIDER is unset): Anthropic → OpenAI → GitHub Models.
+Default priority (when AI_PROVIDER is unset): Anthropic → Gemini → OpenAI → GitHub Models.
 
-Force a provider with AI_PROVIDER=github | anthropic | openai (needs matching key).
+Force a provider with AI_PROVIDER=github | anthropic | openai | gemini (needs matching key).
 
 Configure via environment variables (in .env or system env):
-  AI_PROVIDER        — optional: github | anthropic | openai
+  AI_PROVIDER        — optional: github | anthropic | openai | gemini
   ANTHROPIC_API_KEY  — Anthropic Claude (requires paid credits)
   OPENAI_API_KEY     — OpenAI (requires paid credits)
-  GITHUB_TOKEN       — GitHub PAT with **models:read** (fine-grained) or **models**
-                        scope (classic). Requires GitHub Copilot subscription.
+  GEMINI_API_KEY     — Google Gemini Flash (free tier via AI Studio)
+  GITHUB_TOKEN       — GitHub PAT (legacy Models API — retired July 2026)
                         Endpoint: https://models.github.ai/inference/
 
 Model selection per provider:
   Anthropic  — CATALYST_CLAUDE_MODEL  (default: claude-haiku-4-5-20251001)
-               SUMMARY_CLAUDE_MODEL   (default: claude-sonnet-4-6)
-               CLINICAL_KPI_CLAUDE_MODEL (default: SUMMARY model — pre-CD / KPI / deep)
+               SUMMARY_CLAUDE_MODEL   (default: same Haiku — pre-CD / KPI / deep)
+               CLINICAL_KPI_CLAUDE_MODEL (default: SUMMARY / Haiku)
+  Gemini     — GEMINI_MODEL           (default: gemini-flash-latest)
   GitHub     — GITHUB_MODELS_MODEL    (default: gpt-4o-mini)
                GITHUB_CLINICAL_MODEL    (default: openai/gpt-4o — clinical feed KPI)
   OpenAI     — OPENAI_MODELS_MODEL    (default: gpt-4o-mini)
@@ -41,13 +42,18 @@ _PROVIDER_KEY = {
     "anthropic": "ANTHROPIC_API_KEY",
     "openai": "OPENAI_API_KEY",
     "github": "GITHUB_TOKEN",
+    "gemini": "GEMINI_API_KEY",
 }
 
 _PROVIDER_LABEL = {
     "anthropic": "Claude (Anthropic)",
     "openai": "OpenAI",
     "github": "GitHub Models (Copilot)",
+    "gemini": "Gemini Flash (Google)",
 }
+
+_PROVIDER_ORDER = ("anthropic", "gemini", "openai", "github")
+_PROVIDER_ORDER_CLINICAL = ("anthropic", "gemini", "github", "openai")
 
 _LAST_ERRORS: dict[str, str] = {}
 _LAST_SUCCESS: bool = False
@@ -62,6 +68,10 @@ _RUNTIME_LOADED = False
 ANTHROPIC_BILLING_URL = "https://console.anthropic.com/settings/billing"
 
 
+# UI no longer offers these; stale overrides would keep failing (e.g. GitHub Models 410).
+_RETIRED_UI_PROVIDERS = frozenset({"github", "openai"})
+
+
 def _load_runtime_override() -> str | None:
     global _runtime_provider, _RUNTIME_LOADED
     if _RUNTIME_LOADED:
@@ -73,6 +83,13 @@ def _load_runtime_override() -> str | None:
         try:
             data = json.loads(path.read_text(encoding="utf-8"))
             p = str(data.get("provider") or "").strip().lower()
+            if p in _RETIRED_UI_PROVIDERS:
+                # Drop retired Copilot/OpenAI session so Claude/Gemini can take over.
+                try:
+                    path.unlink(missing_ok=True)
+                except OSError:
+                    pass
+                continue
             if p in _PROVIDER_KEY:
                 _runtime_provider = p
                 if path == _LEGACY_SESSION_FILE and not _OVERRIDE_FILE.is_file():
@@ -120,6 +137,10 @@ def set_active_provider(provider: str) -> None:
     key = str(provider or "").strip().lower()
     if key not in _PROVIDER_KEY:
         raise ValueError(f"Provider non supportato: {provider}")
+    if key in _RETIRED_UI_PROVIDERS:
+        raise ValueError(
+            "GitHub Models / OpenAI non sono più selezionabili dall’UI — usa gemini o anthropic."
+        )
     if not _provider_if_key(key):
         raise ValueError(
             f"{_PROVIDER_LABEL.get(key, key)} non configurato "
@@ -134,7 +155,7 @@ def set_session_provider(name: str | None) -> dict[str, Any]:
     """Compat API: imposta override runtime (None non supportato — usa env default)."""
     key = (name or "").strip().lower()
     if not key:
-        return {"ok": False, "error": "Provider richiesto (anthropic | openai | github)"}
+        return {"ok": False, "error": "Provider richiesto (anthropic | openai | github | gemini)"}
     try:
         set_active_provider(key)
     except ValueError as exc:
@@ -167,7 +188,7 @@ def _provider_if_key(name: str) -> str | None:
 
 def configured_providers() -> list[str]:
     out: list[str] = []
-    for name in ("anthropic", "openai", "github"):
+    for name in _PROVIDER_ORDER:
         if _provider_if_key(name):
             out.append(name)
     return out
@@ -178,7 +199,7 @@ def active_provider() -> str | None:
     preferred = get_active_provider()
     if _provider_if_key(preferred):
         return preferred
-    for name in ("anthropic", "openai", "github"):
+    for name in _PROVIDER_ORDER:
         if _provider_if_key(name):
             return name
     return None
@@ -196,9 +217,13 @@ def is_available() -> bool:
 
 
 def is_stale_extraction(extracted: dict[str, Any] | None) -> bool:
-    """True when cached AI output should be discarded and re-run."""
+    """True when cached AI output should be discarded and re-run.
+
+    Empty dict means AI returned None (provider error or unconfigured) —
+    always treat as stale so the entry is re-processed when a key becomes available.
+    """
     if not extracted:
-        return False
+        return True  # empty {} or None → stale, re-process
     headline = str(extracted.get("headline") or "").lower()
     return any(marker in headline for marker in _STALE_HEADLINE_MARKERS)
 
@@ -216,6 +241,8 @@ def _classify_error(exc: str) -> str:
     low = exc.lower()
     if "no_access" in low or "models` permission" in low or "models:read" in low:
         return "github_no_access"
+    if "github_models_retirement" in low or "retirement brownout" in low or "410" in low and "github" in low:
+        return "github_retired"
     if "too many requests" in low or "rate limit" in low or "429" in low:
         return "rate_limit"
     if "credit balance" in low or "insufficient" in low and "anthropic" in low:
@@ -255,7 +282,7 @@ def friendly_error_message(
             if has_alt:
                 msg += " Provider alternativo in .env verrà usato automaticamente."
             else:
-                msg += " Aggiungi ANTHROPIC_API_KEY o OPENAI_API_KEY in .env e riavvia l'API."
+                msg += " Aggiungi GEMINI_API_KEY, ANTHROPIC_API_KEY o OPENAI_API_KEY in .env e riavvia l'API."
             return msg
         wait_en = f" Retry in ~{wait_s}s." if wait_s > 0 else " Wait 1–2 minutes and retry."
         return (
@@ -265,8 +292,14 @@ def friendly_error_message(
             + (
                 " A fallback provider in .env will be used automatically."
                 if has_alt
-                else " Add ANTHROPIC_API_KEY or OPENAI_API_KEY in .env and restart the API."
+                else " Add GEMINI_API_KEY, ANTHROPIC_API_KEY or OPENAI_API_KEY in .env and restart the API."
             )
+        )
+    if kind == "github_retired":
+        return (
+            "GitHub Models (Copilot) è ritirato — usa Gemini (gratis) o Claude."
+            if it
+            else "GitHub Models (Copilot) is retired — use Gemini (free) or Claude."
         )
     if kind == "github_no_access":
         return (
@@ -285,20 +318,13 @@ def _build_user_hint(*, lang: str = "it") -> str:
     it = lang.startswith("it")
     parts: list[str] = []
 
-    if forced == "github" or "github" in configured_providers():
-        ge = errs.get("github", "")
-        if "no_access" in ge.lower():
-            parts.append(
-                "Copilot/GitHub Models: account senza accesso ai modelli (no_access). "
-                "Serve abbonamento Copilot attivo + PAT con permesso Models (read). "
-                "Prova il playground su github.com/marketplace/models."
-                if it
-                else "Copilot/GitHub Models: no model access (no_access). "
-                "Need active Copilot + PAT with Models read. Try github.com/marketplace/models."
-            )
-        elif ge:
-            fe = friendly_error_message(lang="it" if it else "en", provider="github")
-            parts.append(fe or f"GitHub Models: {ge[:120]}")
+    ge = errs.get("github", "")
+    if ge and _classify_error(ge) in ("github_retired", "github_no_access"):
+        parts.append(
+            "GitHub Models è ritirato — salva una GEMINI_API_KEY (gratis) in Chiavi API e seleziona Gemini."
+            if it
+            else "GitHub Models is retired — save a free GEMINI_API_KEY in API keys and select Gemini."
+        )
 
     if forced != "github" and "anthropic" in configured_providers():
         ae = errs.get("anthropic", "")
@@ -312,15 +338,22 @@ def _build_user_hint(*, lang: str = "it") -> str:
     if not parts:
         if not is_available():
             return (
-                "Nessun provider AI configurato in .env (GITHUB_TOKEN + AI_PROVIDER=github)."
+                "Nessun provider AI configurato in .env (GEMINI_API_KEY gratis via AI Studio, oppure Anthropic/OpenAI)."
                 if it
-                else "No AI provider in .env (GITHUB_TOKEN + AI_PROVIDER=github)."
+                else "No AI provider in .env (free GEMINI_API_KEY via AI Studio, or Anthropic/OpenAI)."
             )
         if _LAST_SUCCESS:
+            selected = get_active_provider()
+            if selected == "gemini":
+                return (
+                    "Gemini attivo — ultima chiamata AI riuscita."
+                    if it
+                    else "Gemini active — last AI call succeeded."
+                )
             return (
-                "GitHub Copilot attivo — ultima chiamata AI riuscita."
+                "Provider AI attivo — ultima chiamata riuscita."
                 if it
-                else "GitHub Copilot active — last AI call succeeded."
+                else "AI provider active — last call succeeded."
             )
         return (
             "Provider configurato; esegui di nuovo «Arricchisci clinico»."
@@ -432,6 +465,14 @@ def _call_provider(
             provider_name="github",
             task=task,
         )
+    if provider == "gemini":
+        return _call_gemini(
+            prompt,
+            system=system,
+            max_tokens=max_tokens,
+            model_override=model_override,
+            task=task,
+        )
     return None
 
 
@@ -454,9 +495,9 @@ def _mark_github_rate_limit() -> None:
 def _provider_try_order(*, prefer_non_github: bool = False, task: str = "default") -> list[str]:
     preferred = get_active_provider()
     if task in ("clinical_kpi", "summary"):
-        base = ("anthropic", "github", "openai")
+        base = _PROVIDER_ORDER_CLINICAL
     else:
-        base = ("anthropic", "openai", "github")
+        base = _PROVIDER_ORDER
     configured = [p for p in base if p in configured_providers()]
     if not configured:
         return []
@@ -571,9 +612,10 @@ def no_provider_placeholder(task: str = "default") -> dict[str, Any]:
     """Structured placeholder returned when no AI provider is configured."""
     msg = (
         "No AI provider configured. Add one of these to your .env:\n"
+        "  GEMINI_API_KEY     (aistudio.google.com/apikey — free tier)\n"
         "  ANTHROPIC_API_KEY  (console.anthropic.com — requires credits)\n"
-        "  GITHUB_TOKEN       (github.com/settings/tokens — free with Copilot)\n"
-        "  OPENAI_API_KEY     (platform.openai.com — requires credits)"
+        "  OPENAI_API_KEY     (platform.openai.com — requires credits)\n"
+        "  GITHUB_TOKEN       (legacy Models API — retired July 2026)"
     )
     if task == "catalyst":
         return {
@@ -606,14 +648,14 @@ def no_provider_placeholder(task: str = "default") -> dict[str, Any]:
 # ── Anthropic ──────────────────────────────────────────────────────────────────
 
 _DEFAULT_CATALYST_MODEL = "claude-haiku-4-5-20251001"
-_DEFAULT_SUMMARY_MODEL  = "claude-sonnet-4-6"
+_DEFAULT_SUMMARY_MODEL  = "claude-haiku-4-5-20251001"
 _CLINICAL_KPI_TASKS = frozenset({"summary", "clinical_kpi", "deep_clinical"})
 
 
 def _anthropic_model_for_task(task: str, model_override: str | None) -> str:
     if model_override:
         return model_override
-    if task == "catalyst":
+    if task in ("catalyst", "guidance_extract"):
         return (
             os.environ.get("CATALYST_CLAUDE_MODEL")
             or _DEFAULT_CATALYST_MODEL
@@ -643,6 +685,61 @@ def _openai_compat_model_for_task(task: str, provider: str, model_override: str 
     if provider == "github":
         return os.environ.get("GITHUB_MODELS_MODEL", "openai/gpt-4o-mini")
     return os.environ.get("OPENAI_MODELS_MODEL", "gpt-4o-mini")
+
+
+def _gemini_model_for_task(task: str, model_override: str | None) -> str:
+    if model_override:
+        return model_override
+    if task in _CLINICAL_KPI_TASKS:
+        return os.environ.get(
+            "GEMINI_CLINICAL_MODEL",
+            os.environ.get("GEMINI_MODEL", "gemini-flash-lite-latest"),
+        )
+    return os.environ.get("GEMINI_MODEL", "gemini-flash-lite-latest")
+
+
+def _call_gemini(
+    prompt: str,
+    *,
+    system: str | None,
+    max_tokens: int,
+    model_override: str | None,
+    task: str,
+) -> str | None:
+    model = _gemini_model_for_task(task, model_override)
+    try:
+        from gemini_client import GeminiClient
+    except ImportError as exc:
+        _LAST_ERRORS["gemini"] = f"google-genai missing: {exc}"
+        print("[ai_provider] google-genai not installed. Run: pip install google-genai", flush=True)
+        return None
+    api_key = get_api_key("gemini")
+    if not api_key:
+        _LAST_ERRORS["gemini"] = "GEMINI_API_KEY not set"
+        return None
+    try:
+        client = GeminiClient(api_key=api_key, model=model)
+        text = client.complete(
+            prompt,
+            system_instruction=system,
+            max_output_tokens=max_tokens,
+        )
+        if text:
+            try:
+                from ai_usage_tracker import record_usage
+
+                # Gemini free tier — track calls; token counts unknown here.
+                record_usage("gemini", model, task, 0, 0)
+            except Exception:
+                pass
+            return text
+        _LAST_ERRORS["gemini"] = "empty response"
+        return None
+    except Exception as exc:
+        err = str(exc)
+        _LAST_ERRORS["gemini"] = err
+        print(f"[ai_provider] Gemini error: {exc}", flush=True)
+        return None
 
 
 def _call_anthropic(

@@ -4,6 +4,7 @@ import {
 
   aggregateAdviceCalibrationBuckets,
 
+  buildAdviceCalibrationFromPaperBuys,
   buildAdviceCalibrationFromPaperSells,
   buildAdviceForecastErrorScatter,
 
@@ -27,6 +28,7 @@ import {
   stampPostSellMove24hOnTicks,
   adviceMonitorPointsExcludingPaperSells,
   summarizePaperSellOperativeCoverage,
+  filterAdviceCalibrationByUniverse,
 
 } from "./investDecisionSimAdviceCalibration";
 
@@ -386,6 +388,196 @@ describe("investDecisionSimAdviceCalibration", () => {
 
     expect(dots.every((d) => d.x >= 0 && d.x <= 100)).toBe(true);
 
+  });
+
+  it("scores each closed paper round-trip as a BUY entry using realized P&L", () => {
+    const points = buildAdviceCalibrationFromPaperBuys(
+      [
+        {
+          id: "t1",
+          at: "2026-06-01T14:31:00.000Z",
+          evaluations: [
+            {
+              key: "good|cd",
+              ticker: "GOOD",
+              planReturnPct: 12,
+            } as never,
+          ],
+          portfolioBefore: [
+            {
+              key: "good|cd",
+              ticker: "GOOD",
+              capital: 5000,
+              entryAt: "2026-05-15T10:00:00.000Z",
+              entryProbPct: 74,
+              entryPlanReturnPct: 12,
+            } as never,
+          ],
+          portfolioAfter: [],
+          trades: [
+            {
+              at: "2026-06-01T14:31:00.000Z",
+              ticker: "GOOD",
+              key: "good|cd",
+              side: "sell",
+              reason: "exit",
+              capital: 5000,
+              pnlPctSimulated: 6.5,
+              pnlEurSimulated: 325,
+            },
+          ],
+          summary: {} as never,
+        },
+        {
+          id: "t2",
+          at: "2026-06-02T14:31:00.000Z",
+          evaluations: [
+            {
+              key: "bad|cd",
+              ticker: "BAD",
+              planReturnPct: 8,
+            } as never,
+          ],
+          portfolioBefore: [
+            {
+              key: "bad|cd",
+              ticker: "BAD",
+              capital: 5000,
+              entryAt: "2026-05-20T10:00:00.000Z",
+              entryProbPct: 65,
+              entryPlanReturnPct: 8,
+            } as never,
+          ],
+          portfolioAfter: [],
+          trades: [
+            {
+              at: "2026-06-02T14:31:00.000Z",
+              ticker: "BAD",
+              key: "bad|cd",
+              side: "sell",
+              reason: "stop",
+              capital: 5000,
+              pnlPctSimulated: -4.2,
+              pnlEurSimulated: -210,
+            },
+          ],
+          summary: {} as never,
+        },
+      ] as never[],
+      "en",
+    );
+
+    expect(points).toHaveLength(2);
+    expect(points.every((p) => p.suggestedAction === "buy")).toBe(true);
+    expect(points.every((p) => p.source === "experiment")).toBe(true);
+    expect(points.every((p) => p.kind === "paper_buy_closed")).toBe(true);
+
+    const good = points.find((p) => p.ticker === "GOOD");
+    expect(good?.outcome).toBe("good");
+    expect(good?.priceChangePct).toBe(6.5);
+    expect(good?.probPct).toBe(74);
+
+    const bad = points.find((p) => p.ticker === "BAD");
+    expect(bad?.outcome).toBe("bad");
+    expect(bad?.priceChangePct).toBe(-4.2);
+    expect(bad?.probPct).toBe(65);
+  });
+
+  it("skips paper BUY when the round-trip P&L is missing or unfinite", () => {
+    const points = buildAdviceCalibrationFromPaperBuys(
+      [
+        {
+          id: "t1",
+          at: "2026-06-01T14:31:00.000Z",
+          evaluations: [],
+          portfolioBefore: [
+            {
+              key: "x|cd",
+              ticker: "X",
+              capital: 5000,
+              entryAt: "2026-05-15T10:00:00.000Z",
+              entryProbPct: 72,
+            } as never,
+          ],
+          portfolioAfter: [],
+          trades: [
+            {
+              at: "2026-06-01T14:31:00.000Z",
+              ticker: "X",
+              key: "x|cd",
+              side: "sell",
+              reason: "exit",
+              capital: 5000,
+              pnlPctSimulated: null,
+              pnlEurSimulated: null,
+            },
+          ],
+          summary: {} as never,
+        },
+      ] as never[],
+      "en",
+    );
+    expect(points).toHaveLength(0);
+  });
+
+  it("emits one paper BUY point per SELL trade in the tick history", () => {
+    const ticks = [
+      {
+        id: "t1",
+        at: "2026-06-01T14:31:00.000Z",
+        evaluations: [],
+        portfolioBefore: [
+          {
+            key: "a|cd",
+            ticker: "A",
+            capital: 5000,
+            entryAt: "2026-05-01T10:00:00.000Z",
+            entryProbPct: 70,
+          } as never,
+          {
+            key: "b|cd",
+            ticker: "B",
+            capital: 5000,
+            entryAt: "2026-05-05T10:00:00.000Z",
+            entryProbPct: 60,
+          } as never,
+        ],
+        portfolioAfter: [],
+        trades: [
+          {
+            at: "2026-06-01T14:31:00.000Z",
+            ticker: "A",
+            key: "a|cd",
+            side: "sell",
+            reason: "exit",
+            capital: 5000,
+            pnlPctSimulated: 3.4,
+            pnlEurSimulated: 170,
+          },
+          {
+            at: "2026-06-01T14:31:00.000Z",
+            ticker: "B",
+            key: "b|cd",
+            side: "sell",
+            reason: "exit",
+            capital: 5000,
+            pnlPctSimulated: -1.9,
+            pnlEurSimulated: -95,
+          },
+        ],
+        summary: {} as never,
+      },
+    ] as never[];
+
+    const buyPoints = buildAdviceCalibrationFromPaperBuys(ticks, "en");
+    const sellTradeCount = ticks
+      .flatMap((t: { trades: Array<{ side: string }> }) => t.trades)
+      .filter((tr) => tr.side === "sell").length;
+
+    expect(buyPoints).toHaveLength(sellTradeCount);
+    expect(buyPoints).toHaveLength(2);
+    expect(buyPoints.every((p) => p.suggestedAction === "buy")).toBe(true);
+    expect(buyPoints.map((p) => p.outcome).sort()).toEqual(["bad", "good"]);
   });
 
   it("scores executed paper SELL with post-move 24h from the next tick", () => {
@@ -893,6 +1085,43 @@ describe("investDecisionSimAdviceCalibration", () => {
     expect(buyOpen).toHaveLength(2);
     expect(buyOpen.find((p) => p.ticker === "AAA")?.outcome).toBe("good");
     expect(buyOpen.find((p) => p.ticker === "BBB")?.outcome).toBe("bad");
+  });
+
+  it("tags live calibration universe and filters portfolio vs sim loop", () => {
+    const portfolio = buildAdviceCalibrationFromLiveRows(
+      [
+        {
+          key: "AAA|2026-09-01",
+          ticker: "AAA",
+          suggestedAction: "sell",
+          inPaperPortfolio: false,
+          hasPosition: true,
+          probPct: 70,
+          pnlPct24h: -2,
+        },
+      ],
+      "en",
+    );
+    const sim = buildAdviceCalibrationFromLiveRows(
+      [
+        {
+          key: "BBB|2026-09-01",
+          ticker: "BBB",
+          suggestedAction: "buy",
+          inPaperPortfolio: true,
+          hasPosition: false,
+          probPct: 65,
+          pnlPct24h: 3,
+        },
+      ],
+      "en",
+    );
+    expect(portfolio[0]?.universe).toBe("portafoglio");
+    expect(sim[0]?.universe).toBe("sim loop");
+    const merged = [...portfolio, ...sim];
+    expect(filterAdviceCalibrationByUniverse(merged, "portfolio")).toHaveLength(1);
+    expect(filterAdviceCalibrationByUniverse(merged, "simloop")).toHaveLength(1);
+    expect(filterAdviceCalibrationByUniverse(merged, "all")).toHaveLength(2);
   });
 
 });

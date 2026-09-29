@@ -46,10 +46,11 @@ describe("inMissedOppWatchWindow", () => {
 });
 
 describe("inMissedOppOperationalWindow", () => {
-  it("is T-14 through T-90", () => {
-    expect(MISSED_OPP_OP_MIN_DAYS).toBe(14);
+  it("is T-0 through T-90", () => {
+    expect(MISSED_OPP_OP_MIN_DAYS).toBe(0);
     expect(MISSED_OPP_OP_MAX_DAYS).toBe(90);
-    expect(inMissedOppOperationalWindow(13)).toBe(false);
+    expect(inMissedOppOperationalWindow(0)).toBe(true);
+    expect(inMissedOppOperationalWindow(13)).toBe(true);
     expect(inMissedOppOperationalWindow(14)).toBe(true);
     expect(inMissedOppOperationalWindow(75)).toBe(true);
     expect(inMissedOppOperationalWindow(90)).toBe(true);

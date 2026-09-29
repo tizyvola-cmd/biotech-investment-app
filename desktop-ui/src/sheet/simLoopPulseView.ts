@@ -42,9 +42,10 @@ import {
   buildCausalSimLoopShareWalk,
   causalOptsFromSizing,
   causalShareForSell,
-  rebalanceCausalSimLoopShares,
+  resolveLiveOpenShares,
   shareToSynthCap,
 } from "./simLoopCausalSynth";
+import { computeSimLoopCashFlow } from "./experimentCashFlow";
 
 export type SimLoopPulsePortfolioRow = {
   key: string;
@@ -73,6 +74,19 @@ export type SimLoopPulseTotals = {
   /** Realized P&L from paper SELL trades (same basis as Loss Rescue · Sim Loop BUY). */
   closedPnlEur: number;
   closedDealCount: number;
+  /** Nominal capital released by every SELL (synth-scaled when sizing != null). */
+  capitalReturnedFromClosedEur: number;
+  /** Nominal capital currently locked in open paper positions. */
+  capitalInOpenEur: number;
+  /** min(returned, open) — descriptive upper bound of recycled capital. */
+  capitalReinvestedEur: number;
+  /** max(0, open − returned) — capital that cannot come from closed deals. */
+  freshCapitalDeployedEur: number;
+  /** Positive realized P&L on closed paper SELLs. */
+  realizedGainsFromClosedEur: number;
+  /** min(gains, open) — display metric for gains recycled into open book. */
+  gainsRecycledInOpenEur: number;
+  capitalNotFromGainsEur: number;
 };
 
 export type SimLoopPulseData = {
@@ -213,6 +227,8 @@ export function resolveSimLoopAlignedOpenPnl(
   effectiveCap: number,
   entryAt: string | null | undefined,
   paperFallbackPct: number | null | undefined,
+  /** Synth sim loop — use paper marks only, not real Pick stocks capital. */
+  preferPaperMarks = false,
 ): {
   pnlEur: number;
   pnlPct: number | null;
@@ -222,7 +238,7 @@ export function resolveSimLoopAlignedOpenPnl(
   const inp = inputs?.[key];
   const portfolioCap = inp?.capital && inp.capital > 0 ? inp.capital : 0;
 
-  if (inputs && portfolioCap > 0 && !inp?.ignoreSheet) {
+  if (!preferPaperMarks && inputs && portfolioCap > 0 && !inp?.ignoreSheet) {
     const m = positionPnlForOpenRow(simRow, inputs, portfolioHistory);
     if (m.pnlEur != null && m.pos && m.pos.capital > 0) {
       return scaleOpenPnlToCap(
@@ -304,7 +320,8 @@ function resolveEffectiveCap(
   activeShares: Record<string, number> = {},
 ): number {
   if (!sizing || equalCap <= 0) return equalCap;
-  return synthCapForOpenPosition(rowKey, equalCap, sizing, activeShares);
+  const synthCap = synthCapForOpenPosition(rowKey, equalCap, sizing, activeShares);
+  return synthCap > 0 ? synthCap : equalCap;
 }
 
 export type SimLoopVisitSnapshot = {
@@ -1073,12 +1090,16 @@ export function buildSimLoopPulseData(opts: {
   const evalByKey = new Map(
     (latestTick?.evaluations ?? []).map((e) => [e.key, e]),
   );
+  const shareWalk = sizing
+    ? buildCausalSimLoopShareWalk(state.ticks, causalOptsFromSizing(sizing))
+    : null;
   const liveOpenShares =
     sizing && state.paperPortfolio.length
-      ? rebalanceCausalSimLoopShares(
+      ? resolveLiveOpenShares(
           state.paperPortfolio,
           latestTick?.evaluations ?? [],
           causalOptsFromSizing(sizing),
+          shareWalk,
         )
       : {};
   const history = buildSimLoopHistoryFromTicks(state.ticks, sizing);
@@ -1121,6 +1142,7 @@ export function buildSimLoopPulseData(opts: {
       effectiveCap,
       pos.entryAt,
       markPct,
+      sizing != null,
     );
     const pnlEur = aligned.pnlEur;
     const pnlPct = aligned.pnlPct;
@@ -1164,6 +1186,16 @@ export function buildSimLoopPulseData(opts: {
   );
   const pnlEur = Math.round((closedPnlEur + openPnlEur) * 100) / 100;
 
+  const effectiveOpenCapByKey = new Map<string, number>(
+    drafts.map((d) => [d.key, d.gainPlanRow.capital]),
+  );
+  const cashFlow = computeSimLoopCashFlow(
+    state.ticks,
+    state.paperPortfolio,
+    sizing,
+    effectiveOpenCapByKey,
+  );
+
   let equalReferenceTotals: SimLoopPulseTotals | null = null;
   if (sizing) {
     let equalOpenPnl = 0;
@@ -1187,6 +1219,13 @@ export function buildSimLoopPulseData(opts: {
     }
     const equalClosed = resolveSimLoopClosedPnlEur(state.ticks, null);
     const equalPnl = Math.round((equalClosed + equalOpenPnl) * 100) / 100;
+    const equalCashFlow = computeSimLoopCashFlow(
+      state.ticks,
+      state.paperPortfolio,
+      null,
+      undefined,
+      sizing.totalCapitalEur,
+    );
     equalReferenceTotals = {
       pnlEur: equalPnl,
       pnlPct:
@@ -1199,6 +1238,13 @@ export function buildSimLoopPulseData(opts: {
         equalCapTotal > 0 ? positionCapitalPnlPct(equalOpenPnl, equalCapTotal) : null,
       closedPnlEur: equalClosed,
       closedDealCount,
+      capitalReturnedFromClosedEur: equalCashFlow.capitalReturnedFromClosedEur,
+      capitalInOpenEur: equalCashFlow.capitalInOpenEur,
+      capitalReinvestedEur: equalCashFlow.capitalReinvestedEur,
+      freshCapitalDeployedEur: equalCashFlow.freshCapitalDeployedEur,
+      realizedGainsFromClosedEur: equalCashFlow.realizedGainsFromClosedEur,
+      gainsRecycledInOpenEur: equalCashFlow.gainsRecycledInOpenEur,
+      capitalNotFromGainsEur: equalCashFlow.capitalNotFromGainsEur,
     };
   }
   let pnlEurToday = 0;
@@ -1221,6 +1267,13 @@ export function buildSimLoopPulseData(opts: {
     openPnlPct: capital > 0 ? positionCapitalPnlPct(openPnlEur, capital) : null,
     closedPnlEur,
     closedDealCount,
+    capitalReturnedFromClosedEur: cashFlow.capitalReturnedFromClosedEur,
+    capitalInOpenEur: cashFlow.capitalInOpenEur,
+    capitalReinvestedEur: cashFlow.capitalReinvestedEur,
+    freshCapitalDeployedEur: cashFlow.freshCapitalDeployedEur,
+    realizedGainsFromClosedEur: cashFlow.realizedGainsFromClosedEur,
+    gainsRecycledInOpenEur: cashFlow.gainsRecycledInOpenEur,
+    capitalNotFromGainsEur: cashFlow.capitalNotFromGainsEur,
   };
 
   const priorSnapshot = resolveEffectiveSimLoopVisitSnapshot(rawPriorSnapshot, totals);
@@ -1431,10 +1484,11 @@ export function buildSimLoopEqualSynthReconcile(opts: {
     (latestTick?.evaluations ?? []).map((e) => [e.key, e]),
   );
   const walk = buildCausalSimLoopShareWalk(state.ticks, causalOptsFromSizing(sizing));
-  const liveOpenShares = rebalanceCausalSimLoopShares(
+  const liveOpenShares = resolveLiveOpenShares(
     state.paperPortfolio,
     latestTick?.evaluations ?? [],
     causalOptsFromSizing(sizing),
+    walk,
   );
   const closedByKey = resolveSimLoopClosedPnlByKey(state.ticks, sizing);
   const openKeys = new Set(state.paperPortfolio.map((p) => p.key));

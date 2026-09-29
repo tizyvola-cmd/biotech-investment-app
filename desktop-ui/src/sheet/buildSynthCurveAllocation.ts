@@ -21,6 +21,9 @@ import {
 import { optimizeWeightSimExp } from "./weightSimExpOptimizer";
 import type { SdsGainBreakdown } from "./sdsGainBreakdown";
 import type { PhaseAResult, RiskPattern } from "../riskPattern/riskPatternTypes";
+import type { PaperPosition } from "./investDecisionSimLoop";
+import { buildSuggestionMonitorRows } from "./suggestionMonitor";
+import { buildSimTableApprovedWeightMaps } from "./simTableApprovedWeightHints";
 
 export type BuildSynthCurveAllocationArgs = {
   closedRows: SimOutcomeRow[];
@@ -36,6 +39,8 @@ export type BuildSynthCurveAllocationArgs = {
   phaseA: PhaseAResult | null;
   approvedPattern: RiskPattern | null;
   matchesStep2Pattern: (deal: import("./threePortfolioCompare").ComparisonDeal) => boolean;
+  /** Paper sim book — must match Three-Portfolio compare for the same deal universe. */
+  paperPortfolio?: PaperPosition[];
 };
 
 export function buildSynthCurveAllocation(
@@ -56,11 +61,46 @@ export function buildSynthCurveAllocation(
     phaseA: args.phaseA,
     approvedPattern: args.approvedPattern,
     matchesStep2Pattern: args.matchesStep2Pattern,
+    paperPortfolio: args.paperPortfolio,
   });
 
   const frozen = loadFrozenWeights();
   const mineDeals = comparison.mineDeals;
   const simLoopDeals = comparison.simLoopDeals;
+
+  const sdsByTicker = new Map<string, SdsRow>();
+  for (const s of args.sdsRows ?? []) {
+    if (s.ticker) sdsByTicker.set(s.ticker.toUpperCase(), s);
+  }
+  let monitorRows: import("./suggestionMonitor").SuggestionMonitorRow[] = [];
+  if (args.simTable?.rows?.length && args.investInputs) {
+    try {
+      monitorRows = buildSuggestionMonitorRows({
+        simTable: args.simTable,
+        inputs: args.investInputs,
+        pointsBySeriesKey: args.pointsBySeriesKey ?? new Map<string, ChartPoint[]>(),
+        lang: args.lang,
+        paperPortfolio: args.paperPortfolio ?? [],
+      });
+    } catch {
+      monitorRows = [];
+    }
+  }
+  const monitorByKey = new Map(monitorRows.map((m) => [m.key, m]));
+  const simTableApprovedWeightMaps = buildSimTableApprovedWeightMaps({
+    comparison,
+    simTable: args.simTable,
+    frozen,
+    matchesStep2Pattern: args.matchesStep2Pattern,
+    monitorByKey,
+    dealCtx: {
+      sdsByTicker,
+      snapshot: args.calibrationSnapshot,
+      sdsBreakdown: args.sdsBreakdown,
+      phaseA: args.phaseA,
+      approvedPattern: args.approvedPattern,
+    },
+  });
 
   const portfolioApproved = computeApprovedWeightShares(
     mineDeals,
@@ -135,7 +175,10 @@ export function buildSynthCurveAllocation(
     portfolioSynthShares: portfolioSynth,
     simLoopSynthShares: simLoopSynth,
   });
-  if (!payload || !args.investInputs || args.totalCapitalEur <= 0) return payload;
+  if (!payload) return null;
+  if (!args.investInputs || args.totalCapitalEur <= 0) {
+    return { ...payload, simTableApprovedWeightMaps };
+  }
 
   const adjustedDisplay: Record<string, number> = {
     ...payload.portfolioDisplaySharesByRowKey,
@@ -150,5 +193,9 @@ export function buildSynthCurveAllocation(
       d.realizedReturnPct,
     );
   }
-  return { ...payload, portfolioDisplaySharesByRowKey: adjustedDisplay };
+  return {
+    ...payload,
+    portfolioDisplaySharesByRowKey: adjustedDisplay,
+    simTableApprovedWeightMaps,
+  };
 }

@@ -45,13 +45,16 @@ export function PortfolioExitButton({
   const [busy, setBusy] = useState(false);
   const urgent = exitDecision === "exit";
 
-  const runExit = () => {
+  const runExit = async () => {
     setBusy(true);
     try {
-      const result = onSell(simKey, simRow ?? null, { confirm: true });
+      const result = await Promise.resolve(onSell(simKey, simRow ?? null, { confirm: true }));
       if (result && !result.ok && result.reason !== "cancelled") {
         const msg = failureMessage(result.reason, t);
         if (msg && typeof window !== "undefined") window.alert(msg);
+      }
+      if (result?.ok && !result.diskPersisted && typeof window !== "undefined") {
+        window.alert(t("sim.pnl.sellDiskPersistFailed"));
       }
       if (!result || result.ok) onSuccess?.();
     } finally {
@@ -70,9 +73,11 @@ export function PortfolioExitButton({
       } ${compact ? "text-[9px] px-1.5 py-0" : ""} ${className}`}
       title={t("sim.lossAnalysis.exitSell.title")}
       onClick={(e) => {
+        e.preventDefault();
         e.stopPropagation();
         runExit();
       }}
+      onPointerDown={(e) => e.stopPropagation()}
     >
       ↩ {t("sim.lossAnalysis.action.sellShares")}
     </button>

@@ -23,10 +23,18 @@ import {
   MOBILE_CHART_H,
   MOBILE_CHART_W,
   ZONE_HOT_W1,
+  ZONE_HOT_W1_OPACITY,
   ZONE_HOT_W2,
+  ZONE_HOT_W2_OPACITY,
   ZONE_PAST,
   ZONE_POST_CD,
+  ZONE_PRE_OPACITY,
+  ZONE_POST_OPACITY,
   ZONE_RUNWAY,
+  ZONE_RUNWAY_OPACITY,
+  CHART_GAIN_PLANNED,
+  CHART_GAIN_ACTUAL,
+  CHART_GAIN_HISTORICAL,
 } from "./mobileChartTheme";
 
 const PURPLE = CHART_PURPLE;
@@ -45,7 +53,7 @@ const POST_COLOR = "#2563eb";
 const GAP_ARC = "#d97706";
 
 function chartPad(w: number, h: number) {
-  return { left: 38, right: 10, top: 26, bottom: 34, w, h, iw: w - 48, ih: h - 60 };
+  return { left: 34, right: 14, top: 22, bottom: 28, w, h, iw: w - 48, ih: h - 50 };
 }
 
 function xAxisLabelY(pad: ReturnType<typeof chartPad>): number {
@@ -86,6 +94,21 @@ function yScale(min: number, max: number, pad: ReturnType<typeof chartPad>) {
 
 function polyline(pts: Array<{ x: number; y: number }>): string {
   return pts.map((p, i) => `${i === 0 ? "M" : "L"} ${p.x.toFixed(1)} ${p.y.toFixed(1)}`).join(" ");
+}
+
+/** Avoid a vertical "actual" stub when all samples share (almost) the same x. */
+function seriesHasHorizontalSpread(pts: Array<{ x: number }>, minPx = 8): boolean {
+  if (pts.length < 2) return false;
+  const xs = pts.map((p) => p.x);
+  return Math.max(...xs) - Math.min(...xs) >= minPx;
+}
+
+function renderPlotClipPath(pad: ReturnType<typeof chartPad>, uid: string): ReactNode {
+  return (
+    <clipPath id={`${uid}-plot`}>
+      <rect x={pad.left} y={pad.top} width={pad.iw} height={pad.ih} />
+    </clipPath>
+  );
 }
 
 function pickWatchOffsetTicks(xMin: number, xMax: number): Array<{ offset: number; label: string }> {
@@ -227,9 +250,10 @@ function MobileChartPlot({
   );
 }
 
-function renderChartDefs(uid: string): ReactNode {
+function renderChartDefs(uid: string, pad?: ReturnType<typeof chartPad>): ReactNode {
   return (
     <defs>
+      {pad ? renderPlotClipPath(pad, uid) : null}
       <filter id={`${uid}-shadow`} x="-20%" y="-20%" width="140%" height="140%">
         <feDropShadow dx="0" dy="2" stdDeviation="2.5" floodColor="#1e40af" floodOpacity="0.18" />
       </filter>
@@ -243,26 +267,51 @@ function renderChartDefs(uid: string): ReactNode {
   );
 }
 
-function renderPlotBackground(pad: ReturnType<typeof chartPad>, uid: string): ReactNode {
-  const x = pad.left - 4;
-  const y = pad.top - 4;
-  const w = pad.iw + 8;
-  const h = pad.ih + 8;
-  return (
-    <>
-      {renderChartDefs(uid)}
-      <rect
-        x={x}
-        y={y}
-        width={w}
-        height={h}
-        rx={8}
-        fill="rgba(14, 14, 24, 0.35)"
-        stroke="rgba(255, 255, 255, 0.14)"
-        strokeWidth={1}
-      />
-    </>
-  );
+export type MobileChartPlotSurface = "default" | "opaque";
+
+function renderPlotBackground(
+  pad: ReturnType<typeof chartPad>,
+  uid: string,
+  _surface: MobileChartPlotSurface = "default",
+): ReactNode {
+  return renderChartDefs(uid, pad);
+}
+
+function densifyPredBlend(
+  points: NonNullable<MobileCurveChartsPayload["predBlend"]>,
+  field: "model" | "blend",
+  xMin: number,
+  xMax: number,
+  step = 2,
+): Array<{ offset: number; val: number }> {
+  const src = points
+    .filter((p) => p[field] != null && Number.isFinite(p[field] as number))
+    .map((p) => ({ offset: p.offset, val: p[field] as number }));
+  if (src.length < 2) return src;
+
+  const out: Array<{ offset: number; val: number }> = [];
+  const lo = Math.ceil(xMin);
+  const hi = Math.floor(xMax);
+  for (let off = lo; off <= hi; off += step) {
+    const val =
+      field === "model"
+        ? interpolateSeriesAtOffset(
+            src.map((p) => ({ offset: p.offset, y: p.val })),
+            off,
+            { extrapolate: true },
+          )
+        : interpolateAtOffset(
+            src.map((p) => ({ offset: p.offset, val: p.val })),
+            off,
+          );
+    if (val != null && Number.isFinite(val)) out.push({ offset: off, val });
+  }
+  for (const p of src) {
+    if (p.offset >= xMin && p.offset <= xMax && !out.some((q) => q.offset === p.offset)) {
+      out.push(p);
+    }
+  }
+  return out.sort((a, b) => a.offset - b.offset);
 }
 
 function renderTimelineZones(
@@ -284,11 +333,11 @@ function renderTimelineZones(
     if (x2 - x1 < 1) return;
     bands.push(<rect key={key} x={x1} y={y} width={x2 - x1} height={h} fill={fill} opacity={opacity} />);
   };
-  band("hot-w1", -30, -10, ZONE_HOT_W1, 0.22);
-  band("hot-w2", -10, -3, ZONE_HOT_W2, 0.28);
-  if (todayOffset != null) band("past", xMin, todayOffset, ZONE_PAST, 0.18);
-  if (todayOffset != null && todayOffset < 0) band("runway", todayOffset, 0, ZONE_RUNWAY, 0.22);
-  if (0 <= xMax) band("postcd", 0, xMax, ZONE_POST_CD, 0.14);
+  band("hot-w1", -30, -10, ZONE_HOT_W1, ZONE_HOT_W1_OPACITY);
+  band("hot-w2", -10, -3, ZONE_HOT_W2, ZONE_HOT_W2_OPACITY);
+  band("runway", -10, 0, ZONE_RUNWAY, ZONE_RUNWAY_OPACITY);
+  band("pre", xMin, 0, ZONE_PAST, ZONE_PRE_OPACITY);
+  if (0 <= xMax) band("post", 0, xMax, ZONE_POST_CD, ZONE_POST_OPACITY);
   return <g>{bands}</g>;
 }
 
@@ -398,21 +447,28 @@ function renderVerticalGrid(
   ));
 }
 
-function renderCdMarker(xCd: number, pad: ReturnType<typeof chartPad>, uid: string): ReactNode {
-  const badgeY = pad.top - 12;
+function renderCdMarker(xCd: number, pad: ReturnType<typeof chartPad>, _uid: string): ReactNode {
   return (
-    <g filter={`url(#${uid}-glow-cd)`}>
+    <g>
       <line
         x1={xCd}
         y1={pad.top}
         x2={xCd}
         y2={pad.top + pad.ih}
-        stroke={CD}
-        strokeWidth={2}
-        strokeDasharray="5 4"
+        stroke="rgb(15 23 42)"
+        strokeOpacity={0.55}
+        strokeDasharray="4 4"
+        strokeWidth={1.25}
       />
-      <rect x={xCd - 13} y={badgeY} width={26} height={13} rx={4} fill={CD} />
-      <text x={xCd} y={badgeY + 9.5} textAnchor="middle" fontSize={8} fontWeight={800} fill="#fff">
+      <text
+        x={xCd}
+        y={pad.top - 4}
+        textAnchor="middle"
+        fontSize={10}
+        fontWeight={800}
+        fill="rgb(15 23 42)"
+        fillOpacity={0.9}
+      >
         CD
       </text>
     </g>
@@ -425,52 +481,44 @@ function renderTodayMarker(
   yOnCurve: number | null,
   todayVal: number | null,
   todayLabel: string,
-  uid: string,
+  _uid: string,
 ): ReactNode {
-  const pinY = pad.top - 4;
   return (
-    <g filter={`url(#${uid}-glow-today)`}>
+    <g>
       <line
         x1={xToday}
         y1={pad.top}
         x2={xToday}
         y2={pad.top + pad.ih}
         stroke={TODAY}
-        strokeDasharray="4 3"
-        strokeWidth={2}
+        strokeDasharray="5 3"
+        strokeWidth={1.75}
       />
-      <polygon
-        points={`${xToday},${pinY + 7} ${xToday - 5},${pinY} ${xToday + 5},${pinY}`}
+      <text
+        x={xToday}
+        y={pad.top - 4}
+        textAnchor="middle"
+        fontSize={10}
+        fontWeight={800}
         fill={TODAY}
-        stroke="#fff"
-        strokeWidth={0.75}
-      />
-      <text x={xToday} y={pinY - 3} textAnchor="middle" fontSize={8} fontWeight={800} fill={TODAY}>
-        {todayLabel}
+        letterSpacing="0.06em"
+      >
+        {todayLabel.toUpperCase()}
       </text>
+      {yOnCurve != null ? (
+        <circle cx={xToday} cy={yOnCurve} r={4.5} fill={ACTUAL_GREEN} stroke="#fff" strokeWidth={1.25} />
+      ) : null}
       {yOnCurve != null && todayVal != null ? (
-        <>
-          <circle cx={xToday} cy={yOnCurve} r={5.5} fill={TODAY} stroke="#fff" strokeWidth={1.5} />
-          <rect
-            x={Math.min(xToday + 6, pad.left + pad.iw - 44)}
-            y={yOnCurve - 18}
-            width={40}
-            height={14}
-            rx={4}
-            fill="rgba(245,158,11,0.92)"
-          />
-          <text
-            x={Math.min(xToday + 26, pad.left + pad.iw - 24)}
-            y={yOnCurve - 8}
-            textAnchor="middle"
-            fontSize={8}
-            fill="#fff"
-            fontWeight={700}
-          >
-            {todayVal >= 0 ? "+" : ""}
-            {todayVal.toFixed(1)}%
-          </text>
-        </>
+        <text
+          x={Math.min(xToday + 8, pad.left + pad.iw - 8)}
+          y={yOnCurve - 8}
+          fontSize={8}
+          fontWeight={700}
+          fill={TICK}
+        >
+          {todayVal >= 0 ? "+" : ""}
+          {todayVal.toFixed(1)}%
+        </text>
       ) : null}
     </g>
   );
@@ -520,11 +568,13 @@ export function MobilePredBlendChart({
   todayOffset,
   width = MOBILE_CHART_W,
   height = CHART_H,
+  plotSurface = "default",
 }: {
   points: NonNullable<MobileCurveChartsPayload["predBlend"]>;
   todayOffset: number | null;
   width?: number;
   height?: number;
+  plotSurface?: MobileChartPlotSurface;
 }) {
   const { t } = useMobileLang();
   const pad = chartPad(width, height);
@@ -534,12 +584,13 @@ export function MobilePredBlendChart({
   const [yMin, yMax] = domain(vals);
   const x = xScaleFromDomain(xMin, xMax, pad);
   const y = yScale(yMin, yMax, pad);
-  const modelPts = points
+  const modelDraw = densifyPredBlend(points, "model", xMin, xMax, 2);
+  const blendDraw = densifyPredBlend(points, "blend", xMin, xMax, 2);
+  const modelPts = modelDraw.map((p) => ({ x: x(p.offset), y: y(p.val), off: p.offset }));
+  const blendPts = blendDraw.map((p) => ({ x: x(p.offset), y: y(p.val) }));
+  const modelKnots = points
     .filter((p) => p.model != null)
     .map((p) => ({ x: x(p.offset), y: y(p.model as number), off: p.offset }));
-  const blendPts = points
-    .filter((p) => p.blend != null)
-    .map((p) => ({ x: x(p.offset), y: y(p.blend as number) }));
 
   const zeroY = y(0);
   const showZero = zeroY >= pad.top && zeroY <= pad.top + pad.ih;
@@ -581,7 +632,7 @@ export function MobilePredBlendChart({
         className="curve-chart-svg"
         preserveAspectRatio="xMidYMid meet"
       >
-        {renderPlotBackground(pad, uid)}
+        {renderPlotBackground(pad, uid, plotSurface)}
         {renderTimelineZones(x, pad, xMin, xMax, todayOffset)}
         {renderCartesianGrid(pad, width, yMin, yMax, y)}
         {renderVerticalGrid(ticks, x, pad)}
@@ -602,12 +653,12 @@ export function MobilePredBlendChart({
             d={polyline(modelPts)}
             fill="none"
             stroke={PURPLE}
-            strokeWidth={2.25}
+            strokeWidth={plotSurface === "opaque" ? 2.5 : 2.25}
             strokeLinejoin="round"
             filter={`url(#${uid}-shadow)`}
           />
         ) : null}
-        {modelPts.map((p) => (
+        {modelKnots.map((p) => (
           <circle key={p.off} cx={p.x} cy={p.y} r={3.5} fill={PURPLE} stroke="#fff" strokeWidth={1} />
         ))}
         {blendPts.length >= 2 ? (
@@ -637,6 +688,7 @@ export function MobileSlopeTrajectoryChart({
   height = CHART_H,
   xDomain = null,
   useWatchTicks = false,
+  plotSurface = "default",
 }: {
   points: NonNullable<MobileCurveChartsPayload["slopeTrajectory"]>;
   todayOffset: number | null;
@@ -645,6 +697,7 @@ export function MobileSlopeTrajectoryChart({
   /** Fixed calendar window (e.g. T−120…T−7 watch arc). */
   xDomain?: [number, number] | null;
   useWatchTicks?: boolean;
+  plotSurface?: MobileChartPlotSurface;
 }) {
   const { t } = useMobileLang();
   const pad = chartPad(width, height);
@@ -678,6 +731,7 @@ export function MobileSlopeTrajectoryChart({
   const todayY = todayVal != null ? y(todayVal) : null;
   const showCd = 0 >= xMin && 0 <= xMax;
   const showToday = todayOffset != null && todayOffset >= xMin && todayOffset <= xMax;
+  const showActualPath = actPts.length >= 2 && seriesHasHorizontalSpread(actPts);
   const uid = `slope-${++_gradSeq}`;
 
   return (
@@ -689,7 +743,7 @@ export function MobileSlopeTrajectoryChart({
         className="curve-chart-svg"
         preserveAspectRatio="xMidYMid meet"
       >
-        {renderPlotBackground(pad, uid)}
+        {renderPlotBackground(pad, uid, plotSurface)}
         {renderTimelineZones(x, pad, xMin, xMax, todayOffset)}
         {renderCartesianGrid(pad, width, yMin, yMax, y)}
         {renderVerticalGrid(ticks, x, pad)}
@@ -699,25 +753,29 @@ export function MobileSlopeTrajectoryChart({
             d={polyline(predPts)}
             fill="none"
             stroke={PURPLE}
-            strokeWidth={2}
+            strokeWidth={plotSurface === "opaque" ? 2.25 : 2}
             strokeDasharray="5 3"
             strokeLinejoin="round"
+            clipPath={`url(#${uid}-plot)`}
           />
         ) : null}
-        {actPts.length >= 2 ? (
+        {showActualPath ? (
           <>
             <path
               d={polyline(actPts)}
               fill="none"
               stroke={ACTUAL_GREEN}
-              strokeWidth={2.25}
+              strokeWidth={plotSurface === "opaque" ? 2.5 : 2.25}
               strokeLinejoin="round"
               filter={`url(#${uid}-shadow)`}
+              clipPath={`url(#${uid}-plot)`}
             />
             {actPts.map((p, i) => (
               <circle key={i} cx={p.x} cy={p.y} r={4} fill={ACTUAL_GREEN} stroke="#fff" strokeWidth={1} />
             ))}
           </>
+        ) : actPts.length >= 1 && showToday ? (
+          <circle cx={x(todayOffset!)} cy={todayY ?? actPts[actPts.length - 1].y} r={4.5} fill={ACTUAL_GREEN} stroke="#fff" strokeWidth={1.25} />
         ) : null}
         {showCd ? renderCdMarker(x(0), pad, uid) : null}
         {showToday
@@ -831,11 +889,19 @@ export function MobileGainPlanChart({
     : sorted
         .filter((p) => p.actual != null && Number.isFinite(p.actual))
         .map((p) => ({ x: x(p.day), y: y(p.actual as number), day: p.day }));
+  const histPts = hypothetical
+    ? sorted
+        .filter((p) => p.historical != null && Number.isFinite(p.historical))
+        .map((p) => ({ x: x(p.day), y: y(p.historical as number), day: p.day }))
+    : [];
   const planPts = sorted
     .filter((p) => p.planned != null && Number.isFinite(p.planned))
     .map((p) => ({ x: x(p.day), y: y(p.planned as number) }));
 
   const showActual = !hypothetical && actPts.length >= 2;
+  const showActualPath = showActual && seriesHasHorizontalSpread(actPts);
+  const showHistorical = histPts.length >= 2;
+  const showHistoricalPath = showHistorical && seriesHasHorizontalSpread(histPts);
 
   let exitDay: number | null = null;
   let peakPlanned = -Infinity;
@@ -859,15 +925,20 @@ export function MobileGainPlanChart({
     return ticks;
   })();
   const xDay = (d: number) => x(d);
-  const todayPt = showActual ? actPts[actPts.length - 1] : null;
+  const todayPt = showActual ? actPts[actPts.length - 1] : showHistorical ? histPts[histPts.length - 1] : null;
+  const entryPt = hypothetical && showHistorical ? histPts.find((p) => p.day === 0) ?? histPts[0] : null;
   const uid = `gain-${++_gradSeq}`;
-  const GAIN_PLANNED = "#6366f1";
 
   return (
     <MobileChartPlot
       height={height}
       footer={
         <div className="curve-gain-legend" aria-hidden>
+          {showHistorical ? (
+            <span className="curve-legend-item curve-legend-item--gain-hist">
+              <i /> {t("curve.gainLegendHistorical")}
+            </span>
+          ) : null}
           {showActual ? (
             <span className="curve-legend-item curve-legend-item--gain-act">
               <i /> {t("curve.gainLegendActual")}
@@ -899,51 +970,98 @@ export function MobileGainPlanChart({
           strokeWidth={1}
           opacity={0.85}
         />
-        {showActual ? (
+        {showHistoricalPath ? (
+          <path
+            d={polyline(histPts)}
+            fill="none"
+            stroke={CHART_GAIN_HISTORICAL}
+            strokeWidth={2.25}
+            strokeLinejoin="round"
+            clipPath={`url(#${uid}-plot)`}
+          />
+        ) : null}
+        {showActualPath ? (
           <>
             <path
               d={polyline(actPts)}
               fill="none"
-              stroke={ACTUAL_GREEN}
+              stroke={CHART_GAIN_ACTUAL}
               strokeWidth={2.25}
               strokeLinejoin="round"
-              filter={`url(#${uid}-shadow)`}
+              clipPath={`url(#${uid}-plot)`}
             />
             {actPts.map((p) => (
-              <circle key={p.day} cx={p.x} cy={p.y} r={3.5} fill={ACTUAL_GREEN} stroke="#fff" strokeWidth={1} />
+              <circle key={p.day} cx={p.x} cy={p.y} r={3.5} fill={CHART_GAIN_ACTUAL} stroke="#fff" strokeWidth={1} />
             ))}
           </>
+        ) : showActual ? (
+          <circle
+            cx={todayPt!.x}
+            cy={todayPt!.y}
+            r={4}
+            fill={CHART_GAIN_ACTUAL}
+            stroke="#fff"
+            strokeWidth={1.25}
+          />
         ) : null}
         {planPts.length >= 2 ? (
           <path
             d={polyline(planPts)}
             fill="none"
-            stroke={GAIN_PLANNED}
+            stroke={CHART_GAIN_PLANNED}
             strokeWidth={2}
             strokeDasharray="6 4"
             strokeLinejoin="round"
+            clipPath={`url(#${uid}-plot)`}
           />
         ) : null}
-        {todayPt ? (
+        {entryPt ? (
+          <circle cx={entryPt.x} cy={entryPt.y} r={4.5} fill={CHART_GAIN_ACTUAL} stroke="#fff" strokeWidth={1.25} />
+        ) : null}
+        {todayPt && !hypothetical ? (
           <g>
             <line
               x1={todayPt.x}
               y1={pad.top}
               x2={todayPt.x}
               y2={pad.top + pad.ih}
-              stroke="rgba(167,139,250,0.75)"
-              strokeDasharray="3 3"
-              strokeWidth={1}
+              stroke={TODAY}
+              strokeDasharray="5 3"
+              strokeWidth={1.75}
             />
             <text
               x={todayPt.x}
               y={pad.top - 4}
               textAnchor="middle"
-              fontSize={7}
-              fontWeight={700}
-              fill={TICK}
+              fontSize={10}
+              fontWeight={800}
+              fill={TODAY}
+              letterSpacing="0.06em"
             >
-              {t("curve.gainToday")}
+              TODAY
+            </text>
+          </g>
+        ) : hypothetical ? (
+          <g>
+            <line
+              x1={x(0)}
+              y1={pad.top}
+              x2={x(0)}
+              y2={pad.top + pad.ih}
+              stroke={TODAY}
+              strokeDasharray="5 3"
+              strokeWidth={1.75}
+            />
+            <text
+              x={x(0)}
+              y={pad.top - 4}
+              textAnchor="middle"
+              fontSize={10}
+              fontWeight={800}
+              fill={TODAY}
+              letterSpacing="0.06em"
+            >
+              TODAY
             </text>
           </g>
         ) : null}
@@ -975,7 +1093,7 @@ export function MobileGainPlanChart({
             cx={planPts[planPts.length - 1].x}
             cy={planPts[planPts.length - 1].y}
             r={3.5}
-            fill={GAIN_PLANNED}
+            fill={CHART_GAIN_PLANNED}
             stroke="#fff"
             strokeWidth={0.75}
           />

@@ -1,19 +1,23 @@
 @echo off
 setlocal
-title Term 2 = Mobile (PWA 5174)
+title Term 2 = Mobile DEV (solo sviluppo)
 cd /d "%~dp0.."
 echo.
 echo  ========================================
-echo   Term 2 = Mobile
-echo  SuperNova Mobile - porta 5174
-echo  Tab: Dashboard · Portfolio · Opportunities
+echo   ATTENZIONE: MODALITA SVILUPPO (DEV)
 echo  ========================================
 echo.
-echo  Prima avvia Term 1 = Biotech (API 8765).
-echo  Se vedi "Port 5174 already in use" = Mobile gia attivo: usa la finestra vecchia.
+echo  Questa finestra serve SOLO a sviluppare l'app.
+echo  Per il telefono usa invece (nessun terminale sul PC):
 echo.
-echo  Server online: URL API = http://91.99.15.48:8765 + token VPS
-echo  Per icona sul Desktop: scripts\Installa_Mobile_Su_Desktop.bat
+echo    http://91.99.15.48:8765/mobile/
+echo.
+echo  Oppure doppio clic: scripts\Apri_Mobile_VPS.bat
+echo  Icona Desktop: scripts\Installa_Mobile_VPS_Su_Desktop.bat
+echo.
+echo  ========================================
+echo   Term 2 = Mobile DEV - porta 5174
+echo  ========================================
 echo.
 cd mobile-ui
 if not exist node_modules (

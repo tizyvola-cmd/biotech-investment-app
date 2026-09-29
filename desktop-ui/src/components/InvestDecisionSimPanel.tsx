@@ -2,16 +2,13 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type { ChartBundle, SheetTable } from "../types";
 import { chartPointsMapFromBundle, loadSimulationChartsBundle } from "../data/simulationCharts";
 import { useInvestSimInputs } from "../hooks/useInvestSimInputs";
-import { useInvestSimPortfolioHistory } from "../hooks/useInvestSimPortfolioHistory";
-import { useDecisionSimPairPrechartHeight } from "../hooks/useDecisionSimPairPrechartHeight";
-import { buildPortfolioDailyPnlLedger } from "../sheet/simulationPosition";
-import { buildCumulativePortfolioMaturationSeries } from "../sheet/portfolioScenarioGain";
+import { useLossRiskCatalog } from "../hooks/useLossRiskCatalog";
 import { useLang, useT } from "../shared/i18n";
 import { SHEET_GRID_TABLE_CLASS, gridTd, gridTh } from "../sheet/sheetGridTable";
 import { SheetGridColgroup } from "../sheet/SheetGridColgroup";
 import { buildMigSolidityByKey } from "../sheet/entrySolidityMig";
-import type { SdsRow } from "../api/supernova";
-import { loadSdsCohort } from "../api/supernova";
+import type { RegulatoryRiskSnapshot, SdsRow } from "../api/supernova";
+import { fetchRegulatoryRiskSnapshot, loadSdsCohort } from "../api/supernova";
 import { loadEisSuperScoreState } from "../api/eisSuperScore";
 import { useCdPatternPolygonOverview } from "../sheet/useCdPatternPolygonOverview";
 import type { LossAnalysisProbOptions } from "../sheet/portfolioLossAnalysis";
@@ -35,6 +32,7 @@ import {
   stopDecisionSimRun,
   type DecisionSimState,
 } from "../sheet/investDecisionSimStorage";
+import { loadInvestSimHistory } from "../sheet/investSimStorage";
 import {
   auditDecisionSimState,
   formatSimLoopDiagnosticReport,
@@ -45,10 +43,13 @@ import {
   type CurveMisalignmentId,
 } from "../sheet/investDecisionSimLoop";
 import { AppSuggestionsMonitorModal } from "./AppSuggestionsMonitorModal";
-import { DecisionSimPnlCharts } from "./DecisionSimPnlCharts";
-import { DecisionSimMaturationChart } from "./DecisionSimMaturationChart";
 import { DecisionSimMisalignTypesChart } from "./DecisionSimMisalignTypesChart";
-import { DecisionSimAdviceCalibrationPanel } from "./DecisionSimAdviceCalibrationPanel";
+import { buildMonitorAdviceCalibrationPoints } from "./DecisionSimAdviceCalibrationPanel";
+import {
+  prepareAdviceCalibrationPoints,
+  useStableAdviceCalibrationPoints,
+} from "../hooks/useStableAdviceCalibrationPoints";
+import { AdviceErrorChartsCard } from "./DecisionSimChartStrip";
 import { summarizeAdviceCalibrationFromLiveRows } from "../sheet/investDecisionSimAdviceCalibration";
 import {
   ADVICE_FEEDBACK_CHANGED_EVENT,
@@ -68,9 +69,8 @@ import {
   formatCapturePct,
 } from "../sheet/adviceComplementKpis";
 import { buildSimLoopSynthMaturationSeries } from "../sheet/simLoopSynthMaturation";
-import { resolveSimLoopCapitalPot } from "../sheet/investDecisionSimCharts";
+import { resolveDashboardSynthCapitalPot } from "../sheet/investDecisionSimCharts";
 import { useSimLoopSynthAllocation } from "../hooks/useSimLoopSynthAllocation";
-import type { SimLoopSizingVariant } from "../sheet/simLoopSizingVariant";
 import {
   buildSimLoopGainAuditExport,
   downloadSimLoopGainAuditExcel,
@@ -134,13 +134,11 @@ export function InvestDecisionSimPanel({
   const locale = it ? "it-IT" : "en-US";
 
   const investInputs = useInvestSimInputs(simTable);
-  const portfolioHistory = useInvestSimPortfolioHistory().history;
   const [state, setState] = useState<DecisionSimState>(() => loadDecisionSimState());
   const [running, setRunning] = useState(false);
   const [msg, setMsg] = useState<string | null>(null);
   const [expandedTick, setExpandedTick] = useState<string | null>(null);
   const [suggestionsOpen, setSuggestionsOpen] = useState(false);
-  const [simLoopSizingVariant, setSimLoopSizingVariant] = useState<SimLoopSizingVariant>("equal");
   const tickInFlightRef = useRef(false);
 
   const [sdsRows, setSdsRows] = useState<SdsRow[] | null>(null);
@@ -164,9 +162,30 @@ export function InvestDecisionSimPanel({
     void loadEisSuperScoreState().then(setEisState);
   }, []);
 
+  const [autoRegSnap, setAutoRegSnap] = useState<RegulatoryRiskSnapshot | null>(null);
+  useEffect(() => {
+    let cancelled = false;
+    void fetchRegulatoryRiskSnapshot()
+      .then((snap) => {
+        if (!cancelled) setAutoRegSnap(snap);
+      })
+      .catch(() => {
+        /* Soft SELL still works via riskV2 / P(plan) */
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
   const pointsBySeriesKey = useMemo(() => {
     return chartPointsMapFromBundle(localCharts);
   }, [localCharts]);
+
+  const { catalog: lossRiskCatalog, catalogByRowKey } = useLossRiskCatalog({
+    simTable,
+    sdsRows,
+    chartBundle: localCharts,
+  });
 
   const pendingGapReviews = useMemo(
     () => pendingGapInvestigationRecords(state.gapInvestigationLog),
@@ -187,12 +206,6 @@ export function InvestDecisionSimPanel({
       }),
     );
   }, [pendingGapReviews]);
-
-  const actualPortfolioSeries = useMemo(() => {
-    if (!simTable?.rows?.length) return { closed: [], open: [] };
-    const ledger = buildPortfolioDailyPnlLedger(simTable, investInputs, portfolioHistory);
-    return buildCumulativePortfolioMaturationSeries(ledger);
-  }, [simTable, investInputs, portfolioHistory]);
 
   const probOptions = useMemo((): LossAnalysisProbOptions | null => {
     if (!simTable) return null;
@@ -260,6 +273,10 @@ export function InvestDecisionSimPanel({
         cumulativeClosedPnlEur: current.cumulativePaperPnlEur,
         badBuyScoredKeys: new Set(current.badBuyScoredKeys),
         adviceFeedback,
+        history: loadInvestSimHistory(),
+        lossRiskCatalog,
+        catalogByRowKey,
+        autoRegSnap,
       });
       const next = appendDecisionSimTick(current, tick);
       setState(next);
@@ -295,7 +312,19 @@ export function InvestDecisionSimPanel({
       tickInFlightRef.current = false;
       setRunning(false);
     }
-  }, [simTable, investInputs, pointsBySeriesKey, it, locale, probOptions, t, adviceFeedback]);
+  }, [
+    simTable,
+    investInputs,
+    pointsBySeriesKey,
+    it,
+    locale,
+    probOptions,
+    t,
+    adviceFeedback,
+    lossRiskCatalog,
+    catalogByRowKey,
+    autoRegSnap,
+  ]);
 
   const liveEvaluations = useMemo(() => {
     if (!simTable?.rows?.length) return [];
@@ -307,11 +336,24 @@ export function InvestDecisionSimPanel({
       probOptions,
       paperPortfolio: state.paperPortfolio,
       adviceFeedback,
+      history: loadInvestSimHistory(),
+      lossRiskCatalog,
+      catalogByRowKey,
+      autoRegSnap,
     });
-  }, [simTable, investInputs, pointsBySeriesKey, it, probOptions, state.paperPortfolio, adviceFeedback]);
+  }, [
+    simTable,
+    investInputs,
+    pointsBySeriesKey,
+    it,
+    probOptions,
+    state.paperPortfolio,
+    adviceFeedback,
+    lossRiskCatalog,
+    catalogByRowKey,
+    autoRegSnap,
+  ]);
 
-  const showDecisionSimChartPair = Boolean(simTable?.rows?.length);
-  const { preChartRef, preChartHeight } = useDecisionSimPairPrechartHeight(showDecisionSimChartPair);
 
   const monitorRows = useMemo((): SuggestionMonitorRow[] => {
     if (!simTable?.rows?.length) return [];
@@ -323,8 +365,41 @@ export function InvestDecisionSimPanel({
       probOptions,
       paperPortfolio: state.paperPortfolio,
       adviceFeedback,
+      history: loadInvestSimHistory(),
+      lossRiskCatalog,
+      catalogByRowKey,
+      autoRegSnap,
     });
-  }, [simTable, investInputs, pointsBySeriesKey, it, probOptions, state.paperPortfolio, adviceFeedback]);
+  }, [
+    simTable,
+    investInputs,
+    pointsBySeriesKey,
+    it,
+    probOptions,
+    state.paperPortfolio,
+    adviceFeedback,
+    lossRiskCatalog,
+    catalogByRowKey,
+    autoRegSnap,
+  ]);
+
+  const adviceCalibrationPoints = useStableAdviceCalibrationPoints(
+    useMemo(
+      () =>
+        prepareAdviceCalibrationPoints(
+          buildMonitorAdviceCalibrationPoints({
+            monitorRows,
+            paperPortfolio: state.paperPortfolio,
+            decisionSimTicks: state.ticks,
+            adviceLog: state.adviceLog,
+            liveEvaluations,
+            simTable,
+            lang,
+          }),
+        ),
+      [monitorRows, state.paperPortfolio, state.ticks, state.adviceLog, liveEvaluations, simTable, lang],
+    ),
+  );
 
   const liveMisalign = useMemo(
     () => criticalMisalignmentSummaryFromEvaluations(liveEvaluations),
@@ -340,7 +415,7 @@ export function InvestDecisionSimPanel({
 
   const simLoopCapitalPot = useMemo(
     () =>
-      resolveSimLoopCapitalPot(
+      resolveDashboardSynthCapitalPot(
         state.config.capitalPerTrade,
         state.config.maxOpenPositions,
       ),
@@ -353,16 +428,18 @@ export function InvestDecisionSimPanel({
     investInputs,
     pointsBySeriesKey,
     totalCapitalEur: simLoopCapitalPot,
+    paperPortfolio: state.paperPortfolio,
     enabled: Boolean(simTable?.rows?.length),
   });
 
   const simLoopSynthMaturation = useMemo(() => {
     if (!synthAlloc) return null;
     return buildSimLoopSynthMaturationSeries(state.ticks, {
+      shareByRowKey: synthAlloc.shareByRowKey,
       totalCapitalEur: synthAlloc.totalCapitalEur,
       capitalPerTrade: state.config.capitalPerTrade,
       targetGainEur: synthAlloc.targetGainEur,
-      sizingMode: "causal_rebalance",
+      sizingMode: "static_approved",
       live: {
         paperPortfolio: state.paperPortfolio,
         evaluations: liveEvaluations,
@@ -792,37 +869,12 @@ export function InvestDecisionSimPanel({
 
       {simTable?.rows?.length ? (
         <>
-        <div className="grid grid-cols-1 lg:grid-cols-2 gap-3 items-stretch shrink-0 min-w-0 min-h-[320px]">
-          <DecisionSimAdviceCalibrationPanel
-            monitorRows={monitorRows}
-            paperPortfolio={state.paperPortfolio}
-            decisionSimTicks={state.ticks}
-            liveEvaluations={liveEvaluations}
-            simTable={simTable}
+        <div className="space-y-2 shrink-0 min-w-0">
+          {/* Advice-calibration panel removed 2026-07-16 (user request). Chart strip now spans full width. */}
+          <AdviceErrorChartsCard
+            points={adviceCalibrationPoints}
             lang={lang}
-            unifiedAdviceSuccess={unifiedAdviceSuccess}
-            adviceComplement={adviceComplement}
-            compact
-            className="tester-monitor-panel min-w-0"
-            preChartMeasureRef={preChartRef}
-          />
-          <DecisionSimPnlCharts
-            ticks={state.ticks}
-            livePiggy={livePiggy}
-            liveEvaluations={liveEvaluations}
-            paperPortfolio={state.paperPortfolio}
-            simTable={simTable}
-            capitalPerTrade={state.config.capitalPerTrade}
-            maxOpenPositions={state.config.maxOpenPositions}
-            lang={lang}
-            compact
             className="min-w-0"
-            pairPreChartHeight={preChartHeight}
-            simLoopSynthMaturation={simLoopSynthMaturation}
-            simLoopWeightedMaturation={simLoopWeightedMaturation}
-            simLoopSizedTotalCapitalEur={synthAlloc?.totalCapitalEur}
-            sizingVariant={simLoopSizingVariant}
-            onSizingVariantChange={setSimLoopSizingVariant}
           />
         </div>
         {state.ticks.length > 0 || liveMisalign.evaluatedTickers > 0 ? (
@@ -830,28 +882,7 @@ export function InvestDecisionSimPanel({
             <p className="tester-monitor-muted text-[10px] leading-relaxed shrink-0 px-0.5">
               {t("testerMonitor.decisionSim.misalignGuide")}
             </p>
-            <div className="grid grid-cols-1 lg:grid-cols-2 gap-3 items-stretch shrink-0 min-w-0 min-h-[280px]">
-              {state.ticks.length > 0 ? (
-                <DecisionSimMaturationChart
-                  ticks={state.ticks}
-                  livePiggy={livePiggy}
-                  liveEvaluations={liveEvaluations}
-                  paperPortfolio={state.paperPortfolio}
-                  actualPortfolioSeries={actualPortfolioSeries}
-                  simLoopSynthSeries={simLoopSynthMaturation ?? undefined}
-                  simLoopWeightedSeries={simLoopWeightedMaturation ?? undefined}
-                  sizingVariant={simLoopSizingVariant}
-                  onSizingVariantChange={setSimLoopSizingVariant}
-                  compact
-                  className="min-w-0"
-                />
-              ) : (
-                <div className="tester-monitor-panel rounded-xl flex items-center justify-center p-3 min-h-[208px]">
-                  <p className="tester-monitor-muted text-[10px] text-center">
-                    {t("testerMonitor.decisionSim.chart.maturationEmpty")}
-                  </p>
-                </div>
-              )}
+            <div className="shrink-0 min-w-0">
               <DecisionSimMisalignTypesChart
                 rows={misalignChart}
                 misalignedTickers={liveMisalign.misalignedTickers}

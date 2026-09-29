@@ -1,0 +1,297 @@
+﻿{
+  "schema_version": 2,
+  "updated_at": "2026-07-02T19:19:22.704571+00:00",
+  "testers": {
+    "tizyvola_at_gmail.com": {
+      "tester_id": "tizyvola_at_gmail.com",
+      "display_name": "Tizy",
+      "email": "tizyvola@gmail.com",
+      "invite_code": "",
+      "status": "approved",
+      "source": "mobile",
+      "created_at": "2026-06-14T20:11:05.826995+00:00",
+      "last_seen_at": "2026-07-02T12:08:47.769638+00:00",
+      "event_count": 18,
+      "session_ping_count": 18
+    },
+    "mickmart_at_gmail.com": {
+      "tester_id": "mickmart_at_gmail.com",
+      "display_name": "MIck",
+      "email": "mickmart@gmail.com",
+      "invite_code": "",
+      "status": "approved",
+      "source": "desktop",
+      "created_at": "2026-07-02T18:56:52.087432+00:00",
+      "last_seen_at": "2026-07-02T18:58:59.768914+00:00",
+      "event_count": 0,
+      "session_ping_count": 0
+    },
+    "andrea.vicario1979_at_gmail.com": {
+      "tester_id": "andrea.vicario1979_at_gmail.com",
+      "display_name": "Andre",
+      "email": "andrea.vicario1979@gmail.com",
+      "invite_code": "",
+      "status": "approved",
+      "source": "desktop",
+      "created_at": "2026-07-02T19:19:19.390678+00:00",
+      "last_seen_at": "2026-07-02T19:19:19.390678+00:00",
+      "event_count": 0,
+      "session_ping_count": 0,
+      "approval_email_sent_at": "2026-07-02T19:19:22.704526+00:00"
+    }
+  },
+  "events": [
+    {
+      "id": "d93fb6ad-b332-4587-9180-a331c1ac4757",
+      "tester_id": "tizyvola_at_gmail.com",
+      "source": "mobile",
+      "module": "dashboard",
+      "kind": "session_ping",
+      "ticker": null,
+      "payload": {
+        "app_version": "2026.06.13-mobile-v8-curve-load",
+        "screen": "dashboard",
+        "email": "tizyvola@gmail.com"
+      },
+      "created_at": "2026-06-14T20:13:06.859156+00:00"
+    },
+    {
+      "id": "52910473-f732-49cf-a5a6-86ca0f983b84",
+      "tester_id": "tizyvola_at_gmail.com",
+      "source": "mobile",
+      "module": "dashboard",
+      "kind": "session_ping",
+      "ticker": null,
+      "payload": {
+        "app_version": "2026.06.13-mobile-v8-curve-load",
+        "screen": "dashboard",
+        "email": "tizyvola@gmail.com"
+      },
+      "created_at": "2026-06-14T20:15:08.757692+00:00"
+    },
+    {
+      "id": "60cee392-b4c6-438d-9b95-fe88e41d34cc",
+      "tester_id": "tizyvola_at_gmail.com",
+      "source": "mobile",
+      "module": "dashboard",
+      "kind": "session_ping",
+      "ticker": null,
+      "payload": {
+        "app_version": "2026.06.13-mobile-v8-curve-load",
+        "screen": "dashboard",
+        "email": "tizyvola@gmail.com"
+      },
+      "created_at": "2026-06-14T20:15:12.108699+00:00"
+    },
+    {
+      "id": "8775d37b-9a78-48b8-ba42-79d3dbc25505",
+      "tester_id": "tizyvola_at_gmail.com",
+      "source": "mobile",
+      "module": "dashboard",
+      "kind": "session_ping",
+      "ticker": null,
+      "payload": {
+        "app_version": "2026.07.01-mobile-v10-tabs-redesign",
+        "screen": "dashboard",
+        "email": "tizyvola@gmail.com"
+      },
+      "created_at": "2026-07-02T11:49:17.954568+00:00"
+    },
+    {
+      "id": "e5b38cb7-49c5-4c17-994d-5bffd4ce1483",
+      "tester_id": "tizyvola_at_gmail.com",
+      "source": "mobile",
+      "module": "dashboard",
+      "kind": "session_ping",
+      "ticker": null,
+      "payload": {
+        "app_version": "2026.07.01-mobile-v10-tabs-redesign",
+        "screen": "dashboard",
+        "email": "tizyvola@gmail.com"
+      },
+      "created_at": "2026-07-02T11:52:28.735262+00:00"
+    },
+    {
+      "id": "34e3d63d-2651-4044-94eb-3a8f2374efe7",
+      "tester_id": "tizyvola_at_gmail.com",
+      "source": "mobile",
+      "module": "dashboard",
+      "kind": "session_ping",
+      "ticker": null,
+      "payload": {
+        "app_version": "2026.07.01-mobile-v10-tabs-redesign",
+        "screen": "dashboard",
+        "email": "tizyvola@gmail.com"
+      },
+      "created_at": "2026-07-02T11:55:17.011820+00:00"
+    },
+    {
+      "id": "cba2fb51-f569-4cf7-a2c6-c0661594a987",
+      "tester_id": "tizyvola_at_gmail.com",
+      "source": "mobile",
+      "module": "dashboard",
+      "kind": "session_ping",
+      "ticker": null,
+      "payload": {
+        "app_version": "2026.07.01-mobile-v10-tabs-redesign",
+        "screen": "dashboard",
+        "email": "tizyvola@gmail.com"
+      },
+      "created_at": "2026-07-02T11:55:18.452593+00:00"
+    },
+    {
+      "id": "7b7d85a0-3015-4535-8454-0439f52cda75",
+      "tester_id": "tizyvola_at_gmail.com",
+      "source": "mobile",
+      "module": "dashboard",
+      "kind": "session_ping",
+      "ticker": null,
+      "payload": {
+        "app_version": "2026.07.01-mobile-v10-tabs-redesign",
+        "screen": "dashboard",
+        "email": "tizyvola@gmail.com"
+      },
+      "created_at": "2026-07-02T11:58:47.610112+00:00"
+    },
+    {
+      "id": "0cfb58a5-acf4-4f2b-bea7-f34a37e961ea",
+      "tester_id": "tizyvola_at_gmail.com",
+      "source": "mobile",
+      "module": "dashboard",
+      "kind": "session_ping",
+      "ticker": null,
+      "payload": {
+        "app_version": "2026.07.01-mobile-v10-tabs-redesign",
+        "screen": "dashboard",
+        "email": "tizyvola@gmail.com"
+      },
+      "created_at": "2026-07-02T11:59:18.343265+00:00"
+    },
+    {
+      "id": "8c77633e-9a23-47b4-a22e-73ce098f7290",
+      "tester_id": "tizyvola_at_gmail.com",
+      "source": "mobile",
+      "module": "dashboard",
+      "kind": "session_ping",
+      "ticker": null,
+      "payload": {
+        "app_version": "2026.07.01-mobile-v10-tabs-redesign",
+        "screen": "dashboard",
+        "email": "tizyvola@gmail.com"
+      },
+      "created_at": "2026-07-02T11:59:19.913781+00:00"
+    },
+    {
+      "id": "e7c5adad-56aa-44d7-88d5-e2936e00af42",
+      "tester_id": "tizyvola_at_gmail.com",
+      "source": "mobile",
+      "module": "dashboard",
+      "kind": "session_ping",
+      "ticker": null,
+      "payload": {
+        "app_version": "2026.07.01-mobile-v10-tabs-redesign",
+        "screen": "dashboard",
+        "email": "tizyvola@gmail.com"
+      },
+      "created_at": "2026-07-02T11:59:30.587301+00:00"
+    },
+    {
+      "id": "ffa64d41-475e-4751-a600-c52a11a9cef0",
+      "tester_id": "tizyvola_at_gmail.com",
+      "source": "mobile",
+      "module": "dashboard",
+      "kind": "session_ping",
+      "ticker": null,
+      "payload": {
+        "app_version": "2026.07.01-mobile-v10-tabs-redesign",
+        "screen": "dashboard",
+        "email": "tizyvola@gmail.com"
+      },
+      "created_at": "2026-07-02T12:03:17.521568+00:00"
+    },
+    {
+      "id": "6d77f15d-2375-40d0-b64a-d73341501056",
+      "tester_id": "tizyvola_at_gmail.com",
+      "source": "mobile",
+      "module": "dashboard",
+      "kind": "session_ping",
+      "ticker": null,
+      "payload": {
+        "app_version": "2026.07.01-mobile-v10-tabs-redesign",
+        "screen": "dashboard",
+        "email": "tizyvola@gmail.com"
+      },
+      "created_at": "2026-07-02T12:03:47.923562+00:00"
+    },
+    {
+      "id": "00b2cf70-ee4e-4dfd-ae42-5f98b3362804",
+      "tester_id": "tizyvola_at_gmail.com",
+      "source": "mobile",
+      "module": "dashboard",
+      "kind": "session_ping",
+      "ticker": null,
+      "payload": {
+        "app_version": "2026.07.01-mobile-v10-tabs-redesign",
+        "screen": "dashboard",
+        "email": "tizyvola@gmail.com"
+      },
+      "created_at": "2026-07-02T12:04:17.199401+00:00"
+    },
+    {
+      "id": "e2bd798d-503d-4912-96a7-3d5f94f0f597",
+      "tester_id": "tizyvola_at_gmail.com",
+      "source": "mobile",
+      "module": "dashboard",
+      "kind": "session_ping",
+      "ticker": null,
+      "payload": {
+        "app_version": "2026.07.01-mobile-v10-tabs-redesign",
+        "screen": "dashboard",
+        "email": "tizyvola@gmail.com"
+      },
+      "created_at": "2026-07-02T12:04:18.392505+00:00"
+    },
+    {
+      "id": "728e3caf-be83-46f0-b357-84ac7be2077c",
+      "tester_id": "tizyvola_at_gmail.com",
+      "source": "mobile",
+      "module": "dashboard",
+      "kind": "session_ping",
+      "ticker": null,
+      "payload": {
+        "app_version": "2026.07.01-mobile-v10-tabs-redesign",
+        "screen": "dashboard",
+        "email": "tizyvola@gmail.com"
+      },
+      "created_at": "2026-07-02T12:04:30.243328+00:00"
+    },
+    {
+      "id": "1dc375aa-9ad2-4dec-9ec7-cf6fbacc9eae",
+      "tester_id": "tizyvola_at_gmail.com",
+      "source": "mobile",
+      "module": "dashboard",
+      "kind": "session_ping",
+      "ticker": null,
+      "payload": {
+        "app_version": "2026.07.01-mobile-v10-tabs-redesign",
+        "screen": "dashboard",
+        "email": "tizyvola@gmail.com"
+      },
+      "created_at": "2026-07-02T12:08:17.526534+00:00"
+    },
+    {
+      "id": "0487ac11-2b2c-4eb0-90af-13adb28b6636",
+      "tester_id": "tizyvola_at_gmail.com",
+      "source": "mobile",
+      "module": "dashboard",
+      "kind": "session_ping",
+      "ticker": null,
+      "payload": {
+        "app_version": "2026.07.01-mobile-v10-tabs-redesign",
+        "screen": "dashboard",
+        "email": "tizyvola@gmail.com"
+      },
+      "created_at": "2026-07-02T12:08:47.769638+00:00"
+    }
+  ]
+}

@@ -214,10 +214,12 @@ export function findClinicalPreCdRecord(
 ): ClinicalPreCdRecord | null {
   const tk = ticker.trim().toUpperCase();
   if (!tk) return null;
-  for (const rec of records) {
-    if ((rec.ticker ?? "").toUpperCase() !== tk) continue;
-    if (cdIso && rec.cd_date && rec.cd_date.slice(0, 10) !== cdIso) continue;
-    return rec;
+  const day = cdIso?.slice(0, 10) || null;
+  const tickerRecs = records.filter((rec) => (rec.ticker ?? "").toUpperCase() === tk);
+  if (day) {
+    return (
+      tickerRecs.find((rec) => rec.cd_date?.slice(0, 10) === day) ?? null
+    );
   }
-  return null;
+  return tickerRecs[0] ?? null;
 }

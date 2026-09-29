@@ -259,17 +259,26 @@ export function RiskBenefitScaleCell({
   entry,
   benefitFillPct,
   perDayPct,
+  benefitSourceNote,
   onClick,
   it,
+  uniformTypography = false,
 }: {
   entry: LossRiskEntry;
   /** 0-100. Use `deriveBenefitFillPct` to compute this from a gain plan. */
   benefitFillPct: number;
   /** Raw per-day expected % move — only used in the tooltip caption. */
   perDayPct: number | null;
+  /** Optional note on how benefit (heart) was derived — appended to tooltip. */
+  benefitSourceNote?: string;
   onClick: () => void;
   it: boolean;
+  /** KPI snapshot table — inherit parent cell font (10px medium). */
+  uniformTypography?: boolean;
 }) {
+  const scoreText = uniformTypography ? "text-[10px] font-medium" : "text-[9px] font-semibold";
+  const scorePad = uniformTypography ? "px-0.5" : "px-1";
+  const mutedText = uniformTypography ? "text-[10px] font-medium" : "text-[9px] font-semibold";
   if (entry.riskScore == null && benefitFillPct <= 0) {
     return (
       <span
@@ -299,12 +308,12 @@ export function RiskBenefitScaleCell({
         perDayPct != null && Number.isFinite(perDayPct)
           ? ` (~${perDayPct >= 0 ? "+" : ""}${perDayPct.toFixed(2)}%/giorno)`
           : ""
-      }. Clicca per il dettaglio per-bucket.`
+      }${benefitSourceNote ? ` · ${benefitSourceNote}` : ""}. Clicca per il dettaglio per-bucket.`
     : `Risk ${riskUnknown ? "n/a" : `${r.toFixed(0)}/100`} · Benefit ${b.toFixed(0)}/100${
         perDayPct != null && Number.isFinite(perDayPct)
           ? ` (~${perDayPct >= 0 ? "+" : ""}${perDayPct.toFixed(2)}%/day)`
           : ""
-      }. Click for per-bucket details.`;
+      }${benefitSourceNote ? ` · ${benefitSourceNote}` : ""}. Click for per-bucket details.`;
   return (
     <button
       type="button"
@@ -316,7 +325,7 @@ export function RiskBenefitScaleCell({
       <RiskBenefitScaleIcon riskScore={r} benefitFillPct={b} size={iconSize} />
       <span className="flex items-center gap-0.5 leading-none">
         <span
-          className={`text-[9px] font-semibold px-1 rounded tabular-nums ${
+          className={`${scoreText} ${scorePad} rounded tabular-nums ${
             riskUnknown
               ? "bg-slate-100 text-slate-500 dark:bg-slate-800/60 dark:text-slate-400"
               : riskScoreTone(r)
@@ -333,9 +342,9 @@ export function RiskBenefitScaleCell({
         >
           {riskUnknown ? "—" : r.toFixed(0)}
         </span>
-        <span className="text-[8px] text-ink-muted/70">/</span>
+        <span className={`${uniformTypography ? "text-[10px]" : "text-[8px]"} text-ink-muted/70`}>/</span>
         <span
-          className={`text-[9px] font-semibold px-1 rounded ${benefitScoreTone(b)} tabular-nums`}
+          className={`${scoreText} ${scorePad} rounded ${benefitScoreTone(b)} tabular-nums`}
           title={
             it
               ? "Beneficio: tasso di crescita % per giorno verso il target"
@@ -350,7 +359,7 @@ export function RiskBenefitScaleCell({
       entry.recommendedSizePct != null &&
       Number.isFinite(entry.recommendedSizePct) ? (
         <span
-          className="text-[9px] tabular-nums leading-tight text-ink-muted font-semibold"
+          className={`${mutedText} tabular-nums leading-tight text-ink-muted`}
           title={
             it
               ? `Quota suggerita su un budget di ${Math.round(entry.recommendedSizeBudgetEur ?? 0).toLocaleString("it-IT")} € — pesata per EV, confidence e pattern di Step 2 (stessa logica del grafico Step 3).`
@@ -358,7 +367,7 @@ export function RiskBenefitScaleCell({
           }
         >
           €{Math.round(entry.recommendedSizeEur).toLocaleString("it-IT")}{" "}
-          <span className="text-ink-muted/80 font-normal">
+          <span className="text-ink-muted/80">
             ({entry.recommendedSizePct.toFixed(1)}%)
           </span>
         </span>

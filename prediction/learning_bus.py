@@ -30,7 +30,7 @@ from __future__ import annotations
 
 import json
 import os
-from dataclasses import asdict, dataclass, field
+from dataclasses import asdict, dataclass, field, replace
 from datetime import datetime, timezone
 from typing import Any, Iterable, Literal
 
@@ -89,6 +89,15 @@ Schedule = Literal[
 """Coarse-grained execution cadence.  Stored as plain string so the UI can
 group by it (e.g. "what runs on Sunday?")."""
 
+MonitorTier = Literal["core", "secondary", "diagnostic", "retired"]
+"""UI / health priority for the Loop monitor.
+
+* **core**       — drives preds / sizing / advice; always shown; stall alerts.
+* **secondary**  — real but quieter (FE calib, on-demand proposals, live rules).
+* **diagnostic** — D-family reporting; no auto-tune; collapsed by default.
+* **retired**    — orphan / noise; hidden from default monitor grid.
+"""
+
 
 @dataclass(frozen=True)
 class LoopMetadata:
@@ -119,6 +128,8 @@ class LoopMetadata:
     planned: bool = False
     """True for loops we have not yet built (e.g. portfolio_error_loop in
     Phase 3).  The UI shows them as "Coming soon" placeholders."""
+    monitor_tier: MonitorTier = "core"
+    """Loop-monitor priority — see ``MonitorTier``."""
 
 
 @dataclass
@@ -139,6 +150,11 @@ class LoopStatus:
     """Tiny dict with up to a handful of top-level fields from the source
     JSON.  Used by the drill-down modal so the UI doesn't need a dedicated
     endpoint for every loop."""
+    stale_days: int | None = None
+    """Days since ``last_run_at``.  ``None`` if the loop has no state file
+    yet or the run timestamp is missing.  Used by the UI to flag loops that
+    haven't refreshed within their expected cadence (e.g. a weekly-Sunday
+    loop that hasn't updated for > 10 days is stuck)."""
 
     def to_dict(self) -> dict[str, Any]:
         return asdict(self)
@@ -918,6 +934,40 @@ LOOPS: tuple[LoopMetadata, ...] = (
     ),
 )
 
+# Default tier is "core". Override noise / diagnostics so the Loop monitor
+# surfaces signal-bearing loops first without deleting modules from disk.
+_MONITOR_TIER_BY_ID: dict[str, MonitorTier] = {
+    # Retired — orphan / static / eval-only clutter
+    "polygon_accuracy": "retired",
+    "fundamental_shrink": "retired",
+    "emp_precat_blend": "retired",
+    "daily_open_recalib": "retired",
+    "kpi_signal_analysis": "retired",
+    "blend_ab_eval": "retired",
+    "evaluation_framework": "retired",
+    # Diagnostic — D monitoring (no auto-tune); stall alerts suppressed
+    "data_quality": "diagnostic",
+    "accuracy_monitor": "diagnostic",
+    "sign_curve_daily": "diagnostic",
+    "accuracy_v4_v5": "diagnostic",
+    # Secondary — real but quieter
+    "posthoc_mag_calib": "secondary",
+    "ai_feed_recalib": "secondary",
+    "direction_ensemble": "secondary",
+    "proposal_engine": "secondary",
+    "ra_calibration": "secondary",
+    "plan_prob_audit": "secondary",
+    "mig_calibration": "secondary",
+    "sds_roi_calibration": "secondary",
+}
+
+LOOPS = tuple(
+    replace(m, monitor_tier=_MONITOR_TIER_BY_ID[m.id])
+    if m.id in _MONITOR_TIER_BY_ID
+    else m
+    for m in LOOPS
+)
+
 
 # Map id → metadata for O(1) lookup.
 LOOPS_BY_ID: dict[str, LoopMetadata] = {m.id: m for m in LOOPS}
@@ -1008,57 +1058,106 @@ def _read_cluster_cf_status(meta: LoopMetadata) -> LoopStatus | None:
     factors = data.get("cluster_cal_factors") or data.get("clusters") or {}
     if not factors:
         return None
+    min_samples = int(data.get("min_samples") or 5)
     active = sum(
         1
         for f in factors.values()
-        if isinstance(f, dict) and (f.get("status") == "active" or f.get("n_samples", 0) >= 5)
+        if isinstance(f, dict)
+        and (f.get("status") == "active" or int(f.get("n_samples") or 0) >= min_samples)
     )
     total = len(factors)
+    # Trend from learning_history.json weeks[-1] vs weeks[-2] (MAE lift).
+    trend = "flat"
+    hist_doc = _safe_read_json(LEARNING_HISTORY_JSON) or {}
+    weeks = hist_doc.get("weeks") if isinstance(hist_doc.get("weeks"), list) else []
+    if len(weeks) >= 2 and isinstance(weeks[-1], dict) and isinstance(weeks[-2], dict):
+        prev_mae = weeks[-2].get("mae_after_cluster")
+        cur_mae = weeks[-1].get("mae_after_cluster")
+        if isinstance(prev_mae, (int, float)) and isinstance(cur_mae, (int, float)):
+            # Lower MAE = improvement, shown as "down" trend arrow.
+            if cur_mae - prev_mae < -0.1:
+                trend = "down"
+            elif cur_mae - prev_mae > 0.1:
+                trend = "up"
+    if active >= max(1, total * 2 // 3):
+        verdict: Verdict = "improving"
+    elif active > 0:
+        verdict = "stable"
+    else:
+        verdict = "collecting_data"
     return LoopStatus(
         id=meta.id,
-        last_run_at=_mtime_iso(CLUSTER_CAL_FACTORS_JSON),
-        verdict="improving" if active >= max(1, total // 2) else "collecting_data",
+        last_run_at=data.get("generated_at") or _mtime_iso(CLUSTER_CAL_FACTORS_JSON),
+        verdict=verdict,
         primary_metric={
             "name": "Active clusters",
             "value": active,
             "unit": f"/{total}",
-            "trend": "flat",
+            "trend": trend,
         },
         n_samples=sum(
             int(f.get("n_samples", 0) or 0) for f in factors.values() if isinstance(f, dict)
         ),
-        message=f"{active}/{total} clusters active",
+        message=f"{active}/{total} clusters ≥ {min_samples} samples",
         raw_excerpt={
             "global_cal_factor": data.get("global_cal_factor"),
+            "cluster_global_blend": data.get("cluster_global_blend"),
             "n_clusters": total,
+            "min_samples": min_samples,
         },
     )
 
 
 def _read_regime_status(meta: LoopMetadata) -> LoopStatus | None:
     data = _safe_read_json(REGIME_MULTIPLIERS_JSON) or {}
-    multipliers = data.get("multipliers") or {}
-    if not multipliers:
+    # Schema v1 uses "regimes" (not "multipliers"); per-regime sample count is
+    # "n" (not "n_samples"). Keep the legacy keys as fallback so old dumps still
+    # parse.
+    regimes = data.get("regimes") or data.get("multipliers") or {}
+    if not regimes:
         return None
+    min_samples = int(data.get("min_samples") or 8)
+
+    def _n(entry: dict[str, Any]) -> int:
+        try:
+            return int(entry.get("n") or entry.get("n_samples") or 0)
+        except (TypeError, ValueError):
+            return 0
+
     active = sum(
-        1 for v in multipliers.values() if isinstance(v, dict) and v.get("n_samples", 0) >= 8
+        1
+        for v in regimes.values()
+        if isinstance(v, dict)
+        and (v.get("status") == "active" or _n(v) >= min_samples)
     )
-    total = len(multipliers)
+    total = len(regimes)
+    n_samples_total = sum(_n(v) for v in regimes.values() if isinstance(v, dict))
+    verdict: Verdict
+    if active == total and total > 0:
+        verdict = "improving"
+    elif active > 0:
+        verdict = "stable"
+    else:
+        verdict = "collecting_data"
     return LoopStatus(
         id=meta.id,
-        last_run_at=_mtime_iso(REGIME_MULTIPLIERS_JSON),
-        verdict="improving" if active == total else "collecting_data",
+        last_run_at=data.get("generated_at") or _mtime_iso(REGIME_MULTIPLIERS_JSON),
+        verdict=verdict,
         primary_metric={
             "name": "Regimes calibrated",
             "value": active,
             "unit": f"/{total}",
             "trend": "flat",
         },
-        n_samples=sum(
-            int(v.get("n_samples", 0) or 0) for v in multipliers.values() if isinstance(v, dict)
+        n_samples=n_samples_total or None,
+        message=(
+            f"{active}/{total} regimes ≥ {min_samples} samples · current {data.get('current_regime') or '?'}"
         ),
-        message=f"{active}/{total} regimes ≥ 8 samples",
-        raw_excerpt={k: v for k, v in list(multipliers.items())[:3]},
+        raw_excerpt={
+            "current_regime": data.get("current_regime"),
+            "min_samples": min_samples,
+            **{k: v for k, v in list(regimes.items())[:3]},
+        },
     )
 
 
@@ -1101,19 +1200,39 @@ def _read_polygon_status(meta: LoopMetadata) -> LoopStatus | None:
     data = _safe_read_json(path) or {}
     if not data:
         return None
-    rho = data.get("mean_corr_match_stock")
+    # Schema stores the mean ρ inside `effectiveness`, not top-level. Keep the
+    # top-level lookup as fallback for older dumps.
+    effectiveness = data.get("effectiveness") or {}
+    rho = effectiveness.get("mean_corr_match_stock") if isinstance(effectiveness, dict) else None
+    if rho is None:
+        rho = data.get("mean_corr_match_stock")
+    history = data.get("learning_history") if isinstance(data.get("learning_history"), list) else []
+    trend = "flat"
+    if len(history) >= 2 and isinstance(history[-1], dict) and isinstance(history[-2], dict):
+        prev = history[-2].get("mean_corr_match_stock")
+        cur = history[-1].get("mean_corr_match_stock")
+        if isinstance(prev, (int, float)) and isinstance(cur, (int, float)):
+            if cur - prev > 0.01:
+                trend = "up"
+            elif cur - prev < -0.01:
+                trend = "down"
     return LoopStatus(
         id=meta.id,
-        last_run_at=_mtime_iso(path),
+        last_run_at=data.get("generated_at") or _mtime_iso(path),
         verdict="neutral",  # analytics-only — never "improving" in production
         primary_metric=(
-            {"name": "Mean ρ", "value": round(float(rho), 3), "unit": "", "trend": "flat"}
+            {"name": "Mean ρ", "value": round(float(rho), 3), "unit": "", "trend": trend}
             if rho is not None
             else None
         ),
         n_samples=int(data.get("n_samples", 0) or 0) or None,
         message="Analytics-only (no recommender consumes ρ today)",
-        raw_excerpt={"mean_corr_match_stock": rho, "n_samples": data.get("n_samples")},
+        raw_excerpt={
+            "mean_corr_match_stock": rho,
+            "n_samples": data.get("n_samples"),
+            "n_events": data.get("n_events"),
+            "bins_with_data": effectiveness.get("bins_with_data") if isinstance(effectiveness, dict) else None,
+        },
     )
 
 
@@ -1122,16 +1241,30 @@ def _read_curve_impact_status(meta: LoopMetadata) -> LoopStatus | None:
     data = _safe_read_json(path) or {}
     if not data:
         return None
-    mae_base = data.get("mae_base_pp")
-    mae_daily = data.get("mae_daily_pp")
+    # Schema v2 nests the layer MAEs under `last_summary`; fall back to the
+    # legacy top-level keys so older dumps still parse.
+    summary = data.get("last_summary") if isinstance(data.get("last_summary"), dict) else {}
+    mae_base = summary.get("mae_base_pp", data.get("mae_base_pp"))
+    mae_daily = summary.get("mae_daily_pp", data.get("mae_daily_pp"))
+    mae_k8 = summary.get("mae_k8_pp", data.get("mae_k8_pp"))
+    mae_eis = summary.get("mae_eis_pp", data.get("mae_eis_pp"))
     delta = None
     verdict: Verdict = "collecting_data"
     if mae_base is not None and mae_daily is not None:
         delta = float(mae_daily) - float(mae_base)
-        verdict = "improving" if delta < -0.1 else ("stable" if abs(delta) < 0.5 else "not_helping")
+        # Curve daily typically reduces MAE by many pp vs base — use tighter
+        # bands so the verdict actually reacts to the observed lift.
+        if delta < -1.0:
+            verdict = "improving"
+        elif delta < -0.1:
+            verdict = "stable"
+        elif abs(delta) < 0.5:
+            verdict = "stable"
+        else:
+            verdict = "not_helping"
     return LoopStatus(
         id=meta.id,
-        last_run_at=_mtime_iso(path),
+        last_run_at=data.get("built_at") or _mtime_iso(path),
         verdict=verdict,
         primary_metric=(
             {
@@ -1143,7 +1276,9 @@ def _read_curve_impact_status(meta: LoopMetadata) -> LoopStatus | None:
             if delta is not None
             else None
         ),
-        n_samples=int(data.get("n_events", 0) or 0) or None,
+        n_samples=int(
+            summary.get("n_daily") or data.get("n_events") or 0
+        ) or None,
         message=(
             f"base {mae_base:.2f} → daily {mae_daily:.2f} pp"
             if mae_base is not None and mae_daily is not None
@@ -1152,9 +1287,11 @@ def _read_curve_impact_status(meta: LoopMetadata) -> LoopStatus | None:
         raw_excerpt={
             "mae_base_pp": mae_base,
             "mae_daily_pp": mae_daily,
-            "mae_k8_pp": data.get("mae_k8_pp"),
-            "mae_eis_pp": data.get("mae_eis_pp"),
+            "mae_k8_pp": mae_k8,
+            "mae_eis_pp": mae_eis,
             "n_events": data.get("n_events"),
+            "hit_base_pct": summary.get("hit_base_pct"),
+            "hit_daily_pct": summary.get("hit_daily_pct"),
         },
     )
 
@@ -1164,31 +1301,66 @@ def _read_signal_audit_status(meta: LoopMetadata) -> LoopStatus | None:
     data = _safe_read_json(path) or {}
     if not data:
         return None
-    hit = data.get("useful_hit_pct")
+    # Hit-rate lives under `cohorts.useful` (n, hits, hit_pct); the legacy
+    # top-level `useful_hit_pct` was never populated by signal_audit.
+    cohorts = data.get("cohorts") if isinstance(data.get("cohorts"), dict) else {}
+    useful = cohorts.get("useful") if isinstance(cohorts, dict) else None
+    strong = cohorts.get("strong") if isinstance(cohorts, dict) else None
+    hit = None
+    n_useful = 0
+    if isinstance(useful, dict):
+        hit = useful.get("hit_pct")
+        n_useful = int(useful.get("n") or 0)
+    if hit is None:
+        hit = data.get("useful_hit_pct")  # legacy fallback
+        n_useful = int(data.get("useful_n") or 0)
+    # Trend: compare with previous weekly bucket if available.
+    weekly = data.get("weekly_actionable") if isinstance(data.get("weekly_actionable"), list) else []
+    trend = "flat"
+    if len(weekly) >= 2:
+        prev = weekly[-2].get("hit_pct") if isinstance(weekly[-2], dict) else None
+        cur = weekly[-1].get("hit_pct") if isinstance(weekly[-1], dict) else None
+        if isinstance(prev, (int, float)) and isinstance(cur, (int, float)):
+            if cur - prev >= 2:
+                trend = "up"
+            elif cur - prev <= -2:
+                trend = "down"
+    verdict: Verdict
+    if hit is None:
+        verdict = "collecting_data"
+    elif float(hit) >= 60:
+        verdict = "improving"
+    elif float(hit) >= 50:
+        verdict = "stable"
+    else:
+        verdict = "not_helping"
+    pending = data.get("pending_outcomes") or 0
     return LoopStatus(
         id=meta.id,
-        last_run_at=_mtime_iso(path),
-        verdict="improving" if (hit is not None and float(hit) >= 60) else "collecting_data",
+        last_run_at=data.get("generated_at") or _mtime_iso(path),
+        verdict=verdict,
         primary_metric=(
             {
                 "name": "Useful hit-rate",
                 "value": round(float(hit), 1),
                 "unit": "%",
-                "trend": "flat",
+                "trend": trend,
             }
             if hit is not None
             else None
         ),
-        n_samples=int(data.get("useful_n", 0) or 0) or None,
+        n_samples=n_useful or None,
         message=(
-            f"useful hit {hit:.1f}% · pending {data.get('pending_outcomes', 0)}"
-            if hit is not None
-            else None
+            f"useful hit {float(hit):.1f}% (n={n_useful}) · strong {float(strong.get('hit_pct') or 0):.1f}% · pending {pending}"
+            if hit is not None and isinstance(strong, dict)
+            else (f"useful hit {float(hit):.1f}% · pending {pending}" if hit is not None else None)
         ),
         raw_excerpt={
-            "useful_hit_pct": hit,
-            "useful_n": data.get("useful_n"),
-            "pending_outcomes": data.get("pending_outcomes"),
+            "useful": useful,
+            "strong": strong,
+            "pending_outcomes": pending,
+            "log_rows": data.get("log_rows"),
+            "closed_rows": data.get("closed_rows"),
         },
     )
 
@@ -1198,36 +1370,78 @@ def _read_eis_super_status(meta: LoopMetadata) -> LoopStatus | None:
     data = _safe_read_json(path) or {}
     if not data:
         return None
-    lift = data.get("mean_lift_7d")
-    rho_raw = data.get("mean_corr_raw_7d")
-    rho_super = data.get("mean_corr_super_7d")
+    # Metrics live under `effectiveness` (aggregated over all windows for the
+    # 7d bucket). Legacy dumps stored them at top-level — keep both paths.
+    eff = data.get("effectiveness") if isinstance(data.get("effectiveness"), dict) else {}
+    lift = eff.get("mean_lift_7d", data.get("mean_lift_7d"))
+    rho_raw = eff.get("mean_corr_raw_7d", data.get("mean_corr_raw_7d"))
+    rho_super = eff.get("mean_corr_super_7d", data.get("mean_corr_super_7d"))
+    mae_raw = eff.get("mean_mae_raw_7d")
+    mae_super = eff.get("mean_mae_super_7d")
+    mae_lift = eff.get("mean_mae_lift_7d")
+    history = data.get("history") if isinstance(data.get("history"), list) else []
+    # Trend on the aggregated correlation lift (super vs raw) week over week.
+    trend = "flat"
+    if len(history) >= 2 and isinstance(history[-1], dict) and isinstance(history[-2], dict):
+        prev_lift = history[-2].get("mean_lift_7d")
+        cur_lift = history[-1].get("mean_lift_7d")
+        if isinstance(prev_lift, (int, float)) and isinstance(cur_lift, (int, float)):
+            if cur_lift - prev_lift > 0.005:
+                trend = "up"
+            elif cur_lift - prev_lift < -0.005:
+                trend = "down"
     verdict: Verdict = "collecting_data"
     if rho_raw is not None and rho_super is not None:
-        verdict = "improving" if float(rho_super) > float(rho_raw) + 0.02 else "stable"
+        gap = float(rho_super) - float(rho_raw)
+        if gap > 0.02:
+            verdict = "improving"
+        elif gap >= -0.005:
+            verdict = "stable"
+        else:
+            verdict = "not_helping"
+    n_scored = int(data.get("n_events_scored") or 0)
     return LoopStatus(
         id=meta.id,
-        last_run_at=_mtime_iso(path),
+        last_run_at=data.get("generated_at") or _mtime_iso(path),
         verdict=verdict,
         primary_metric=(
             {
-                "name": "Lift 7d",
-                "value": round(float(lift), 3),
-                "unit": "",
-                "trend": "up" if (lift or 0) > 0 else "flat",
+                "name": "MAE lift 7d",
+                "value": round(float(mae_lift), 2),
+                "unit": "pp",
+                "trend": trend,
             }
-            if lift is not None
-            else None
+            if mae_lift is not None
+            else (
+                {
+                    "name": "Corr lift 7d",
+                    "value": round(float(lift), 3),
+                    "unit": "",
+                    "trend": trend,
+                }
+                if lift is not None
+                else None
+            )
         ),
-        n_samples=None,
+        n_samples=n_scored or None,
         message=(
-            f"ρ super {rho_super:.3f} vs raw {rho_raw:.3f}"
-            if rho_raw is not None and rho_super is not None
-            else None
+            f"ρ super {float(rho_super):.3f} vs raw {float(rho_raw):.3f} · MAE {float(mae_super):.2f} vs {float(mae_raw):.2f} pp"
+            if rho_raw is not None and rho_super is not None and mae_raw is not None and mae_super is not None
+            else (
+                f"ρ super {float(rho_super):.3f} vs raw {float(rho_raw):.3f}"
+                if rho_raw is not None and rho_super is not None
+                else None
+            )
         ),
         raw_excerpt={
             "mean_lift_7d": lift,
             "mean_corr_raw_7d": rho_raw,
             "mean_corr_super_7d": rho_super,
+            "mean_mae_raw_7d": mae_raw,
+            "mean_mae_super_7d": mae_super,
+            "mean_mae_lift_7d": mae_lift,
+            "n_events_scored": n_scored or None,
+            "bins_with_data_7d": eff.get("bins_with_data_7d") if isinstance(eff, dict) else None,
         },
     )
 
@@ -1257,14 +1471,43 @@ def _read_trade_calib_status(meta: LoopMetadata) -> LoopStatus | None:
     data = _safe_read_json(INVESTMENT_TRADE_CALIB_JSON) or {}
     if not data:
         return None
+    # Schema uses `n_closed` / `n_positions` / `n_buy_cases`; there is no
+    # `n_trades` field — keep it as legacy fallback.
+    n_closed = int(data.get("n_closed") or data.get("n_trades") or 0)
+    n_positions = int(data.get("n_positions") or 0)
+    reliable = bool(data.get("calibration_reliable"))
+    min_cases = int(data.get("min_cases_for_calibration") or 5)
+    verdict: Verdict
+    if reliable and n_closed >= min_cases:
+        verdict = "stable"
+    elif data.get("thresholds"):
+        verdict = "collecting_data"
+    else:
+        verdict = "collecting_data"
     return LoopStatus(
         id=meta.id,
-        last_run_at=_mtime_iso(INVESTMENT_TRADE_CALIB_JSON),
-        verdict="stable" if data.get("thresholds") else "collecting_data",
-        primary_metric=None,
-        n_samples=int(data.get("n_trades", 0) or 0) or None,
-        message=(f"n trades calibrated: {data.get('n_trades')}" if data.get("n_trades") else None),
-        raw_excerpt={"thresholds": data.get("thresholds")},
+        last_run_at=data.get("generated_at") or _mtime_iso(INVESTMENT_TRADE_CALIB_JSON),
+        verdict=verdict,
+        primary_metric={
+            "name": "Closed trades",
+            "value": n_closed,
+            "unit": f"/{n_positions}" if n_positions else "",
+            "trend": "flat",
+        },
+        n_samples=n_closed or None,
+        message=(
+            f"{n_closed} closed / {n_positions} positions · reliable={reliable}"
+            if n_positions or n_closed
+            else None
+        ),
+        raw_excerpt={
+            "thresholds": data.get("thresholds"),
+            "n_closed": n_closed,
+            "n_positions": n_positions,
+            "n_buy_cases": data.get("n_buy_cases"),
+            "n_sell_cases": data.get("n_sell_cases"),
+            "calibration_reliable": reliable,
+        },
     )
 
 
@@ -1375,23 +1618,256 @@ def _read_advice_feedback_status(meta: LoopMetadata) -> LoopStatus | None:
     )
 
 
+def _read_accuracy_monitor_status(meta: LoopMetadata) -> LoopStatus | None:
+    path = MODEL_ACCURACY_MONITOR_JSON
+    data = _safe_read_json(path) or {}
+    entries = data.get("entries") if isinstance(data.get("entries"), list) else []
+    if not entries:
+        return None
+    last = entries[-1] if isinstance(entries[-1], dict) else {}
+    n_retro = int(last.get("n_retro_state") or 0)
+    return LoopStatus(
+        id=meta.id,
+        last_run_at=last.get("run_iso") or _mtime_iso(path),
+        verdict="stable" if n_retro > 0 else "collecting_data",
+        primary_metric={
+            "name": "Snapshots",
+            "value": len(entries),
+            "unit": "",
+            "trend": "flat",
+        },
+        n_samples=n_retro or None,
+        message=(
+            f"last snapshot n_retro={n_retro} · trigger={last.get('snapshot_trigger', '?')}"
+            if n_retro
+            else None
+        ),
+        raw_excerpt={
+            "last_run_iso": last.get("run_iso"),
+            "n_snapshots": len(entries),
+            "n_retro_state": n_retro,
+            "recalibrated": last.get("recalibrated"),
+            "snapshot_trigger": last.get("snapshot_trigger"),
+        },
+    )
+
+
+def _read_sign_curve_daily_status(meta: LoopMetadata) -> LoopStatus | None:
+    path = MODEL_SIGN_CURVE_DAILY_JSON
+    data = _safe_read_json(path) or {}
+    overall = data.get("overall") if isinstance(data.get("overall"), dict) else None
+    if not overall:
+        return None
+    hit = overall.get("hit_pct")
+    n_pairs = int(overall.get("n_pairs") or 0)
+    return LoopStatus(
+        id=meta.id,
+        last_run_at=data.get("generated_at") or _mtime_iso(path),
+        verdict=(
+            "stable"
+            if (isinstance(hit, (int, float)) and n_pairs > 0)
+            else "collecting_data"
+        ),
+        primary_metric=(
+            {
+                "name": "Sign hit",
+                "value": round(float(hit), 1),
+                "unit": "%",
+                "trend": "flat",
+            }
+            if hit is not None
+            else None
+        ),
+        n_samples=int(data.get("n_events") or n_pairs or 0) or None,
+        message=(
+            f"sign hit {float(hit):.1f}% · n_pairs {n_pairs} · pre-CD {overall.get('hit_pct_pre_cd', '?')}"
+            if hit is not None
+            else None
+        ),
+        raw_excerpt={
+            "overall": overall,
+            "n_events": data.get("n_events"),
+            "flat_band_pp": data.get("flat_band_pp"),
+        },
+    )
+
+
+def _read_slope_contrarian_status(meta: LoopMetadata) -> LoopStatus | None:
+    path = os.path.join(DATA_DIR, "slope_contrarian_calib.json")
+    data = _safe_read_json(path) or {}
+    if not data:
+        return None
+    weight = data.get("combined_s5d_weight")
+    n_total = int(data.get("n_contrarian_total") or 0)
+    min_cases = int(data.get("min_cases_for_calibration") or 8)
+    down = data.get("model_down") if isinstance(data.get("model_down"), dict) else {}
+    up = data.get("model_up") if isinstance(data.get("model_up"), dict) else {}
+    reliable_down = bool(down.get("reliable"))
+    reliable_up = bool(up.get("reliable"))
+    reliable = reliable_down and reliable_up
+    verdict: Verdict
+    if reliable and weight is not None:
+        verdict = "stable"
+    elif n_total >= min_cases:
+        verdict = "collecting_data"
+    else:
+        verdict = "collecting_data"
+    return LoopStatus(
+        id=meta.id,
+        last_run_at=data.get("generated_at") or _mtime_iso(path),
+        verdict=verdict,
+        primary_metric=(
+            {
+                "name": "s5d weight",
+                "value": round(float(weight), 3),
+                "unit": "",
+                "trend": "flat",
+            }
+            if weight is not None
+            else None
+        ),
+        n_samples=n_total or None,
+        message=(
+            f"weight {float(weight):.2f} · n_contrarian {n_total} · reliable down/up={reliable_down}/{reliable_up}"
+            if weight is not None
+            else f"n_contrarian {n_total} (need {min_cases})"
+        ),
+        raw_excerpt={
+            "combined_s5d_weight": weight,
+            "n_contrarian_total": n_total,
+            "model_down": down,
+            "model_up": up,
+            "outcome_horizon": data.get("outcome_horizon"),
+            "slope5d_threshold": data.get("slope5d_threshold"),
+        },
+    )
+
+
+def _read_sds_roi_status(meta: LoopMetadata) -> LoopStatus | None:
+    path = os.path.join(DATA_DIR, "sds_roi_calibration.json")
+    data = _safe_read_json(path) or {}
+    profiles = data.get("profiles") if isinstance(data.get("profiles"), dict) else None
+    if not profiles:
+        return None
+    return LoopStatus(
+        id=meta.id,
+        last_run_at=str(data.get("generated_at")) if data.get("generated_at") else _mtime_iso(path),
+        verdict="stable",
+        primary_metric={
+            "name": "ROI profiles",
+            "value": len(profiles),
+            "unit": "",
+            "trend": "flat",
+        },
+        n_samples=int(data.get("sample_n_cap") or 0) or None,
+        message=f"{len(profiles)} macro-cluster profiles · cap n={data.get('sample_n_cap')}",
+        raw_excerpt={
+            "profile_names": list(profiles.keys())[:8],
+            "normalization": data.get("normalization"),
+            "sample_n_cap": data.get("sample_n_cap"),
+        },
+    )
+
+
+def _read_accuracy_v4_v5_status(meta: LoopMetadata) -> LoopStatus | None:
+    path = os.path.join(DATA_DIR, "accuracy_v4_v5_summary.json")
+    data = _safe_read_json(path) or {}
+    history = data.get("history") if isinstance(data.get("history"), list) else []
+    latest = data.get("latest") if isinstance(data.get("latest"), dict) else None
+    if not history and not latest:
+        return None
+    last_iso = None
+    if latest:
+        last_iso = latest.get("generated_at")
+    if not last_iso and history:
+        last = history[-1] if isinstance(history[-1], dict) else {}
+        last_iso = last.get("run_iso")
+    return LoopStatus(
+        id=meta.id,
+        last_run_at=last_iso or _mtime_iso(path),
+        verdict="stable" if history else "collecting_data",
+        primary_metric={
+            "name": "Snapshots",
+            "value": len(history),
+            "unit": "",
+            "trend": "flat",
+        },
+        n_samples=None,
+        message=f"{len(history)} historical snapshots (v4 vs v5)",
+        raw_excerpt={
+            "n_history": len(history),
+            "latest_generated_at": latest.get("generated_at") if latest else None,
+            "past_only": latest.get("past_only") if latest else None,
+        },
+    )
+
+
 # id → specialised reader.  Any id missing from this map uses the generic
 # reader (file mtime only, verdict=unknown).
 _STATUS_READERS: dict[str, Any] = {
     "cluster_cf": _read_cluster_cf_status,
     "regime_mult": _read_regime_status,
     "global_cf": _read_global_cf_status,
+    "posthoc_mag_calib": _read_global_cf_status,  # same file, same signal
     "validation_feedback": _read_validation_feedback_status,
     "polygon_accuracy": _read_polygon_status,
     "curve_impact": _read_curve_impact_status,
     "signal_audit": _read_signal_audit_status,
     "eis_super_score": _read_eis_super_status,
+    "slope_contrarian": _read_slope_contrarian_status,
+    "sds_roi_calibration": _read_sds_roi_status,
     "investment_trade_calib": _read_trade_calib_status,
     "portfolio_error_loop": _read_portfolio_error_loop_status,
     "bayesian_shrinkage": _read_bayesian_shrinkage_status,
     "proposal_engine": _read_proposal_engine_status,
     "advice_feedback": _read_advice_feedback_status,
+    "accuracy_monitor": _read_accuracy_monitor_status,
+    "sign_curve_daily": _read_sign_curve_daily_status,
+    "accuracy_v4_v5": _read_accuracy_v4_v5_status,
 }
+
+
+def _parse_iso(iso: str | None) -> datetime | None:
+    if not iso or not isinstance(iso, str):
+        return None
+    try:
+        dt = datetime.fromisoformat(iso.replace("Z", "+00:00"))
+    except ValueError:
+        return None
+    if dt.tzinfo is None:
+        dt = dt.replace(tzinfo=timezone.utc)
+    return dt
+
+
+def _annotate_staleness(meta: LoopMetadata, status: LoopStatus) -> LoopStatus:
+    """Populate ``stale_days`` (days since last run) and demote the verdict to
+    ``stalled`` when a scheduled loop is well past its expected cadence.
+
+    Cadence tolerance:
+      * weekly_sunday  → 10 days
+      * post_refresh_daily → 3 days
+      * every_refresh / every_pred_live → 2 days
+      * every_30_days → 45 days
+      * on_demand / on_demand_user → never stale (user-driven)
+    """
+    parsed = _parse_iso(status.last_run_at)
+    if parsed is None:
+        return status
+    delta_days = (datetime.now(tz=timezone.utc) - parsed).days
+    status.stale_days = max(0, delta_days)
+    tolerance = {
+        "weekly_sunday": 10,
+        "post_refresh_daily": 3,
+        "every_refresh": 2,
+        "every_pred_live": 2,
+        "every_30_days": 45,
+    }.get(meta.schedule)
+    if tolerance is not None and status.stale_days > tolerance:
+        # Only demote when the loop was previously reporting activity — never
+        # override analytics-only "neutral" verdicts.
+        if status.verdict not in ("neutral", "stalled"):
+            status.verdict = "stalled"
+    return status
 
 
 def read_loop_status(meta: LoopMetadata) -> LoopStatus:
@@ -1402,35 +1878,66 @@ def read_loop_status(meta: LoopMetadata) -> LoopStatus:
     * `_frontend_status` for loops whose schedule is ``frontend_localstorage``
     * the specialised reader from `_STATUS_READERS` if registered
     * `_generic_status` (mtime only, ``verdict='unknown'``) otherwise
+
+    After the reader runs, ``stale_days`` is computed and the verdict is
+    demoted to ``stalled`` when the scheduled loop is well past its cadence.
     """
     if meta.planned:
         return _planned_status(meta)
     if meta.schedule == "frontend_localstorage":
         return _frontend_status(meta)
     reader = _STATUS_READERS.get(meta.id)
+    status: LoopStatus | None = None
     if reader is not None:
         try:
-            specialised = reader(meta)
-            if specialised is not None:
-                return specialised
+            status = reader(meta)
         except Exception:
             # Defensive — never let a single reader bring down the bus.
-            pass
-    return _generic_status(meta)
+            status = None
+    if status is None:
+        status = _generic_status(meta)
+    return _annotate_staleness(meta, status)
 
 
 # ── Aggregated views ─────────────────────────────────────────────────────────
 
 
-def list_loops() -> list[dict[str, Any]]:
-    """Return every loop metadata as plain dicts (JSON-ready)."""
-    return [asdict(m) for m in LOOPS]
-
-
-def list_loops_with_status() -> list[dict[str, Any]]:
-    """Return ``[{...metadata, status: {...}}, …]`` for every loop."""
-    out: list[dict[str, Any]] = []
+def _iter_monitor_loops(
+    *,
+    include_retired: bool = False,
+    include_diagnostic: bool = True,
+) -> Iterable[LoopMetadata]:
     for meta in LOOPS:
+        if meta.monitor_tier == "retired" and not include_retired:
+            continue
+        if meta.monitor_tier == "diagnostic" and not include_diagnostic:
+            continue
+        yield meta
+
+
+def list_loops(*, include_retired: bool = True) -> list[dict[str, Any]]:
+    """Return loop metadata as plain dicts (JSON-ready).
+
+    ``include_retired`` defaults True for API completeness; the Loop monitor
+    UI filters retired client-side via ``monitor_tier``.
+    """
+    return [
+        asdict(m)
+        for m in _iter_monitor_loops(include_retired=include_retired, include_diagnostic=True)
+    ]
+
+
+def list_loops_with_status(
+    *,
+    include_retired: bool = True,
+    include_diagnostic: bool = True,
+) -> list[dict[str, Any]]:
+    """Return ``[{...metadata, status: {...}}, …]`` for every (filtered) loop."""
+    out: list[dict[str, Any]] = []
+    for meta in _iter_monitor_loops(
+        include_retired=include_retired,
+        include_diagnostic=include_diagnostic,
+    ):
         status = read_loop_status(meta)
         merged = asdict(meta)
         merged["status"] = status.to_dict()
@@ -1473,7 +1980,12 @@ def _classify(status: LoopStatus, meta: LoopMetadata) -> str:
 
 
 def get_health_overview() -> dict[str, Any]:
-    """Aggregated health view consumed by the Learning Lab v2 landing."""
+    """Aggregated health view consumed by the Learning Lab v2 landing.
+
+    Counts exclude ``retired`` loops so orphans do not inflate the grid.
+    Diagnostic loops are counted separately under ``diagnostic_total``.
+    Stall rollups only consider ``core`` + ``secondary``.
+    """
     by_family: dict[Family, dict[str, int]] = {
         "A_magnitude": {"total": 0, "active": 0, "collecting": 0, "stalled": 0, "planned": 0, "frontend_only": 0},
         "B_pre_cd": {"total": 0, "active": 0, "collecting": 0, "stalled": 0, "planned": 0, "frontend_only": 0},
@@ -1481,16 +1993,32 @@ def get_health_overview() -> dict[str, Any]:
         "D_monitoring": {"total": 0, "active": 0, "collecting": 0, "stalled": 0, "planned": 0, "frontend_only": 0},
     }
     last_runs: list[str] = []
+    tier_counts = {"core": 0, "secondary": 0, "diagnostic": 0, "retired": 0}
+    alert_stalled: list[str] = []
     for meta in LOOPS:
+        tier_counts[meta.monitor_tier] = tier_counts.get(meta.monitor_tier, 0) + 1
+        if meta.monitor_tier == "retired":
+            continue
         status = read_loop_status(meta)
         by_family[meta.family]["total"] += 1
         by_family[meta.family][_classify(status, meta)] += 1
         if status.last_run_at:
             last_runs.append(status.last_run_at)
+        if (
+            meta.monitor_tier in ("core", "secondary")
+            and (
+                status.verdict == "stalled"
+                or (isinstance(status.stale_days, int) and status.stale_days > 30)
+            )
+        ):
+            alert_stalled.append(meta.id)
+    visible = tier_counts["core"] + tier_counts["secondary"] + tier_counts["diagnostic"]
     return {
         "computed_at": datetime.now(tz=timezone.utc).isoformat(timespec="seconds"),
         "newest_run_at": max(last_runs) if last_runs else None,
-        "total_loops": len(LOOPS),
+        "total_loops": visible,
+        "tier_counts": tier_counts,
+        "alert_stalled_ids": alert_stalled,
         "by_family": [
             {"family": fam, **counts} for fam, counts in by_family.items()
         ],
@@ -1501,6 +2029,7 @@ __all__ = (
     "Family",
     "Verdict",
     "Schedule",
+    "MonitorTier",
     "LoopMetadata",
     "LoopStatus",
     "LOOPS",

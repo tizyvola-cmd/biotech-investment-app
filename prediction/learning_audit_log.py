@@ -68,6 +68,12 @@ def build_learning_audit_log(*, limit: int = 200) -> dict[str, Any]:
     weeks_in = hist_doc.get("weeks") if isinstance(hist_doc, dict) else []
     if not isinstance(weeks_in, list):
         weeks_in = []
+    try:
+        from prediction.learning_lab import weeks_with_live_snapshot_for_ui
+
+        weeks_in = weeks_with_live_snapshot_for_ui(weeks_in)
+    except Exception:
+        pass
     reliable = _reliable_weeks([w for w in weeks_in if isinstance(w, dict)])
 
     weekly_metrics: list[dict[str, Any]] = []

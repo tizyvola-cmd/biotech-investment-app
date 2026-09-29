@@ -38,6 +38,7 @@ import {
 } from "../sheet/predictionGuide";
 import type { GuideCurvePoint } from "../sheet/predictionGuide";
 import { fmtAxisPctTick } from "../sheet/chartAxisFormat";
+import { useLang } from "../shared/i18n";
 
 type CompareMode = "this" | "last" | "overlay";
 
@@ -103,6 +104,8 @@ function GuideChart({
   compareMode: CompareMode;
   dashedIds?: Set<string>;
 }) {
+  const { lang } = useLang();
+  const it = lang === "it";
   const activeCurves = useMemo(() => {
     const pick = (src: Partial<Record<MacroGroupId, GuideCurvePoint[]>>) =>
       guideToChartRows(src, groupIds);
@@ -188,7 +191,9 @@ function GuideChart({
       <div className="rounded-lg border border-[rgb(var(--border))]/60 p-4">
         <h3 className="text-sm font-semibold mb-2">{title}</h3>
         <p className="text-xs text-ink-muted py-4 text-center">
-          No curve selected — enable at least one macro-group below.
+          {it
+            ? "Nessuna curva selezionata — abilita almeno un macro-gruppo qui sotto."
+            : "No curve selected — enable at least one macro-group below."}
         </p>
       </div>
     );
@@ -199,10 +204,16 @@ function GuideChart({
       <div className="rounded-lg border border-[rgb(var(--border))]/60 p-4">
         <h3 className="text-sm font-semibold mb-2">{title}</h3>
         <p className="text-xs text-ink-muted py-4 text-center">
-          Not enough data to plot the curve — at least 2 nodes with a % value are required.
+          {it
+            ? "Dati insufficienti per tracciare la curva — servono almeno 2 nodi con un valore %."
+            : "Not enough data to plot the curve — at least 2 nodes with a % value are required."}
           {snapshot.refSource
-            ? " The reference μ curves do not cover enough nodes for this chart."
-            : " Regenerate chart snapshots (Export_Desktop_Snapshots) or run refresh_predizione_guida.py."}
+            ? (it
+                ? " Le curve μ di riferimento non coprono abbastanza nodi per questo grafico."
+                : " The reference μ curves do not cover enough nodes for this chart.")
+            : (it
+                ? " Rigenera gli snapshot dei grafici (Export_Desktop_Snapshots) o esegui refresh_predizione_guida.py."
+                : " Regenerate chart snapshots (Export_Desktop_Snapshots) or run refresh_predizione_guida.py.")}
         </p>
       </div>
     );
@@ -219,7 +230,7 @@ function GuideChart({
             <YAxis tick={{ fontSize: 10 }} tickFormatter={(v) => `${fmtAxisPctTick(v)}%`} domain={yDomain} />
             <Tooltip
               formatter={(v: number) => `${v >= 0 ? "+" : ""}${v.toFixed(2)}%`}
-              labelFormatter={(l) => `Node ${l}`}
+              labelFormatter={(l) => (it ? `Nodo ${l}` : `Node ${l}`)}
             />
             <Legend wrapperStyle={{ fontSize: 10 }} />
             {lineIds.map(({ key, gid, dashed }) => (
@@ -229,9 +240,9 @@ function GuideChart({
                 dataKey={key}
                 name={
                   key.endsWith("_prev")
-                    ? `${MACRO_GROUP_LABELS[gid]} (last week)`
+                    ? `${MACRO_GROUP_LABELS[gid]} ${it ? "(settimana scorsa)" : "(last week)"}`
                     : key.endsWith("_ref")
-                      ? `${MACRO_GROUP_LABELS[gid]} (reference μ)`
+                      ? `${MACRO_GROUP_LABELS[gid]} ${it ? "(μ di riferimento)" : "(reference μ)"}`
                       : MACRO_GROUP_LABELS[gid]
                 }
                 stroke={MACRO_GROUP_COLORS[gid]}
@@ -263,6 +274,8 @@ export function PredictionGuidePanel({
   manifestUpdatedAt?: string | null;
   onReloadAccuracy?: () => void;
 }) {
+  const { lang } = useLang();
+  const it = lang === "it";
   const [snapshot, setSnapshot] = useState<PredictionGuideSnapshot | null>(null);
   const [weekly, setWeekly] = useState<WeeklyGuideState>({
     thisWeek: null,
@@ -349,7 +362,9 @@ export function PredictionGuidePanel({
   }, [snapshot]);
 
   if (sheetLoading) {
-    return <p className="text-sm text-ink-muted">Loading Accuracy sheet…</p>;
+    return <p className="text-sm text-ink-muted">
+      {it ? "Caricamento foglio Accuracy…" : "Loading Accuracy sheet…"}
+    </p>;
   }
 
   const accRows = accTable?.rows?.length ?? 0;
@@ -357,11 +372,13 @@ export function PredictionGuidePanel({
     return (
       <div className="flex flex-col gap-2 text-sm">
         <p className="text-negative">
-          {sheetError ?? "Accuracy sheet empty or missing — export data/accuracy_sheet_snapshot.json."}
+          {sheetError ?? (it
+            ? "Foglio Accuracy vuoto o mancante — esporta data/accuracy_sheet_snapshot.json."
+            : "Accuracy sheet empty or missing — export data/accuracy_sheet_snapshot.json.")}
         </p>
         {onReloadAccuracy ? (
           <button type="button" className="btn text-xs py-1.5 self-start" onClick={onReloadAccuracy}>
-            Reload Accuracy
+            {it ? "Ricarica Accuracy" : "Reload Accuracy"}
           </button>
         ) : null}
       </div>
@@ -369,27 +386,30 @@ export function PredictionGuidePanel({
   }
 
   if (!snapshot) {
-    return <p className="text-sm text-ink-muted">Computing curves…</p>;
+    return <p className="text-sm text-ink-muted">
+      {it ? "Calcolo curve…" : "Computing curves…"}
+    </p>;
   }
 
   const lastUpdatedLabel = snapshot.computedAt
-    ? new Date(snapshot.computedAt).toLocaleString("en-US", { hour12: false })
+    ? new Date(snapshot.computedAt).toLocaleString(it ? "it-IT" : "en-US", { hour12: false })
     : "—";
 
   return (
     <div className="flex flex-col flex-1 gap-4">
       <p className="text-xs text-ink-muted shrink-0">
-        Empirical % distribution vs T−60 around the CD — same thresholds as the{" "}
-        <strong>Prediction Guide</strong> sheet and μ curves (Global, Cluster 0, SuperNova cl.1, Post-CD).
-        Post-CD: pre (T−7,−5,−3) vs post (T+4,+7) mean; threshold ±{POST_CD_EPS_PP} pp. Pre-CD (~2 months):
-        T−10 vs T−60, threshold {PRE_CD_RALLY_PP}/{PRE_CD_FALL_PP} pp.
+        {it
+          ? <>Distribuzione % empirica vs T−60 attorno al CD — stesse soglie del foglio <strong>Prediction Guide</strong> e curve μ (Global, Cluster 0, SuperNova cl.1, Post-CD). Post-CD: media pre (T−7,−5,−3) vs post (T+4,+7); soglia ±{POST_CD_EPS_PP} pp. Pre-CD (~2 mesi): T−10 vs T−60, soglia {PRE_CD_RALLY_PP}/{PRE_CD_FALL_PP} pp.</>
+          : <>Empirical % distribution vs T−60 around the CD — same thresholds as the <strong>Prediction Guide</strong> sheet and μ curves (Global, Cluster 0, SuperNova cl.1, Post-CD). Post-CD: pre (T−7,−5,−3) vs post (T+4,+7) mean; threshold ±{POST_CD_EPS_PP} pp. Pre-CD (~2 months): T−10 vs T−60, threshold {PRE_CD_RALLY_PP}/{PRE_CD_FALL_PP} pp.</>}
       </p>
 
       {accuracyDataStale && (
         <p className="text-xs text-amber-600 dark:text-amber-400 shrink-0 rounded-md border border-amber-500/40 bg-amber-500/10 px-3 py-2">
-          In-memory Accuracy data not aligned with the snapshot on disk
+          {it
+            ? "Dati Accuracy in memoria non allineati con lo snapshot su disco"
+            : "In-memory Accuracy data not aligned with the snapshot on disk"}
           {manifestUpdatedAt
-            ? ` (export ${new Date(manifestUpdatedAt).toLocaleString("en-US", { hour12: false })})`
+            ? ` (export ${new Date(manifestUpdatedAt).toLocaleString(it ? "it-IT" : "en-US", { hour12: false })})`
             : ""}
           .{" "}
           {onReloadAccuracy ? (
@@ -398,32 +418,32 @@ export function PredictionGuidePanel({
               className="underline text-accent"
               onClick={() => onReloadAccuracy()}
             >
-              Reload Accuracy
+              {it ? "Ricarica Accuracy" : "Reload Accuracy"}
             </button>
           ) : (
-            "Press Reload Accuracy at the top."
+            it ? "Premi Ricarica Accuracy in alto." : "Press Reload Accuracy at the top."
           )}
         </p>
       )}
 
       <div className="flex flex-wrap gap-2 shrink-0">
         <SummaryCard
-          label="Last recompute"
+          label={it ? "Ultimo ricalcolo" : "Last recompute"}
           value={lastUpdatedLabel}
-          hint="curves from current Accuracy sheet"
+          hint={it ? "curve dal foglio Accuracy corrente" : "curves from current Accuracy sheet"}
         />
         <SummaryCard
-          label="N data (cohort)"
+          label={it ? "N dati (coorte)" : "N data (cohort)"}
           value={String(snapshot.nEligible)}
-          hint="past CD · Exact/Partial"
+          hint={it ? "CD passati · Exact/Partial" : "past CD · Exact/Partial"}
         />
         <SummaryCard
-          label="+N this week"
+          label={it ? "+N questa settimana" : "+N this week"}
           value={`+${weekly.newThisWeek}`}
           hint={weekly.thisWeek?.weekKey ?? isoWeekLabel()}
         />
         <SummaryCard
-          label="Δ vs last week"
+          label={it ? "Δ vs settimana scorsa" : "Δ vs last week"}
           value={
             weekly.deltaVsLastWeek != null
               ? `${weekly.deltaVsLastWeek >= 0 ? "+" : ""}${weekly.deltaVsLastWeek}`
@@ -431,24 +451,24 @@ export function PredictionGuidePanel({
           }
           hint={
             weekly.lastWeek
-              ? `prev.: ${weekly.lastWeek.nSamples} · ${weekly.lastWeek.weekKey}`
-              : "first week"
+              ? `${it ? "prec." : "prev."}: ${weekly.lastWeek.nSamples} · ${weekly.lastWeek.weekKey}`
+              : (it ? "prima settimana" : "first week")
           }
         />
         <SummaryCard
-          label="Classified Post-CD"
+          label={it ? "Classificati Post-CD" : "Classified Post-CD"}
           value={String(snapshot.nClassifiedPost)}
-          hint={`of ${snapshot.nEligible}`}
+          hint={`${it ? "su" : "of"} ${snapshot.nEligible}`}
         />
       </div>
 
       <div className="flex flex-wrap items-center gap-2 shrink-0">
-        <span className="text-xs text-ink-muted">Week comparison:</span>
+        <span className="text-xs text-ink-muted">{it ? "Confronto settimane:" : "Week comparison:"}</span>
         <SelectionChipGroup>
           {(
             [
-              ["this", "This week"],
-              ["last", "Last week"],
+              ["this", it ? "Questa settimana" : "This week"],
+              ["last", it ? "Settimana scorsa" : "Last week"],
               ["overlay", "Overlay"],
             ] as const
           ).map(([mode, label]) => (
@@ -456,7 +476,7 @@ export function PredictionGuidePanel({
               key={mode}
               active={compareMode === mode}
               disabled={mode !== "this" && !weekly.lastWeek}
-              onClick={() => setCompareMode(mode)}
+              onClick={() => setCompareMode(mode as CompareMode)}
             >
               {label}
             </SelectionChip>
@@ -467,60 +487,73 @@ export function PredictionGuidePanel({
           active={showPreCd}
           onClick={() => setShowPreCd((v) => !v)}
         >
-          Show pre-CD behaviors
+          {it ? "Mostra comportamenti pre-CD" : "Show pre-CD behaviors"}
         </SelectionChip>
-        <SelectionChip onClick={() => void recompute()}>Recompute</SelectionChip>
+        <SelectionChip onClick={() => void recompute()}>
+          {it ? "Ricalcola" : "Recompute"}
+        </SelectionChip>
       </div>
 
       {snapshot.refSource && (
         <p className="text-[10px] text-ink-muted shrink-0">
-          Reference μ: {snapshot.refSource}
+          {it ? "μ di riferimento:" : "Reference μ:"} {snapshot.refSource}
           {chartsSource && ` · ${chartsSource}`}
-          {refOverrides.size > 0 && " — solid line = μ JSON; dashed = Accuracy only"}
+          {refOverrides.size > 0 && (it
+            ? " — linea continua = μ JSON; tratteggiata = solo Accuracy"
+            : " — solid line = μ JSON; dashed = Accuracy only")}
         </p>
       )}
 
       {!snapshot.refSource && (
         <p className="text-[10px] text-amber-600 dark:text-amber-400 shrink-0">
-          Reference μ missing in simulation_charts_snapshot.json — curves from Accuracy
-          aggregation only. Regenerate chart snapshots to align Post-CD μ.
+          {it
+            ? "μ di riferimento mancante in simulation_charts_snapshot.json — curve solo dall'aggregazione Accuracy. Rigenera gli snapshot dei grafici per allineare μ Post-CD."
+            : "Reference μ missing in simulation_charts_snapshot.json — curves from Accuracy aggregation only. Regenerate chart snapshots to align Post-CD μ."}
         </p>
       )}
 
       {snapshot.nEligible < 4 && (
         <p className="text-[10px] text-amber-600 dark:text-amber-400 shrink-0">
-          Small cohort (N={snapshot.nEligible}): unstable curves — more past CDs with
-          Exact/Partial and historical % over at least 4 nodes are needed.
+          {it
+            ? `Coorte piccola (N=${snapshot.nEligible}): curve instabili — servono più CD passati con Exact/Partial e % storiche su almeno 4 nodi.`
+            : `Small cohort (N=${snapshot.nEligible}): unstable curves — more past CDs with Exact/Partial and historical % over at least 4 nodes are needed.`}
           {diag && snapshot.nEligible === 0 ? (
             <span className="block mt-0.5 text-ink-muted">
-              Diagnostics: {diag.nRows} rows · {diag.nPastCd} past CD · {diag.nSponsorOk} sponsor
-              ok · {diag.nWithTrajectory} with ≥4 Historical % nodes.
+              {it ? "Diagnostica: " : "Diagnostics: "}
+              {diag.nRows} {it ? "righe" : "rows"} · {diag.nPastCd} {it ? "CD passati" : "past CD"} · {diag.nSponsorOk} {it ? "sponsor ok" : "sponsor ok"} · {diag.nWithTrajectory} {it ? "con ≥4 nodi storici %" : "with ≥4 Historical % nodes"}.
               {snapshot.refSource
-                ? " Showing reference μ curves (historical cohort interpolation)."
-                : " Regenerate snapshot: Export_Desktop_Snapshots.bat or refresh_predizione_guida.py."}
+                ? (it
+                    ? " Mostro curve μ di riferimento (interpolazione coorte storica)."
+                    : " Showing reference μ curves (historical cohort interpolation).")
+                : (it
+                    ? " Rigenera snapshot: Export_Desktop_Snapshots.bat o refresh_predizione_guida.py."
+                    : " Regenerate snapshot: Export_Desktop_Snapshots.bat or refresh_predizione_guida.py.")}
             </span>
           ) : null}
         </p>
       )}
 
       <div className="rounded-lg border border-[rgb(var(--border))]/60 p-3 shrink-0 space-y-2">
-        <p className="text-xs font-medium text-accent">Visible curves (Post-CD)</p>
+        <p className="text-xs font-medium text-accent">
+          {it ? "Curve visibili (Post-CD)" : "Visible curves (Post-CD)"}
+        </p>
         <p className="text-[10px] text-ink-muted leading-snug">
-          Disable a curve to shrink the Y axis and see the others better (e.g. hide
-          SuperNova).
+          {it
+            ? "Disabilita una curva per restringere l'asse Y e vedere meglio le altre (es. nascondi SuperNova)."
+            : "Disable a curve to shrink the Y axis and see the others better (e.g. hide SuperNova)."}
         </p>
         <SelectionChipGroup>
           {(
             [
-              ["noSupernova", "Without SuperNova"],
-              ["postCdOnly", "Only Post-CD"],
-              ["noCluster", "Without Cluster"],
-              ["empiricalOnly", "Empirical only"],
-              ["all", "All"],
-              ["none", "None"],
+              ["noSupernova", it ? "Senza SuperNova" : "Without SuperNova"],
+              ["postCdOnly", it ? "Solo Post-CD" : "Only Post-CD"],
+              ["noCluster", it ? "Senza Cluster" : "Without Cluster"],
+              ["empiricalOnly", it ? "Solo empiriche" : "Empirical only"],
+              ["all", it ? "Tutte" : "All"],
+              ["none", it ? "Nessuna" : "None"],
             ] as const
           ).map(([preset, label]) => (
-            <SelectionChip key={preset} onClick={() => applyVisPreset(preset, "post")}>
+            <SelectionChip key={preset} onClick={() => applyVisPreset(preset as GuideVisibilityPreset, "post")}>
               {label}
             </SelectionChip>
           ))}
@@ -558,7 +591,9 @@ export function PredictionGuidePanel({
       </div>
 
       <GuideChart
-        title="Post-CD macro-groups (mean historical % vs T−60)"
+        title={it
+          ? "Macro-gruppi Post-CD (media % storica vs T−60)"
+          : "Post-CD macro-groups (mean historical % vs T−60)"}
         groupIds={visiblePostGroups}
         snapshot={snapshot}
         weekly={weekly}
@@ -569,15 +604,17 @@ export function PredictionGuidePanel({
       {showPreCd && (
         <>
           <div className="rounded-lg border border-[rgb(var(--border))]/60 p-3 shrink-0 space-y-2">
-            <p className="text-xs font-medium text-accent">Visible curves (Pre-CD)</p>
+            <p className="text-xs font-medium text-accent">
+              {it ? "Curve visibili (Pre-CD)" : "Visible curves (Pre-CD)"}
+            </p>
             <SelectionChipGroup>
               {(
                 [
-                  ["all", "All"],
-                  ["none", "None"],
+                  ["all", it ? "Tutte" : "All"],
+                  ["none", it ? "Nessuna" : "None"],
                 ] as const
               ).map(([preset, label]) => (
-                <SelectionChip key={preset} onClick={() => applyVisPreset(preset, "pre")}>
+                <SelectionChip key={preset} onClick={() => applyVisPreset(preset as GuideVisibilityPreset, "pre")}>
                   {label}
                 </SelectionChip>
               ))}
@@ -610,7 +647,9 @@ export function PredictionGuidePanel({
             </SelectionChipGroup>
           </div>
           <GuideChart
-            title="Behaviors ~2 months before CD"
+            title={it
+              ? "Comportamenti ~2 mesi prima del CD"
+              : "Behaviors ~2 months before CD"}
             groupIds={visiblePreGroups}
             snapshot={snapshot}
             weekly={weekly}
@@ -620,10 +659,13 @@ export function PredictionGuidePanel({
       )}
 
       <p className="text-[10px] text-ink-muted shrink-0 pb-2">
-        Aggregation source: {snapshot.dataSource}
-        {chartsSource ? ` · μ JSON: ${chartsSource}` : " · μ JSON: missing"}
-        . Weekly history in localStorage (max 2 weeks). Percentages normalized from
-        Excel fraction (×100 if |v|≤1.5).
+        {it ? "Sorgente aggregazione:" : "Aggregation source:"} {snapshot.dataSource}
+        {chartsSource
+          ? ` · μ JSON: ${chartsSource}`
+          : (it ? " · μ JSON: mancante" : " · μ JSON: missing")}
+        . {it
+          ? "Storico settimanale in localStorage (max 2 settimane). Percentuali normalizzate da frazione Excel (×100 se |v|≤1.5)."
+          : "Weekly history in localStorage (max 2 weeks). Percentages normalized from Excel fraction (×100 if |v|≤1.5)."}
       </p>
     </div>
   );

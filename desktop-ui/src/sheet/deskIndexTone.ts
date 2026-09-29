@@ -1,6 +1,8 @@
 /**
  * Dashboard catalyst-index colors: green = positive, red = negative, yellow = neutral.
- * Gray is reserved for outdated / market-closed carry (last print, not live).
+ * Signed prints keep red/green also when the market is closed; the age of the
+ * print is carried by the last-reading badge, not by the color.
+ * Gray is only for missing values.
  * Excel-like text colors (no chip boxes) — display only, not a Soft BUY/SELL gate.
  */
 
@@ -25,30 +27,28 @@ export function recToDeskIndexTone(
   return "empty";
 }
 
-/**
- * Signed live % → always green/red (never gray).
- * Gray only when `stale` (last session print while market closed / carry).
- */
+/** Signed % → always green/red, live or carried from the last session. */
 export function deskSignedLiveTone(
   pct: number | null | undefined,
-  opts?: { stale?: boolean },
 ): DeskIndexTone {
-  if (opts?.stale) return "stale";
   if (pct == null || !Number.isFinite(pct)) return "empty";
   return pct >= 0 ? "pos" : "neg";
 }
 
 /**
- * Map a cell tone, forcing gray when the print is outdated.
- * When live and tone is flat/warn, prefer signed % → red/green if provided.
+ * Map a cell tone to a color. Outdated prints keep their red/green.
+ * When tone is flat/warn, prefer signed % → red/green if provided.
  */
-export function deskLiveOrStaleTone(
+export function deskCellTone(
   tone: "up" | "down" | "flat" | "warn" | "none" | "stale" | string | null | undefined,
-  opts?: { stale?: boolean; signedPct?: number | null },
+  opts?: { signedPct?: number | null },
 ): DeskIndexTone {
-  if (opts?.stale) return "stale";
   if (tone === "none" || tone == null) return "empty";
-  if (tone === "stale") return "stale";
+  if (tone === "stale") {
+    const p = opts?.signedPct;
+    if (p != null && Number.isFinite(p)) return p >= 0 ? "pos" : "neg";
+    return "stale";
+  }
   if (tone === "flat" || tone === "warn") {
     const p = opts?.signedPct;
     if (p != null && Number.isFinite(p)) return p >= 0 ? "pos" : "neg";
@@ -69,7 +69,7 @@ export function deskIndexTextClass(tone: DeskIndexTone): string {
   if (tone === "neu") {
     return "text-[rgb(var(--signal-neutral))]";
   }
-  // empty + stale share muted gray; stale is semantic (outdated print).
+  // empty + stale share muted gray: no usable value to color.
   return "text-ink-muted";
 }
 

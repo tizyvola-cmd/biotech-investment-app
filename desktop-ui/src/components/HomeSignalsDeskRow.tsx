@@ -14,7 +14,7 @@ import {
 } from "../sheet/eventVolIndexDisplay";
 import {
   deskStaleProvenanceTip,
-  deskStaleSessionBadge,
+  deskLastReadingBadge,
   deskRowIsStaleCarry,
 } from "../sheet/deskFieldProvenance";
 import { formatShortInterestCell } from "../sheet/catalystShortInterestDisplay";
@@ -33,7 +33,7 @@ import {
 } from "../sheet/preMktConvictionDisplay";
 import {
   deskIndexTextClass,
-  deskLiveOrStaleTone,
+  deskCellTone,
   deskSignedLiveTone,
   toDeskIndexTone,
   type DeskIndexTone,
@@ -211,15 +211,12 @@ function HomeSignalsDeskRowImpl({
     priorSessionPct,
     volRow: filledVol ?? vol,
   });
-  // Gray only for outdated carry (market closed / last session print).
-  // Live signed % always red or green — never yellow/gray for near-zero.
+  // Signed % always red or green — market closed only adds the last-reading badge.
   const pricePrintStale =
     !liveSession || deskRowIsStaleCarry(vol) || deskRowIsStaleCarry(vsRow);
-  const d24Tone: DeskIndexTone = deskSignedLiveTone(d24Pct, {
-    stale: pricePrintStale,
-  });
+  const d24Tone: DeskIndexTone = deskSignedLiveTone(d24Pct);
   const d24Label = formatSignedPct(d24Pct, 1);
-  const d24StaleBadge = deskStaleSessionBadge(vol, it);
+  const d24StaleBadge = deskLastReadingBadge(vol, it);
   const d24StaleTip = deskStaleProvenanceTip(vol, it);
   const d24Tip =
     d24Pct == null || !Number.isFinite(d24Pct)
@@ -231,10 +228,10 @@ function HomeSignalsDeskRowImpl({
             ? `Variazione prezzo ~24h (ultimo prezzo vs chiusura ultima giornata lavorativa): ${d24Label}. Non è Soft BUY/SELL.`
             : `~24h price change (last price vs last trading-day close): ${d24Label}. Not Soft BUY/SELL.`,
           d24StaleTip,
-          pricePrintStale
+          pricePrintStale && !d24StaleTip
             ? it
-              ? "Mercato chiuso / stampa precedente — colore grigio (non live)."
-              : "Market closed / prior print — gray (not live)."
+              ? "Mercato chiuso — valore dell’ultima lettura, non live."
+              : "Market closed — value from the last reading, not live."
             : null,
         ]
           .filter(Boolean)
@@ -245,9 +242,7 @@ function HomeSignalsDeskRowImpl({
       : vol?.hour_chg_pct != null && Number.isFinite(vol.hour_chg_pct)
         ? vol.hour_chg_pct
         : null;
-  const visitTone: DeskIndexTone = deskSignedLiveTone(visitPct, {
-    stale: pricePrintStale,
-  });
+  const visitTone: DeskIndexTone = deskSignedLiveTone(visitPct);
   const visitLabel = formatSignedPct(visitPct, 2);
   const visitTip =
     visitPct == null
@@ -260,8 +255,8 @@ function HomeSignalsDeskRowImpl({
             : `Percent price change vs the desk’s previous hourly call (last_close vs prior pack): ${visitLabel}. Not Soft BUY/SELL.`,
           pricePrintStale
             ? it
-              ? "Mercato chiuso / stampa precedente — colore grigio (non live)."
-              : "Market closed / prior print — gray (not live)."
+              ? "Mercato chiuso — valore dell’ultima lettura, non live."
+              : "Market closed — value from the last reading, not live."
             : null,
         ]
           .filter(Boolean)
@@ -280,8 +275,7 @@ function HomeSignalsDeskRowImpl({
   );
   const govCell = formatGovFlagCell(accumRow, it, accumLoading && !accumRow);
   const vsCell = formatVsXbiCell(vsRow, it, vsXbiLoading && !vsRow);
-  const vsTone: DeskIndexTone = deskLiveOrStaleTone(vsCell.tone, {
-    stale: pricePrintStale || deskRowIsStaleCarry(vsRow),
+  const vsTone: DeskIndexTone = deskCellTone(vsCell.tone, {
     signedPct:
       vsRow?.relative_move != null && Number.isFinite(vsRow.relative_move)
         ? vsRow.relative_move * 100
@@ -297,9 +291,7 @@ function HomeSignalsDeskRowImpl({
     preMktLoading && !preMktRaw,
   );
   const diverge = formatPriceVolDivergence(filledVol, it);
-  const divergeTone: DeskIndexTone = deskLiveOrStaleTone(diverge.tone, {
-    stale: pricePrintStale,
-  });
+  const divergeTone: DeskIndexTone = deskCellTone(diverge.tone);
   const biasCell = formatBiasCell(
     {
       rr10: eventVol?.rr10 ?? null,
@@ -310,9 +302,7 @@ function HomeSignalsDeskRowImpl({
     it,
   );
   const qty = formatDeskVolumeQtyOnly(vol?.pct_of_prev);
-  const qtyTone: DeskIndexTone = deskLiveOrStaleTone(qty.tone, {
-    stale: pricePrintStale,
-  });
+  const qtyTone: DeskIndexTone = deskCellTone(qty.tone);
   const trendCell = formatSearchInterestCell(trend, trendsLoading && !trend);
   const trendTip = searchInterestTooltip(
     trend,
@@ -511,11 +501,7 @@ function HomeSignalsDeskRowImpl({
       </td>
       <td className={DESK_CELL} title={ivrCell.tip}>
         <DeskIndexText
-          tone={
-            ivrCell.staleBadge || ivrCell.emptyReason
-              ? "stale"
-              : toDeskIndexTone(ivrCell.tone)
-          }
+          tone={ivrCell.emptyReason ? "stale" : toDeskIndexTone(ivrCell.tone)}
           title={ivrCell.tip}
         >
           <span className="text-[11px] font-medium tabular-nums">
@@ -535,11 +521,7 @@ function HomeSignalsDeskRowImpl({
       </td>
       <td className={DESK_CELL} title={skewCell.tip}>
         <DeskIndexText
-          tone={
-            skewCell.staleBadge || skewCell.emptyReason
-              ? "stale"
-              : toDeskIndexTone(skewCell.tone)
-          }
+          tone={skewCell.emptyReason ? "stale" : toDeskIndexTone(skewCell.tone)}
           title={skewCell.tip}
         >
           <span className="text-[11px] font-medium tabular-nums">
@@ -559,7 +541,7 @@ function HomeSignalsDeskRowImpl({
       </td>
       <td className={DESK_CELL} title={siCell.tip}>
         <DeskIndexText
-          tone={deskLiveOrStaleTone(siCell.tone, {
+          tone={deskCellTone(siCell.tone, {
             signedPct:
               siRow?.si_delta_pct != null && Number.isFinite(siRow.si_delta_pct)
                 ? siRow.si_delta_pct

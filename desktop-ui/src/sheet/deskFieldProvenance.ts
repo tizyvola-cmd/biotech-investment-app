@@ -145,6 +145,56 @@ export function deskStaleSessionBadge(
   return it ? itMap[wd] ?? "ven" : enMap[wd] ?? "Fri";
 }
 
+function readingClock(asof: string | null | undefined): string | null {
+  const d = asof ? new Date(asof) : null;
+  if (!d || Number.isNaN(d.getTime())) return null;
+  return d.toLocaleTimeString(undefined, {
+    hour: "2-digit",
+    minute: "2-digit",
+  });
+}
+
+/** Cell badge for a carried print: weekday + clock of the last reading. */
+export function deskLastReadingBadge(
+  row: unknown,
+  it: boolean,
+  now: Date = new Date(),
+): string | null {
+  const badge = deskStaleSessionBadge(row, it, now);
+  if (!badge) return null;
+  const clock = readingClock(deskProvenanceOf(row)?.asof);
+  return clock ? `${badge} ${clock}` : badge;
+}
+
+/** Most recent `_desk.asof` across rows — when the desk last read the tape. */
+export function deskLatestReadingAsof(rows: Iterable<unknown>): string | null {
+  let best: string | null = null;
+  for (const row of rows) {
+    const asof = deskProvenanceOf(row)?.asof;
+    if (!asof) continue;
+    const t = new Date(asof).getTime();
+    if (Number.isNaN(t)) continue;
+    if (!best || t > new Date(best).getTime()) best = asof;
+  }
+  return best;
+}
+
+/** «ven 18/09 · 22:00» — human stamp for the last reading. */
+export function formatDeskReadingStamp(
+  asof: string | null | undefined,
+  it: boolean,
+): string | null {
+  const d = asof ? new Date(asof) : null;
+  if (!d || Number.isNaN(d.getTime())) return null;
+  const date = d.toLocaleDateString(it ? "it-IT" : "en-GB", {
+    weekday: "short",
+    day: "2-digit",
+    month: "2-digit",
+  });
+  const clock = readingClock(asof);
+  return clock ? `${date} · ${clock}` : date;
+}
+
 export function deskStaleProvenanceTip(
   row: unknown,
   it: boolean,
@@ -155,9 +205,11 @@ export function deskStaleProvenanceTip(
   const badge = deskStaleSessionBadge(row, it, now);
   const day = meta?.session_day || meta?.asof?.slice(0, 10) || "—";
   const src = meta?.source || "cache";
+  const clock = readingClock(meta?.asof);
+  const when = clock ? `${badge} ${day} ${clock}` : `${badge} ${day}`;
   return it
-    ? `Ultima stampa ${badge} (${day}) · fonte ${src}. Mercato chiuso — non è un dato live.`
-    : `Last print ${badge} (${day}) · source ${src}. Market closed — not a live print.`;
+    ? `Ultima lettura ${when} · fonte ${src}. Mercato chiuso — valore dell’ultima seduta.`
+    : `Last reading ${when} · source ${src}. Market closed — last session value.`;
 }
 
 export type EventVolEmptyReason = "loading" | "not_loaded" | "no_options";

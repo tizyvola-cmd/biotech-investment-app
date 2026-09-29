@@ -1,8 +1,11 @@
 import { describe, expect, it } from "vitest";
 import {
   coalesceDeskProvenance,
+  deskLastReadingBadge,
+  deskLatestReadingAsof,
   deskRowIsStaleCarry,
   deskStaleSessionBadge,
+  formatDeskReadingStamp,
   eventVolEmptyLabel,
   resolveEventVolEmptyReason,
   stampDeskRowProvenance,
@@ -71,5 +74,29 @@ describe("deskStaleSessionBadge", () => {
     expect(deskRowIsStaleCarry(row, sunday)).toBe(true);
     expect(deskStaleSessionBadge(row, true, sunday)).toBe("ven");
     expect(deskStaleSessionBadge(row, false, sunday)).toBe("Fri");
+  });
+});
+
+describe("last reading stamps", () => {
+  const row = stampDeskRowProvenance({ ticker: "XBI", last_close: 100 }, "server_hourly", {
+    asof: "2026-09-18T20:00:00.000Z",
+    sessionDay: "2026-09-18",
+    signalKeys: ["last_close"],
+  });
+  const sunday = new Date("2026-09-20T15:00:00Z");
+
+  it("adds the clock of the print to the weekday badge", () => {
+    expect(deskLastReadingBadge(row, true, sunday)).toMatch(/^ven \d{1,2}:\d{2}/);
+  });
+
+  it("picks the most recent asof and formats it", () => {
+    const older = stampDeskRowProvenance({ ticker: "ETON" }, "cache", {
+      asof: "2026-09-17T20:00:00.000Z",
+      sessionDay: "2026-09-17",
+    });
+    const latest = deskLatestReadingAsof([older, row]);
+    expect(latest).toBe("2026-09-18T20:00:00.000Z");
+    expect(formatDeskReadingStamp(latest, true)).toMatch(/\d{1,2}:\d{2}/);
+    expect(formatDeskReadingStamp(null, true)).toBeNull();
   });
 });

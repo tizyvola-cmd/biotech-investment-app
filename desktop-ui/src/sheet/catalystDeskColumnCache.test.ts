@@ -10,7 +10,9 @@ import {
   mergeTickerMapsPreferSignal,
   assignTickerMapsPreserving,
   DESK_SIGNAL_KEYS,
+  coalesceDeskTickerRow,
 } from "./catalystDeskColumnCache";
+import { deskProvenanceOf, stampDeskRowProvenance } from "./deskFieldProvenance";
 
 describe("catalystDeskColumnCache", () => {
   it("builds FDA rows from morning brief map", () => {
@@ -330,5 +332,31 @@ describe("catalystDeskColumnCache", () => {
     expect(assigned.ETON).toBe(eton);
     expect(assigned.MRNA).not.toBe(mrna);
     expect(assigned.MRNA?.pct).toBe(9);
+  });
+});
+
+describe("coalesceDeskTickerRow provenance", () => {
+  it("keeps the asof/source of the print when re-storing or merging a row", () => {
+    const next = stampDeskRowProvenance(
+      { ticker: "TPOS", pct_of_prev: 1.4, hour_chg_pct: -0.8 },
+      "server_hourly",
+      {
+        asof: "2026-09-28T20:00:00.000Z",
+        sessionDay: "2026-09-28",
+        signalKeys: ["pct_of_prev", "hour_chg_pct"],
+      },
+    );
+    const fresh = coalesceDeskTickerRow({ ticker: "TPOS" }, next, DESK_SIGNAL_KEYS.vol, "merge");
+    expect(deskProvenanceOf(fresh)?.asof).toBe("2026-09-28T20:00:00.000Z");
+    expect(deskProvenanceOf(fresh)?.source).toBe("server_hourly");
+
+    const merged = coalesceDeskTickerRow(
+      { ticker: "TPOS", pct_of_prev: 1.1, hour_chg_pct: -0.2 },
+      next,
+      DESK_SIGNAL_KEYS.vol,
+      "merge",
+    );
+    expect(deskProvenanceOf(merged)?.asof).toBe("2026-09-28T20:00:00.000Z");
+    expect(deskProvenanceOf(merged)?.session_day).toBe("2026-09-28");
   });
 });

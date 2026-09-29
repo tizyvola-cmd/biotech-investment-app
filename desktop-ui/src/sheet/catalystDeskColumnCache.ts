@@ -23,6 +23,7 @@ import {
 } from "./deskEmptyCellDiag";
 import {
   coalesceDeskProvenance,
+  deskProvenanceOf,
   stampDeskRowProvenance,
 } from "./deskFieldProvenance";
 
@@ -461,6 +462,23 @@ export function deskRowHasSignal(
  * so a partial Yahoo reprint cannot punch holes in an already-painted desk.
  * Empty = null, NaN, "", "—", blank — not only strict null.
  */
+/**
+ * Stamp a row keeping the timestamp/source of the print it already carries:
+ * re-storing or merging a row is not a new reading of the tape.
+ */
+function stampKeepingReading<T extends object>(
+  row: T,
+  source: string,
+  signalKeys: readonly string[],
+): T {
+  const meta = deskProvenanceOf(row);
+  return stampDeskRowProvenance(row, meta?.source || source, {
+    asof: meta?.asof ?? null,
+    sessionDay: meta?.session_day ?? null,
+    signalKeys,
+  }) as T;
+}
+
 export function coalesceDeskTickerRow<T extends object>(
   prev: T,
   next: T,
@@ -489,7 +507,7 @@ export function coalesceDeskTickerRow<T extends object>(
       source,
       deskSignalValueUsable,
     );
-    return stampDeskRowProvenance(next, source, { signalKeys });
+    return stampKeepingReading(next, source, signalKeys);
   }
   const out = { ...(next as Record<string, unknown>) };
   const p = prev as Record<string, unknown>;
@@ -514,7 +532,7 @@ export function coalesceDeskTickerRow<T extends object>(
     source,
     deskSignalValueUsable,
   );
-  const stamped = stampDeskRowProvenance(merged, source, { signalKeys });
+  const stamped = stampKeepingReading(merged, source, signalKeys);
   return coalesceDeskProvenance(prev, stamped, true) as T;
 }
 

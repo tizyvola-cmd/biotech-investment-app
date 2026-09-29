@@ -2174,6 +2174,13 @@ export type ProductStudyResultRow = {
   description?: string | null;
 };
 
+/** Plain-language reading of the posted endpoints (AI, cached with the dossier). */
+export type ProductStudyReadoutExplainer = {
+  what?: string | null;
+  why?: string | null;
+  impact?: string | null;
+};
+
 export type ProductStudyCard = {
   nct_id?: string | null;
   title?: string | null;
@@ -2188,6 +2195,7 @@ export type ProductStudyCard = {
   has_results?: boolean;
   ctgov_url?: string | null;
   results_table?: ProductStudyResultRow[];
+  readout_explainer?: ProductStudyReadoutExplainer | null;
 };
 
 export type ProductStudyPaperRef = {

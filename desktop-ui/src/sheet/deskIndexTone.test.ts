@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import {
-  deskLiveOrStaleTone,
+  deskCellTone,
   deskSignedLiveTone,
   recToDeskIndexTone,
   toDeskIndexTone,
@@ -18,20 +18,21 @@ describe("toDeskIndexTone", () => {
 });
 
 describe("deskSignedLiveTone", () => {
-  it("uses gray only when stale; otherwise always red or green", () => {
+  it("is red or green for any signed value, gray only when missing", () => {
     expect(deskSignedLiveTone(1.2)).toBe("pos");
     expect(deskSignedLiveTone(-0.01)).toBe("neg");
     expect(deskSignedLiveTone(0)).toBe("pos");
-    expect(deskSignedLiveTone(1.2, { stale: true })).toBe("stale");
     expect(deskSignedLiveTone(null)).toBe("empty");
   });
 });
 
-describe("deskLiveOrStaleTone", () => {
-  it("forces gray for outdated prints", () => {
-    expect(deskLiveOrStaleTone("up", { stale: true })).toBe("stale");
-    expect(deskLiveOrStaleTone("flat", { signedPct: -0.2 })).toBe("neg");
-    expect(deskLiveOrStaleTone("warn")).toBe("neu");
+describe("deskCellTone", () => {
+  it("keeps colors for outdated prints and falls back to the signed %", () => {
+    expect(deskCellTone("up")).toBe("pos");
+    expect(deskCellTone("stale", { signedPct: -0.2 })).toBe("neg");
+    expect(deskCellTone("stale")).toBe("stale");
+    expect(deskCellTone("flat", { signedPct: -0.2 })).toBe("neg");
+    expect(deskCellTone("warn")).toBe("neu");
   });
 });
 

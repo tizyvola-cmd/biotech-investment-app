@@ -2,7 +2,7 @@ import type { EventVolIndexRow } from "../api/supernova";
 import { eventVolPairKey } from "../api/supernova";
 import {
   deskStaleProvenanceTip,
-  deskStaleSessionBadge,
+  deskLastReadingBadge,
   eventVolEmptyLabel,
   eventVolEmptyTip,
   resolveEventVolEmptyReason,
@@ -147,7 +147,7 @@ export function formatIvrCell(
       ? `IVR ${ivr.toFixed(2)}`
       : undefined;
 
-  const staleBadge = deskStaleSessionBadge(row, it);
+  const staleBadge = deskLastReadingBadge(row, it);
   const staleTip = deskStaleProvenanceTip(row, it);
   const parts = [
     it
@@ -225,7 +225,7 @@ export function formatSkewCell(
       : row.rr_slope != null
         ? `Δ ${row.rr_slope > 0 ? "+" : ""}${row.rr_slope.toFixed(3)}`
         : undefined;
-  const staleBadge = deskStaleSessionBadge(row, it);
+  const staleBadge = deskLastReadingBadge(row, it);
   const staleTip = deskStaleProvenanceTip(row, it);
   const parts = [
     it

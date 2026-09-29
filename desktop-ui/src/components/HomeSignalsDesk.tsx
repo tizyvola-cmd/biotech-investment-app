@@ -96,6 +96,10 @@ import {
 import type { InvestSimInputs, InvestSimHistoryPoint } from "../sheet/investSimStorage";
 import { isDuringUsEquityRegularHours } from "../sheet/marketSession";
 import {
+  deskLatestReadingAsof,
+  formatDeskReadingStamp,
+} from "../sheet/deskFieldProvenance";
+import {
   formatPriceVolDivergence,
   isVolumeSurge,
   mergeVolumeVsPrevMaps,
@@ -2506,6 +2510,10 @@ export function HomeSignalsDesk({
 
   const simMissing = !simTable?.rows?.length;
   const liveSession = isDuringUsEquityRegularHours();
+  const lastReadingLabel = formatDeskReadingStamp(
+    deskLatestReadingAsof(Object.values(volByTicker)),
+    it,
+  );
 
   return (
     <section
@@ -2580,8 +2588,22 @@ export function HomeSignalsDesk({
           </span>
           <span className={`inline-flex items-center gap-1.5 ${deskIndexTextClass("stale")}`}>
             <span className="h-1.5 w-1.5 rounded-full bg-[rgb(var(--ink-muted))]" />
-            {it ? "Outdated (mkt chiuso)" : "Outdated (mkt closed)"}
+            {it ? "Nessun dato" : "No data"}
           </span>
+          {lastReadingLabel ? (
+            <span
+              className="text-[#5B6580]"
+              title={
+                it
+                  ? "I colori restano rossi/verdi anche a mercato chiuso: mostrano l\u2019ultima lettura, non un prezzo live."
+                  : "Colors stay red/green with the market closed: they show the last reading, not a live print."
+              }
+            >
+              {it ? "· Ultima lettura " : "· Last reading "}
+              {lastReadingLabel}
+              {liveSession ? "" : it ? " (mkt chiuso)" : " (mkt closed)"}
+            </span>
+          ) : null}
           <span className="text-[#5B6580]">
             {it
               ? `· Solo catalyst ≤${DESK_CALENDAR_HORIZON_DAYS}g + ★ priorità in cima`

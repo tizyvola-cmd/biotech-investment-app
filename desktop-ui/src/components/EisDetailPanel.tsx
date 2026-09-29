@@ -575,13 +575,13 @@ export function EisDetailPanel({
               <SumDimChip label="Acc" sum={accSum} tip={eisScoreLegendCopy(it).acc} />
             </div>
             {productClinicalEvents.length > 0 ? (
-              <p className="text-[10px] text-ink-muted mt-1 max-w-[16rem] ml-auto">
+              <p className="text-[10px] text-[#4C3FD1] font-medium mt-1 max-w-[16rem] ml-auto">
                 {it
                   ? `${productClinicalEvents.length} news · Clin, Fin e Acc sommati ciascuno a parte (EIS solo per evento)`
                   : `${productClinicalEvents.length} news · Clin, Fin & Acc each summed separately (EIS per event only)`}
               </p>
             ) : detail.breakdownHint ? (
-              <p className="text-[10px] text-ink-muted mt-1 max-w-[14rem] ml-auto">{detail.breakdownHint}</p>
+              <p className="text-[10px] text-[#4C3FD1] font-medium mt-1 max-w-[14rem] ml-auto">{detail.breakdownHint}</p>
             ) : null}
           </div>
         </div>

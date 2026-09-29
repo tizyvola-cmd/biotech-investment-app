@@ -740,7 +740,7 @@ export function TickerCompany30dCatalystPanel({
               ? `Catalyst prossimi ${companyHorizon.horizonDays} giorni`
               : `Next ${companyHorizon.horizonDays}-day catalysts`}
         </p>
-        <p className="text-[10px] text-ink-muted">
+        <p className="text-[10px] text-[#4C3FD1] font-medium">
           {companyHorizon.horizonDays >= 360
             ? it
               ? "Nessuna entro 30g — mostro il calendario fino a un anno"

@@ -653,6 +653,21 @@ export function CdProductStudySummary({
       ? `${patent.brand_name} (${patent.generic_name})`
       : patent?.brand_name || patent?.generic_name || productName;
 
+  // The card label can be a study placeholder ("CD study"): the competition
+  // search uses the resolved drug and disease shown in the Product Summary.
+  const competitionProduct =
+    usableProductName(briefing.productName) ||
+    usableProductName(patent?.generic_name) ||
+    usableProductName(patent?.brand_name) ||
+    usableProductName(productName) ||
+    null;
+  const competitionIndication =
+    String(indication || "").trim() ||
+    indicationRows[0]?.label ||
+    indications[0] ||
+    briefing.indication ||
+    null;
+
   const methodNote =
     patent?.method === "20y_from_filing"
       ? "Estimate: US composition-of-matter term ≈ filing + 20 years (no PTE/SPC)."
@@ -818,9 +833,9 @@ export function CdProductStudySummary({
           <EisCompetitionNotesBox
             ticker={ticker}
             it={it}
-            productName={usableProductName(productName) || productName}
+            productName={competitionProduct}
             company={company}
-            indication={indication}
+            indication={competitionIndication}
             nctId={primaryNctId || null}
           />
         </ProductSectionBox>
